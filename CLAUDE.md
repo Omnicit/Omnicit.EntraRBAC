@@ -114,10 +114,11 @@ whether `ubuntu-latest`, `windows-latest` and `macos-latest` (with `package`, th
 checks on `main`) exist; `package` follows via `needs: build-and-test`. **The mechanism is the
 MATRIX, not the skip:** a job-level `if:` is evaluated BEFORE the matrix expands, so the legs are
 never created and a required check that never reports stays pending forever (`package` skipped
-counts as passed, but the three matrix names still never report). Turning the repository private is therefore a change to this condition
-or the protection rule, in the SAME change, never afterwards. **Never rewrite the workflow as three
-jobs without a matrix:** their skipped `if:` reports Success and the gate goes GREEN with no test
-run, `package` included; keep the matrix, or make the required checks something a skipped job cannot satisfy.
+counts as passed, but the three matrix names still never report). Turning the repository private
+is therefore a change to this condition, or to the protection rule, made in the SAME change and
+never afterwards. **Never rewrite the workflow as three jobs without a matrix** unless the required
+checks become something a skipped job cannot satisfy: their skipped `if:` reports Success and the
+gate goes GREEN with no test run, `package` included.
 `Why: docs/development/rationale.md#required-checks-and-the-matrix`
 
 **Do not maintain a function roster in this file;** read it from the tree:
@@ -297,8 +298,10 @@ publish it.
     package and is tagged): push the missing tag by hand onto the commit that published the
     version, then re-run ALL jobs of the newest refused run (it counts up from that tag and
     publishes it); re-running only its failed jobs reuses its own build and is refused again. The
-    refusal names the steps. A preview tag on the wrong commit is named in either refusal: delete
-    it with `git push origin :refs/tags/v<version>` before tagging the right commit.
+    refusal names the steps. A preview tag on the wrong commit is named in either refusal -- by
+    the tag check when the run's own build is the package, and in the comparison's repair text
+    otherwise: delete it with `git push origin :refs/tags/v<version>` before tagging the right
+    commit.
   - **Never loosen the comparison to turn a refused run green.** A later-day rebuild is a different
     build too (the release notes carry the build date), so re-running ALL jobs of the run that
     published is refused as well; re-run only its failed jobs.
@@ -320,8 +323,8 @@ publish it.
   `GITHUB_TOKEN` all three, so a stable run that tried would fail in its last step, AFTER the
   publish. On a `v` tag run the release step attaches the release to the tag already there; the
   only tag the workflow ever writes is a hyphenated preview tag, which the ruleset excludes.
-- **The publish job refuses a version its ref does not call for**, after the artefact is verified
-  and before anything is published: on a `v` tag the built version must equal the tag exactly and
+- **The publish job refuses a version its ref does not call for**, straight after the artefact is
+  verified and before anything is published: on a `v` tag the built version must equal the tag exactly and
   the tagged commit must be on `main`; on `main` the build must carry a prerelease label; any other
   ref is refused. It guards against MISTAKES, not an adversary; the gate stays in the settings.
   **A refused or misplaced stable tag stays where it is**, and nothing removes it for you: someone
@@ -382,7 +385,7 @@ verbatim into the built manifest's `PrivateData.PSData.ReleaseNotes`.
   changed-file gate fires only on a path matching `^source/`.
 - **The two gates that read the BUILT artefact need a build** (`build.yaml`'s `test` workflow does
   not include `build`, so both measure what is already in `output/module/`): the published-notes
-  gate also compares it with the CURRENT `CHANGELOG.md`, so an older build turns it red; the
+  gate also compares it with the CURRENT `CHANGELOG.md`, so a build older than the `CHANGELOG.md` edit turns it red; the
   version cap reads only the artefact's own version, so it reddens on staleness only if nothing
   resolves or the stale build is outside the `1.x` line. Build before test, as
   `## Build and Test Commands` requires. Both resolve the module with
@@ -404,7 +407,7 @@ merge commit message names); a tag on HEAD is returned verbatim and outranks eve
 `next-version`, though a higher `release/x.y.z` still beats it. **At most ONE increment**, from the
 commits since the NEAREST reachable tag (all of them when there is none): a TAG base not on HEAD
 takes the greater of the branch default (Patch on `main` and every branch prefix this repo uses) and
-the highest `+semver:` level in that window; a `release/*` branch takes none (`increment: None`). A
+the highest `+semver:` level in that window; a `release/*` branch has no branch default (`increment: None`). A
 `next-version` or `release/x.y.z` base takes no default increment, so it is used as written unless a
 `+semver:` commit is in the window. A PRERELEASE-labelled tag (`v0.9.0-preview.1`) takes no
 `MajorMinorPatch` increment at all, and no `+semver:` message moves it.
@@ -453,7 +456,7 @@ either shape freely.
 
 Every public cmdlet calling Graph or Azure invokes `Initialize-OERAuth` at the start of its
 `begin`/`process` block, with `-IncludeARM` when it needs ARM; `Connect-OER` is an optional pre-auth
-shortcut. Auth uses AzAuth's `Get-AzToken` for every credential type; state in
+shortcut -- all cmdlets authenticate automatically on first use. Auth uses AzAuth's `Get-AzToken` for every credential type; state in
 `$script:_OERAuthState`, keyed on tenant, auth identity, **and cloud**, carries `SignedInObjectId`
 (Graph token `oid` claim), never the token. `Why: docs/development/rationale.md#auth-state`
 
@@ -485,8 +488,8 @@ wrapper after its session gate (a changed session still reads `GraphSessionChang
 
 A refused command's nested sign-ins are refused before they are made: before `Lock-OERSignIn`,
 `Initialize-OERAuth` asks `Get-OERSignInRefusal -OutsideCaller`; when a command OUTSIDE its caller
-is latched (the caller is a cmdlet it calls, or signs in inside its output) it raises a terminating
-`SignInRefused` naming it -- no token call, no `Connect-MgGraph`, no latch of its own. The caller's
+is latched (the caller is a cmdlet that command calls, or signs in inside that command's output) it
+raises a terminating `SignInRefused` naming that command -- no token call, no `Connect-MgGraph`, no latch of its own. The caller's
 own latched frame does not count: a command refused earlier in the same invocation
 (`Invoke-OERStructure`, next piped document) may sign in again. Only `Initialize-OERAuth` passes
 `-OutsideCaller`; never make that check walk the whole stack. A finished command is on no call
@@ -504,7 +507,8 @@ any scriptblock; the transports' own refreshes, in `Invoke-GraphSingle` and
 does.** `begin` calls `Initialize-OERAuth` directly in a `try` (not a script block or nested
 function; gate 10 allows it) with `-ErrorVariable SignInErrors`. A terminating refusal is caught,
 scrubbed first, re-raised with `$PSCmdlet.ThrowTerminatingError` (the sign-in's own record and
-ErrorId; a caller's `try` still catches it); never `WriteError`. The one refusal written without
+ErrorId; a caller's `try` still catches it and, outside one, only that statement ends); never
+`WriteError`. The one refusal written without
 terminating, `ArmTokenAcquisitionFailed`, is found in `SignInErrors` by the first comma segment of
 its `FullyQualifiedErrorId`, compared whole and ordinally, never searched for; the export marks
 itself refused and raises nothing (a caller's `try` catches it only under a Stop error preference).
@@ -766,8 +770,8 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   handler writes the same warning before `$Caller.ShouldProcess` only when the cmdlet it calls will
   not write it: under `-WhatIf` (cmdlet never called) and, in both modes, for the group PIM MFA /
   authentication-context pair the diff reconciles (`Set-OERGroupPimPolicy`, given the reconciled
-  parameters, writes none). Its tests run each such case as a plan and as a real run with the real
-  cmdlet, from one live state, and hold the same text and exactly one warning.
+  parameters, writes none). The handler's tests run each such case as a plan and as a real run with
+  the real cmdlet, from one live state, and hold the same text and exactly one warning in the run.
   `Why: docs/development/rationale.md#warning-before-confirmation`
 - `[OutputType([PSCustomObject])]` on every function that returns type-tagged objects.
 - **Output tagging is mandatory** -- never return raw hashtables from `Invoke-OERGraphRequest`:
@@ -805,7 +809,7 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Unit/Public/AdministrativeUnitAliasOrder.Cohort.Tests.ps1`.
   `Why: docs/development/rationale.md#alias-declaration-order`
 - **`-Scope` binds from the pipeline only where the piped OBJECT is assignment-shaped, never where
-  it is scope-DEFINING.** Assignment-shaped (`RoleAssignment` and its PIM siblings) carry `Scope`
+  it is scope-DEFINING -- a split by object shape, not a blanket rule per cmdlet.** Assignment-shaped (`RoleAssignment` and its PIM siblings) carry `Scope`
   and feed the four cmdlets that bind it: `Enable-`/`Disable-OEREligibleRoleAssignment`,
   `Remove-OERActiveRoleAssignment`/`Remove-OEREligibleRoleAssignment`. `Set-OERRoleAssignment` and
   `Remove-OERRoleAssignment` have NO `-Scope` (they act on `-Id`, which embeds the scope); do not
@@ -840,7 +844,8 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Ambiguous` when `Test-OERAmbiguousNameError` says so; `NotFound` when the FullyQualifiedErrorId
   starts, ordinally, with `ApproverUnresolved` or `PrincipalUnresolved`; `Other` otherwise, a null
   record included. The six approver call sites (three policy cmdlets, three apply handlers) switch
-  on its answer and keep their own message, target, category and inner exception. Never test either
+  on its answer and keep their own message, target, category and inner exception, so every
+  published record stays byte-identical. Never test either
   internal id elsewhere: the cohort in `tests/Unit/Private/Get-OERApproverErrorClass.Tests.ps1`
   fails a string constant naming one as an operand of a comparison operator, an argument of a
   string comparison method or a `switch` clause outside the classifier and the three producers
@@ -965,8 +970,8 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   put-back; it warns before any PATCH and writes no default) and the authentication context
   validation read (a failure skips the validation). The apply engine reaches the pair reads when its
   diff binds one half; its row is then `Failed`. It never reaches the duration reads: its diff binds
-  both halves of an expiration pair, and when the half the document leaves out has no live value (no
-  read, or `maximumDuration` not a positive whole number of days) and the declared half does not
+  both halves of an expiration pair, and when the half the document leaves out has no live value (the
+  read gave none, or its `maximumDuration` is not a positive whole number of days) and the declared half does not
   already match, `Resolve-OERGroupPimPolicyChange` names the pair in `UnknownLiveValues`, binds
   neither half, and `Sync-OERStructureGroup` refuses that access type with `PimRuleValueUnknown`
   before `ShouldProcess` -- never a default. Known and NOT fixed, outside this cmdlet (unmeasured): a
@@ -974,9 +979,9 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   and an empty Azure Resource Manager body makes `Set-OERResourceGroup` send an empty location.
   `Why: docs/development/rationale.md#a-set-cmdlets-own-read-decides-a-written-value`
 - **`Send-OERPimRulePatch` is the single owner of sending a Microsoft Graph PIM rule set, one PATCH
-  per rule**, including the pair put-back (Graph accepts the first rule of the MFA /
-  authentication-context pair and rejects the second: the first is PATCHed straight back to its live
-  version) and the rule that no warning is written between the first PATCH and the last put-back --
+  per rule**, including the pair put-back (when Graph accepts the first rule of the MFA /
+  authentication-context pair and rejects the second, the first is PATCHed straight back to its
+  live version) and the rule that no warning is written between the first PATCH and the last put-back --
   the helper returns its messages, the caller writes them after it returns. Called by
   `Set-OERGroupPimPolicy` and `Set-OERDirectoryRoleManagementPolicy`, which confirm first and order
   the rules with `Get-OERPimRulePatchOrder`. Never PATCH a rule from either cmdlet directly; never
@@ -1037,7 +1042,8 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Why: docs/development/rationale.md#naming-standard`
 - **`Test-OERJsonDateKindSupport` is the single owner of whether the running `ConvertFrom-Json` has
   `-DateKind`:** one `Get-Command` of the module-qualified
-  `Microsoft.PowerShell.Utility\ConvertFrom-Json`, true on PowerShell 7.5 or later.
+  `Microsoft.PowerShell.Utility\ConvertFrom-Json`, true when it has the parameter (PowerShell 7.5 or
+  later).
   `Read-OERStructureDocument` adds `-DateKind String` to its parse when true, so a structure
   document reaches the validator and the engine as written; on 7.2-7.4 `Test-OERStructureSchema`
   refuses every date value the parse made (Rule 2b), no field exempted. Never ask the question
@@ -1093,8 +1099,8 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   catch a reader that stops and report the section unread, never empty. Never read the Groups
   section, or decide relevance before a full read, elsewhere. **A dynamic group's `members` is an
   EXPLICIT null, never an omitted key and never a list:** the null is no gap, so it is named unread
-  nowhere, and a failed read of those members records no cause. Members are still read (group read
-  in full) and counted per group in `DynamicMembers` (beside `PimLeftOut`), so the roster keeps a
+  nowhere, and a failed read of those members records no cause. Members are still read, for a group read
+  in full, and counted per group in `DynamicMembers` (beside `PimLeftOut`), so the roster keeps a
   `memberCount`. `Sync-OERStructureGroup` writes no aggregate member row for an explicit null; a
   declared list, `[]` and an omitted key keep their rows. Never write a dynamic group's members or
   name their failed read unread. `Why: docs/development/rationale.md#export-group-selection`
@@ -1213,9 +1219,9 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   never an Error or a refusal:** `Export-OERInventory` warns before its `ShouldProcess` (with
   `Groups` and `AdministrativeUnits` included, from what it read, with no request) and lists the
   groups in the bundle README; validator Rule 16 warns on a document that places such a group in a
-  restricted unit it declares. State the limit as Microsoft Learn documents it, as fact; what
-  Microsoft Graph answers to the engine's PIM writes for such a group stays unmeasured until a live
-  run measures it. `Why: docs/development/rationale.md#restricted-unit-pim`
+  restricted unit it declares. State the limit as Microsoft Learn documents it, as fact, and state
+  what Microsoft Graph answers to the engine's PIM writes for such a group as unmeasured until a
+  live run measures it. `Why: docs/development/rationale.md#restricted-unit-pim`
 - **`Test-OERRolePolicyModified` is the single owner of whether an Azure role management policy has
   been changed:** the list row's `policyAssignmentProperties.policy` (carried as `PolicyMetadata` by
   `Get-OERRoleManagementPolicyForScope`, with no request of its own) with a non-empty
@@ -1234,7 +1240,7 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   export reads the candidates through `Get-OERInventoryRolePolicy` (the same one paged list and
   converters as `Get-OERInventory -AllRolesAtScope`) and the assignments with one extra
   `Get-OERRoleAssignment -AtScope` list per scope, read before the policy list; `-AllRolePolicies`
-  makes the earlier per-scope call and selects nothing. Never decide the selection elsewhere, except
+  makes the per-scope call earlier versions made and selects nothing. Never decide the selection elsewhere, except
   the export's fallback when the selection itself stops, which keeps every candidate and names each
   distinct scope among them as not judged; never drop a policy that cannot be judged, never add a
   request per policy. `Why: docs/development/rationale.md#export-role-policy-selection`
@@ -1383,7 +1389,7 @@ comment in both files together. The ARM `Retry-After` header is read in exactly 
 `Get-ArmRetryAfterHeaderValue`, and the header collection never leaves the wrapper. That is a
 convention kept by review, not a machine-checked rule: no gate in `tests/QA/sourcehygiene.tests.ps1`
 enforces it, and none should be added that checks something weaker than the rule (a gate green on a
-second header read elsewhere is guard-shaped but inert).
+second header read elsewhere is guard-shaped but inert). Keep it by review.
 `Why: docs/development/rationale.md#arm-requests`
 
 `roleDefinitionId` in a role assignment body is always the FULL ARM resource id, never a bare GUID.
@@ -1511,8 +1517,8 @@ only if a `Justification` string is provided. Never suppress a rule that hides a
     the `Lock-OERSignIn` assignment and the statement directly after each
     `Register-OERSignInIdentity`;
   - the name `ReclaimGraphSession` (a parameter, a prefix of it on an `Initialize-OERAuth` call, a
-    variable, a member, a hashtable key, any string, or a prefix of it as a key splatted into
-    `Initialize-OERAuth`) only in `Connect-OER` and `Initialize-OERAuth`, both really naming it, and
+    variable, a member, a hashtable key, any string, or a prefix of it as a key the calling
+    function writes into a hashtable it splats into `Initialize-OERAuth`) only in `Connect-OER` and `Initialize-OERAuth`, both really naming it, and
     no file under `source/` calling `Connect-OER`, which passes it on its own;
   - every `Register-OERSignInIdentity` call the statement directly after an `Unlock-OERSignIn` call
     with the same `-Invocation`, as many of the one as of the other;
