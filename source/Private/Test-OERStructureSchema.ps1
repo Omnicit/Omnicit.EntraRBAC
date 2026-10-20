@@ -98,6 +98,25 @@ function Test-OERStructureSchema {
     splat key cannot be dropped, and New-OERAccessPackageApprovalStage's own duration encoder rejects
     a value below 1, so the build throws and the whole assignmentPolicy is reported Failed instead of
     being created or updated (issue #70).
+    An assignmentPolicies entry whose requestorScope.scope is AllExternalUsers (any letter case) and
+    that declares no approval is a Warning at its requestorScope.scope path (BL-54): Microsoft Graph
+    refuses such a policy with AnyUserPolicyValidationError ("An access package policy with Any User
+    option must have an approval configured"). The entry has approval when it declares at least one
+    approvalStages entry and does not declare requireApproval false (with requireApproval omitted the
+    apply derives it from the stage count). One text names a requireApproval false, the other the
+    missing stage; the second says what the engine does with what the entry omits: a created policy
+    gets no approval, and an existing policy keeps the approval it has live, so the update is
+    accepted only when the live policy already requires it. It is a Warning because the validator
+    cannot see the live policy. An accessPackages displayName that is a canonical GUID (Test-OERGuid)
+    is a Warning at its displayName path (BL-24): the engine creates the package with that name, and
+    a GUID is read as an object id wherever an access review or another reference names the package.
+    A group that declares template and no displayName, and whose template Resolve-OERName cannot
+    resolve with the tokens given (a token with no value, a name over 256 characters), is an Error at
+    groups[i].template carrying Resolve-OERName's reason (BL-139); a value in tokens is inserted as
+    text, so a '$' in it or a value that looks like a token resolves. A principalType of a
+    roleAssignments or administrativeUnits scopedRoles entry, and the recurrence of an accessReviews
+    entry, that is not a string (for example an array holding the right word) is an Error that names
+    the type of the value it found (BL-155, BL-117).
     Every closed enum value (accessType, enablement, membershipRuleProcessingState,
     catalogResourceType, approverInfoVisibility, accessReviewRecurrence, accessReviewDefaultDecision,
     principalType, directoryRoleAssignmentType, principalStatus) is accepted in any casing, but a non-canonically cased
@@ -461,16 +480,13 @@ function Test-OERStructureSchema {
         $Seen[$Key] = $Index
     }
 
-    # The name a groups[] entry claims: its displayName, or for a template-based entry the name the
-    # naming engine computes from template and tokens, with the token conversion Sync-OERStructureGroup
-    # applies. Returns $null when the entry declares neither, or when the name cannot be computed --
-    # an unknown token, or any other refusal, makes Resolve-OERName throw -- since the apply engine
-    # reports such an entry Failed on its own. The one owner of that computation here: the duplicate
-    # check (BL-02) and the administrativeUnit placement rule (Rule 12) both call it.
-    function Get-GroupEntryName {
+    # BL-139 (R-12): the one computation of a template-based group's name, with the token conversion
+    # Sync-OERStructureGroup applies, and the reason when it cannot be computed. Returns a record with
+    # Name (the name Resolve-OERName computes, or $null) and Reason (Resolve-OERName's own message when it
+    # throws -- an unknown token, a name over the length limit -- or $null). Get-GroupEntryName and the
+    # groups rule both read it, so the name a rule uses and the Error the groups rule gives never disagree.
+    function Resolve-GroupTemplateName {
         param([object]$Group)
-        if (Test-HasProp -Node $Group -Name 'displayName') { return [string]$Group.displayName }
-        if (-not (Test-HasProp -Node $Group -Name 'template') -or [string]::IsNullOrEmpty([string]$Group.template)) { return $null }
         $TokenHash = @{}
         if ((Test-HasProp -Node $Group -Name 'tokens') -and $Group.tokens -is [PSCustomObject]) {
             foreach ($TokenProp in $Group.tokens.PSObject.Properties) {
@@ -478,10 +494,34 @@ function Test-OERStructureSchema {
             }
         }
         try {
-            return Resolve-OERName -Template ([string]$Group.template) -Tokens $TokenHash
+            [PSCustomObject]@{ Name = (Resolve-OERName -Template ([string]$Group.template) -Tokens $TokenHash); Reason = $null }
         } catch {
-            return $null
+            [PSCustomObject]@{ Name = $null; Reason = $PSItem.Exception.Message }
         }
+    }
+
+    # The name a groups[] entry claims: its displayName, or for a template-based entry the name the
+    # naming engine computes from template and tokens (Resolve-GroupTemplateName). Returns $null when the
+    # entry declares neither, or when the name cannot be computed -- an unknown token, or any other refusal,
+    # makes Resolve-OERName throw. A rule that needs a name claims none then; the groups rule reports the
+    # template itself as an Error (BL-139), so the apply engine's Failed row for it is no longer the first
+    # place it shows. The one owner of that computation here: the duplicate check (BL-02) and the
+    # administrativeUnit placement rule (Rule 12) both call it.
+    function Get-GroupEntryName {
+        param([object]$Group)
+        if (Test-HasProp -Node $Group -Name 'displayName') { return [string]$Group.displayName }
+        if (-not (Test-HasProp -Node $Group -Name 'template') -or [string]::IsNullOrEmpty([string]$Group.template)) { return $null }
+        return (Resolve-GroupTemplateName -Group $Group).Name
+    }
+
+    # The value a "must be ..." Error found, in the words every enum Error here uses: a string is shown
+    # quoted, and a value that is not a string is named by its type, so an array holding 'User' is never
+    # shown as if it were the string 'User'. The value is never $null where this is called (an explicit
+    # null is not declared, Test-HasProp having said so first), so there is no null branch.
+    function Get-FoundValueText {
+        param([object]$Value)
+        if ($Value -is [string]) { return "'$Value'" }
+        return "a value that is not a string ($($Value.GetType().Name))"
     }
 
     $KnownTop = @('version', 'tenantId', 'tenantAlias', 'groups', 'administrativeUnits', 'catalogs',
@@ -586,6 +626,20 @@ function Test-OERStructureSchema {
                         $G.tokens -isnot [PSCustomObject]) {
                         Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.tokens" `
                             -Message "Group at $GPath with 'template' must also have a 'tokens' object."
+                    }
+                    # BL-139 (R-12): a template Resolve-OERName cannot resolve -- a token no tokens entry
+                    # supplies, a name over its length limit -- is an Error here, with its own reason,
+                    # since Invoke-OERStructure would otherwise find out only when it reaches the group.
+                    # It is read from the tokens the engine would pass (none when tokens is missing or
+                    # not an object), so the tokens finding above and this one can stand together. An
+                    # empty template names nothing to resolve. An entry that also declares displayName is
+                    # the 'not both' Error above and gets no template finding.
+                    if (-not [string]::IsNullOrEmpty([string]$G.template)) {
+                        $TemplateResolution = Resolve-GroupTemplateName -Group $G
+                        if ($null -ne $TemplateResolution.Reason) {
+                            Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.template" `
+                                -Message "'template' at $GPath cannot be resolved to a group name: $($TemplateResolution.Reason)"
+                        }
                     }
                 }
 
@@ -1011,12 +1065,16 @@ function Test-OERStructureSchema {
                             # outside it is an Error, and one in another letter case is the casing Warning, since
                             # schema.json declares the enum case-sensitively. An entry without it is valid as
                             # before, and the apply engine does not use it to match or write.
+                            #
+                            # BL-155: the value must be a string. -inotcontains reads a one-element array as its
+                            # element, so ["User"] used to pass as 'User'; a value that is not a string is named
+                            # by its type, as principalStatus does.
                             if (Test-HasProp -Node $SR -Name 'principalType') {
                                 $ValidSrPrincipalTypes = @(Resolve-OERStructureEnumCasing -EnumName 'principalType' -List)
-                                if ($ValidSrPrincipalTypes -inotcontains $SR.principalType) {
+                                if ($SR.principalType -isnot [string] -or $ValidSrPrincipalTypes -inotcontains $SR.principalType) {
                                     Add-Finding -Section 'administrativeUnits' -Item $AUItem `
                                         -Path "$SRPath.principalType" `
-                                        -Message "'principalType' at $SRPath must be one of: $($ValidSrPrincipalTypes -join ', '). Got: '$($SR.principalType)'."
+                                        -Message "'principalType' at $SRPath must be one of: $($ValidSrPrincipalTypes -join ', '). Got: $(Get-FoundValueText -Value $SR.principalType)."
                                 } else {
                                     Add-EnumCasingWarning -EnumName 'principalType' -Key 'principalType' -Value $SR.principalType `
                                         -Section 'administrativeUnits' -Item $AUItem -Path "$SRPath.principalType"
@@ -1136,6 +1194,15 @@ function Test-OERStructureSchema {
                 if (-not (Test-HasProp -Node $AP -Name 'displayName')) {
                     Add-Finding -Section 'accessPackages' -Item $APItem -Path $APPath `
                         -Message "'displayName' is required at $APPath."
+                } elseif ($AP.displayName -is [string] -and (Test-OERGuid -Value $AP.displayName)) {
+                    # BL-24: the engine creates the package with the displayName it is given, and
+                    # Resolve-OERAccessPackageId reads a canonical GUID (Test-OERGuid) as an object id, so
+                    # an access review or another reference that names the package by that name looks for
+                    # an id instead of the name. A Warning: the package itself can still be created.
+                    Add-Finding -Section 'accessPackages' -Item $APItem -Path "$APPath.displayName" -Severity 'Warning' `
+                        -Message ("'displayName' at $APPath is the GUID '$($AP.displayName)': Invoke-OERStructure creates the access package with that name, " +
+                            "and a GUID is read as an object id wherever an access review's 'accessPackage' (or another reference) names the package, " +
+                            'so a reference by that name looks for an object id and does not find the package. Give the access package a name that is not a GUID.')
                 }
                 if (-not (Test-HasProp -Node $AP -Name 'catalog')) {
                     Add-Finding -Section 'accessPackages' -Item $APItem -Path $APPath `
@@ -1502,6 +1569,53 @@ function Test-OERStructureSchema {
                                 }
                             }
 
+                            # BL-54: Microsoft Graph refuses an assignment policy for "all users (any new external
+                            # users)" -- allowedTargetScope allExternalUsers -- that has no approval configured:
+                            # AnyUserPolicyValidationError, "An access package policy with Any User option must
+                            # have an approval configured" (measured in Sprint 8 step 3; Microsoft Learn, entitlement
+                            # management, onboard external users: Require approval Yes is mandatory for that option).
+                            # The engine sends only the approval settings an entry declares, and reads an omitted
+                            # field differently on the two paths (Build-OERPolicyParts, ConvertTo-OERPolicyBody):
+                            #   - a policy it CREATES gets no approval unless the entry declares it;
+                            #   - an EXISTING policy keeps its live approval settings for whatever the entry omits
+                            #     (Set-OERAccessPackageAssignmentPolicy hands the live policy to the body builder);
+                            #   - approvalStages declared with at least one stage and requireApproval OMITTED derives
+                            #     isApprovalRequiredForAdd true from the stage count, so approval is configured; an
+                            #     explicit requireApproval false wins over the stages.
+                            # So the entry has approval when it declares at least one stage and does not declare
+                            # requireApproval false. A Warning and never an Error: an existing policy may already
+                            # carry the approval, which this offline check cannot see, and the write is the one
+                            # Microsoft Graph refuses. Exactly one of the two texts fires for any one policy.
+                            if ((Test-HasProp -Node $Pol -Name 'requestorScope') -and
+                                (Test-HasProp -Node $Pol.requestorScope -Name 'scope') -and
+                                ([string]$Pol.requestorScope.scope -ieq 'AllExternalUsers')) {
+                                $ExtApprovalOff = (Test-HasProp -Node $Pol -Name 'requireApproval') -and
+                                    ($Pol.requireApproval -is [bool]) -and (-not $Pol.requireApproval)
+                                $ExtHasStage = $false
+                                if (Test-HasProp -Node $Pol -Name 'approvalStages') {
+                                    $ExtStagesVal = $Pol.approvalStages
+                                    $ExtHasStage = ($ExtStagesVal -is [System.Collections.IEnumerable]) -and
+                                        ($ExtStagesVal -isnot [string]) -and (@($ExtStagesVal).Count -gt 0)
+                                }
+                                $ExtReason = 'Microsoft Graph refuses an access package policy with the Any User option that has no approval configured ' +
+                                    "(AnyUserPolicyValidationError: 'An access package policy with Any User option must have an approval configured')."
+                                if ($ExtApprovalOff) {
+                                    Add-Finding -Section 'accessPackages' -Item $APItem `
+                                        -Path "$PolPath.requestorScope.scope" -Severity 'Warning' `
+                                        -Message ("assignmentPolicy at $PolPath has requestorScope.scope 'AllExternalUsers' but declares 'requireApproval' false. $ExtReason " +
+                                            'Approval is switched off by that declaration, so creating or updating the policy this way is refused and the policy is reported Failed. ' +
+                                            "Declare 'requireApproval' true and at least one 'approvalStages' entry.")
+                                } elseif (-not $ExtHasStage) {
+                                    Add-Finding -Section 'accessPackages' -Item $APItem `
+                                        -Path "$PolPath.requestorScope.scope" -Severity 'Warning' `
+                                        -Message ("assignmentPolicy at $PolPath has requestorScope.scope 'AllExternalUsers' but declares no 'approvalStages' entry. $ExtReason " +
+                                            'Invoke-OERStructure sends only the approval settings the entry declares: creating the policy from this entry is refused, ' +
+                                            'and an existing policy keeps the approval settings it has live for what the entry omits, so the update is accepted only when ' +
+                                            'the live policy already requires approval with at least one stage. ' +
+                                            "Declare 'requireApproval' true and at least one 'approvalStages' entry.")
+                                }
+                            }
+
                             if (Test-HasProp -Node $Pol -Name 'durationInDays') {
                                 if (-not (Test-IsInt -Value $Pol.durationInDays -Min 1 -Max 3650)) {
                                     Add-Finding -Section 'accessPackages' -Item $APItem `
@@ -1580,11 +1694,14 @@ function Test-OERStructureSchema {
                         -Consequence $ARConsequence
                 }
 
+                # BL-117 (fifth point): the value must be a string. -inotcontains reads a one-element array
+                # as its element, so ["Monthly"] used to pass as 'Monthly'; a value that is not a string is
+                # named by its type, as principalStatus does.
                 if (Test-HasProp -Node $AR -Name 'recurrence') {
-                    if ($ValidRecurrence -inotcontains $AR.recurrence) {
+                    if ($AR.recurrence -isnot [string] -or $ValidRecurrence -inotcontains $AR.recurrence) {
                         Add-Finding -Section 'accessReviews' -Item $ARItem `
                             -Path "$ARPath.recurrence" `
-                            -Message "'recurrence' at $ARPath must be one of: $($ValidRecurrence -join ', '). Got: '$($AR.recurrence)'."
+                            -Message "'recurrence' at $ARPath must be one of: $($ValidRecurrence -join ', '). Got: $(Get-FoundValueText -Value $AR.recurrence)."
                     } else {
                         Add-EnumCasingWarning -EnumName 'accessReviewRecurrence' -Key 'recurrence' -Value $AR.recurrence `
                             -Section 'accessReviews' -Item $ARItem -Path "$ARPath.recurrence"
@@ -1799,12 +1916,15 @@ function Test-OERStructureSchema {
                             'the document would rewrite its condition and description on every run.')
                 }
 
+                # BL-155: the value must be a string. -inotcontains reads a one-element array as its element,
+                # so ["User"] used to pass as 'User'; a value that is not a string is named by its type, as
+                # principalStatus below does.
                 if (Test-HasProp -Node $RA -Name 'principalType') {
                     $ValidPrincipalTypes = @(Resolve-OERStructureEnumCasing -EnumName 'principalType' -List)
-                    if ($ValidPrincipalTypes -inotcontains $RA.principalType) {
+                    if ($RA.principalType -isnot [string] -or $ValidPrincipalTypes -inotcontains $RA.principalType) {
                         Add-Finding -Section 'roleAssignments' -Item $RAItem `
                             -Path "$RAPath.principalType" `
-                            -Message "'principalType' at $RAPath must be one of: $($ValidPrincipalTypes -join ', '). Got: '$($RA.principalType)'."
+                            -Message "'principalType' at $RAPath must be one of: $($ValidPrincipalTypes -join ', '). Got: $(Get-FoundValueText -Value $RA.principalType)."
                     } else {
                         Add-EnumCasingWarning -EnumName 'principalType' -Key 'principalType' -Value $RA.principalType `
                             -Section 'roleAssignments' -Item $RAItem -Path "$RAPath.principalType"
@@ -1823,30 +1943,20 @@ function Test-OERStructureSchema {
                     if ($RA.principalStatus -isnot [string] -or $ValidPrincipalStatuses -inotcontains $RA.principalStatus) {
                         # A value that is not a string is named by its type, as the principal rule below does,
                         # so an array holding 'Deleted' is never shown as if it were the string 'Deleted'.
-                        $StatusFound = if ($RA.principalStatus -is [string]) {
-                            "'$($RA.principalStatus)'"
-                        } else {
-                            "a value that is not a string ($($RA.principalStatus.GetType().Name))"
-                        }
                         Add-Finding -Section 'roleAssignments' -Item $RAItem `
                             -Path "$RAPath.principalStatus" `
-                            -Message "'principalStatus' at $RAPath must be one of: $($ValidPrincipalStatuses -join ', '). Got: $StatusFound."
+                            -Message "'principalStatus' at $RAPath must be one of: $($ValidPrincipalStatuses -join ', '). Got: $(Get-FoundValueText -Value $RA.principalStatus)."
                     } else {
                         Add-EnumCasingWarning -EnumName 'principalStatus' -Key 'principalStatus' -Value $RA.principalStatus `
                             -Section 'roleAssignments' -Item $RAItem -Path "$RAPath.principalStatus"
                     }
                     if ((Test-HasProp -Node $RA -Name 'principal') -and
                         ($RA.principal -isnot [string] -or -not (Test-OERGuid -Value $RA.principal))) {
-                        $PrincipalFound = if ($RA.principal -is [string]) {
-                            "'$($RA.principal)'"
-                        } else {
-                            "a value that is not a string ($($RA.principal.GetType().Name))"
-                        }
                         Add-Finding -Section 'roleAssignments' -Item $RAItem `
                             -Path "$RAPath.principal" `
                             -Message ("'principal' at $RAPath must be an object id (a GUID) when 'principalStatus' is declared: the entry stands for a " +
                                 'principal the directory did not return when the document was exported, so the engine looks no principal up for it. ' +
-                                "Got: $PrincipalFound. Name the principal by its object id, or remove 'principalStatus' to have the principal looked up by name.")
+                                "Got: $(Get-FoundValueText -Value $RA.principal). Name the principal by its object id, or remove 'principalStatus' to have the principal looked up by name.")
                     }
                 }
 
