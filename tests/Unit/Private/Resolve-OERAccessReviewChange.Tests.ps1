@@ -497,6 +497,163 @@ Describe 'Resolve-OERAccessReviewChange' {
         }
     }
 
+    Context 'a live numbered range with fewer than one occurrence (BL-117, first point)' {
+        # Graph can report numberOfOccurrences 0 for a numbered range. Set-OERAccessReviewDefinition
+        # declares [ValidateRange(1, [int]::MaxValue)] on -Occurrences, so seeding the live 0 into the
+        # write made the binding fail and the entry Failed. A count below one cannot be sent back, so
+        # when the document declares no range of its own the recurrence unit is left untouched and
+        # reported in NotApplied, the way the other units this diff cannot rebuild are.
+        BeforeAll {
+            $script:NumberedZeroReason = 'the live recurrence range is numbered with 0 occurrence(s), which cannot be sent back; ' +
+            'the recurrence, start date and range were left untouched. Declare ''endDate'' or ''occurrences'' to change the recurrence'
+        }
+
+        BeforeEach {
+            $script:NumberedReview = $script:CurrentReview.PSObject.Copy()
+            $script:NumberedReview.Recurrence = @{
+                pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }
+                range   = @{ type = 'numbered'; startDate = '2026-07-01'; numberOfOccurrences = 0 }
+            }
+        }
+
+        It 'leaves the whole recurrence unit untouched and says why when the document changes only the cadence' {
+            InModuleScope $script:moduleName -Parameters @{ Current = $script:NumberedReview; Reason = $script:NumberedZeroReason } {
+                param($Current, $Reason)
+                $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review'; recurrence = 'Monthly' }
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+                $Change.Changed | Should -BeFalse
+                foreach ($Key in 'Recurrence', 'StartDate', 'EndDate', 'Occurrences') {
+                    $Change.SetParams.ContainsKey($Key) | Should -BeFalse -Because "$Key must not be sent for a numbered range of 0"
+                }
+                @($Change.NotApplied).Count | Should -Be 1
+                @($Change.NotApplied)[0]    | Should -BeExactly $Reason
+            }
+        }
+
+        It 'leaves the unit untouched when the document changes only the start date' {
+            InModuleScope $script:moduleName -Parameters @{ Current = $script:NumberedReview; Reason = $script:NumberedZeroReason } {
+                param($Current, $Reason)
+                $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review'; startDate = '2026-08-01' }
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+                $Change.Changed | Should -BeFalse
+                $Change.SetParams.Count | Should -Be 0
+                @($Change.NotApplied) | Should -Be @($Reason)
+            }
+        }
+
+        It 'still applies a field outside the unit while the unit is held back' {
+            InModuleScope $script:moduleName -Parameters @{ Current = $script:NumberedReview; Reason = $script:NumberedZeroReason } {
+                param($Current, $Reason)
+                $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review'; recurrence = 'Monthly'; durationInDays = 21 }
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+                $Change.Changed                  | Should -BeTrue
+                $Change.SetParams.DurationInDays | Should -Be 21
+                $Change.SetParams.ContainsKey('Recurrence')  | Should -BeFalse
+                $Change.SetParams.ContainsKey('Occurrences') | Should -BeFalse
+                @($Change.NotApplied) | Should -Be @($Reason)
+            }
+        }
+
+        It 'reports nothing when the document changes nothing in the unit' {
+            InModuleScope $script:moduleName -Parameters @{ Current = $script:NumberedReview } {
+                param($Current)
+                $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review'; recurrence = 'Quarterly'; startDate = '2026-07-01' }
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+                $Change.Changed | Should -BeFalse
+                @($Change.NotApplied) | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'names the count the live range reports, and a missing or unreadable count as such: <Label>' -ForEach @(
+            @{ Label = '-3'; Reported = -3; Shown = '-3 occurrence(s)' }
+            @{ Label = '$null'; Reported = $null; Shown = 'no readable occurrence count' }
+            @{ Label = 'an empty text'; Reported = ''; Shown = 'no readable occurrence count' }
+            @{ Label = 'a text that is not a number'; Reported = 'many'; Shown = 'no readable occurrence count' }
+            @{ Label = '0 as text'; Reported = '0'; Shown = '0 occurrence(s)' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Current = $script:NumberedReview; Reported = $Reported; Shown = $Shown } {
+                param($Current, $Reported, $Shown)
+                $Current.Recurrence.range.numberOfOccurrences = $Reported
+                $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review'; recurrence = 'Monthly' }
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+                $Change.SetParams.ContainsKey('Occurrences') | Should -BeFalse
+                $Change.SetParams.ContainsKey('Recurrence')  | Should -BeFalse
+                @($Change.NotApplied).Count | Should -Be 1
+                @($Change.NotApplied)[0] | Should -BeExactly ("the live recurrence range is numbered with $Shown, which cannot be sent back; " +
+                    'the recurrence, start date and range were left untouched. Declare ''endDate'' or ''occurrences'' to change the recurrence')
+            }
+        }
+
+        It 'applies a declared endDate over the live range, which is the remedy the reason names' {
+            InModuleScope $script:moduleName -Parameters @{ Current = $script:NumberedReview } {
+                param($Current)
+                $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review'; recurrence = 'Monthly'; endDate = '2027-07-01' }
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+                $Change.SetParams.Recurrence | Should -Be 'Monthly'
+                $Change.SetParams.EndDate    | Should -Be ([datetime]'2027-07-01')
+                $Change.SetParams.ContainsKey('Occurrences') | Should -BeFalse
+                @($Change.NotApplied) | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'applies declared occurrences over the live range, which is the other remedy the reason names' {
+            InModuleScope $script:moduleName -Parameters @{ Current = $script:NumberedReview } {
+                param($Current)
+                $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review'; recurrence = 'Monthly'; occurrences = 4 }
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+                $Change.SetParams.Recurrence  | Should -Be 'Monthly'
+                $Change.SetParams.Occurrences | Should -Be 4
+                $Change.SetParams.ContainsKey('EndDate') | Should -BeFalse
+                @($Change.NotApplied) | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'converts the review to OneTime without a range or a note' {
+            InModuleScope $script:moduleName -Parameters @{ Current = $script:NumberedReview } {
+                param($Current)
+                $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review'; recurrence = 'OneTime'; startDate = '2026-07-01' }
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+                $Change.SetParams.Recurrence | Should -Be 'OneTime'
+                $Change.SetParams.ContainsKey('Occurrences') | Should -BeFalse
+                $Change.SetParams.ContainsKey('EndDate')     | Should -BeFalse
+                @($Change.NotApplied) | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'still carries a live numbered range of one occurrence forward' {
+            # The boundary: one occurrence is a valid -Occurrences, so it rides along as before.
+            $Current = $script:NumberedReview.PSObject.Copy()
+            $Current.Recurrence = @{
+                pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }
+                range   = @{ type = 'numbered'; startDate = '2026-07-01'; numberOfOccurrences = 1 }
+            }
+            InModuleScope $script:moduleName -Parameters @{ Current = $Current } {
+                param($Current)
+                $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review'; recurrence = 'Monthly' }
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+                $Change.SetParams.Recurrence  | Should -Be 'Monthly'
+                $Change.SetParams.Occurrences | Should -Be 1
+                @($Change.NotApplied) | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'gives the unrepresentable-pattern reason, not this one, when the pattern is also outside the vocabulary' {
+            $Current = $script:NumberedReview.PSObject.Copy()
+            $Current.Recurrence = @{
+                pattern = @{ type = 'absoluteMonthly'; interval = 2; dayOfMonth = 1 }
+                range   = @{ type = 'numbered'; startDate = '2026-07-01'; numberOfOccurrences = 0 }
+            }
+            InModuleScope $script:moduleName -Parameters @{ Current = $Current } {
+                param($Current)
+                $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review'; recurrence = 'Quarterly' }
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+                $Change.SetParams.Count | Should -Be 0
+                @($Change.NotApplied).Count | Should -Be 1
+                @($Change.NotApplied)[0] | Should -BeLike '*interval 2*'
+            }
+        }
+    }
+
     It 'lets a declared range override the live range' {
         $Current = $script:CurrentReview.PSObject.Copy()
         $Current.Recurrence = @{

@@ -239,6 +239,9 @@ Describe 'Sync-OERStructureDirectoryRoleManagementPolicy: an emptied approver si
     It 'converges a declared empty groups side: the first run clears it, the second is only Unchanged' {
         # A declared empty groups list beside a live user side. The write mock does what the real write
         # path does with a bound empty -ApproverGroup: it clears the group side and keeps the user side.
+        # The live policy carries the raw approval rule its Approvers projection comes from, as a real
+        # read does (EffectiveRules): since BL-113 the handler decides, from that rule, whether the change
+        # leaves an approver, and the user side kept there is what lets this change through.
         InModuleScope $script:moduleName {
             $script:LiveDrmp = [PSCustomObject]@{
                 PolicyId        = 'DirectoryRole_11111111-1111-1111-1111-111111111111_aaaaaaaa-0000-0000-0000-000000000010'
@@ -248,6 +251,16 @@ Describe 'Sync-OERStructureDirectoryRoleManagementPolicy: an emptied approver si
                     [PSCustomObject]@{ Id = 'aaaaaaaa-0000-0000-0000-000000000001'; UserType = 'User'; DisplayName = 'Person One' }
                     [PSCustomObject]@{ Id = 'bbbbbbbb-0000-0000-0000-000000000002'; UserType = 'Group'; DisplayName = 'Approvers' }
                 )
+                EffectiveRules  = @(@{
+                        id      = 'Approval_EndUser_Assignment'
+                        setting = @{
+                            isApprovalRequired = $true
+                            approvalStages     = @(@{ primaryApprovers = @(
+                                        @{ '@odata.type' = '#microsoft.graph.singleUser'; userId = 'aaaaaaaa-0000-0000-0000-000000000001'; description = 'Person One' }
+                                        @{ '@odata.type' = '#microsoft.graph.groupMembers'; groupId = 'bbbbbbbb-0000-0000-0000-000000000002'; description = 'Approvers' }
+                                    ) })
+                        }
+                    })
             }
             Mock Get-OERDirectoryRoleManagementPolicy { $script:LiveDrmp }
             Mock Set-OERDirectoryRoleManagementPolicy {
@@ -537,5 +550,218 @@ Describe 'Sync-OERStructureDirectoryRoleManagementPolicy: the plan shows the MFA
                 ($Run.Warnings[0] -ceq $Plan.Warnings[0]) | Should -BeTrue -Because 'the plan must show the very warning the run gives'
             }
         }
+    }
+}
+
+Describe 'Sync-OERStructureDirectoryRoleManagementPolicy: approval required with no approver is refused before the gate (BL-113)' {
+    # Set-OERDirectoryRoleManagementPolicy refuses, with ApproverRequired and before anything is sent, a
+    # call that would require approval with no approver on the live approval stage. Under -WhatIf the
+    # engine never calls it, so the plan said "would update" while the run reported Failed. The handler
+    # now takes the cmdlet's decision itself, through the same owner (Resolve-OERGraphApproverSet), from
+    # the live approval rule its read returned (EffectiveRules) and the approver parameters the diff
+    # binds, before the -WhatIf warning and ShouldProcess: the plan and the run report the same Failed
+    # row, and the cmdlet is never called. The live policy is the Microsoft Graph v1.0 rule set, projected
+    # by the real converter, so the projection the diff reads and the raw rule the owner reads agree.
+    # Defined here, in the discovery phase, since -ForEach is read then.
+    $RefusalCases = @(
+        @{
+            Name     = 'a declared empty users side beside an empty live groups side'
+            Reason   = 'Bound'
+            Required = $true; Users = @('aaaaaaaa-0000-0000-0000-000000000001'); Groups = @(); Manager = $false; Mfa = $false
+            Json     = '{ "role": "Reports Reader", "requireApproval": true, "approvers": { "users": [] } }'
+        }
+        @{
+            Name     = 'requireApproval true declared alone, the live first stage without approvers'
+            Reason   = 'Live'
+            Required = $false; Users = @(); Groups = @(); Manager = $false; Mfa = $false
+            Json     = '{ "role": "Reports Reader", "requireApproval": true }'
+        }
+        @{
+            Name     = 'requireApproval true and an empty users side, the live policy without approvers'
+            Reason   = 'Live'
+            Required = $false; Users = @(); Groups = @(); Manager = $false; Mfa = $false
+            Json     = '{ "role": "Reports Reader", "requireApproval": true, "approvers": { "users": [] } }'
+        }
+        @{
+            # The -WhatIf block would warn that the context clears MFA on activation: the refusal comes first.
+            Name     = 'requireApproval true declared beside an authentication context that clears a live MFA'
+            Reason   = 'Live'
+            Required = $false; Users = @(); Groups = @(); Manager = $false; Mfa = $true
+            Json     = '{ "role": "Reports Reader", "requireApproval": true, "authenticationContextId": "c1" }'
+        }
+    )
+    $ApproverLeftCases = @(
+        @{
+            Name     = 'a group approver'
+            Required = $true; Users = @('aaaaaaaa-0000-0000-0000-000000000001'); Groups = @('bbbbbbbb-0000-0000-0000-000000000002'); Manager = $false; Mfa = $false
+            Json     = '{ "role": "Reports Reader", "requireApproval": true, "approvers": { "users": [] } }'
+        }
+        @{
+            Name     = 'an approver of another kind (a requestor manager)'
+            Required = $true; Users = @('aaaaaaaa-0000-0000-0000-000000000001'); Groups = @(); Manager = $true; Mfa = $false
+            Json     = '{ "role": "Reports Reader", "requireApproval": true, "approvers": { "users": [] } }'
+        }
+    )
+
+    BeforeAll {
+        InModuleScope $script:moduleName {
+            $script:ApprPolicyId = 'DirectoryRole_11111111-1111-1111-1111-111111111111_aaaaaaaa-0000-0000-0000-000000000010'
+            function script:Invoke-SyncDrmpApprViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item)
+                Sync-OERStructureDirectoryRoleManagementPolicy -Item $Item -Caller $PSCmdlet
+            }
+            # The live rules in the Microsoft Graph v1.0 shape: the approval rule with one stage holding the
+            # given approvers, and the MFA / authentication context pair (context disabled).
+            function script:New-DrmpApprRule {
+                param([bool]$Required, [string[]]$Users, [string[]]$Groups, [bool]$Manager, [bool]$Mfa)
+                $Primary = @(
+                    foreach ($Id in @($Users)) { if ($Id) { @{ '@odata.type' = '#microsoft.graph.singleUser'; userId = $Id; description = 'Person One' } } }
+                    foreach ($Id in @($Groups)) { if ($Id) { @{ '@odata.type' = '#microsoft.graph.groupMembers'; groupId = $Id; description = 'Approvers' } } }
+                    if ($Manager) { @{ '@odata.type' = '#microsoft.graph.requestorManager'; managerLevel = 1 } }
+                )
+                $Enabled = @(if ($Mfa) { 'MultiFactorAuthentication', 'Justification' } else { 'Justification' })
+                @(
+                    @{ '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyEnablementRule'; id = 'Enablement_EndUser_Assignment'; enabledRules = $Enabled }
+                    @{ '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyAuthenticationContextRule'; id = 'AuthenticationContext_EndUser_Assignment'
+                        isEnabled = $false; claimValue = '' }
+                    @{
+                        '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyApprovalRule'
+                        id            = 'Approval_EndUser_Assignment'
+                        setting       = @{
+                            isApprovalRequired               = $Required
+                            isApprovalRequiredForExtension   = $false
+                            isRequestorJustificationRequired = $true
+                            approvalMode                     = 'SingleStage'
+                            approvalStages                   = @(@{
+                                    approvalStageTimeOutInDays      = 1
+                                    isApproverJustificationRequired = $true
+                                    escalationTimeInMinutes         = 0
+                                    isEscalationEnabled             = $false
+                                    primaryApprovers                = $Primary
+                                    escalationApprovers             = @()
+                                })
+                        }
+                    }
+                )
+            }
+            # One run of the handler: its rows, the records its caller collected and the warnings written.
+            function script:Invoke-DrmpApprRun {
+                param([string]$Json, [bool]$WhatIfRun)
+                $Switches = if ($WhatIfRun) { @{ WhatIf = $true } } else { @{ Confirm = $false } }
+                $Err = $null
+                $Warn = $null
+                $Rows = @(Invoke-SyncDrmpApprViaCaller -Item ($Json | ConvertFrom-Json) @Switches -ErrorAction SilentlyContinue -ErrorVariable Err `
+                        -WarningAction SilentlyContinue -WarningVariable Warn)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err); Warn = @($Warn) }
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            Mock Initialize-OERAuth {}
+            Mock Get-OERDirectoryRoleManagementPolicy {
+                ConvertTo-OERRoleManagementPolicy -Rules @($script:DrmpApprRules) -PolicyId $script:ApprPolicyId -Scope '/' -RoleName 'Reports Reader' -ApproverShape Graph
+            }
+            Mock Resolve-OERPrincipal { throw 'no approver value should need resolving: only an empty side is declared' }
+            # The real cmdlet's read of the policy by its id (the parity test below). Anything else, a PATCH
+            # included, is not simulated and throws.
+            Mock Invoke-OERGraphRequest {
+                if ($Uri -eq "v1.0/policies/roleManagementPolicies/$($script:ApprPolicyId)?`$expand=rules" -and $Method -ne 'PATCH') {
+                    return @{ id = $script:ApprPolicyId; scopeId = '/'; scopeType = 'DirectoryRole'; rules = @($script:DrmpApprRules) }
+                }
+                throw "unexpected $Method $Uri"
+            }
+        }
+    }
+
+    It 'refuses <Name> with ApproverRequired, the same Failed row in a plan and in a run, and never calls the cmdlet' -ForEach $RefusalCases {
+        $Result = InModuleScope $script:moduleName -Parameters @{ Json = $Json; Required = $Required; Users = $Users; Groups = $Groups; Manager = $Manager; Mfa = $Mfa } {
+            param($Json, $Required, $Users, $Groups, $Manager, $Mfa)
+            $script:DrmpApprRules = New-DrmpApprRule -Required $Required -Users $Users -Groups $Groups -Manager $Manager -Mfa $Mfa
+            Mock Set-OERDirectoryRoleManagementPolicy {}
+            [PSCustomObject]@{
+                Plan = Invoke-DrmpApprRun -Json $Json -WhatIfRun $true
+                Run  = Invoke-DrmpApprRun -Json $Json -WhatIfRun $false
+            }
+        }
+        $PolicyId = 'DirectoryRole_11111111-1111-1111-1111-111111111111_aaaaaaaa-0000-0000-0000-000000000010'
+        $Message = if ($Reason -eq 'Bound') {
+            "Approval cannot be required with no approver: after -ApproverUser/-ApproverGroup are applied, directory role management policy '$PolicyId' would have none. Pass at least one approver."
+        } else {
+            "Approval cannot be required with no approver: directory role management policy '$PolicyId' has none on its live approval rule and none was supplied. Pass -ApproverUser or -ApproverGroup."
+        }
+        $Detail = if ($Reason -eq 'Bound') {
+            'approval would be required with no approver (ApproverRequired): the declared approvers, with what the document does not declare kept from the live approval rule, name nobody; the policy was not changed'
+        } else {
+            'approval would be required with no approver (ApproverRequired): the live approval rule names no approver and the document declares none; the policy was not changed'
+        }
+        foreach ($Mode in @($Result.Plan, $Result.Run)) {
+            @($Mode.Rows).Count | Should -Be 1
+            $Mode.Rows[0].Section | Should -BeExactly 'directoryRoleManagementPolicies'
+            $Mode.Rows[0].Item | Should -BeExactly 'Reports Reader'
+            $Mode.Rows[0].Action | Should -BeExactly 'Failed'
+            $Mode.Rows[0].Detail | Should -BeExactly $Detail
+            [string]$Mode.Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'ApproverRequired,*'
+            # Written once through the caller, with the cmdlet's message, category and the entry's label.
+            $Own = @($Mode.Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncDrmpApprViaCaller' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -BeExactly 'ApproverRequired,Invoke-SyncDrmpApprViaCaller'
+            [string]$Own[0].CategoryInfo.Category | Should -BeExactly 'InvalidArgument'
+            $Own[0].TargetObject | Should -BeExactly 'Reports Reader'
+            $Own[0].Exception.Message | Should -BeExactly $Message
+            @($Mode.Err).Count | Should -Be 1
+            # Refused before the -WhatIf warning about the MFA / authentication context pair.
+            @($Mode.Warn).Count | Should -Be 0
+        }
+        # Reached: the live policy was read in both modes. The cmdlet was never called.
+        Should -Invoke -ModuleName $script:moduleName Get-OERDirectoryRoleManagementPolicy -Times 2 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Set-OERDirectoryRoleManagementPolicy -Times 0
+    }
+
+    It 'leaves <Name> on the live stage: no refusal, the run sends the emptied side and the plan reports it' -ForEach $ApproverLeftCases {
+        $Result = InModuleScope $script:moduleName -Parameters @{ Json = $Json; Required = $Required; Users = $Users; Groups = $Groups; Manager = $Manager; Mfa = $Mfa } {
+            param($Json, $Required, $Users, $Groups, $Manager, $Mfa)
+            $script:DrmpApprRules = New-DrmpApprRule -Required $Required -Users $Users -Groups $Groups -Manager $Manager -Mfa $Mfa
+            Mock Set-OERDirectoryRoleManagementPolicy {}
+            [PSCustomObject]@{
+                Plan = Invoke-DrmpApprRun -Json $Json -WhatIfRun $true
+                Run  = Invoke-DrmpApprRun -Json $Json -WhatIfRun $false
+            }
+        }
+        @($Result.Plan.Rows).Action | Should -Be @('Skipped')
+        $Result.Plan.Rows[0].Detail | Should -BeExactly "would update directory role management policy for 'Reports Reader' (approvers(users=[]))"
+        @($Result.Plan.Err).Count | Should -Be 0
+        @($Result.Run.Rows).Action | Should -Be @('Updated')
+        @($Result.Run.Err).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERDirectoryRoleManagementPolicy -Times 1 -Exactly -ParameterFilter {
+            $PesterBoundParameters.ContainsKey('ApproverUser') -and @($ApproverUser).Count -eq 0 -and -not $PesterBoundParameters.ContainsKey('ApproverGroup')
+        }
+    }
+
+    It 'refuses <Name> with the very message the real Set-OERDirectoryRoleManagementPolicy publishes for the same call' -ForEach $RefusalCases {
+        # The handler copies the cmdlet's text: the same splat the diff builds, sent to the REAL cmdlet
+        # against the same live rules, is refused with the same id and the same message, and sends nothing.
+        $Result = InModuleScope $script:moduleName -Parameters @{ Json = $Json; Required = $Required; Users = $Users; Groups = $Groups; Manager = $Manager; Mfa = $Mfa } {
+            param($Json, $Required, $Users, $Groups, $Manager, $Mfa)
+            $script:DrmpApprRules = New-DrmpApprRule -Required $Required -Users $Users -Groups $Groups -Manager $Manager -Mfa $Mfa
+            $Handler = Invoke-DrmpApprRun -Json $Json -WhatIfRun $true
+            $Declared = Resolve-OERDeclaredApprover -Declared ($Json | ConvertFrom-Json)
+            $Splat = (Resolve-OERRoleManagementPolicyChange -Declared $Declared -Current (Get-OERDirectoryRoleManagementPolicy -Role 'Reports Reader') -SendDeclaredApproverSideOnly).SetParams
+            $CmdErr = $null
+            $null = Set-OERDirectoryRoleManagementPolicy -PolicyId $script:ApprPolicyId @Splat -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable CmdErr
+            [PSCustomObject]@{ Handler = $Handler; CmdErr = @($CmdErr) }
+        }
+        $HandlerOwn = @($Result.Handler.Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncDrmpApprViaCaller' })
+        $CmdOwn = @($Result.CmdErr | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Set-OERDirectoryRoleManagementPolicy' })
+        $HandlerOwn.Count | Should -Be 1
+        $CmdOwn.Count | Should -Be 1
+        $CmdOwn[0].FullyQualifiedErrorId | Should -BeExactly 'ApproverRequired,Set-OERDirectoryRoleManagementPolicy'
+        ($HandlerOwn[0].Exception.Message -ceq $CmdOwn[0].Exception.Message) | Should -BeTrue -Because "the handler must publish the cmdlet's own text: '$($HandlerOwn[0].Exception.Message)' against '$($CmdOwn[0].Exception.Message)'"
+        [string]$HandlerOwn[0].CategoryInfo.Category | Should -BeExactly ([string]$CmdOwn[0].CategoryInfo.Category)
+        # Reached: the real cmdlet read the policy by its id, once, and sent nothing.
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like 'v1.0/policies/roleManagementPolicies/*?$expand=rules' }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
     }
 }

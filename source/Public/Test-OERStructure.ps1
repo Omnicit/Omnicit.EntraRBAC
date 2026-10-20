@@ -17,6 +17,29 @@ function Test-OERStructure {
     rejected by a draft-07 validator outside the module, even though Invoke-OERStructure would apply
     the very same document successfully: the apply path rewrites the casing first, this one does not.
 
+    Text is validated as written on PowerShell 7.5 or later, where the document is parsed with
+    ConvertFrom-Json -DateKind String. PowerShell 7.2 to 7.4 has no such parameter, and its
+    ConvertFrom-Json turns a string that holds an ISO 8601 date and time with seconds -- an assignment
+    policy's expirationDateTime such as "2027-01-01T00:00:00Z", for example -- into a date, so the text
+    written is lost: each such value is an Error at its own path that says to run on PowerShell 7.5 or
+    later, and Invoke-OERStructure refuses the document. A date alone ("2026-07-01"), or a time without
+    seconds ("2026-07-01T10:00"), stays a string. On PowerShell 7.5 or later an -InputObject whose
+    values the caller already turned into dates is read as ConvertTo-Json writes them; on 7.2 to 7.4
+    they come back as dates and are refused like any other. A displayName that is not a string (a
+    number, a boolean, an object or an array) is an Error naming the type found, in groups,
+    administrativeUnits, catalogs, accessPackages, assignmentPolicies and accessReviews alike. A groups
+    entry that declares template and no displayName, and whose template cannot be turned into a name
+    with its tokens (a placeholder no token supplies, a name over 256 characters), is an Error at
+    groups[i].template carrying the reason, so Invoke-OERStructure refuses
+    the whole document; a token value is inserted as text, so a '$' in it, or a value that looks like
+    a token, stays as written. A file that cannot be read is refused with InvalidStructureDocument and
+    the reason the file system gave, never as an empty document. The principalType of a roleAssignments
+    or scopedRoles entry, and the recurrence of an accessReviews entry, that is not a string -- an
+    array holding the right word, say -- is an Error that names the type found. An assignment policy
+    whose requestorScope.scope is AllExternalUsers and that declares no approval is a Warning, since
+    Microsoft Graph refuses such a policy (AnyUserPolicyValidationError), and so is an accessPackages
+    displayName that is a GUID, which a reference would read as an object id.
+
     An omitted groups[].members, administrativeUnits[].members, administrativeUnits[].scopedRoles,
     catalogs[].resources or accessPackages[].resourceRoles key is reported as a Warning, since
     Invoke-OERStructure -Prune still removes every live entry in that collection; set the key to null

@@ -2319,23 +2319,16 @@ function Get-OERInventory {
                     $PType = [string]$Rec.pattern.type
                     $Interval = [int]$Rec.pattern.interval
                     # New-OERAccessReviewRecurrence can only emit weekly interval 1 and absoluteMonthly
-                    # interval 1/3/6/12 (mirrors Resolve-OERAccessReviewChange's representable check), so
-                    # every other live interval collapses onto a coarser cadence below. Warn before the
-                    # collapse rather than exporting a bi-monthly or n-weekly review as Monthly/Weekly
-                    # with no sign anything was lost.
-                    $PatternRepresentable = switch ($PType) {
-                        'weekly'          { $Interval -eq 1 }
-                        'absoluteMonthly' { $Interval -in 1, 3, 6, 12 }
-                        default           { $false }
-                    }
-                    if (-not $PatternRepresentable) {
+                    # interval 1/3/6/12, so every other live interval collapses onto a coarser cadence.
+                    # Get-OERAccessReviewCadence owns that table, shared with Resolve-OERAccessReviewChange,
+                    # and says both which cadence the pattern reads as and whether it is representable.
+                    # Warn before the collapse rather than exporting a bi-monthly or n-weekly review as
+                    # Monthly/Weekly with no sign anything was lost.
+                    $CadenceShape = Get-OERAccessReviewCadence -PatternType $PType -Interval $Interval
+                    if (-not $CadenceShape.Representable) {
                         Write-Warning "Get-OERInventory: access review '$($Ar.DisplayName)' has a live recurrence pattern ($PType interval $Interval) that the module's cadence vocabulary cannot represent; exporting the nearest coarser cadence instead of the true interval."
                     }
-                    $Cadence = switch ($PType) {
-                        'weekly' { 'Weekly' }
-                        'absoluteMonthly' { switch ($Interval) { 1 { 'Monthly' } 3 { 'Quarterly' } 6 { 'SemiAnnually' } 12 { 'Annually' } default { 'Monthly' } } }
-                        default { 'OneTime' }
-                    }
+                    $Cadence = $CadenceShape.Cadence
                 }
                 $Proj.recurrence = $Cadence
 

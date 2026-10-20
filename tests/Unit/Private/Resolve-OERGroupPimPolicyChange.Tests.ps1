@@ -489,3 +489,142 @@ Describe 'Resolve-OERGroupPimPolicyChange ConflictReason (BL-17)' {
         }
     }
 }
+
+Describe 'Resolve-OERGroupPimPolicyChange: the undeclared half of an expiration pair is never guessed (final review of Sprint 11 step 11, Important 1)' {
+    # A policy read can succeed and still give no value for one half of an expiration pair: the rules
+    # list answered empty, the expiration rule is absent, its isExpirationRequired is missing, or its
+    # maximumDuration is not a positive whole number of days (ConvertFrom-OERDuration gives $null for
+    # PT36H). The diff used to fill the half the document leaves out with a default (not permanent,
+    # 365 or 180 days), bind both halves, and Set-OERGroupPimPolicy sent the guess without a read of its
+    # own. Now, when that half's live value is unknown and the declared half is not known to match its
+    # live value already, the pair is named in UnknownLiveValues and neither half is bound; the handler
+    # refuses the access type. Current is built with the REAL converter from the rules each case names.
+    # Defined here, in the discovery phase, since -ForEach is read then.
+    $NoRule = @(@{ id = 'Enablement_EndUser_Assignment'; enabledRules = @('Justification') })
+    $EligNone = 'allowPermanentEligibility is declared without eligibleDurationDays, and the live eligible assignment expiration (Expiration_Admin_Eligibility maximumDuration) is unknown: the read returned no value for it'
+    $EligPerm = 'eligibleDurationDays is declared without allowPermanentEligibility, and whether the live policy allows permanent eligible assignment (Expiration_Admin_Eligibility isExpirationRequired) is unknown: the read returned no value for it'
+    $ActNone = 'allowPermanentActive is declared without activeDurationDays, and the live active assignment expiration (Expiration_Admin_Assignment maximumDuration) is unknown: the read returned no value for it'
+    $ActPerm = 'activeDurationDays is declared without allowPermanentActive, and whether the live policy allows permanent active assignment (Expiration_Admin_Assignment isExpirationRequired) is unknown: the read returned no value for it'
+    $UnknownCases = @(
+        # The eligible pair.
+        @{ Name = 'allowPermanentEligibility false alone over an empty rules list'; Json = '{ "allowPermanentEligibility": false }'; Rules = @(); Perm = 'AllowPermanentEligibility'; Dur = 'EligibleDuration'; Text = $EligNone }
+        @{ Name = 'allowPermanentEligibility true alone with the rule absent'; Json = '{ "allowPermanentEligibility": true }'; Rules = $NoRule; Perm = 'AllowPermanentEligibility'; Dur = 'EligibleDuration'; Text = $EligNone }
+        @{ Name = 'allowPermanentEligibility true alone over a maximumDuration of PT36H'; Json = '{ "allowPermanentEligibility": true }'
+            Rules = @(@{ id = 'Expiration_Admin_Eligibility'; isExpirationRequired = $true; maximumDuration = 'PT36H' }); Perm = 'AllowPermanentEligibility'; Dur = 'EligibleDuration'
+            Text = "allowPermanentEligibility is declared without eligibleDurationDays, and the live eligible assignment expiration (Expiration_Admin_Eligibility maximumDuration) is unknown: it reads 'PT36H', which is not a positive whole number of days" }
+        @{ Name = 'eligibleDurationDays alone over an empty rules list'; Json = '{ "eligibleDurationDays": 90 }'; Rules = @(); Perm = 'AllowPermanentEligibility'; Dur = 'EligibleDuration'; Text = $EligPerm }
+        @{ Name = 'eligibleDurationDays alone with the rule absent'; Json = '{ "eligibleDurationDays": 90 }'; Rules = $NoRule; Perm = 'AllowPermanentEligibility'; Dur = 'EligibleDuration'; Text = $EligPerm }
+        @{ Name = 'eligibleDurationDays alone over a rule without isExpirationRequired'; Json = '{ "eligibleDurationDays": 30 }'
+            Rules = @(@{ id = 'Expiration_Admin_Eligibility'; maximumDuration = 'P90D' }); Perm = 'AllowPermanentEligibility'; Dur = 'EligibleDuration'; Text = $EligPerm }
+        # The active pair.
+        @{ Name = 'allowPermanentActive false alone over an empty rules list'; Json = '{ "allowPermanentActive": false }'; Rules = @(); Perm = 'AllowPermanentActive'; Dur = 'ActiveDuration'; Text = $ActNone }
+        @{ Name = 'allowPermanentActive true alone with the rule absent'; Json = '{ "allowPermanentActive": true }'; Rules = $NoRule; Perm = 'AllowPermanentActive'; Dur = 'ActiveDuration'; Text = $ActNone }
+        @{ Name = 'allowPermanentActive true alone over a maximumDuration of PT36H'; Json = '{ "allowPermanentActive": true }'
+            Rules = @(@{ id = 'Expiration_Admin_Assignment'; isExpirationRequired = $true; maximumDuration = 'PT36H' }); Perm = 'AllowPermanentActive'; Dur = 'ActiveDuration'
+            Text = "allowPermanentActive is declared without activeDurationDays, and the live active assignment expiration (Expiration_Admin_Assignment maximumDuration) is unknown: it reads 'PT36H', which is not a positive whole number of days" }
+        @{ Name = 'activeDurationDays alone over an empty rules list'; Json = '{ "activeDurationDays": 90 }'; Rules = @(); Perm = 'AllowPermanentActive'; Dur = 'ActiveDuration'; Text = $ActPerm }
+        @{ Name = 'activeDurationDays alone with the rule absent'; Json = '{ "activeDurationDays": 90 }'; Rules = $NoRule; Perm = 'AllowPermanentActive'; Dur = 'ActiveDuration'; Text = $ActPerm }
+        @{ Name = 'activeDurationDays alone over a rule without isExpirationRequired'; Json = '{ "activeDurationDays": 30 }'
+            Rules = @(@{ id = 'Expiration_Admin_Assignment'; maximumDuration = 'P90D' }); Perm = 'AllowPermanentActive'; Dur = 'ActiveDuration'; Text = $ActPerm }
+    )
+
+    It 'names the pair and binds neither half: <Name>' -ForEach $UnknownCases {
+        InModuleScope $script:moduleName -Parameters @{ Json = $Json; Rules = $Rules; Perm = $Perm; Dur = $Dur; Text = $Text } {
+            param($Json, $Rules, $Perm, $Dur, $Text)
+            $Current = ConvertTo-OERGroupPimPolicy -Rules $Rules -GroupId 'g1' -PolicyId 'p1' -AccessType 'member'
+            $Declared = ('{ "activationMaxHours": 4, ' + $Json.TrimStart('{ ')) | ConvertFrom-Json
+            $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current
+            @($R.UnknownLiveValues) | Should -Be @($Text)
+            $R.SetParams.ContainsKey($Perm) | Should -BeFalse
+            $R.SetParams.ContainsKey($Dur) | Should -BeFalse
+            @($R.Changes | Where-Object { $_ -like 'eligible(*' -or $_ -like 'active(*' }) | Should -BeNullOrEmpty
+            # Reached: the rest of the block is still compared (the live activationMaxHours is unknown, so it differs).
+            $R.SetParams.ActivationMaxHours | Should -Be 4
+        }
+    }
+
+    It 'names both pairs, eligible first, when both leave out an unknown half' {
+        InModuleScope $script:moduleName {
+            $Current = ConvertTo-OERGroupPimPolicy -Rules @() -GroupId 'g1' -PolicyId 'p1' -AccessType 'member'
+            $Declared = '{ "eligibleDurationDays": 90, "allowPermanentActive": true }' | ConvertFrom-Json
+            $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current
+            @($R.UnknownLiveValues) | Should -Be @(
+                'eligibleDurationDays is declared without allowPermanentEligibility, and whether the live policy allows permanent eligible assignment (Expiration_Admin_Eligibility isExpirationRequired) is unknown: the read returned no value for it'
+                'allowPermanentActive is declared without activeDurationDays, and the live active assignment expiration (Expiration_Admin_Assignment maximumDuration) is unknown: the read returned no value for it'
+            )
+            $R.SetParams.Keys.Count | Should -Be 0
+        }
+    }
+
+    It 'the control: the permanence alone over a known duration sends the declared permanence with the live duration' {
+        InModuleScope $script:moduleName {
+            $Current = ConvertTo-OERGroupPimPolicy -Rules @(@{ id = 'Expiration_Admin_Eligibility'; isExpirationRequired = $true; maximumDuration = 'P90D' }) -GroupId 'g1' -PolicyId 'p1' -AccessType 'member'
+            $R = Resolve-OERGroupPimPolicyChange -Declared ('{ "allowPermanentEligibility": true }' | ConvertFrom-Json) -Current $Current
+            @($R.UnknownLiveValues) | Should -BeNullOrEmpty
+            $R.Changed | Should -BeTrue
+            $R.SetParams.AllowPermanentEligibility | Should -BeTrue
+            $R.SetParams.EligibleDuration | Should -Be 90
+        }
+    }
+
+    It 'the control: the duration alone over a known permanence sends the declared duration with the live permanence, also over PT36H (<Maximum>)' -ForEach @(
+        @{ Maximum = 'P90D' }
+        @{ Maximum = 'PT36H' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Maximum = $Maximum } {
+            param($Maximum)
+            # isExpirationRequired false: permanent assignment allowed, the opposite of the old default.
+            $Current = ConvertTo-OERGroupPimPolicy -Rules @(@{ id = 'Expiration_Admin_Assignment'; isExpirationRequired = $false; maximumDuration = $Maximum }) -GroupId 'g1' -PolicyId 'p1' -AccessType 'member'
+            $R = Resolve-OERGroupPimPolicyChange -Declared ('{ "activeDurationDays": 30 }' | ConvertFrom-Json) -Current $Current
+            @($R.UnknownLiveValues) | Should -BeNullOrEmpty
+            $R.Changed | Should -BeTrue
+            $R.SetParams.ActiveDuration | Should -Be 30
+            $R.SetParams.AllowPermanentActive | Should -BeTrue
+        }
+    }
+
+    It 'the control: a declared half that already matches its known live value sends nothing and names nothing, though the other half is unknown (<Name>)' -ForEach @(
+        # isExpirationRequired true reads as not permanent; PT36H leaves the duration unknown.
+        @{ Name = 'the permanence over a duration of PT36H'; Json = '{ "allowPermanentEligibility": false }'
+            Rule = @{ id = 'Expiration_Admin_Eligibility'; isExpirationRequired = $true; maximumDuration = 'PT36H' } }
+        # No isExpirationRequired leaves the permanence unknown; P90D is 90 days.
+        @{ Name = 'the duration over a rule without isExpirationRequired'; Json = '{ "activeDurationDays": 90 }'
+            Rule = @{ id = 'Expiration_Admin_Assignment'; maximumDuration = 'P90D' } }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Json = $Json; Rule = $Rule } {
+            param($Json, $Rule)
+            $Current = ConvertTo-OERGroupPimPolicy -Rules @($Rule) -GroupId 'g1' -PolicyId 'p1' -AccessType 'member'
+            $R = Resolve-OERGroupPimPolicyChange -Declared ($Json | ConvertFrom-Json) -Current $Current
+            @($R.UnknownLiveValues) | Should -BeNullOrEmpty
+            $R.Changed | Should -BeFalse
+            $R.SetParams.Keys.Count | Should -Be 0
+        }
+    }
+
+    It 'the control: both halves declared over an empty rules list send both declared values and name nothing' {
+        InModuleScope $script:moduleName {
+            $Current = ConvertTo-OERGroupPimPolicy -Rules @() -GroupId 'g1' -PolicyId 'p1' -AccessType 'member'
+            $R = Resolve-OERGroupPimPolicyChange -Declared ('{ "allowPermanentEligibility": true, "eligibleDurationDays": 90 }' | ConvertFrom-Json) -Current $Current
+            @($R.UnknownLiveValues) | Should -BeNullOrEmpty
+            $R.SetParams.AllowPermanentEligibility | Should -BeTrue
+            $R.SetParams.EligibleDuration | Should -Be 90
+        }
+    }
+
+    It 'the control: a null Current keeps its documented everything-changed form (the handler never passes one)' {
+        InModuleScope $script:moduleName {
+            $R = Resolve-OERGroupPimPolicyChange -Declared ('{ "allowPermanentEligibility": true }' | ConvertFrom-Json) -Current $null
+            @($R.UnknownLiveValues) | Should -BeNullOrEmpty
+            $R.SetParams.AllowPermanentEligibility | Should -BeTrue
+            $R.SetParams.EligibleDuration | Should -Be 365
+        }
+    }
+
+    It 'returns UnknownLiveValues as an empty list when nothing is unknown' {
+        InModuleScope $script:moduleName {
+            $R = Resolve-OERGroupPimPolicyChange -Declared ([pscustomobject]@{ activationMaxHours = 4 }) -Current ([pscustomobject]@{ ActivationMaxHours = 8 })
+            $R.PSObject.Properties.Name | Should -Contain 'UnknownLiveValues'
+            @($R.UnknownLiveValues).Count | Should -Be 0
+        }
+    }
+}

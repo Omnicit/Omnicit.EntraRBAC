@@ -7,7 +7,8 @@ function Set-OERAccessPackageAssignmentPolicy {
     Replaces an assignment policy through Microsoft Graph (PUT, full update). The policy is given by -Id;
     its parent access package is read from the existing policy. The new definition is supplied with the
     same building blocks as New-OERAccessPackageAssignmentPolicy: -RequestorScope (optional; the live
-    scope is preserved when omitted), -RequestorSettings, -ApprovalStage, -DurationInDays /
+    scope is preserved when omitted, unless it is an unreadable unknownFutureValue, below),
+    -RequestorSettings, -ApprovalStage, -DurationInDays /
     -DurationInHours / -ExpirationDateTime (mutually exclusive; at most one may be supplied),
     -RequireApproval, -RequireRequestorJustification, -RequireApprovalForUpdate,
     -DisableAssignmentNotifications, -DisplayName, -Description.
@@ -41,6 +42,17 @@ function Set-OERAccessPackageAssignmentPolicy {
     (re-create the Lifecycle access review, or turn off "Require access reviews" on the policy); every
     other Graph failure is surfaced unchanged.
 
+    A policy whose live allowedTargetScope reads as unknownFutureValue is refused, unless -RequestorScope
+    is given. Microsoft Graph names a scope it does not model that way only when asked with the 'Prefer:
+    include-unknown-enum-members' header, which this module never sends, so the real scope cannot be read.
+    An update that carried the value forward would replace the policy's scope with the placeholder itself:
+    measured, a PUT with allowedTargetScope unknownFutureValue answers 200 and stores it as the scope. The
+    call is refused with a non-terminating UnknownAllowedTargetScope error (category InvalidData) after the
+    live policy is read once and before anything is sent, also under -WhatIf, and that holds for a rename
+    too. Pass -RequestorScope to set the scope, and the update is sent as usual; apply the same policy
+    through Invoke-OERStructure and its row is Failed for the same reason whatever its entry declares,
+    a requestorScope included, since the engine has no such escape, with nothing written.
+
     .PARAMETER Id
     The assignment policy id (GUID) to update.
 
@@ -69,7 +81,10 @@ function Set-OERAccessPackageAssignmentPolicy {
     module does not model connected organization targets, and the full update would replace every
     connected organization the live policy names with an empty list. Omit -RequestorScope to keep the
     live scope and its connected organizations. Every other scope, and a tagged scope object that
-    does carry a connected organization target, is unaffected.
+    does carry a connected organization target, is unaffected. When the live policy's
+    allowedTargetScope reads as unknownFutureValue (a scope this module cannot read), omitting
+    -RequestorScope is refused with a non-terminating UnknownAllowedTargetScope error and nothing is
+    sent: pass -RequestorScope to replace the scope.
 
     .PARAMETER RequestorSettings
     A tagged object from New-OERAccessPackageRequestorSettings controlling requestor self-service options.
@@ -292,6 +307,29 @@ function Set-OERAccessPackageAssignmentPolicy {
                     'live policy names with an empty list. Nothing was sent. Omit -RequestorScope to keep ' +
                     'the live scope and its connected organizations.')) `
                 -ErrorId 'InvalidPolicyInput' -Category InvalidArgument -TargetObject $Id -Cmdlet $PSCmdlet
+            return
+        }
+
+        # BL-49 (Sprint 11 step 11, A24): a policy whose allowedTargetScope reads as unknownFutureValue
+        # carries a scope Microsoft Graph names that way only when asked with 'Prefer:
+        # include-unknown-enum-members', which this module never sends. MEASURED LIVE (Sprint 11 step
+        # 11, check 1.1): a PUT with allowedTargetScope unknownFutureValue answers 200 and STORES the
+        # placeholder as the policy's scope, so carrying the read value back (ConvertTo-OERPolicyBody
+        # does, when -RequestorScope is omitted) would replace the real scope. Refused here, after the
+        # read and its AccessPackageNotFound check and BEFORE ConvertTo-OERPolicyBody and ShouldProcess,
+        # so it reads the same under -WhatIf and no PUT is ever sent. A bound -RequestorScope replaces
+        # the scope outright and goes through (the BL-50 check above is the other side of that term and
+        # the two never both apply). -eq compares case-insensitively, so every casing is caught. The
+        # apply engine refuses the same read in Sync-OERStructureAccessPackage.
+        if (-not $PSBoundParameters.ContainsKey('RequestorScope') -and
+            [string]$Existing.allowedTargetScope -eq 'unknownFutureValue') {
+            Write-CmdletError `
+                -Message ([System.Exception]::new(
+                    "Microsoft Graph returned allowedTargetScope 'unknownFutureValue' for assignment policy '$Id', " +
+                    'a placeholder for a scope this module cannot read without the ' +
+                    "'Prefer: include-unknown-enum-members' header; writing it back would replace the policy's " +
+                    'requestor scope, so nothing was sent. Pass -RequestorScope to set the scope.')) `
+                -ErrorId 'UnknownAllowedTargetScope' -Category InvalidData -TargetObject $Id -Cmdlet $PSCmdlet
             return
         }
 

@@ -225,8 +225,8 @@ BeforeAll {
         }
         @{
             File     = 'Set-OERGroupPimPolicy.ps1'
-            Fragment = 'was declined while'
-            Reason   = 'Reports a partner rule the operator declined at the prompt while the other rule was applied.'
+            Fragment = 'Write-Warning $SplitWarning'
+            Reason   = 'An outcome warning: which rule of the MFA / authentication context pair a split -Confirm answer sent, whether Microsoft Graph accepted it, and what that left on the policy, known only after the last PATCH.'
         }
     )
 

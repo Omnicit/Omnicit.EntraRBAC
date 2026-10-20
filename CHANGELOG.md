@@ -19,6 +19,13 @@ when the session names none. Both commands write members, owners, eligibility an
 one fixed order, and a dynamic group's members as null, so a `-Prune` plan shows no member row for
 it.
 
+`Invoke-OERStructure` and `Set-OERGroupPimPolicy` write no guessed value after a failed or empty
+read, and `-WhatIf` fails a directory role or group PIM policy needing approval by nobody. In a
+thread job `Invoke-OERStructure` needs `-Confirm:$false` or `-WhatIf` (`ConfirmationUnavailable`).
+`Set-OERAccessPackageAssignmentPolicy` refuses to write back a read `unknownFutureValue` without
+`-RequestorScope`. Validation refuses an unresolvable group template and, before PowerShell 7.5, a
+timestamp with seconds.
+
 ## [1.3.0] - 2026-10-19
 
 A PIM for Groups activation is no longer written or applied as a standing membership. Inventories

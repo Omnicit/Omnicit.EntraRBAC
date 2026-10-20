@@ -194,4 +194,39 @@ Describe 'ConvertTo-OERInventoryRoleManagementPolicy' {
             $Entry.PSObject.TypeNames[0] | Should -BeExactly 'System.Management.Automation.PSCustomObject'
         }
     }
+
+    # BL-157: a role name of white space is truthy, so it used to be written as the role (the validator
+    # refuses an empty name and cannot tell white space from one). The same rule BL-45 gave the role
+    # assignment entry: [string]::IsNullOrWhiteSpace on the name, and the id the policy already carries.
+    Context 'a role name that is blank or white space (BL-157)' {
+        It 'writes the role definition id as the role of the <Side> for a name of <Case>' -ForEach @(
+            @{ Side = 'roleManagementPolicies entry'; Directory = $false; Case = 'spaces'; Name = '   ' }
+            @{ Side = 'roleManagementPolicies entry'; Directory = $false; Case = 'a tab and a line break'; Name = "`t`r`n" }
+            @{ Side = 'roleManagementPolicies entry'; Directory = $false; Case = 'nothing (empty)'; Name = '' }
+            @{ Side = 'roleManagementPolicies entry'; Directory = $false; Case = 'nothing (null)'; Name = $null }
+            @{ Side = 'directoryRoleManagementPolicies entry'; Directory = $true; Case = 'spaces'; Name = '   ' }
+            @{ Side = 'directoryRoleManagementPolicies entry'; Directory = $true; Case = 'a tab and a line break'; Name = "`t`r`n" }
+            @{ Side = 'directoryRoleManagementPolicies entry'; Directory = $true; Case = 'nothing (empty)'; Name = '' }
+            @{ Side = 'directoryRoleManagementPolicies entry'; Directory = $true; Case = 'nothing (null)'; Name = $null }
+        ) {
+            $Policy = New-PolicyFixture -Override @{ RoleName = $Name }
+            $Entry = InModuleScope $script:moduleName -Parameters @{ Policy = $Policy; Directory = $Directory } {
+                param($Policy, $Directory)
+                ConvertTo-OERInventoryRoleManagementPolicy -Policy $Policy -Directory:$Directory
+            }
+            $Entry.role | Should -BeExactly '11111111-1111-1111-1111-111111111111'
+        }
+
+        It 'writes a name that is not blank as it is, surrounding white space included, on the <Side>' -ForEach @(
+            @{ Side = 'roleManagementPolicies entry'; Directory = $false }
+            @{ Side = 'directoryRoleManagementPolicies entry'; Directory = $true }
+        ) {
+            $Policy = New-PolicyFixture -Override @{ RoleName = ' Fixture Role A ' }
+            $Entry = InModuleScope $script:moduleName -Parameters @{ Policy = $Policy; Directory = $Directory } {
+                param($Policy, $Directory)
+                ConvertTo-OERInventoryRoleManagementPolicy -Policy $Policy -Directory:$Directory
+            }
+            $Entry.role | Should -BeExactly ' Fixture Role A '
+        }
+    }
 }

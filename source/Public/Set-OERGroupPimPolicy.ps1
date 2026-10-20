@@ -68,9 +68,10 @@ function Set-OERGroupPimPolicy {
     approvers must justify, carry over from the live stage; a policy with no stage yet gets a 1-day
     timeout with approver justification required. Any of the
     three parameters makes the cmdlet read the live approval rule first; when that read fails, a
-    non-terminating ApprovalRuleReadFailed error is written and NO rule is patched, including the
-    other rules bound on the same call, since the carried-over stage and approvers would otherwise be
-    lost.
+    non-terminating ApprovalRuleReadFailed error is written, and when it returns no rule at all, a
+    non-terminating PimRuleValueUnknown error; either way NO rule is patched, including the other
+    rules bound on the same call, since the carried-over stage and approvers would otherwise be lost
+    (no parameter supplies the stage settings, so no call that changes approval can be made then).
 
     Entra PIM treats an enabled authentication context and MultiFactorAuthentication on activation as
     mutually exclusive, so this cmdlet reconciles the two instead of sending a combination the
@@ -82,14 +83,21 @@ function Set-OERGroupPimPolicy {
     enablement rule and, if it carries MultiFactorAuthentication, patches that rule with the flag
     removed and every other flag preserved; binding -ActivationEnabledRules with
     MultiFactorAuthentication without -AuthenticationContextId reads the live authentication-context
-    rule and, if it is enabled, patches it disabled (empty claim value). Before any of this, a
+    rule and, if it is enabled, patches it disabled (empty claim value). That read decides whether the
+    other rule is sent too, so when it fails the call is refused with the read's own error, and when
+    it returns no rule it is refused with a non-terminating PimRuleValueUnknown error; either way
+    nothing is sent, the other rules bound on the call included, and -WhatIf shows the refusal too.
+    Pass both -AuthenticationContextId and -ActivationEnabledRules so that neither rule depends on
+    that read. Before any of this, a
     non-empty -AuthenticationContextId is validated against the tenant's authentication contexts (see
     Get-OERAuthenticationContext): an id that does not exist is a non-terminating
     AuthenticationContextNotFound error, and an id that exists but is not published is a
     non-terminating AuthenticationContextNotAvailable error -- both return before any Graph write. A
     failed validation READ (for example, missing AuthenticationContext.Read.All) is not a refusal: it
     degrades to a Write-Warning and the call proceeds unvalidated, so an automation identity without
-    that scope can still set a context it knows is valid.
+    that scope can still set a context it knows is valid. Every rule is confirmed on its own, so a
+    -Confirm answer can send one rule of a reconciled pair and decline the other; a warning written
+    after the last PATCH then says what that left on the policy, as far as the call knows it.
 
     .PARAMETER Group
     The target group whose PIM-for-groups activation policy is updated, given as a display name or object
@@ -115,7 +123,8 @@ function Set-OERGroupPimPolicy {
     empty. When omitted, the rule is normally left unpatched -- EXCEPT when -ActivationEnabledRules is
     bound together with MultiFactorAuthentication: PIM cannot hold both an enabled authentication
     context and MFA on activation, so the live authentication-context rule is read and, if it is
-    enabled, patched off even though this parameter itself was never supplied.
+    enabled, patched off even though this parameter itself was never supplied. Should that read fail,
+    or return no rule, the call is refused before anything is sent (see the description).
 
     .PARAMETER ActivationEnabledRules
     The enabledRules required on end-user activation (Justification, MultiFactorAuthentication,
@@ -123,7 +132,9 @@ function Set-OERGroupPimPolicy {
     normally left unchanged on the policy -- EXCEPT when a non-empty -AuthenticationContextId is
     supplied: PIM cannot hold both an enabled authentication context and MFA on activation, so the
     live enablement rule is read and, if it carries MultiFactorAuthentication, re-sent with that flag
-    removed and every other flag preserved, even though this parameter itself was never bound.
+    removed and every other flag preserved, even though this parameter itself was never bound. Should
+    that read fail, or return no rule, the call is refused before anything is sent (see the
+    description).
 
     .PARAMETER ActiveEnabledRules
     The enabledRules required on an admin active assignment (Justification, MultiFactorAuthentication,
@@ -131,24 +142,28 @@ function Set-OERGroupPimPolicy {
     unchanged on the policy.
 
     .PARAMETER EligibleDuration
-    Maximum lifetime in whole days for time-bound admin eligible assignments (e.g. 365). Defaults to 365.
-    The eligible-expiration rule is patched only when either -EligibleDuration or -AllowPermanentEligibility
+    Maximum lifetime in whole days for time-bound admin eligible assignments (e.g. 365). The
+    eligible-expiration rule is patched only when either -EligibleDuration or -AllowPermanentEligibility
     is explicitly supplied. The day count is converted to an ISO 8601 duration for Microsoft Graph. When
     -AllowPermanentEligibility is supplied WITHOUT -EligibleDuration, the rule's live maximumDuration is
-    read and sent back untouched instead of this default -- so enabling permanence alone never silently
-    rewrites an existing time-bound maximum to 365 days; the default is used only when that live read
-    fails or the policy has no existing value. Also bindable as -EligibleDurationDays, the name
-    Get-OERGroupPimPolicy uses on its output.
+    read and sent back untouched -- so enabling permanence alone never silently rewrites an existing
+    time-bound maximum. Should that live read fail, the call is refused with the read's own error, and
+    should the rule carry no maximumDuration, with a non-terminating PimRuleValueUnknown error; nothing
+    is sent either way, the other rules bound on the call included (pass -EligibleDuration as well).
+    The declared default of 365 is therefore never sent in place of the live value. Also bindable as
+    -EligibleDurationDays, the name Get-OERGroupPimPolicy uses on its output.
 
     .PARAMETER ActiveDuration
-    Maximum lifetime in whole days for time-bound admin active assignments (e.g. 180). Defaults to 180.
-    The active-expiration rule is patched only when either -ActiveDuration or -AllowPermanentActive is
+    Maximum lifetime in whole days for time-bound admin active assignments (e.g. 180). The
+    active-expiration rule is patched only when either -ActiveDuration or -AllowPermanentActive is
     explicitly supplied. The day count is converted to an ISO 8601 duration for Microsoft Graph. When
     -AllowPermanentActive is supplied WITHOUT -ActiveDuration, the rule's live maximumDuration is read
-    and sent back untouched instead of this default -- so enabling permanence alone never silently
-    rewrites an existing time-bound maximum to 180 days; the default is used only when that live read
-    fails or the policy has no existing value. Also bindable as -ActiveDurationDays, the name
-    Get-OERGroupPimPolicy uses on its output.
+    and sent back untouched -- so enabling permanence alone never silently rewrites an existing
+    time-bound maximum. Should that live read fail, the call is refused with the read's own error, and
+    should the rule carry no maximumDuration, with a non-terminating PimRuleValueUnknown error; nothing
+    is sent either way, the other rules bound on the call included (pass -ActiveDuration as well). The
+    declared default of 180 is therefore never sent in place of the live value. Also bindable as
+    -ActiveDurationDays, the name Get-OERGroupPimPolicy uses on its output.
 
     .PARAMETER EligibleAlertRecipient
     Extra recipient email addresses added to the eligible-assignment admin alert notification
@@ -197,14 +212,15 @@ function Set-OERGroupPimPolicy {
     .PARAMETER AllowPermanentEligibility
     Allow permanent eligible assignments (sets isExpirationRequired to false on the eligibility rule).
     When supplied (even without -EligibleDuration), the eligible-expiration rule is included in the
-    patch, carrying forward the rule's live maximumDuration (see -EligibleDuration) rather than
-    rewriting it to the -EligibleDuration default.
+    patch, carrying forward the rule's live maximumDuration rather than rewriting it to the
+    -EligibleDuration default; a live read that fails or carries no value refuses the call (see
+    -EligibleDuration).
 
     .PARAMETER AllowPermanentActive
     Allow permanent active assignments (sets isExpirationRequired to false on the active-assignment rule).
     When supplied (even without -ActiveDuration), the active-expiration rule is included in the patch,
-    carrying forward the rule's live maximumDuration (see -ActiveDuration) rather than rewriting it to
-    the -ActiveDuration default.
+    carrying forward the rule's live maximumDuration rather than rewriting it to the -ActiveDuration
+    default; a live read that fails or carries no value refuses the call (see -ActiveDuration).
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
@@ -340,25 +356,29 @@ function Set-OERGroupPimPolicy {
         # sent. Resolve-OERApproverInput owns the rules (a blank value is skipped, the same principal
         # named twice is kept once in first-seen order) and is shared with
         # Set-OERDirectoryRoleManagementPolicy; the refusal is reported here, under this cmdlet's id.
-        # Three outcomes, three reports: an ambiguous name is AmbiguousApproverName (the resolver's
-        # text names the candidate ids), only an approver that matches nothing (ApproverUnresolved) is
-        # ApproverNotFound, and anything else -- a 403, an exhausted 429, a 5xx -- is not evidence that
-        # the approver is missing, so it is published as itself.
+        # Three outcomes, three reports, the class decided by Get-OERApproverErrorClass: an ambiguous
+        # name is AmbiguousApproverName (the resolver's text names the candidate ids), only an approver
+        # that matches nothing (ApproverUnresolved) is ApproverNotFound, and anything else -- a 403, an
+        # exhausted 429, a 5xx -- is not evidence that the approver is missing, so it is published as
+        # itself. The caught record is kept in $LookupError: inside the switch, $PSItem is the class.
         $ApproverUserBound = $PSBoundParameters.ContainsKey('ApproverUser')
         $ApproverGroupBound = $PSBoundParameters.ContainsKey('ApproverGroup')
         try {
             $ApproverInput = Resolve-OERApproverInput -User $ApproverUser -Group $ApproverGroup
         } catch {
             Remove-OERErrorRecord -Record $PSItem
-            if (Test-OERAmbiguousNameError -Record $PSItem) {
-                Write-CmdletError -Message ([System.Exception]::new("Could not resolve approver '$($PSItem.TargetObject)': $($PSItem.Exception.Message)")) -ErrorId 'AmbiguousApproverName' -Category InvalidArgument -TargetObject $PSItem.TargetObject -Cmdlet $PSCmdlet
-                return
+            $LookupError = $PSItem
+            switch (Get-OERApproverErrorClass -Record $LookupError) {
+                'Ambiguous' {
+                    Write-CmdletError -Message ([System.Exception]::new("Could not resolve approver '$($LookupError.TargetObject)': $($LookupError.Exception.Message)")) -ErrorId 'AmbiguousApproverName' -Category InvalidArgument -TargetObject $LookupError.TargetObject -Cmdlet $PSCmdlet
+                }
+                'NotFound' {
+                    Write-CmdletError -Message ([System.Exception]::new($LookupError.Exception.Message)) -ErrorId 'ApproverNotFound' -Category ObjectNotFound -TargetObject $LookupError.TargetObject -Cmdlet $PSCmdlet
+                }
+                default {
+                    $PSCmdlet.WriteError($LookupError)
+                }
             }
-            if (([string]$PSItem.FullyQualifiedErrorId).StartsWith('ApproverUnresolved', [System.StringComparison]::Ordinal)) {
-                Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'ApproverNotFound' -Category ObjectNotFound -TargetObject $PSItem.TargetObject -Cmdlet $PSCmdlet
-                return
-            }
-            $PSCmdlet.WriteError($PSItem)
             return
         }
         $ResolvedUser = $ApproverInput.User
@@ -469,45 +489,68 @@ function Set-OERGroupPimPolicy {
         # The exclusion decision itself is owned by Resolve-OERPimActivationConflict, shared with the
         # ARM path. Only the two cases that can produce a real change issue a live read, and only the
         # rule they need -- an unconditional read would add a Graph call to every invocation.
+        # The read decides whether the OTHER half of the pair is sent too, so a read that fails, or
+        # that returns no rule, refuses the call before anything is sent (Sprint 11 step 11, A24): a
+        # failed read is published as itself and an empty one is PimRuleValueUnknown. It used to warn
+        # and send the bound half alone, which could leave exactly the combination PIM cannot honour.
+        # An enablement rule whose enabledRules is an empty list is an answer (no MFA), not an empty
+        # read. Both refusals stand before ShouldProcess, so -WhatIf shows them too.
         $Resolution = $null
         # Each live rule a reconcile reads is kept by id: should both halves of the pair be sent and
         # Microsoft Graph reject the second, Send-OERPimRulePatch puts the first back to this value,
         # so it is not read a second time.
         $LiveRuleById = @{}
+        $PairUnknownRemedy = 'Pass both -AuthenticationContextId and -ActivationEnabledRules, so that neither rule depends on this read.'
         if ($WantsAc -and $WantsMfa) {
             $Resolution = Resolve-OERPimActivationConflict -CallerRequestsAuthContext -CallerRequestsMfa `
                 -EffectiveAuthContextEnabled -EffectiveAuthContextId $AuthenticationContextId `
                 -EffectiveActivationEnabledRules @($ActivationEnabledRules)
         } elseif ($WantsAc -and -not $AerBound) {
-            $LiveEnabledRules = $null
             try {
                 $LiveRule = Invoke-OERGraphRequest -Uri (Get-OERPimGroupsGraphPath -Path ("policies/roleManagementPolicies/{0}/rules/Enablement_EndUser_Assignment" -f $PolicyId))
-                $LiveEnabledRules = @($LiveRule.enabledRules)
-                if ($null -ne $LiveRule) { $LiveRuleById['Enablement_EndUser_Assignment'] = $LiveRule }
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                Write-Warning "Could not read the live activation enablement rules for policy '$PolicyId'; multi-factor authentication may remain enabled alongside authentication context '$AuthenticationContextId', which PIM treats as mutually exclusive: $($PSItem.Exception.Message)"
+                $PSCmdlet.WriteError($PSItem)
+                return
             }
-            if ($null -ne $LiveEnabledRules) {
-                $Resolution = Resolve-OERPimActivationConflict -CallerRequestsAuthContext `
-                    -EffectiveAuthContextEnabled -EffectiveAuthContextId $AuthenticationContextId `
-                    -EffectiveActivationEnabledRules $LiveEnabledRules
+            if ($null -eq $LiveRule) {
+                Write-CmdletError `
+                    -Message ([System.Exception]::new(
+                        "Reading the live rule 'Enablement_EndUser_Assignment' of PIM policy '$PolicyId' returned no rule, so whether " +
+                        "activation requires multi-factor authentication, which PIM cannot hold beside authentication context " +
+                        "'$AuthenticationContextId', is unknown; nothing was changed. $PairUnknownRemedy")) `
+                    -ErrorId 'PimRuleValueUnknown' -Category InvalidData -TargetObject $PolicyId -Cmdlet $PSCmdlet
+                return
             }
+            $LiveRuleById['Enablement_EndUser_Assignment'] = $LiveRule
+            $Resolution = Resolve-OERPimActivationConflict -CallerRequestsAuthContext `
+                -EffectiveAuthContextEnabled -EffectiveAuthContextId $AuthenticationContextId `
+                -EffectiveActivationEnabledRules @($LiveRule.enabledRules)
         } elseif ($WantsMfa -and -not $AcBound) {
             try {
                 $LiveRule = Invoke-OERGraphRequest -Uri (Get-OERPimGroupsGraphPath -Path ("policies/roleManagementPolicies/{0}/rules/AuthenticationContext_EndUser_Assignment" -f $PolicyId))
-                if ($null -ne $LiveRule) { $LiveRuleById['AuthenticationContext_EndUser_Assignment'] = $LiveRule }
-                $ConflictParams = @{
-                    CallerRequestsMfa               = $true
-                    EffectiveAuthContextId          = [string]$LiveRule.claimValue
-                    EffectiveActivationEnabledRules = @($ActivationEnabledRules)
-                }
-                if ([bool]$LiveRule.isEnabled) { $ConflictParams.EffectiveAuthContextEnabled = $true }
-                $Resolution = Resolve-OERPimActivationConflict @ConflictParams
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                Write-Warning "Could not read the live authentication context rule for policy '$PolicyId'; it may remain enabled alongside the multi-factor authentication requirement, which PIM treats as mutually exclusive: $($PSItem.Exception.Message)"
+                $PSCmdlet.WriteError($PSItem)
+                return
             }
+            if ($null -eq $LiveRule) {
+                Write-CmdletError `
+                    -Message ([System.Exception]::new(
+                        "Reading the live rule 'AuthenticationContext_EndUser_Assignment' of PIM policy '$PolicyId' returned no rule, so " +
+                        'whether an authentication context is enabled, which PIM cannot hold beside multi-factor authentication, is ' +
+                        "unknown; nothing was changed. $PairUnknownRemedy")) `
+                    -ErrorId 'PimRuleValueUnknown' -Category InvalidData -TargetObject $PolicyId -Cmdlet $PSCmdlet
+                return
+            }
+            $LiveRuleById['AuthenticationContext_EndUser_Assignment'] = $LiveRule
+            $ConflictParams = @{
+                CallerRequestsMfa               = $true
+                EffectiveAuthContextId          = [string]$LiveRule.claimValue
+                EffectiveActivationEnabledRules = @($ActivationEnabledRules)
+            }
+            if ([bool]$LiveRule.isEnabled) { $ConflictParams.EffectiveAuthContextEnabled = $true }
+            $Resolution = Resolve-OERPimActivationConflict @ConflictParams
         }
 
         if ($Resolution -and $Resolution.Action -eq 'Conflict') {
@@ -526,34 +569,69 @@ function Set-OERGroupPimPolicy {
         # uses (read the single rule, then reuse its maximumDuration untouched). The raw ISO string is
         # passed through as-is, not re-parsed, so a non-day form (P1Y, PT1H30M, ...) survives exactly.
         # Only issued when a permanence switch is bound WITHOUT its duration -- an unconditional read
-        # would add a Graph call to every invocation. A failed read falls back to the parameter default
-        # and warns rather than failing the whole call.
+        # would add a Graph call to every invocation. The read decides the duration that is sent, so
+        # a read that fails, or a rule that answers with no maximumDuration (or no rule at all),
+        # refuses the call before anything is sent (Sprint 11 step 11, A24): a failed read is published
+        # as itself and an empty value is PimRuleValueUnknown. It used to warn and send the parameter
+        # default (365 / 180 days), or send it silently for an empty value, rewriting the maximum the
+        # tenant had. Both refusals stand before ShouldProcess, so -WhatIf shows them too.
         $LiveEligibleDuration = $null
         if ($PSBoundParameters.ContainsKey('AllowPermanentEligibility') -and -not $PSBoundParameters.ContainsKey('EligibleDuration')) {
             try {
                 $LiveRule = Invoke-OERGraphRequest -Uri (Get-OERPimGroupsGraphPath -Path ("policies/roleManagementPolicies/{0}/rules/Expiration_Admin_Eligibility" -f $PolicyId))
-                if (-not [string]::IsNullOrWhiteSpace([string]$LiveRule.maximumDuration)) { $LiveEligibleDuration = [string]$LiveRule.maximumDuration }
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                Write-Warning "Could not read the live eligible-assignment maximum duration for policy '$PolicyId'; falling back to the -EligibleDuration default of $EligibleDuration day(s): $($PSItem.Exception.Message)"
+                $PSCmdlet.WriteError($PSItem)
+                return
             }
+            # No rule at all is worded as the pair reads word it; a rule without a maximum as such.
+            $Unknown = if ($null -eq $LiveRule) {
+                "Reading the live rule 'Expiration_Admin_Eligibility' of PIM policy '$PolicyId' returned no rule"
+            } elseif ([string]::IsNullOrWhiteSpace([string]$LiveRule.maximumDuration)) {
+                "The live eligible-assignment expiration rule of PIM policy '$PolicyId' carries no maximum duration"
+            }
+            if ($Unknown) {
+                Write-CmdletError `
+                    -Message ([System.Exception]::new(
+                        "$Unknown, so the duration to keep is unknown; nothing was changed. Pass -EligibleDuration with " +
+                        '-AllowPermanentEligibility.')) `
+                    -ErrorId 'PimRuleValueUnknown' -Category InvalidData -TargetObject $PolicyId -Cmdlet $PSCmdlet
+                return
+            }
+            $LiveEligibleDuration = [string]$LiveRule.maximumDuration
         }
         $LiveActiveDuration = $null
         if ($PSBoundParameters.ContainsKey('AllowPermanentActive') -and -not $PSBoundParameters.ContainsKey('ActiveDuration')) {
             try {
                 $LiveRule = Invoke-OERGraphRequest -Uri (Get-OERPimGroupsGraphPath -Path ("policies/roleManagementPolicies/{0}/rules/Expiration_Admin_Assignment" -f $PolicyId))
-                if (-not [string]::IsNullOrWhiteSpace([string]$LiveRule.maximumDuration)) { $LiveActiveDuration = [string]$LiveRule.maximumDuration }
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                Write-Warning "Could not read the live active-assignment maximum duration for policy '$PolicyId'; falling back to the -ActiveDuration default of $ActiveDuration day(s): $($PSItem.Exception.Message)"
+                $PSCmdlet.WriteError($PSItem)
+                return
             }
+            $Unknown = if ($null -eq $LiveRule) {
+                "Reading the live rule 'Expiration_Admin_Assignment' of PIM policy '$PolicyId' returned no rule"
+            } elseif ([string]::IsNullOrWhiteSpace([string]$LiveRule.maximumDuration)) {
+                "The live active-assignment expiration rule of PIM policy '$PolicyId' carries no maximum duration"
+            }
+            if ($Unknown) {
+                Write-CmdletError `
+                    -Message ([System.Exception]::new(
+                        "$Unknown, so the duration to keep is unknown; nothing was changed. Pass -ActiveDuration with " +
+                        '-AllowPermanentActive.')) `
+                    -ErrorId 'PimRuleValueUnknown' -Category InvalidData -TargetObject $PolicyId -Cmdlet $PSCmdlet
+                return
+            }
+            $LiveActiveDuration = [string]$LiveRule.maximumDuration
         }
 
         # Approval is patched as one rule, so what the caller did not supply -- the stage fields and
         # the approver side left unbound -- has to come from the live rule, or the PATCH would erase
-        # it. Unlike the duration reads above, a failed read here is a REFUSAL of the whole call, not
-        # a warning: there is no safe fallback for someone else's approvers. It is issued only when an
-        # approval parameter is bound, and before any PATCH, so no other rule is half-applied either.
+        # it. Like the reconcile and duration reads above, a failed read here is a REFUSAL of the whole
+        # call, not a warning: there is no safe fallback for someone else's approvers. It is issued only
+        # when an approval parameter is bound, and before any PATCH, so no other rule is half-applied
+        # either. It keeps its own ApprovalRuleReadFailed id, which it had before those reads refused;
+        # a read that answers with no rule is PimRuleValueUnknown, as for the other reads.
         $ApproversBound = $ApproverUserBound -or $ApproverGroupBound
         $ApprovalBound = $ApproversBound -or $PSBoundParameters.ContainsKey('RequireApproval')
         $LiveApprovalRule = $null
@@ -571,6 +649,21 @@ function Set-OERGroupPimPolicy {
                         "Could not read the live approval rule for PIM policy '$PolicyId': $($PSItem.Exception.Message) Nothing was changed: the approval stage and the approvers not supplied on this call are carried over from the live rule, and without it they would be lost.")) `
                     -ErrorId 'ApprovalRuleReadFailed' -Category ReadError -TargetObject $PolicyId `
                     -InnerException $PSItem.Exception -Cmdlet $PSCmdlet
+                return
+            }
+            # A read that answers with no rule is refused too (Sprint 11 step 11, A24): without it the
+            # rule set would be built from no live stage, and the stage settings this cmdlet has no
+            # parameter for (the approval timeout, approver justification, escalation) would be sent as
+            # New-OERPimRuleSet's defaults in place of the live ones. Before ShouldProcess and every
+            # PATCH, so -WhatIf shows it and no other bound rule is sent either.
+            if ($null -eq $LiveApprovalRule) {
+                Write-CmdletError `
+                    -Message ([System.Exception]::new(
+                        "Reading the live rule 'Approval_EndUser_Assignment' of PIM policy '$PolicyId' returned no rule, so " +
+                        'the approval stage settings and the approvers this call does not supply are unknown; nothing was ' +
+                        'changed. No parameter of this cmdlet supplies the stage settings (the approval timeout, approver ' +
+                        'justification, escalation), so no call that changes approval can be made without that rule.')) `
+                    -ErrorId 'PimRuleValueUnknown' -Category InvalidData -TargetObject $PolicyId -Cmdlet $PSCmdlet
                 return
             }
 
@@ -642,22 +735,20 @@ function Set-OERGroupPimPolicy {
 
         # The eligible- and active-expiration rules are each a unit: bind either the duration or the
         # permanence switch and both fields are sent so the rule is never half-updated. When only the
-        # permanence switch was bound, prefer the live value read above over the parameter default (see
-        # the read block above) so a caller enabling permanence does not silently rewrite an existing
-        # time-bound maximum. $EligibleDurationDaysReported/$ActiveDurationDaysReported carry the day
-        # count that was ACTUALLY sent, for the Patched summary built below (audit: the summary used to
-        # echo the unbound -EligibleDuration/-ActiveDuration parameter variable instead).
+        # permanence switch was bound, the live value read above is sent (see the read block above) so
+        # a caller enabling permanence does not silently rewrite an existing time-bound maximum; a read
+        # that failed or answered with no value has already refused the call, so the parameter default
+        # is never sent in its place. $EligibleDurationDaysReported/$ActiveDurationDaysReported carry
+        # the day count that was ACTUALLY sent, for the Patched summary built below (audit: the summary
+        # used to echo the unbound -EligibleDuration/-ActiveDuration parameter variable instead).
         $EligibleDurationDaysReported = $EligibleDuration
         if ($PSBoundParameters.ContainsKey('EligibleDuration') -or $PSBoundParameters.ContainsKey('AllowPermanentEligibility')) {
             if ($PSBoundParameters.ContainsKey('EligibleDuration')) {
                 $RuleParams.EligibleDuration = ConvertTo-OERDuration -Days $EligibleDuration
                 $EligibleDurationDaysReported = $EligibleDuration
-            } elseif ($LiveEligibleDuration) {
+            } else {
                 $RuleParams.EligibleDuration = $LiveEligibleDuration
                 $EligibleDurationDaysReported = ConvertFrom-OERDuration -Duration $LiveEligibleDuration -Unit Days
-            } else {
-                $RuleParams.EligibleDuration = ConvertTo-OERDuration -Days $EligibleDuration
-                $EligibleDurationDaysReported = $EligibleDuration
             }
             if ($AllowPermanentEligibility) { $RuleParams.AllowPermanentEligibility = $true }
         }
@@ -666,12 +757,9 @@ function Set-OERGroupPimPolicy {
             if ($PSBoundParameters.ContainsKey('ActiveDuration')) {
                 $RuleParams.ActiveDuration = ConvertTo-OERDuration -Days $ActiveDuration
                 $ActiveDurationDaysReported = $ActiveDuration
-            } elseif ($LiveActiveDuration) {
+            } else {
                 $RuleParams.ActiveDuration = $LiveActiveDuration
                 $ActiveDurationDaysReported = ConvertFrom-OERDuration -Duration $LiveActiveDuration -Unit Days
-            } else {
-                $RuleParams.ActiveDuration = ConvertTo-OERDuration -Days $ActiveDuration
-                $ActiveDurationDaysReported = $ActiveDuration
             }
             if ($AllowPermanentActive) { $RuleParams.AllowPermanentActive = $true }
         }
@@ -722,14 +810,56 @@ function Set-OERGroupPimPolicy {
             $Failed.AddRange([string[]]$SendResult.Failed)
         }
 
-        # A per-rule -Confirm decline can accept one half of a reconciled pair and refuse the other,
-        # which leaves the policy in exactly the mutually exclusive combination this cmdlet just
-        # worked to avoid. Silence here would read as success.
+        # A reconcile sends both rules of the pair, and every rule is confirmed on its own, so a
+        # -Confirm answer can send one and decline the other (BL-97 F2). What that leaves depends on
+        # the direction of the reconcile, on which rule was sent and on whether Microsoft Graph
+        # accepted it -- known here, since the send has returned -- so the warning names that
+        # direction, as far as this call knows it ("may" where the live value of the rule it did not
+        # read is unknown). Silence would read as success. It is an outcome, so it is written only
+        # here: after the last PATCH and after the send's own messages, a rejection among them.
+        # Patch order (Get-OERPimRulePatchOrder): under ClearMfa the enablement rule (MFA removed) goes
+        # first and the enabling context rule last; under DisableAuthContext the disabling context
+        # rule first and the enablement rule (MFA added) last, which Graph rejects while a context is
+        # still enabled (MfaAndAcrsConflict). Why: docs/development/rationale.md#mfa-authcontext-exclusion
         if ($Resolution -and $Resolution.Action -in @('ClearMfa', 'DisableAuthContext')) {
-            $ReconciledRuleId = if ($Resolution.Action -eq 'ClearMfa') { 'Enablement_EndUser_Assignment' } else { 'AuthenticationContext_EndUser_Assignment' }
-            $PartnerRuleId = if ($Resolution.Action -eq 'ClearMfa') { 'AuthenticationContext_EndUser_Assignment' } else { 'Enablement_EndUser_Assignment' }
-            if ($Sent.Contains($PartnerRuleId) -and -not $Sent.Contains($ReconciledRuleId)) {
-                Write-Warning "Rule '$ReconciledRuleId' was declined while '$PartnerRuleId' was applied, so PIM policy '$PolicyId' still requires both multi-factor authentication and an authentication context on activation. Re-run and accept both, or fix it with Get-OERGroupPimPolicy and a follow-up Set-OERGroupPimPolicy."
+            $EnablementRuleId = 'Enablement_EndUser_Assignment'
+            $ContextRuleId = 'AuthenticationContext_EndUser_Assignment'
+            $EnablementSent = $Sent.Contains($EnablementRuleId)
+            if ($EnablementSent -ne $Sent.Contains($ContextRuleId)) {
+                $SentRuleId = if ($EnablementSent) { $EnablementRuleId } else { $ContextRuleId }
+                $DeclinedRuleId = if ($EnablementSent) { $ContextRuleId } else { $EnablementRuleId }
+                $SentRejected = $Failed.Contains($SentRuleId)
+                $Declined = "Rule '$DeclinedRuleId' was declined while '$SentRuleId' was"
+                $Remedy = ' Re-run and accept both, or fix it with Get-OERGroupPimPolicy and a follow-up Set-OERGroupPimPolicy.'
+                $SplitWarning = if ($Resolution.Action -eq 'DisableAuthContext' -and $EnablementSent) {
+                    if ($SentRejected) {
+                        "$Declined sent, and Microsoft Graph rejected '$SentRuleId' (see the rejection reported for it): Microsoft " +
+                        'Graph refuses multi-factor authentication while an authentication context is enabled (MfaAndAcrsConflict), ' +
+                        "and the authentication context of PIM policy '$PolicyId' was enabled when it was read. The policy therefore " +
+                        "keeps its authentication context, and multi-factor authentication was not added to activation.$Remedy"
+                    } else {
+                        "$Declined applied, although the authentication context of PIM policy '$PolicyId' was enabled when it was " +
+                        'read and Microsoft Graph refuses multi-factor authentication while one is enabled (MfaAndAcrsConflict): ' +
+                        'activation may now require both multi-factor authentication and an authentication context, which PIM ' +
+                        "cannot honour.$Remedy"
+                    }
+                } elseif ($SentRejected) {
+                    "$Declined sent, and Microsoft Graph rejected '$SentRuleId' (see the rejection reported for it), so neither rule " +
+                    "of the pair changed: PIM policy '$PolicyId' keeps the multi-factor authentication and authentication context " +
+                    'requirements it had on activation before the call.'
+                } elseif ($EnablementSent) {
+                    "$Declined applied, so multi-factor authentication was removed from activation on PIM policy '$PolicyId' and " +
+                    "this call did not enable authentication context '$AuthenticationContextId': activation may now require " +
+                    "neither multi-factor authentication nor an authentication context.$Remedy"
+                } elseif ($Resolution.Action -eq 'ClearMfa') {
+                    "$Declined applied, so PIM policy '$PolicyId' still requires both multi-factor authentication and an " +
+                    "authentication context on activation.$Remedy"
+                } else {
+                    "$Declined applied, so the authentication context of PIM policy '$PolicyId' was disabled and multi-factor " +
+                    'authentication was not added to activation: activation may now require neither multi-factor authentication ' +
+                    "nor an authentication context.$Remedy"
+                }
+                Write-Warning $SplitWarning
             }
         }
 

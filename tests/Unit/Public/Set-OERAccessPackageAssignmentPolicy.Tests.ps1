@@ -1372,3 +1372,245 @@ $Results = @(
         )
     }
 }
+
+Describe 'Set-OERAccessPackageAssignmentPolicy refuses a read allowedTargetScope of unknownFutureValue (Sprint 11 step 11, BL-49)' {
+    # MEASURED LIVE (Sprint 11 step 11, check 1.1): a PUT whose allowedTargetScope is unknownFutureValue
+    # answers 200 and STORES the placeholder as the policy's scope. Microsoft Graph names a scope it
+    # does not model that way only when the caller sends 'Prefer: include-unknown-enum-members', which
+    # this module never does -- so a policy that reads back so and is updated without -RequestorScope
+    # would have the placeholder carried back and its real scope replaced. The cmdlet therefore refuses
+    # BEFORE ConvertTo-OERPolicyBody, ShouldProcess and the PUT, the same read the apply engine already
+    # refuses in Sync-OERStructureAccessPackage. A bound -RequestorScope writes as before.
+    BeforeAll {
+        $script:Bl49Id = 'bbbbbbbb-0000-0000-0000-000000000011'
+        $script:Bl49Message = "Microsoft Graph returned allowedTargetScope 'unknownFutureValue' for assignment policy 'bbbbbbbb-0000-0000-0000-000000000011', a placeholder for a scope this module cannot read without the 'Prefer: include-unknown-enum-members' header; writing it back would replace the policy's requestor scope, so nothing was sent. Pass -RequestorScope to set the scope."
+
+        function Invoke-Bl49Set {
+            param([hashtable]$Splat, [bool]$UseWhatIf = $false)
+            $Err = $null
+            $Result = Set-OERAccessPackageAssignmentPolicy -Id $script:Bl49Id @Splat -WhatIf:$UseWhatIf -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err
+            [PSCustomObject]@{ Result = $Result; Errors = @($Err) }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        # The live policy's scope is whatever the test sets in $script:Bl49ReadScope; $null omits the key.
+        $script:Bl49ReadScope = 'unknownFutureValue'
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            $Live = @{
+                id            = 'bbbbbbbb-0000-0000-0000-000000000011'
+                displayName   = 'Policy'
+                accessPackage = @{ id = 'ap-1' }
+                expiration    = @{ type = 'noExpiration' }
+            }
+            if ($null -ne $script:Bl49ReadScope) { $Live.allowedTargetScope = $script:Bl49ReadScope }
+            $Live
+        } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            @{
+                id                 = 'bbbbbbbb-0000-0000-0000-000000000011'
+                displayName        = $Body.displayName
+                allowedTargetScope = $Body.allowedTargetScope
+                expiration         = @{ type = 'noExpiration' }
+            }
+        } -ParameterFilter { $Method -eq 'PUT' }
+    }
+
+    Context 'the refusal' {
+        It 'refuses a read scope of <ReadScope> without -RequestorScope: one record, no PUT, no output, the policy read once (WhatIf: <UseWhatIf>)' -ForEach @(
+            @{ ReadScope = 'unknownFutureValue'; UseWhatIf = $false }
+            @{ ReadScope = 'unknownFutureValue'; UseWhatIf = $true }
+            @{ ReadScope = 'UNKNOWNFUTUREVALUE'; UseWhatIf = $false }
+            @{ ReadScope = 'UnknownFutureValue'; UseWhatIf = $true }
+        ) {
+            $script:Bl49ReadScope = $ReadScope
+
+            $Run = Invoke-Bl49Set -Splat @{ DisplayName = 'Policy'; DurationInDays = 30 } -UseWhatIf $UseWhatIf
+
+            $Run.Result | Should -BeNullOrEmpty
+            # The only record this call writes is its own: exactly one, cmdlet-qualified.
+            $Run.Errors.Count | Should -Be 1
+            $Run.Errors[0].FullyQualifiedErrorId | Should -Be 'UnknownAllowedTargetScope,Set-OERAccessPackageAssignmentPolicy'
+            $Run.Errors[0].CategoryInfo.Category | Should -Be 'InvalidData'
+            $Run.Errors[0].TargetObject | Should -Be $script:Bl49Id
+            $Run.Errors[0].Exception.Message | Should -BeExactly $script:Bl49Message
+            # Positive proof that the guard was reached: the live policy was read, once, and that was
+            # the only request made.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                (-not $Method -or $Method -eq 'GET') -and
+                $Uri -ceq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/bbbbbbbb-0000-0000-0000-000000000011?$expand=accessPackage,customExtensionStageSettings($expand=customExtension)'
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PUT' }
+        }
+
+        It 'refuses a rename that supplies no other property (the full update would carry the placeholder back)' {
+            $Run = Invoke-Bl49Set -Splat @{ DisplayName = 'Renamed' }
+
+            $Run.Result | Should -BeNullOrEmpty
+            $Run.Errors.Count | Should -Be 1
+            $Run.Errors[0].FullyQualifiedErrorId | Should -Be 'UnknownAllowedTargetScope,Set-OERAccessPackageAssignmentPolicy'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PUT' }
+        }
+
+        It 'reports the missing access package first: the refusal comes after the AccessPackageNotFound check' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ id = 'bbbbbbbb-0000-0000-0000-000000000011'; displayName = 'Policy'; allowedTargetScope = 'unknownFutureValue' }
+            } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
+
+            $Run = Invoke-Bl49Set -Splat @{ DisplayName = 'Policy'; DurationInDays = 30 }
+
+            $Run.Errors.Count | Should -Be 1
+            $Run.Errors[0].FullyQualifiedErrorId | Should -Be 'AccessPackageNotFound,Set-OERAccessPackageAssignmentPolicy'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PUT' }
+        }
+    }
+
+    Context 'what the refusal leaves alone' {
+        It 'writes the bound -RequestorScope when the read scope is unknownFutureValue (<ReadScope>)' -ForEach @(
+            @{ ReadScope = 'unknownFutureValue' }
+            @{ ReadScope = 'UNKNOWNFUTUREVALUE' }
+        ) {
+            $script:Bl49ReadScope = $ReadScope
+            $Scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers -ErrorAction Stop
+
+            $Run = Invoke-Bl49Set -Splat @{ DisplayName = 'Policy'; RequestorScope = $Scope }
+
+            $Run.Errors.Count | Should -Be 0
+            $Run.Result.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.AssignmentPolicy'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                -not $Method -or $Method -eq 'GET'
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PUT' -and
+                $Uri -like '*assignmentPolicies/bbbbbbbb-0000-0000-0000-000000000011' -and
+                $Body.allowedTargetScope -ceq 'allMemberUsers'
+            }
+        }
+
+        It 'carries a known read scope forward as before when -RequestorScope is omitted (<ReadScope>)' -ForEach @(
+            @{ ReadScope = 'allMemberUsers' }
+            @{ ReadScope = 'specificDirectoryUsers' }
+            @{ ReadScope = 'unknownFutureValues' }
+            @{ ReadScope = $null }
+        ) {
+            $script:Bl49ReadScope = $ReadScope
+
+            $Run = Invoke-Bl49Set -Splat @{ DisplayName = 'Policy'; DurationInDays = 30 }
+
+            $Run.Errors.Count | Should -Be 0
+            $Run.Result.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.AssignmentPolicy'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PUT' -and
+                $Uri -like '*assignmentPolicies/bbbbbbbb-0000-0000-0000-000000000011' -and
+                $Body.allowedTargetScope -ceq $script:Bl49ReadScope
+            }
+        }
+    }
+}
+
+Describe 'Set-OERAccessPackageAssignmentPolicy: the unknownFutureValue refusal in a script with no try (Sprint 11 step 11, BL-49)' {
+    # A refused call writes a NON-terminating error and the script goes on, so what it must not do is
+    # send the PUT on the way. The script stands in no try, prints a sentinel at its end, and the
+    # stubbed transport appends every request to a log file whose path is substituted into the text.
+    # The control runs the allowed form (a bound -RequestorScope) in the same script with the same
+    # stub, so a refused run with no PUT in the log cannot be an artefact of a stub that never logs
+    # one. The stub writes its log with -WhatIf:$false, so a -WhatIf request would still show in it.
+    BeforeAll {
+        $script:Bl49NoTryMessage = "Microsoft Graph returned allowedTargetScope 'unknownFutureValue' for assignment policy 'bbbbbbbb-0000-0000-0000-000000000021', a placeholder for a scope this module cannot read without the 'Prefer: include-unknown-enum-members' header; writing it back would replace the policy's requestor scope, so nothing was sent. Pass -RequestorScope to set the scope."
+
+        $script:Bl49NoTryScenario = {
+            param([string]$Log, [string]$Calls)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Remove-OERErrorRecord -Value { }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        if ($Method -eq 'PUT') {
+            Add-Content -LiteralPath '#LOG#' -WhatIf:$false -Value "Invoke-OERGraphRequest PUT scope=$($Body.allowedTargetScope)"
+            return @{ id = 'bbbbbbbb-0000-0000-0000-000000000021'; displayName = 'Policy'; allowedTargetScope = $Body.allowedTargetScope; expiration = @{ type = 'noExpiration' } }
+        }
+        Add-Content -LiteralPath '#LOG#' -WhatIf:$false -Value "Invoke-OERGraphRequest $Method"
+        @{
+            id                 = 'bbbbbbbb-0000-0000-0000-000000000021'
+            displayName        = 'Policy'
+            accessPackage      = @{ id = 'ap-1' }
+            allowedTargetScope = 'unknownFutureValue'
+            expiration         = @{ type = 'noExpiration' }
+        }
+    }
+}
+$Scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
+#CALLS#
+"OWN:$(@($Error | Where-Object { $_.FullyQualifiedErrorId -eq 'UnknownAllowedTargetScope,Set-OERAccessPackageAssignmentPolicy' }).Count)"
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#CALLS#', $Calls))
+        }
+
+        $script:Bl49RefusedCalls = @'
+$Results = @(
+    Set-OERAccessPackageAssignmentPolicy -Id 'bbbbbbbb-0000-0000-0000-000000000021' -DisplayName 'Policy' -DurationInDays 30 -Confirm:$false
+    Set-OERAccessPackageAssignmentPolicy -Id 'bbbbbbbb-0000-0000-0000-000000000021' -DisplayName 'Renamed' -WhatIf
+)
+"REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
+'@
+        $script:Bl49AllowedCalls = @'
+$Results = @(
+    Set-OERAccessPackageAssignmentPolicy -Id 'bbbbbbbb-0000-0000-0000-000000000021' -DisplayName 'Policy' -RequestorScope $Scope -Confirm:$false
+)
+"REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
+'@
+        $script:Bl49RefusedThenAllowedCalls = @'
+$Results = @(
+    Set-OERAccessPackageAssignmentPolicy -Id 'bbbbbbbb-0000-0000-0000-000000000021' -DisplayName 'Policy' -DurationInDays 30 -Confirm:$false
+    Set-OERAccessPackageAssignmentPolicy -Id 'bbbbbbbb-0000-0000-0000-000000000021' -DisplayName 'Policy' -RequestorScope $Scope -Confirm:$false
+)
+"REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
+'@
+        function Get-Bl49RequestLog ([string]$Log) {
+            if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
+        }
+    }
+
+    It 'reaches the end of the script, sends no PUT, and writes the refusal once per call (with and without -WhatIf)' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = & $script:Bl49NoTryScenario -Log $Log -Calls $script:Bl49RefusedCalls
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        ($Run.Output -join '|') | Should -Be 'REACHED:0|OWN:2|END'
+        # Positive proof: each refused call read the live policy, and that was all it sent.
+        @(Get-Bl49RequestLog -Log $Log) | Should -Be @('Invoke-OERGraphRequest GET', 'Invoke-OERGraphRequest GET')
+        @($Run.Errors).Count | Should -Be 2
+        @($Run.Errors | Where-Object { $_ -ceq $script:Bl49NoTryMessage }).Count | Should -Be 2
+    }
+
+    It 'the control: the same script with a bound -RequestorScope sends the PUT with that scope' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = & $script:Bl49NoTryScenario -Log $Log -Calls $script:Bl49AllowedCalls
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        ($Run.Output -join '|') | Should -Be 'REACHED:1|OWN:0|END'
+        @($Run.Errors).Count | Should -Be 0
+        @(Get-Bl49RequestLog -Log $Log) | Should -Be @('Invoke-OERGraphRequest GET', 'Invoke-OERGraphRequest PUT scope=allMemberUsers')
+    }
+
+    It 'carries on after a refused call: the next call in the same script sends its PUT' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = & $script:Bl49NoTryScenario -Log $Log -Calls $script:Bl49RefusedThenAllowedCalls
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        ($Run.Output -join '|') | Should -Be 'REACHED:1|OWN:1|END'
+        @($Run.Errors).Count | Should -Be 1
+        @($Run.Errors | Where-Object { $_ -ceq $script:Bl49NoTryMessage }).Count | Should -Be 1
+        @(Get-Bl49RequestLog -Log $Log) | Should -Be @(
+            'Invoke-OERGraphRequest GET'
+            'Invoke-OERGraphRequest GET'
+            'Invoke-OERGraphRequest PUT scope=allMemberUsers'
+        )
+    }
+}

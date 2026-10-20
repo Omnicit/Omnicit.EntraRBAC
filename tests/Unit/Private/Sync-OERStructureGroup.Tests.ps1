@@ -67,9 +67,12 @@ Describe 'Sync-OERStructureGroup' {
             Mock Add-OERGroupEligibility { $script:CallLog.Add('Add-OERGroupEligibility') }
             # The group is created in this run, so steps 4 and 5 first ask whether its policy is listed
             # and readable; it is, at once, so nothing waits (Start-Sleep is mocked all the same). The
-            # read is mocked too, so no call reaches the real transport.
+            # read is mocked too, so no call reaches the real transport. The listed policy carries the
+            # eligible expiration duration: the document declares allowPermanentEligibility alone, and a
+            # policy that gave no duration would refuse the access type (PimRuleValueUnknown) rather than
+            # send a guessed one.
             Mock Get-OERPimGroupPolicyId { 'pol-member' }
-            Mock Get-OERListedGroupPimPolicy { [PSCustomObject]@{ ActivationMaxHours = 1 } }
+            Mock Get-OERListedGroupPimPolicy { [PSCustomObject]@{ ActivationMaxHours = 1; AllowPermanentEligibility = $false; EligibleDurationDays = 365 } }
             Mock Start-Sleep { }
             Mock Get-OERGroupPimPolicy { $null }
             Mock Set-OERGroupPimPolicy { $script:CallLog.Add('Set-OERGroupPimPolicy') }
@@ -942,7 +945,9 @@ Describe 'Sync-OERStructureGroup' {
             }
             Mock Resolve-OERGroupId { 'g-1' }
             Mock Get-OERGroup { [PSCustomObject]@{ Id = 'g-1'; Description = $null; Members = @(); PimEligibility = @() } }
-            Mock Get-OERGroupPimPolicy { $null }
+            # BL-40: a live policy that differs from the document. This read used to answer nothing, which
+            # the handler took as "no policy" and carried on; an empty answer now ends the access type.
+            Mock Get-OERGroupPimPolicy { [PSCustomObject]@{ PolicyId = 'pol-live'; ActivationMaxHours = 1; AllowPermanentEligibility = $false; EligibleDurationDays = 365 } }
             # Set succeeds at the cmdlet level but reports a partial rule application.
             Mock Set-OERGroupPimPolicy { [PSCustomObject]@{ Applied = $false; FailedRules = @('Expiration_EndUser_Assignment', 'Enablement_EndUser_Assignment') } }
             Mock Initialize-OERAuth { }
@@ -1465,6 +1470,440 @@ Describe 'Sync-OERStructureGroup' {
                 $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; dynamic = $true; owners = @('person19@example.com') }
                 Invoke-SyncGroupViaCaller -Item $Item | Out-Null
                 Should -Invoke Add-OERGroupMember -Times 1 -ParameterFilter { $AccessType -eq 'owner' }
+            }
+        }
+    }
+
+    Context 'the last user owner is never removed, also while a service principal is an owner (BL-84, R-15)' {
+        # Measured 2026-10-20 (Sprint 11 step 11, check 1.2): Microsoft Graph refuses to remove a
+        # group's only USER owner while a service principal is also an owner (400 Request_BadRequest,
+        # "The group must have at least one owner, hence this owner cannot be removed."). So the
+        # prune pass keeps a user-owner floor beside the any-type floor: an undeclared owner typed
+        # 'user' that is the last user owner standing is Skipped before the warning, before
+        # ShouldProcess and before any request. The live group is a mocked Get-OERGroup whose owners
+        # carry the ObjectType Get-OERGroupRelation gives them; the service principal owner is
+        # withheld for its type (A9) before the guard and counts as an owner still standing.
+        BeforeAll {
+            function New-LuoOwner {
+                param([string]$Id, [AllowNull()][string]$Type)
+                [PSCustomObject]@{ id = $Id; ObjectType = $Type }
+            }
+            # The exact text, written out here on purpose: it is a published Detail.
+            function Get-LuoUserOwnerText {
+                param([string]$Id)
+                "did not remove owner '$Id': it is the last remaining user owner of group 'role_sec_x', and Microsoft Graph refuses to remove a group's last user owner, also while a service principal is an owner (measured: 400 ""The group must have at least one owner, hence this owner cannot be removed.""), so no request was sent (our own guard)."
+            }
+            function Get-LuoSpOwnerText {
+                "prune withheld: undeclared owner 'sp-1' is a service principal, and -Prune never removes a service principal from a group; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember (-AccessType owner for an owner) if it is meant to go."
+            }
+            # Runs one item through the handler in module scope and hands back its rows and warnings,
+            # so the assertions below run OUTSIDE InModuleScope against the -ModuleName mocks.
+            function Invoke-LuoSync {
+                param([PSCustomObject]$Item, [switch]$Prune, [switch]$WhatIf, [switch]$NoConfirm)
+                InModuleScope $script:moduleName -Parameters @{ Item = $Item; PruneRun = [bool]$Prune; WhatIfRun = [bool]$WhatIf; NoConfirmRun = [bool]$NoConfirm } {
+                    param($Item, $PruneRun, $WhatIfRun, $NoConfirmRun)
+                    function Invoke-SyncGroupViaCaller {
+                        [CmdletBinding(SupportsShouldProcess)]
+                        param([PSCustomObject]$Item, [switch]$Prune)
+                        Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune
+                    }
+                    # -Confirm:$false only where asked: a real removal must never wait on a prompt.
+                    $Confirmation = @{}
+                    if ($NoConfirmRun) { $Confirmation.Confirm = $false }
+                    $Rows = @(Invoke-SyncGroupViaCaller -Item $Item -Prune:$PruneRun -WhatIf:$WhatIfRun @Confirmation `
+                            -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -WarningVariable LuoWarnings)
+                    [PSCustomObject]@{ Rows = $Rows; Warnings = @($LuoWarnings) }
+                }
+            }
+        }
+        BeforeEach {
+            $script:LuoOwners = @()
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            Mock -ModuleName $script:moduleName Resolve-OERGroupId { 'g-1' }
+            # An object id resolves to itself, as the real resolver returns an id verbatim.
+            Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal { param($Reference) $Reference }
+            Mock -ModuleName $script:moduleName Resolve-OERStructureDefault { $null }
+            Mock -ModuleName $script:moduleName Get-OERGroupPimPolicy { $null }
+            Mock -ModuleName $script:moduleName Add-OERGroupMember { }
+            Mock -ModuleName $script:moduleName Remove-OERGroupMember { }
+            Mock -ModuleName $script:moduleName Get-OERGroup {
+                [PSCustomObject]@{
+                    Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null
+                    Members = @(); Owners = $script:LuoOwners; PimEligibility = @()
+                }
+            }
+        }
+
+        It 'removes one of two user owners and refuses the last user owner with the measured reason' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'), (New-LuoOwner 'u-2' 'user'))
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }) -Prune -NoConfirm
+            @($Out.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            # Positive identity first: the first owner went, the last one was refused.
+            @($Out.Rows | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared owner 'u-1'" }).Count | Should -Be 1
+            $Refused = @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' })
+            $Refused.Count | Should -Be 1
+            $Refused[0].Detail | Should -BeExactly (Get-LuoUserOwnerText 'u-2')
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -ParameterFilter { $PrincipalId -eq 'u-1' -and $AccessType -eq 'owner' }
+            @($Out.Warnings | Where-Object { "$_" -eq "Sync-OERStructureGroup: removing undeclared owner 'u-1' from group 'role_sec_x'." }).Count | Should -Be 1
+            @($Out.Warnings | Where-Object { "$_" -match 'u-2' }).Count | Should -Be 0
+        }
+
+        It 'never removes a user owner while it is the last user owner and a service principal also owns the group, whichever is listed first' {
+            foreach ($Order in 'user first', 'service principal first') {
+                $User = New-LuoOwner 'u-1' 'user'
+                $Sp = New-LuoOwner 'sp-1' 'servicePrincipal'
+                $script:LuoOwners = if ($Order -eq 'user first') { @($User, $Sp) } else { @($Sp, $User) }
+                $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }) -Prune -NoConfirm
+                @($Out.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0 -Because "the $Order run reads the group"
+                # Positive identity first: both owners reached their guard, each Skipped once.
+                $UserRows = @($Out.Rows | Where-Object { $_.Detail -match "owner 'u-1'" })
+                $UserRows.Count | Should -Be 1
+                $UserRows[0].Action | Should -BeExactly 'Skipped'
+                $UserRows[0].Detail | Should -BeExactly (Get-LuoUserOwnerText 'u-1')
+                $SpRows = @($Out.Rows | Where-Object { $_.Detail -match "owner 'sp-1'" })
+                $SpRows.Count | Should -Be 1
+                $SpRows[0].Action | Should -BeExactly 'Skipped'
+                $SpRows[0].Detail | Should -BeExactly (Get-LuoSpOwnerText)
+                @($Out.Rows | Where-Object { $_.Action -in 'Removed', 'Failed' }).Count | Should -Be 0
+                # The guard stands before the warning and before ShouldProcess.
+                @($Out.Warnings).Count | Should -Be 0
+            }
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+        }
+
+        It 'plans the same under -WhatIf: Skipped with the reason, never would remove, and no request' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'), (New-LuoOwner 'sp-1' 'servicePrincipal'))
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }) -Prune -WhatIf
+            @($Out.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            $UserRows = @($Out.Rows | Where-Object { $_.Detail -match "owner 'u-1'" })
+            $UserRows.Count | Should -Be 1
+            $UserRows[0].Action | Should -BeExactly 'Skipped'
+            $UserRows[0].Detail | Should -BeExactly (Get-LuoUserOwnerText 'u-1')
+            @($Out.Rows | Where-Object { $_.Detail -like 'would remove*' }).Count | Should -Be 0
+            @($Out.Warnings | Where-Object { "$_" -match 'u-1' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+        }
+
+        It 'plans a removal for the first of two undeclared user owners and refuses the last, beside a service principal owner (the plan says what the run does)' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'), (New-LuoOwner 'u-2' 'user'), (New-LuoOwner 'sp-1' 'servicePrincipal'))
+            $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }
+            $Plan = Invoke-LuoSync -Item $Item -Prune -WhatIf
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            # Positive identity first: the first owner is planned, the last one refused, the service
+            # principal withheld, each once.
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq "would remove undeclared owner 'u-1'" }).Count | Should -Be 1
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq (Get-LuoUserOwnerText 'u-2') }).Count | Should -Be 1
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq (Get-LuoSpOwnerText) }).Count | Should -Be 1
+            @($Plan.Rows | Where-Object { $_.Action -ne 'Unchanged' }).Count | Should -Be 3
+            @($Plan.Warnings | Where-Object { "$_" -eq "Sync-OERStructureGroup: would remove undeclared owner 'u-1' from group 'role_sec_x'." }).Count | Should -Be 1
+            @($Plan.Warnings | Where-Object { "$_" -match 'u-2' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+            # The run of the same document does what the plan said: u-1 goes, u-2 is refused with the same text.
+            $Run = Invoke-LuoSync -Item $Item -Prune -NoConfirm
+            @($Run.Rows | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared owner 'u-1'" }).Count | Should -Be 1
+            @($Run.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq (Get-LuoUserOwnerText 'u-2') }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -ParameterFilter { $PrincipalId -eq 'u-1' -and $AccessType -eq 'owner' }
+        }
+
+        It 'plans a removal for two of three undeclared user owners and refuses the last, exactly as the run does' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'), (New-LuoOwner 'u-2' 'user'), (New-LuoOwner 'u-3' 'user'))
+            $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }
+            $Plan = Invoke-LuoSync -Item $Item -Prune -WhatIf
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like 'would remove undeclared owner*' }).Count | Should -Be 2
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq "would remove undeclared owner 'u-1'" }).Count | Should -Be 1
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq "would remove undeclared owner 'u-2'" }).Count | Should -Be 1
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq (Get-LuoUserOwnerText 'u-3') }).Count | Should -Be 1
+            @($Plan.Rows | Where-Object { $_.Action -ne 'Unchanged' }).Count | Should -Be 3
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+            # The same owners, the same document, a real run: the same owner is refused with the same
+            # text, and the owners the plan would remove are the owners the run removed.
+            $Run = Invoke-LuoSync -Item $Item -Prune -NoConfirm
+            @($Run.Rows | Where-Object { $_.Action -eq 'Removed' }).Count | Should -Be 2
+            @($Run.Rows | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared owner 'u-1'" }).Count | Should -Be 1
+            @($Run.Rows | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared owner 'u-2'" }).Count | Should -Be 1
+            @($Run.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq (Get-LuoUserOwnerText 'u-3') }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 2 -Exactly
+        }
+
+        It 'plans the any-type floor the same way for owners not typed user: the first is planned, the last refused' {
+            $script:LuoOwners = @((New-LuoOwner 'x-1' $null), (New-LuoOwner 'x-2' $null))
+            $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }
+            $AnyTypeText = "did not remove owner 'x-2': it is the last remaining owner of group 'role_sec_x', and this pass refuses to remove it (this is our own guard, not a Graph rejection). Microsoft Graph refuses to remove a group's last user owner (measured 2026-10-20), and this pass holds the last owner of any other type the same way, since what Graph does with one has not been measured."
+            $Plan = Invoke-LuoSync -Item $Item -Prune -WhatIf
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq "would remove undeclared owner 'x-1'" }).Count | Should -Be 1
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq $AnyTypeText }).Count | Should -Be 1
+            @($Plan.Rows | Where-Object { $_.Action -ne 'Unchanged' }).Count | Should -Be 2
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+            $Run = Invoke-LuoSync -Item $Item -Prune -NoConfirm
+            @($Run.Rows | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared owner 'x-1'" }).Count | Should -Be 1
+            @($Run.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq $AnyTypeText }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly
+        }
+
+        It 'leaves an owner standing whose removal was declined at the confirmation prompt: the next user owner is asked about, not refused' {
+            # A genuinely DECLINED prompt (ShouldProcess false while $WhatIfPreference is false) is a
+            # state only a runspace on an answering host reaches. The first prompt is answered No, the
+            # second Yes: u-1 stays, so u-2 is not the last user owner standing and is removed.
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Scenario = [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { 'g-luo' }
+    Set-Item -Path function:script:Resolve-OERStructurePrincipal -Value { param($Reference) $Reference }
+    Set-Item -Path function:script:Resolve-OERStructureDefault -Value { $null }
+    Set-Item -Path function:script:Get-OERGroupPimPolicy -Value { $null }
+    Set-Item -Path function:script:Get-OERGroup -Value {
+        [pscustomobject]@{ Id = 'g-luo'; DisplayName = 'grp-luo'; Description = $null; MailNickname = $null
+            GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @()
+            Owners = @([pscustomobject]@{ id = 'u-1'; ObjectType = 'user' }, [pscustomobject]@{ id = 'u-2'; ObjectType = 'user' },
+                [pscustomobject]@{ id = 'sp-1'; ObjectType = 'servicePrincipal' }) }
+    }
+    Set-Item -Path function:script:Read-OERGroupPimHold -Value { [pscustomobject]@{ Read = $true; Held = @{}; Cause = $null } }
+    Set-Item -Path function:script:Remove-OERGroupMember -Value { [System.IO.File]::AppendAllText('#LOG#', "remove $args`n") }
+    function script:Invoke-SyncGroupOwnerAsk {
+        [CmdletBinding(SupportsShouldProcess)]
+        param([PSCustomObject]$Item, [switch]$Prune)
+        Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune
+    }
+}
+$Item = '{ "displayName": "grp-luo", "owners": [] }' | ConvertFrom-Json
+& $Module { param($Item) Invoke-SyncGroupOwnerAsk -Item $Item -Prune -Confirm -WarningAction SilentlyContinue } $Item | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")))
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&No' -AnswerSequence '&No', '&Yes' -Script $Scenario
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Errors) | Should -BeNullOrEmpty
+            # Both user owners reached their question, in order: the guard did not answer for the second.
+            @($Run.Prompts).Count | Should -Be 2
+            $Run.Prompts[0] | Should -Match "Remove undeclared owner 'u-1'"
+            $Run.Prompts[1] | Should -Match "Remove undeclared owner 'u-2'"
+            # u-1 was declined: it is reported as it is for a plan, and nothing was sent for it.
+            @($Run.Output | Where-Object { $_ -ceq "ROW:Skipped:would remove undeclared owner 'u-1'" }).Count | Should -Be 1
+            @($Run.Output | Where-Object { $_ -ceq "ROW:Removed:removed undeclared owner 'u-2'" }).Count | Should -Be 1
+            @($Run.Output | Where-Object { $_ -like 'ROW:*:did not remove owner*' }).Count | Should -Be 0
+            $Lines = @(if (Test-Path -LiteralPath $Log) { Get-Content -LiteralPath $Log })
+            $Lines.Count | Should -Be 1
+            $Lines[0] | Should -BeLike 'remove *u-2*'
+        }
+
+        It 'reports both owners Extra without -Prune, as before' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'), (New-LuoOwner 'sp-1' 'servicePrincipal'))
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() })
+            $Extra = @($Out.Rows | Where-Object { $_.Action -eq 'Extra' })
+            $Extra.Count | Should -Be 2
+            @($Extra | Where-Object { $_.Detail -eq "undeclared owner 'u-1' (use -Prune to remove)" }).Count | Should -Be 1
+            @($Extra | Where-Object { $_.Detail -eq "undeclared owner 'sp-1' (a service principal, which -Prune leaves in place)" }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+        }
+
+        It 'removes an undeclared user owner while a declared user owner stands, beside a service principal owner' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'), (New-LuoOwner 'u-2' 'user'), (New-LuoOwner 'sp-1' 'servicePrincipal'))
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @('u-1') }) -Prune -NoConfirm
+            @($Out.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            @($Out.Rows | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "owner 'u-1' already present" }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared owner 'u-2'" }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq (Get-LuoSpOwnerText) }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Detail -like 'did not remove owner*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -ParameterFilter { $PrincipalId -eq 'u-2' -and $AccessType -eq 'owner' }
+        }
+
+        It 'decrements the user owners still standing after each removal: of three user owners the last is refused' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'), (New-LuoOwner 'u-2' 'user'), (New-LuoOwner 'u-3' 'user'), (New-LuoOwner 'sp-1' 'servicePrincipal'))
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }) -Prune -NoConfirm
+            @($Out.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            @($Out.Rows | Where-Object { $_.Action -eq 'Removed' }).Count | Should -Be 2
+            @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq (Get-LuoUserOwnerText 'u-3') }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 2 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly -ParameterFilter { $PrincipalId -eq 'u-3' }
+        }
+
+        It 'counts only a removal that went through: a refused removal leaves its user owner standing for the next one' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'), (New-LuoOwner 'u-2' 'user'), (New-LuoOwner 'sp-1' 'servicePrincipal'))
+            # The shape the real cmdlet fails in: a [CmdletBinding()] body that writes its record through
+            # $PSCmdlet.WriteError, which the handler's -ErrorAction Stop promotes. An exact filter of
+            # its own, with the default mock kept for every other owner.
+            Mock -ModuleName $script:moduleName Remove-OERGroupMember {
+                [CmdletBinding()] param($Group, $PrincipalId, $AccessType, [switch]$Confirm)
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Graph 403 Forbidden: removal denied'), 'OwnerRemovalDenied',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $PrincipalId))
+            } -ParameterFilter { $PrincipalId -eq 'u-1' }
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }) -Prune -NoConfirm
+            # Positive identity first: the removal of u-1 was attempted and is the one Failed row.
+            $Failed = @($Out.Rows | Where-Object { $_.Action -eq 'Failed' })
+            $Failed.Count | Should -Be 1
+            $Failed[0].Detail | Should -BeLike "failed to remove owner 'u-1': *removal denied*"
+            # u-1 still stands, so u-2 is not the last user owner and is removed.
+            @($Out.Rows | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared owner 'u-2'" }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Detail -like 'did not remove owner*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 2 -Exactly
+        }
+
+        It 'reads the owner type without regard to letter case' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'User'), (New-LuoOwner 'sp-1' 'servicePrincipal'))
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }) -Prune -NoConfirm
+            @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq (Get-LuoUserOwnerText 'u-1') }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+        }
+
+        It 'keeps the any-type floor for a last owner whose type is not known to be a user, with a text that no longer waits on a verification' {
+            $script:LuoOwners = @((New-LuoOwner 'o-1' $null))
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }) -Prune -NoConfirm
+            $Refused = @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' })
+            $Refused.Count | Should -Be 1
+            $Refused[0].Detail | Should -BeExactly "did not remove owner 'o-1': it is the last remaining owner of group 'role_sec_x', and this pass refuses to remove it (this is our own guard, not a Graph rejection). Microsoft Graph refuses to remove a group's last user owner (measured 2026-10-20), and this pass holds the last owner of any other type the same way, since what Graph does with one has not been measured."
+            $Refused[0].Detail | Should -Not -Match 'pending live verification'
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+        }
+
+        It 'counts only owners typed user as user owners: an untyped owner beside the last user owner does not stand in for it' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'), (New-LuoOwner 'x-1' $null))
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }) -Prune -NoConfirm
+            @($Out.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            # The user owner is refused, and the untyped one is not a user owner, so only the any-type
+            # floor applies to it and u-1 still stands.
+            @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq (Get-LuoUserOwnerText 'u-1') }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared owner 'x-1'" }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -ParameterFilter { $PrincipalId -eq 'x-1' -and $AccessType -eq 'owner' }
+        }
+
+        # Final review of Sprint 11 step 11, Important 2 (probe P1): an owner the add pass added in the
+        # same run stands as much as one the read found, so it counts for both floors -- always for the
+        # any-type floor, and for the user-owner floor when the declared-owner resolution knows it is a
+        # user, which it does for a reference with an at sign (Resolve-OERStructurePrincipal resolves
+        # that as a user principal name). An object id names no type, so such an owner counts for the
+        # any-type floor only (the conservative reading). A -WhatIf plan counts an owner it reports
+        # "would add"; a failed add, and one declined at the confirmation prompt, count nowhere.
+        It 'swaps a user owner for a declared user in one run beside a service principal owner: adds the new one, then removes the old one' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'), (New-LuoOwner 'sp-1' 'servicePrincipal'))
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @('person2@example.com') }) -Prune -NoConfirm
+            @($Out.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            @($Out.Rows | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -eq "added owner 'person2@example.com'" }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared owner 'u-1'" }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq (Get-LuoSpOwnerText) }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Detail -like 'did not remove owner*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 1 -Exactly -ParameterFilter { $PrincipalId -eq 'person2@example.com' -and $AccessType -eq 'owner' }
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -ParameterFilter { $PrincipalId -eq 'u-1' -and $AccessType -eq 'owner' }
+        }
+
+        It 'plans the same swap under -WhatIf: would add the new owner and would remove the old one, with no request' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'), (New-LuoOwner 'sp-1' 'servicePrincipal'))
+            $Plan = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @('person2@example.com') }) -Prune -WhatIf
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq "would add owner 'person2@example.com'" }).Count | Should -Be 1
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq "would remove undeclared owner 'u-1'" }).Count | Should -Be 1
+            @($Plan.Rows | Where-Object { $_.Detail -like 'did not remove owner*' }).Count | Should -Be 0
+            @($Plan.Warnings | Where-Object { "$_" -eq "Sync-OERStructureGroup: would remove undeclared owner 'u-1' from group 'role_sec_x'." }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 0 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+        }
+
+        It 'swaps a single owner in one run: the declared user is added and the only live owner removed' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'))
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @('person2@example.com') }) -Prune -NoConfirm
+            @($Out.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            @($Out.Rows | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -eq "added owner 'person2@example.com'" }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared owner 'u-1'" }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Detail -like 'did not remove owner*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -ParameterFilter { $PrincipalId -eq 'u-1' -and $AccessType -eq 'owner' }
+        }
+
+        It 'swaps a single owner of no known type for an owner named by object id in one run: the added owner counts for the any-type floor' {
+            $script:LuoOwners = @((New-LuoOwner 'x-1' $null))
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @('o-2') }) -Prune -NoConfirm
+            @($Out.Rows | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -eq "added owner 'o-2'" }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared owner 'x-1'" }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Detail -like 'did not remove owner*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly
+        }
+
+        It 'counts an added owner named by object id for the any-type floor only: the last user owner is still refused' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'))
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @('o-2') }) -Prune -NoConfirm
+            @($Out.Rows | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -eq "added owner 'o-2'" }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq (Get-LuoUserOwnerText 'u-1') }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+        }
+
+        It 'keeps the old owner when the add of the new one fails: the failed add counts nowhere and the floor text says why' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'), (New-LuoOwner 'sp-1' 'servicePrincipal'))
+            # The shape the real cmdlet fails in, with an exact filter of its own and the default mock kept.
+            Mock -ModuleName $script:moduleName Add-OERGroupMember {
+                [CmdletBinding()] param($Group, $PrincipalId, $AccessType, [switch]$Confirm)
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Graph 403 Forbidden: owner add denied'), 'OwnerAddDenied',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $PrincipalId))
+            } -ParameterFilter { $PrincipalId -eq 'person2@example.com' }
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @('person2@example.com') }) -Prune -NoConfirm
+            # Positive identity first: the add was attempted and is the one Failed row.
+            $Failed = @($Out.Rows | Where-Object { $_.Action -eq 'Failed' })
+            $Failed.Count | Should -Be 1
+            $Failed[0].Detail | Should -BeLike "failed to add owner 'person2@example.com': *owner add denied*"
+            @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq (Get-LuoUserOwnerText 'u-1') }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+        }
+
+        It 'keeps the old owner when the add is declined at the confirmation prompt, and removes it when the add is confirmed (<Answer>)' -ForEach @(
+            @{ Answer = 'the add declined'; Sequence = @('&No'); Prompts = 1; Added = 0; Removed = 0 }
+            @{ Answer = 'the add and the removal confirmed'; Sequence = @('&Yes', '&Yes'); Prompts = 2; Added = 1; Removed = 1 }
+        ) {
+            # A genuinely DECLINED prompt (ShouldProcess false while $WhatIfPreference is false) is a state
+            # only a runspace on an answering host reaches.
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Scenario = [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { 'g-luo' }
+    Set-Item -Path function:script:Resolve-OERStructurePrincipal -Value { param($Reference) $Reference }
+    Set-Item -Path function:script:Resolve-OERStructureDefault -Value { $null }
+    Set-Item -Path function:script:Get-OERGroupPimPolicy -Value { $null }
+    Set-Item -Path function:script:Get-OERGroup -Value {
+        [pscustomobject]@{ Id = 'g-luo'; DisplayName = 'grp-luo'; Description = $null; MailNickname = $null
+            GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @()
+            Owners = @([pscustomobject]@{ id = 'u-1'; ObjectType = 'user' }, [pscustomobject]@{ id = 'sp-1'; ObjectType = 'servicePrincipal' }) }
+    }
+    Set-Item -Path function:script:Read-OERGroupPimHold -Value { [pscustomobject]@{ Read = $true; Held = @{}; Cause = $null } }
+    Set-Item -Path function:script:Add-OERGroupMember -Value { [System.IO.File]::AppendAllText('#LOG#', "add $args`n") }
+    Set-Item -Path function:script:Remove-OERGroupMember -Value { [System.IO.File]::AppendAllText('#LOG#', "remove $args`n") }
+    function script:Invoke-SyncGroupOwnerAsk {
+        [CmdletBinding(SupportsShouldProcess)]
+        param([PSCustomObject]$Item, [switch]$Prune)
+        Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune
+    }
+}
+$Item = '{ "displayName": "grp-luo", "owners": [ "person2@example.com" ] }' | ConvertFrom-Json
+& $Module { param($Item) Invoke-SyncGroupOwnerAsk -Item $Item -Prune -Confirm -WarningAction SilentlyContinue } $Item | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")))
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&No' -AnswerSequence $Sequence -Script $Scenario
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Errors) | Should -BeNullOrEmpty
+            # Reached: the add was asked about first.
+            @($Run.Prompts).Count | Should -Be $Prompts
+            $Run.Prompts[0] | Should -Match "Add owner 'person2@example.com'"
+            $Lines = @(if (Test-Path -LiteralPath $Log) { Get-Content -LiteralPath $Log })
+            @($Lines | Where-Object { $_ -like 'add *' }).Count | Should -Be $Added
+            @($Lines | Where-Object { $_ -like 'remove *' }).Count | Should -Be $Removed
+            if ($Added -eq 0) {
+                # Declined: reported as for a plan, nothing sent, and u-1 is still the last user owner.
+                @($Run.Output | Where-Object { $_ -ceq "ROW:Skipped:would add owner 'person2@example.com'" }).Count | Should -Be 1
+                @($Run.Output | Where-Object { $_ -ceq ('ROW:Skipped:' + ((Get-LuoUserOwnerText 'u-1') -replace 'role_sec_x', 'grp-luo')) }).Count | Should -Be 1
+            } else {
+                $Run.Prompts[1] | Should -Match "Remove undeclared owner 'u-1'"
+                @($Run.Output | Where-Object { $_ -ceq "ROW:Updated:added owner 'person2@example.com'" }).Count | Should -Be 1
+                @($Run.Output | Where-Object { $_ -ceq "ROW:Removed:removed undeclared owner 'u-1'" }).Count | Should -Be 1
+                @($Run.Output | Where-Object { $_ -like 'ROW:*:did not remove owner*' }).Count | Should -Be 0
             }
         }
     }
@@ -3203,6 +3642,497 @@ Describe 'Sync-OERStructureGroup' {
         }
     }
 
+    # BL-40 sweep (Sprint 11 step 11, ruling R-2): step 4 reads the live policy of an access type with
+    # Get-OERGroupPimPolicy -ErrorAction Stop (for an existing group, and for a new group whose wait
+    # fell through to the direct read), and the catch swallowed the failure. The read stayed $null, the
+    # diff took every declared field as changed and DEFAULTED the undeclared half of a duration pair
+    # (eligibleDurationDays without allowPermanentEligibility -> not permanent; allowPermanentEligibility
+    # without eligibleDurationDays -> 365 days; activeDurationDays / allowPermanentActive -> not permanent
+    # / 180 days), and Set-OERGroupPimPolicy, given both halves, skipped its own carry-forward from the
+    # live policy -- so it overwrote live values the document never declared. Under -WhatIf the plan said
+    # "would set pimPolicy" with no error. A read that fails, or that answers with no policy and no error,
+    # is now one Failed row for THAT access type, with the read's own record, before the diff, the
+    # PIM-in-use question and ShouldProcess; the other access type is processed as usual.
+    #
+    # The calls below carry NO -ErrorAction: any -ErrorAction on the wrapper sets the preference in the
+    # wrapper's scope and shadows the global one the module reads. The global preference is pinned to
+    # Continue instead, so the proof does not depend on the preference the runner carries.
+    Context 'a failed or empty read of the live pimPolicy never feeds a write (BL-40)' {
+        BeforeAll {
+            InModuleScope $script:moduleName {
+                function script:Invoke-SyncPimReadViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet
+                }
+            }
+            # Installs, for the current It, the answers of the live policy read: the OWNER read always
+            # answers with a live policy (so the other access type can be seen processed), and the MEMBER
+            # read answers as the case names.
+            function script:Set-PimReadFailure {
+                param([string]$Failure)
+                InModuleScope $script:moduleName -Parameters @{ Failure = $Failure } {
+                    param($Failure)
+                    switch ($Failure) {
+                        'NonTerminatingReal' {
+                            # The REAL Get-OERGroupPimPolicy runs: the policy assignment lookup of the
+                            # member side is refused, so the cmdlet's own Write-CmdletError publishes
+                            # PimPolicyReadFailed, non-terminating; the owner side reads an empty rule set.
+                            Mock Get-OERPimGroupPolicyId {
+                                $script:PimReadLog.Add("READ $AccessType")
+                                'pol-owner'
+                            }
+                            Mock Get-OERPimGroupPolicyId -ParameterFilter { $AccessType -eq 'member' } {
+                                $script:PimReadLog.Add('READ member')
+                                throw 'Graph 403 Forbidden'
+                            }
+                            Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                        }
+                        default {
+                            # AllowPermanentEligibility is true, not the diff's default (false), so the
+                            # control below can tell the live half carried from a defaulted one.
+                            Mock Get-OERGroupPimPolicy {
+                                $script:PimReadLog.Add("READ $AccessType")
+                                [PSCustomObject]@{ PolicyId = 'pol-live'; ActivationMaxHours = 8; AuthenticationContextId = $null; ActivationEnabledRules = @()
+                                    AllowPermanentEligibility = $true; EligibleDurationDays = 365; AllowPermanentActive = $false; ActiveDurationDays = 180
+                                    ActiveEnabledRules = @(); Notifications = [PSCustomObject]@{ EligibleAlert = @(); ActiveAlert = @(); ActivationAlert = @() } }
+                            }
+                        }
+                    }
+                    switch ($Failure) {
+                        'NonTerminatingMock' {
+                            # The shape the real cmdlet fails in: a [CmdletBinding()] body that writes its
+                            # record through $PSCmdlet.WriteError and returns nothing.
+                            Mock Get-OERGroupPimPolicy -ParameterFilter { $AccessType -eq 'member' } {
+                                [CmdletBinding()] param($Group, $AccessType, $TenantId)
+                                $script:PimReadLog.Add('READ member')
+                                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                                        [System.Exception]::new('Graph 403 Forbidden: policy read denied'), 'PimPolicyReadFailed',
+                                        [System.Management.Automation.ErrorCategory]::ReadError, $Group))
+                            }
+                        }
+                        'Terminating' {
+                            Mock Get-OERGroupPimPolicy -ParameterFilter { $AccessType -eq 'member' } {
+                                $script:PimReadLog.Add('READ member')
+                                throw [System.Management.Automation.ErrorRecord]::new(
+                                    [System.Exception]::new('Graph 503 ServiceUnavailable'), 'GraphServiceUnavailable',
+                                    [System.Management.Automation.ErrorCategory]::ReadError, 'g-1')
+                            }
+                        }
+                        'NoObject' {
+                            # No error and no object: the live policy is just as unknown.
+                            Mock Get-OERGroupPimPolicy -ParameterFilter { $AccessType -eq 'member' } {
+                                $script:PimReadLog.Add('READ member')
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        # One case per read failure and per mode. Built here, in the Context body, since -ForEach reads
+        # its data at discovery, before any BeforeAll has run.
+        $PimReadShapes = @(
+            @{ Name = 'the read fails non-terminating'; Failure = 'NonTerminatingMock'; ErrorId = 'PimPolicyReadFailed'; Category = 'ReadError'
+                Message = 'Graph 403 Forbidden: policy read denied'; Reason = 'Graph 403 Forbidden: policy read denied' }
+            @{ Name = 'the real cmdlet fails its read non-terminating'; Failure = 'NonTerminatingReal'; ErrorId = 'PimPolicyReadFailed'; Category = 'ReadError'
+                Message = ("Could not read the PIM-for-groups policy assignment for group 'g-1' ('member' access): Graph 403 Forbidden. " +
+                    'Whether this group has a policy is UNKNOWN, which is not the same as the group having none, so no policy is reported for it.')
+                Reason = ("Could not read the PIM-for-groups policy assignment for group 'g-1' ('member' access): Graph 403 Forbidden. " +
+                    'Whether this group has a policy is UNKNOWN, which is not the same as the group having none, so no policy is reported for it.') }
+            @{ Name = 'the read fails terminating'; Failure = 'Terminating'; ErrorId = 'GraphServiceUnavailable'; Category = 'ReadError'
+                Message = 'Graph 503 ServiceUnavailable'; Reason = 'Graph 503 ServiceUnavailable' }
+            @{ Name = 'the read returns no policy and no error'; Failure = 'NoObject'; ErrorId = 'PimPolicyNotFound'; Category = 'ObjectNotFound'
+                Message = ("Get-OERGroupPimPolicy returned no PIM-for-groups policy for 'member' access on group 'role_sec_x' and no error, " +
+                    "so the live policy is unknown. Nothing was changed for 'member'.")
+                Reason = 'Get-OERGroupPimPolicy returned no policy and no error' }
+        )
+        $PimReadCases = foreach ($ModeCase in @(@{ Mode = 'a real run'; WhatIf = $false }, @{ Mode = 'a -WhatIf plan'; WhatIf = $true })) {
+            foreach ($Shape in $PimReadShapes) { $Shape + $ModeCase }
+        }
+        BeforeEach {
+            $script:PimReadSavedPreference = $global:ErrorActionPreference
+            $global:ErrorActionPreference = 'Continue'
+            InModuleScope $script:moduleName {
+                $script:PimReadLog = [System.Collections.Generic.List[string]]::new()
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERGroupId { 'g-1' }
+                Mock Get-OERGroup { [PSCustomObject]@{ Id = 'g-1'; Description = $null; MailNickname = $null; Members = @(); PimEligibility = @() } }
+                Mock Set-OERGroupPimPolicy {
+                    $script:PimReadLog.Add("SET $AccessType")
+                    [PSCustomObject]@{ Applied = $true; FailedRules = @() }
+                }
+            }
+        }
+        AfterEach {
+            $global:ErrorActionPreference = $script:PimReadSavedPreference
+        }
+
+        It 'fails only the access type whose live policy could not be read, writes nothing for it and processes the other one, when <Name> (<Mode>)' -ForEach $PimReadCases {
+            Set-PimReadFailure -Failure $Failure
+            $Result = InModuleScope $script:moduleName -Parameters @{ WhatIf = $WhatIf } {
+                param($WhatIf)
+                # Only eligibleDurationDays of the expiration pair is declared: a read taken as $null
+                # defaulted allowPermanentEligibility to false and sent both halves.
+                $Item = '{ "displayName": "role_sec_x", "pimPolicy": { "member": { "eligibleDurationDays": 90 }, "owner": { "activationMaxHours": 4 } } }' | ConvertFrom-Json
+                $Switches = if ($WhatIf) { @{ WhatIf = $true } } else { @{ Confirm = $false } }
+                $Rows = @(Invoke-SyncPimReadViaCaller -Item $Item @Switches -ErrorVariable Err 2>$null)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err); Log = @($script:PimReadLog) }
+            }
+
+            # The member access type: one Failed row carrying the read's record, and nothing else about it.
+            $Member = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy (member)*' })
+            $Member.Count | Should -Be 1
+            $Member[0].Section | Should -BeExactly 'groups'
+            $Member[0].Item | Should -BeExactly 'role_sec_x'
+            $Member[0].Action | Should -BeExactly 'Failed'
+            $Member[0].Detail | Should -BeExactly "pimPolicy (member) not applied: could not read the live PIM-for-groups policy: $Reason; nothing was changed for 'member'"
+            [string]$Member[0].Error.FullyQualifiedErrorId | Should -BeLike "$ErrorId,*"
+            $Member[0].Error.Exception.Message | Should -BeExactly $Message
+            # Written once through the caller. -ErrorVariable also holds the inner layers' records, so
+            # the handler's own is counted by the suffix the caller's WriteError gives its id.
+            $Own = @($Result.Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncPimReadViaCaller' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -BeExactly "$ErrorId,Invoke-SyncPimReadViaCaller"
+            [string]$Own[0].CategoryInfo.Category | Should -BeExactly $Category
+            $Own[0].Exception.Message | Should -BeExactly $Message
+            if ($Failure -eq 'NoObject') { $Own[0].TargetObject | Should -BeExactly 'role_sec_x' }
+            # Reached: the member policy was read once. Nothing was written for it, whatever the mode.
+            @($Result.Log | Where-Object { $_ -eq 'READ member' }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 0 -Exactly -ParameterFilter { $AccessType -eq 'member' }
+
+            # The owner access type is still processed: written in a real run, planned under -WhatIf.
+            $Owner = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy (owner)*' })
+            $Owner.Count | Should -Be 1
+            @($Result.Log | Where-Object { $_ -eq 'READ owner' }).Count | Should -Be 1
+            # The two pimPolicy rows are the only ones about the policy; the group row is not one of them.
+            @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy*' }).Count | Should -Be 2
+            if ($WhatIf) {
+                $Owner[0].Action | Should -BeExactly 'Skipped'
+                $Owner[0].Detail | Should -BeLike 'would set pimPolicy (owner): *'
+                Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 0 -Exactly
+            } else {
+                $Owner[0].Action | Should -BeExactly 'Updated'
+                $Owner[0].Detail | Should -BeLike 'pimPolicy (owner) set: *'
+                Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly
+                Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter { $AccessType -eq 'owner' -and $ActivationMaxHours -eq 4 }
+            }
+        }
+
+        It 'sends the declared half and lets the live policy carry the other when the read answers, so the case can tell a refusal from silence' {
+            Set-PimReadFailure -Failure 'None'
+            $Result = InModuleScope $script:moduleName {
+                $Item = '{ "displayName": "role_sec_x", "pimPolicy": { "member": { "eligibleDurationDays": 90 } } }' | ConvertFrom-Json
+                $Rows = @(Invoke-SyncPimReadViaCaller -Item $Item -Confirm:$false -ErrorVariable Err 2>$null)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err); Log = @($script:PimReadLog) }
+            }
+            $PolicyRows = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy*' })
+            @($PolicyRows.Action) | Should -Be @('Updated')
+            $PolicyRows[0].Detail | Should -BeLike 'pimPolicy (member) set: *'
+            @($Result.Err).Count | Should -Be 0
+            @($Result.Log | Where-Object { $_ -eq 'READ member' }).Count | Should -Be 1
+            # The undeclared half is the live policy's (true), not the diff's default for no policy (false).
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter {
+                $AccessType -eq 'member' -and $EligibleDuration -eq 90 -and
+                $PesterBoundParameters.ContainsKey('AllowPermanentEligibility') -and $AllowPermanentEligibility -eq $true
+            }
+        }
+
+        It 'fails an entry declaring only activeDurationDays of the active pair, and never asks the PIM-in-use question, when the read fails' {
+            Set-PimReadFailure -Failure 'NonTerminatingMock'
+            $Result = InModuleScope $script:moduleName {
+                $Item = '{ "displayName": "role_sec_x", "pimPolicy": { "member": { "activeDurationDays": 30 } } }' | ConvertFrom-Json
+                $Rows = @(Invoke-SyncPimReadViaCaller -Item $Item -Confirm:$false -ErrorVariable Err -WarningVariable Warn -WarningAction SilentlyContinue 2>$null)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err); Warn = @($Warn); Log = @($script:PimReadLog) }
+            }
+            $PolicyRows = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy*' })
+            @($PolicyRows.Action) | Should -Be @('Failed')
+            $PolicyRows[0].Detail | Should -Be "pimPolicy (member) not applied: could not read the live PIM-for-groups policy: Graph 403 Forbidden: policy read denied; nothing was changed for 'member'"
+            @($Result.Log | Where-Object { $_ -eq 'READ member' }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 0 -Exactly
+            # Before the PIM-in-use question, which would warn about onboarding the group.
+            Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 0 -Exactly
+            @($Result.Warn).Count | Should -Be 0
+        }
+
+        It 'writes no MFA / authentication context warning for an access type whose live policy could not be read, in a real run and under -WhatIf' -ForEach @(
+            @{ Mode = 'a real run'; WhatIf = $false }
+            @{ Mode = 'a -WhatIf plan'; WhatIf = $true }
+        ) {
+            Set-PimReadFailure -Failure 'NonTerminatingMock'
+            $Result = InModuleScope $script:moduleName -Parameters @{ WhatIf = $WhatIf } {
+                param($WhatIf)
+                # Both sides of the pair declared: with the read taken as "no policy" the diff reconciled
+                # them and the handler warned "pimPolicy (member) of group ...: mfa cleared ...".
+                $Item = ('{ "displayName": "role_sec_x", "pimPolicy": { "member": { "authenticationContextId": "c1", ' +
+                    '"activationEnablement": [ "MultiFactorAuthentication", "Justification" ] } } }') | ConvertFrom-Json
+                $Switches = if ($WhatIf) { @{ WhatIf = $true } } else { @{ Confirm = $false } }
+                $Rows = @(Invoke-SyncPimReadViaCaller -Item $Item @Switches -ErrorVariable Err -WarningVariable Warn -WarningAction SilentlyContinue 2>$null)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err); Warn = @($Warn); Log = @($script:PimReadLog) }
+            }
+            $PolicyRows = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy*' })
+            @($PolicyRows.Action) | Should -Be @('Failed')
+            @($Result.Log | Where-Object { $_ -eq 'READ member' }).Count | Should -Be 1
+            @($Result.Warn).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 0 -Exactly
+        }
+
+        It 'fails the access type of a group created in this run whose wait fell through to the direct read, when <Name>' -ForEach @(
+            @{ Name = 'the read fails non-terminating'; Failure = 'NonTerminatingMock'; ErrorId = 'PimPolicyReadFailed'; Reason = 'Graph 403 Forbidden: policy read denied' }
+            @{ Name = 'the read returns no policy and no error'; Failure = 'NoObject'; ErrorId = 'PimPolicyNotFound'; Reason = 'Get-OERGroupPimPolicy returned no policy and no error' }
+        ) {
+            Set-PimReadFailure -Failure $Failure
+            $Result = InModuleScope $script:moduleName {
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x' } }
+                Mock Start-Sleep { }
+                Mock Get-OERListedGroupPimPolicy { throw 'the wait must not read a policy it was refused a listing for' }
+                # A refused listing stops the wait at once (no sleep) and falls through to the direct read.
+                Mock Get-OERPimGroupPolicyId { throw 'Graph 403 Forbidden: listing refused' }
+                $Item = '{ "displayName": "role_sec_x", "pimPolicy": { "member": { "eligibleDurationDays": 90 } } }' | ConvertFrom-Json
+                $Rows = @(Invoke-SyncPimReadViaCaller -Item $Item -Confirm:$false -ErrorVariable Err 2>$null)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err); Log = @($script:PimReadLog) }
+            }
+            # Reached: the group was created, the listing was asked once, and the direct read was made.
+            @($Result.Rows | Where-Object { $_.Action -eq 'Created' }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Get-OERPimGroupPolicyId -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Start-Sleep -Times 0 -Exactly
+            @($Result.Log | Where-Object { $_ -eq 'READ member' }).Count | Should -Be 1
+            $Failed = @($Result.Rows | Where-Object { $_.Action -eq 'Failed' })
+            $Failed.Count | Should -Be 1
+            $Failed[0].Detail | Should -BeExactly "pimPolicy (member) not applied: could not read the live PIM-for-groups policy: $Reason; nothing was changed for 'member'"
+            [string]$Failed[0].Error.FullyQualifiedErrorId | Should -BeLike "$ErrorId,*"
+            @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy (member) set*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 0 -Exactly
+        }
+
+        It 'scrubs a failed policy read before it publishes it as itself' {
+            Set-PimReadFailure -Failure 'NonTerminatingMock'
+            InModuleScope $script:moduleName {
+                Mock Remove-OERErrorRecord { }
+                $Item = '{ "displayName": "role_sec_x", "pimPolicy": { "member": { "eligibleDurationDays": 90 } } }' | ConvertFrom-Json
+                $null = @(Invoke-SyncPimReadViaCaller -Item $Item -Confirm:$false -ErrorVariable Err 2>$null)
+                # Reached: the handler published the record as itself.
+                @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'PimPolicyReadFailed,Invoke-SyncPimReadViaCaller' }).Count | Should -Be 1
+                # A prefix match: $Caller.WriteError appends ',<command>' to this same record, in place,
+                # before the filter is evaluated.
+                Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                    $Record -and [string]$Record.FullyQualifiedErrorId -like 'PimPolicyReadFailed*' -and
+                    $Record.Exception.Message -eq 'Graph 403 Forbidden: policy read denied'
+                }
+            }
+        }
+    }
+
+    # Final review of Sprint 11 step 11, Important 1: a policy read can SUCCEED and still give no value
+    # for one half of an expiration pair -- the rules list answered empty, the expiration rule absent, its
+    # isExpirationRequired missing, or a maximumDuration that is not a positive whole number of days. When
+    # the document declares only the other half, the diff used to fill this one with a default (not
+    # permanent, 365 or 180 days) and bind both, and Set-OERGroupPimPolicy sent the guess without a read
+    # of its own (probes P2 and P3). Now the diff names the pair (UnknownLiveValues) and the handler
+    # refuses THAT access type before the PIM-in-use question and ShouldProcess, in a real run and under
+    # -WhatIf alike: one Failed row with a PimRuleValueUnknown record, nothing written for it, and the
+    # other access type processed as usual. The live member policy is projected by the REAL converter
+    # from the rules each case names; the owner policy is complete. The global error preference is
+    # pinned to Continue, as in the BL-40 Context above.
+    Context 'an undeclared half of an expiration pair whose live value is unknown refuses the access type (final review, Important 1)' {
+        BeforeAll {
+            InModuleScope $script:moduleName {
+                function script:Invoke-SyncPuViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet
+                }
+            }
+            function script:Get-PuRecordMessage {
+                param([string]$Entry)
+                "pimPolicy (member) of group 'role_sec_x' was not applied: $Entry. A value the document leaves out is taken from the live policy, never from a default, so nothing was changed for 'member'. Declare both values of the pair in the document."
+            }
+            function script:Get-PuRowDetail {
+                param([string]$Entry)
+                "pimPolicy (member) not applied: a value the document leaves to the live policy is unknown (PimRuleValueUnknown): $Entry; nothing was changed for 'member'. Declare both values of the pair in the document."
+            }
+        }
+        # Built here, in the Context body, since -ForEach reads its data at discovery.
+        $PuEligNone = 'allowPermanentEligibility is declared without eligibleDurationDays, and the live eligible assignment expiration (Expiration_Admin_Eligibility maximumDuration) is unknown: the read returned no value for it'
+        $PuEligPerm = 'eligibleDurationDays is declared without allowPermanentEligibility, and whether the live policy allows permanent eligible assignment (Expiration_Admin_Eligibility isExpirationRequired) is unknown: the read returned no value for it'
+        $PuActNone = 'allowPermanentActive is declared without activeDurationDays, and the live active assignment expiration (Expiration_Admin_Assignment maximumDuration) is unknown: the read returned no value for it'
+        $PuActPerm = 'activeDurationDays is declared without allowPermanentActive, and whether the live policy allows permanent active assignment (Expiration_Admin_Assignment isExpirationRequired) is unknown: the read returned no value for it'
+        $PuShapes = @(
+            @{ Name = 'allowPermanentEligibility alone over an empty rules list'; Declared = '"allowPermanentEligibility": false'; Rules = 'Empty'; Entry = $PuEligNone }
+            @{ Name = 'allowPermanentEligibility alone with the rule absent'; Declared = '"allowPermanentEligibility": true'; Rules = 'Absent'; Entry = $PuEligNone }
+            @{ Name = 'allowPermanentEligibility alone over a maximumDuration of PT36H'; Declared = '"allowPermanentEligibility": true'; Rules = 'Expiration_Admin_Eligibility:PT36H'
+                Entry = "allowPermanentEligibility is declared without eligibleDurationDays, and the live eligible assignment expiration (Expiration_Admin_Eligibility maximumDuration) is unknown: it reads 'PT36H', which is not a positive whole number of days" }
+            @{ Name = 'eligibleDurationDays alone over an empty rules list'; Declared = '"eligibleDurationDays": 90'; Rules = 'Empty'; Entry = $PuEligPerm }
+            @{ Name = 'eligibleDurationDays alone with the rule absent'; Declared = '"eligibleDurationDays": 90'; Rules = 'Absent'; Entry = $PuEligPerm }
+            @{ Name = 'eligibleDurationDays alone over a rule without isExpirationRequired'; Declared = '"eligibleDurationDays": 30'; Rules = 'Expiration_Admin_Eligibility:NoRequired'; Entry = $PuEligPerm }
+            @{ Name = 'allowPermanentActive alone over an empty rules list'; Declared = '"allowPermanentActive": false'; Rules = 'Empty'; Entry = $PuActNone }
+            @{ Name = 'allowPermanentActive alone with the rule absent'; Declared = '"allowPermanentActive": true'; Rules = 'Absent'; Entry = $PuActNone }
+            @{ Name = 'allowPermanentActive alone over a maximumDuration of PT36H'; Declared = '"allowPermanentActive": true'; Rules = 'Expiration_Admin_Assignment:PT36H'
+                Entry = "allowPermanentActive is declared without activeDurationDays, and the live active assignment expiration (Expiration_Admin_Assignment maximumDuration) is unknown: it reads 'PT36H', which is not a positive whole number of days" }
+            @{ Name = 'activeDurationDays alone over an empty rules list'; Declared = '"activeDurationDays": 90'; Rules = 'Empty'; Entry = $PuActPerm }
+            @{ Name = 'activeDurationDays alone with the rule absent'; Declared = '"activeDurationDays": 90'; Rules = 'Absent'; Entry = $PuActPerm }
+            @{ Name = 'activeDurationDays alone over a rule without isExpirationRequired'; Declared = '"activeDurationDays": 30'; Rules = 'Expiration_Admin_Assignment:NoRequired'; Entry = $PuActPerm }
+        )
+        $PuCases = foreach ($ModeCase in @(@{ Mode = 'a real run'; WhatIf = $false }, @{ Mode = 'a -WhatIf plan'; WhatIf = $true })) {
+            foreach ($Shape in $PuShapes) { $Shape + $ModeCase }
+        }
+        BeforeEach {
+            $script:PuSavedPreference = $global:ErrorActionPreference
+            $global:ErrorActionPreference = 'Continue'
+            InModuleScope $script:moduleName {
+                $script:PuLog = [System.Collections.Generic.List[string]]::new()
+                $script:PuRules = 'Empty'
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERGroupId { 'g-1' }
+                Mock Get-OERGroup { [PSCustomObject]@{ Id = 'g-1'; Description = $null; MailNickname = $null; Members = @(); PimEligibility = @() } }
+                Mock Get-OERGroupPimPolicy {
+                    $script:PuLog.Add("READ $AccessType")
+                    if ($AccessType -eq 'owner') {
+                        return [PSCustomObject]@{ PolicyId = 'pol-owner'; ActivationMaxHours = 8; AuthenticationContextId = $null; ActivationEnabledRules = @()
+                            AllowPermanentEligibility = $false; EligibleDurationDays = 365; AllowPermanentActive = $false; ActiveDurationDays = 180
+                            ActiveEnabledRules = @(); Notifications = [PSCustomObject]@{ EligibleAlert = @(); ActiveAlert = @(); ActivationAlert = @() } }
+                    }
+                    # 'Empty', 'Absent' (another rule only), '<RuleId>:PT36H' (a duration that is not a whole
+                    # number of days, the permanence known) or '<RuleId>:NoRequired' (no isExpirationRequired).
+                    $RuleId, $Shape = ([string]$script:PuRules) -split ':', 2
+                    $Rules = switch ($RuleId) {
+                        'Empty' { @() }
+                        'Absent' { @(@{ id = 'Enablement_EndUser_Assignment'; enabledRules = @('Justification') }) }
+                        default {
+                            if ($Shape -eq 'PT36H') { @(@{ id = $RuleId; isExpirationRequired = $true; maximumDuration = 'PT36H' }) }
+                            else { @(@{ id = $RuleId; maximumDuration = 'P90D' }) }
+                        }
+                    }
+                    ConvertTo-OERGroupPimPolicy -Rules $Rules -GroupId 'g-1' -PolicyId 'pol-member' -AccessType 'member'
+                }
+                Mock Set-OERGroupPimPolicy {
+                    $script:PuLog.Add("SET $AccessType")
+                    [PSCustomObject]@{ Applied = $true; FailedRules = @() }
+                }
+            }
+        }
+        AfterEach {
+            $global:ErrorActionPreference = $script:PuSavedPreference
+        }
+
+        It 'fails only the member access type, writes nothing for it and processes the owner one: <Name> (<Mode>)' -ForEach $PuCases {
+            $Result = InModuleScope $script:moduleName -Parameters @{ WhatIf = $WhatIf; Declared = $Declared; Rules = $Rules } {
+                param($WhatIf, $Declared, $Rules)
+                $script:PuRules = $Rules
+                $Item = ('{ "displayName": "role_sec_x", "pimPolicy": { "member": { ' + $Declared + ' }, "owner": { "activationMaxHours": 4 } } }') | ConvertFrom-Json
+                $Switches = if ($WhatIf) { @{ WhatIf = $true } } else { @{ Confirm = $false } }
+                $Rows = @(Invoke-SyncPuViaCaller -Item $Item @Switches -ErrorVariable Err -WarningVariable Warn -WarningAction SilentlyContinue 2>$null)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err); Warn = @($Warn); Log = @($script:PuLog) }
+            }
+
+            # The member access type: one Failed row carrying the refusal's record, and nothing else about it.
+            $Member = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy (member)*' })
+            $Member.Count | Should -Be 1
+            $Member[0].Action | Should -BeExactly 'Failed'
+            $Member[0].Detail | Should -BeExactly (Get-PuRowDetail -Entry $Entry)
+            $Member[0].Error.Exception.Message | Should -BeExactly (Get-PuRecordMessage -Entry $Entry)
+            # Written once through the caller, with the published id, category and target.
+            $Own = @($Result.Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncPuViaCaller' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -BeExactly 'PimRuleValueUnknown,Invoke-SyncPuViaCaller'
+            [string]$Own[0].CategoryInfo.Category | Should -BeExactly 'InvalidData'
+            $Own[0].TargetObject | Should -BeExactly 'role_sec_x'
+            $Own[0].Exception.Message | Should -BeExactly (Get-PuRecordMessage -Entry $Entry)
+            # Reached: the member policy was read once. Nothing was written for it, whatever the mode.
+            @($Result.Log | Where-Object { $_ -eq 'READ member' }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 0 -Exactly -ParameterFilter { $AccessType -eq 'member' }
+            @($Result.Warn).Count | Should -Be 0
+
+            # The owner access type is still processed: written in a real run, planned under -WhatIf.
+            $Owner = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy (owner)*' })
+            $Owner.Count | Should -Be 1
+            if ($WhatIf) {
+                $Owner[0].Action | Should -BeExactly 'Skipped'
+                $Owner[0].Detail | Should -BeExactly 'would set pimPolicy (owner): activationMaxHours=4'
+                Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 0 -Exactly
+            } else {
+                $Owner[0].Action | Should -BeExactly 'Updated'
+                $Owner[0].Detail | Should -BeExactly 'pimPolicy (owner) set: activationMaxHours=4'
+                Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly
+                Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter { $AccessType -eq 'owner' -and $ActivationMaxHours -eq 4 }
+            }
+        }
+
+        It 'refuses before the PIM-in-use question and the gate, and names both pairs in one record when both leave out an unknown half' -ForEach @(
+            @{ Entries = "$PuEligPerm; $PuActNone" }
+        ) {
+            $Result = InModuleScope $script:moduleName {
+                $script:PuRules = 'Empty'
+                $Item = '{ "displayName": "role_sec_x", "pimPolicy": { "member": { "eligibleDurationDays": 90, "allowPermanentActive": true } } }' | ConvertFrom-Json
+                $Rows = @(Invoke-SyncPuViaCaller -Item $Item -Confirm:$false -ErrorVariable Err -WarningVariable Warn -WarningAction SilentlyContinue 2>$null)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err); Warn = @($Warn); Log = @($script:PuLog) }
+            }
+            $PolicyRows = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy*' })
+            @($PolicyRows.Action) | Should -Be @('Failed')
+            $PolicyRows[0].Detail | Should -BeExactly (Get-PuRowDetail -Entry $Entries)
+            $Own = @($Result.Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncPuViaCaller' })
+            $Own.Count | Should -Be 1
+            $Own[0].Exception.Message | Should -BeExactly (Get-PuRecordMessage -Entry $Entries)
+            @($Result.Log) | Should -Be @('READ member')
+            Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 0 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 0 -Exactly
+            @($Result.Warn).Count | Should -Be 0
+        }
+
+        It 'the control: eligibleDurationDays alone over a maximumDuration of PT36H whose permanence is known sends the declared duration with the live permanence' {
+            $Result = InModuleScope $script:moduleName {
+                $script:PuRules = 'Expiration_Admin_Eligibility:PT36H'
+                $Item = '{ "displayName": "role_sec_x", "pimPolicy": { "member": { "eligibleDurationDays": 30 } } }' | ConvertFrom-Json
+                $Rows = @(Invoke-SyncPuViaCaller -Item $Item -Confirm:$false -ErrorVariable Err 2>$null)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err) }
+            }
+            @($Result.Err).Count | Should -Be 0
+            $PolicyRows = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy*' })
+            @($PolicyRows.Action) | Should -Be @('Updated')
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter {
+                $AccessType -eq 'member' -and $EligibleDuration -eq 30 -and
+                $PesterBoundParameters.ContainsKey('AllowPermanentEligibility') -and $AllowPermanentEligibility -eq $false
+            }
+        }
+
+        It 'the control: activeDurationDays alone over a maximumDuration of PT36H whose permanence is known sends the declared duration with the live permanence' {
+            $Result = InModuleScope $script:moduleName {
+                $script:PuRules = 'Expiration_Admin_Assignment:PT36H'
+                $Item = '{ "displayName": "role_sec_x", "pimPolicy": { "member": { "activeDurationDays": 30 } } }' | ConvertFrom-Json
+                $Rows = @(Invoke-SyncPuViaCaller -Item $Item -Confirm:$false -ErrorVariable Err 2>$null)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err) }
+            }
+            @($Result.Err).Count | Should -Be 0
+            $PolicyRows = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy*' })
+            @($PolicyRows.Action) | Should -Be @('Updated')
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter {
+                $AccessType -eq 'member' -and $ActiveDuration -eq 30 -and
+                $PesterBoundParameters.ContainsKey('AllowPermanentActive') -and $AllowPermanentActive -eq $false
+            }
+        }
+
+        It 'the control: a declared half that already matches its known live value is Unchanged, though the other half is unknown' {
+            $Result = InModuleScope $script:moduleName {
+                # isExpirationRequired true reads as not permanent; PT36H leaves the duration unknown.
+                $script:PuRules = 'Expiration_Admin_Eligibility:PT36H'
+                $Item = '{ "displayName": "role_sec_x", "pimPolicy": { "member": { "allowPermanentEligibility": false } } }' | ConvertFrom-Json
+                $Rows = @(Invoke-SyncPuViaCaller -Item $Item -Confirm:$false -ErrorVariable Err 2>$null)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err) }
+            }
+            @($Result.Err).Count | Should -Be 0
+            $PolicyRows = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy*' })
+            @($PolicyRows.Action) | Should -Be @('Unchanged')
+            $PolicyRows[0].Detail | Should -BeExactly 'pimPolicy (member) already matches'
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 0 -Exactly
+        }
+    }
+
     Context 'pimPolicy step-4 wait for the policy of a group created in the same run' {
         # For a group THIS run created, step 4 ASKS Get-OERPimGroupPolicyId whether the access type's
         # policy is listed yet (a silent $null while it is not), then reads the listed policy through
@@ -3426,11 +4356,11 @@ Describe 'Sync-OERStructureGroup' {
                         [System.Management.Automation.ErrorCategory]::PermissionDenied, 'g-1')
                 }
                 Mock Get-OERListedGroupPimPolicy { [PSCustomObject]@{ ActivationMaxHours = 1 } }
-                Mock Get-OERGroupPimPolicy {
-                    throw [System.Management.Automation.ErrorRecord]::new(
-                        [System.Exception]::new('Insufficient privileges'), 'PimPolicyReadFailed',
-                        [System.Management.Automation.ErrorCategory]::ReadError, 'g-1')
-                }
+                # BL-40: the direct read the refused wait falls through to ANSWERS. It used to throw as
+                # well, and the handler carried on with no policy to the same single Set call; a failed
+                # direct read now ends the access type (see the Context 'a failed or empty read of the live
+                # pimPolicy ...'), so this test is about the wait, which is what its title says.
+                Mock Get-OERGroupPimPolicy { [PSCustomObject]@{ PolicyId = 'pol-live'; ActivationMaxHours = 1 } }
                 Mock Set-OERGroupPimPolicy { [PSCustomObject]@{ Applied = $true; FailedRules = @() } }
                 Mock Initialize-OERAuth { }
                 Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
@@ -3476,12 +4406,18 @@ Describe 'Sync-OERStructureGroup' {
                     displayName = 'role_sec_x'
                     pimPolicy   = [PSCustomObject]@{ activationMaxHours = 4 }
                 }
-                Invoke-SyncGroupViaCaller -Item $Item | Out-Null
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue)
                 Should -Invoke Get-OERPimGroupPolicyId -Times 0
                 Should -Invoke Get-OERListedGroupPimPolicy -Times 0
                 Should -Invoke Start-Sleep -Times 0
                 Should -Invoke Get-OERGroupPimPolicy -Times 1 -Exactly
-                Should -Invoke Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter { $ActivationMaxHours -eq 4 }
+                # BL-40: the missing policy is a fact, and the single read reports it. It used to be
+                # swallowed and the handler wrote to a policy it had not read (Set once); it is now one
+                # Failed row, and nothing is written.
+                Should -Invoke Set-OERGroupPimPolicy -Times 0 -Exactly
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -like 'pimPolicy (member) not applied: could not read the live PIM-for-groups policy: no policy;*' })
+                $Failed.Count | Should -Be 1
+                [string]$Failed[0].Error.FullyQualifiedErrorId | Should -BeLike 'PimPolicyNotFound,*'
             }
         }
     }
@@ -3673,14 +4609,21 @@ Describe 'Sync-OERStructureGroup' {
                     displayName = 'role_sec_x'
                     pimPolicy   = [PSCustomObject]@{ activationMaxHours = 4 }
                 }
-                $null = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue)
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue)
                 Should -Invoke Start-Sleep -Times 0
                 # One listing and one read, both Get-OERGroupPimPolicy's own, and neither declared the
                 # 404 as an answer.
                 @($script:Calls) | Should -Be @('list', 'read')
                 @($script:DeclaredNotFound) | Should -Be @($false)
                 @($script:ReadDeclaredNotFound) | Should -Be @($false)
-                Should -Invoke Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter { $ActivationMaxHours -eq 4 }
+                # BL-40: the 404 stays a failed read, and a failed read ends the access type. It used to
+                # be swallowed and the handler wrote to a policy it had not read (Set once); it is now one
+                # Failed row carrying the read's record, and nothing is written.
+                Should -Invoke Set-OERGroupPimPolicy -Times 0 -Exactly
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -like 'pimPolicy (member) not applied: could not read the live PIM-for-groups policy:*' })
+                $Failed.Count | Should -Be 1
+                # The listing answered and the read of its rules got the 404: the cmdlet's own record.
+                [string]$Failed[0].Error.FullyQualifiedErrorId | Should -BeLike 'ResourceNotFound,*'
             }
         }
 
@@ -6524,7 +7467,7 @@ Invoke-OERStructure -Json $Json -Confirm:$false #STOP# | ForEach-Object { "ROW:$
                 $Skipped = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match "'o-live'" })
                 $Skipped.Count | Should -Be 1
                 $Skipped[0].Detail | Should -Match '^prune withheld: declared entry ''person15@example\.com'' could not be resolved'
-                $Skipped[0].Detail | Should -Not -Match 'last remaining owner'
+                $Skipped[0].Detail | Should -Not -Match 'last remaining (user )?owner'
             }
         }
 
@@ -8857,7 +9800,7 @@ Invoke-OERStructure -Json $Json -Prune -Confirm:$false | ForEach-Object { "ROW:$
                 @($Out.Errors).Count | Should -Be 0
                 @($Out.Warnings).Count | Should -Be 0
                 Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-PimPruneHeld -Candidate "undeclared owner 'o-act'" -Reason $script:PimActOwner) | Should -Be 1
-                @($Out.Rows | Where-Object { $_.Detail -like '*last remaining owner*' }).Count | Should -Be 0
+                @($Out.Rows | Where-Object { $_.Detail -like '*last remaining owner*' -or $_.Detail -like '*last remaining user owner*' }).Count | Should -Be 0
                 @($Out.Rows).Count | Should -Be 2
                 $Out = Invoke-PimHoldRun -Items @($Item) -Plan:$AsPlan
                 Get-PimRowCount -Rows $Out.Rows -Action 'Extra' -Detail (Get-PimExtraHeld -Candidate "undeclared owner 'o-act'" -Reason $script:PimActOwner) | Should -Be 1
@@ -9001,10 +9944,12 @@ Invoke-OERStructure -Json $Json -Prune -Confirm:$false | ForEach-Object { "ROW:$
             $Item = [PSCustomObject]@{ displayName = 'grp-pim'; members = @('n1@example.com', 'n2@example.com'); owners = @('o1@example.com') }
             $Out = Invoke-PimHoldRun -Items @($Item) -Prune
             @($Out.Errors).Count | Should -Be 0
-            # Reached: three adds and three prunes (the last live owner, 'o-3', refused by its own guard).
+            # Reached: three adds and four prunes. The owner the run added ('o1@example.com', a user
+            # principal name, so a user owner) stands, so both live owners are removed and no owner floor
+            # answers (final review of Sprint 11 step 11, Important 2: an owner the same run adds counts).
             Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 3 -Exactly -Scope It
-            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 3 -Exactly -Scope It
-            @($Out.Rows | Where-Object { $_.Detail -like "did not remove owner 'o-3': it is the last remaining owner*" }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 4 -Exactly -Scope It
+            @($Out.Rows | Where-Object { $_.Detail -like 'did not remove owner*' }).Count | Should -Be 0
             Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimHold -Times 1 -Exactly -Scope It
             # Each item reads its own hold: two items, two reads more.
             $null = Invoke-PimHoldRun -Items @($Item, $Item) -Prune
@@ -9818,11 +10763,14 @@ Describe 'Sync-OERStructureGroup: the plan shows the warning a real run gives (B
             }
         }
 
-        It 'names the access type and the group when no policy was read' {
+        It 'names the access type and the group when the policy read carries no policy id' {
             InModuleScope $script:moduleName {
-                Mock Get-OERGroupPimPolicy { throw 'Forbidden: policy read denied' }
+                # BL-40: this test used to make the read throw, and the handler carried on with no policy.
+                # A failed read now ends that access type before the diff (see the Context in the first
+                # Describe), so the fallback text is reached only by a policy object without an id.
+                Mock Get-OERGroupPimPolicy { [PSCustomObject]@{ ActivationMaxHours = 8 } }
                 Mock Set-OERGroupPimPolicy {}
-                # Both sides declared and no live policy: the diff keeps the context and clears MFA.
+                # Both sides declared and a live policy that says nothing about either: the diff keeps the context and clears MFA.
                 $Json = '{ "displayName": "role_sec_pim", "members": null, "pimPolicy": { "member": { "authenticationContextId": "c1", "activationEnablement": [ "MultiFactorAuthentication", "Justification" ] } } }'
                 $Out = Invoke-GroupWarnCapture -Item ($Json | ConvertFrom-Json) -WhatIfRun $true
                 @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like 'would set pimPolicy (member):*' }).Count | Should -Be 1
@@ -9932,5 +10880,444 @@ Describe 'Sync-OERStructureGroup: the PIM for Groups hold, read for real (BL-125
         Should -Invoke -ModuleName $script:moduleName Read-OERGroupCollection -Times 0 -Scope It
         Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimAssignment -Times 1 -Exactly -Scope It
         Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 1 -Exactly -Scope It -ParameterFilter { $PrincipalId -eq 'id-new' }
+    }
+}
+
+Describe 'Sync-OERStructureGroup: the pair rule the real Set-OERGroupPimPolicy reads itself, inside an apply (Sprint 11 step 11, A24)' {
+    # When the diff finds no conflict against the policy the handler read, Resolve-OERGroupPimPolicyChange
+    # binds only the declared half of the MFA / authentication context pair -- an authenticationContextId
+    # alone against a policy without MFA, or MultiFactorAuthentication alone against a disabled context --
+    # and the REAL Set-OERGroupPimPolicy then reads the other half itself, to decide whether that one has to
+    # change too. Since A24 (ruling R-14) a failed read there, or one that returns no rule, refuses the
+    # cmdlet's call, so the handler's -ErrorAction Stop call lands in its catch: one Failed row with the
+    # record, and nothing is sent. Before, the cmdlet warned and sent the declared half (an Updated row).
+    # Under -WhatIf the handler never calls the cmdlet, so that read is never made. Only auth, the group
+    # lookup and read, the handler's policy read, the PIM-in-use answer, the cmdlet's policy id and context
+    # lookups, the scrub (to record what each layer scrubbed) and the Graph transport below the cmdlet are
+    # mocked; the live rules feed both the handler's policy read and the cmdlet's rule read. Defined here,
+    # in the discovery phase, since -ForEach is read then.
+    $PairCases = @(
+        @{
+            Name       = 'an authenticationContextId declared alone'
+            Json       = '{ "displayName": "role_sec_pair", "members": null, "pimPolicy": { "member": { "authenticationContextId": "c1" } } }'
+            ReadRuleId = 'Enablement_EndUser_Assignment'
+            SentRuleId = 'AuthenticationContext_EndUser_Assignment'
+            Change     = 'authenticationContextId=c1'
+            NoRule     = ("Reading the live rule 'Enablement_EndUser_Assignment' of PIM policy 'pol-pair' returned no rule, so whether " +
+                "activation requires multi-factor authentication, which PIM cannot hold beside authentication context 'c1', is unknown; " +
+                'nothing was changed. Pass both -AuthenticationContextId and -ActivationEnabledRules, so that neither rule depends on this read.')
+        }
+        @{
+            Name       = 'MultiFactorAuthentication declared alone'
+            Json       = '{ "displayName": "role_sec_pair", "members": null, "pimPolicy": { "member": { "activationEnablement": [ "MultiFactorAuthentication" ] } } }'
+            ReadRuleId = 'AuthenticationContext_EndUser_Assignment'
+            SentRuleId = 'Enablement_EndUser_Assignment'
+            Change     = 'activationEnablement=[MultiFactorAuthentication]'
+            NoRule     = ("Reading the live rule 'AuthenticationContext_EndUser_Assignment' of PIM policy 'pol-pair' returned no rule, so " +
+                'whether an authentication context is enabled, which PIM cannot hold beside multi-factor authentication, is unknown; ' +
+                'nothing was changed. Pass both -AuthenticationContextId and -ActivationEnabledRules, so that neither rule depends on this read.')
+        }
+    )
+
+    BeforeAll {
+        InModuleScope $script:moduleName {
+            function script:Invoke-SyncPairViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item)
+                Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet
+            }
+            # One run of the handler for the document: its rows, the records and warnings its caller
+            # collected, every request below the cmdlet ("<METHOD> <rule id>") and every record scrubbed.
+            function script:Invoke-PairRun {
+                param([string]$Json, [bool]$WhatIfRun)
+                $Switches = if ($WhatIfRun) { @{ WhatIf = $true } } else { @{ Confirm = $false } }
+                $Err = $null
+                $Warn = $null
+                $Rows = @(Invoke-SyncPairViaCaller -Item ($Json | ConvertFrom-Json) @Switches -ErrorAction SilentlyContinue -ErrorVariable Err `
+                        -WarningAction SilentlyContinue -WarningVariable Warn)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err); Warn = @($Warn); Calls = @($script:PairCalls); Scrubbed = @($script:PairScrubbed) }
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            # The live policy: activation requires Justification only, and no authentication context is
+            # enabled -- so neither declared half conflicts with it, and the diff binds that half alone.
+            $script:PairLiveRules = @(
+                @{ '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyEnablementRule'; id = 'Enablement_EndUser_Assignment'; enabledRules = @('Justification') }
+                @{ '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyAuthenticationContextRule'; id = 'AuthenticationContext_EndUser_Assignment'
+                    isEnabled = $false; claimValue = '' }
+            )
+            # How the cmdlet's own rule read answers: Rule, Throw (a refused read) or NoRule.
+            $script:PairAnswer = 'Rule'
+            $script:PairCalls = [System.Collections.Generic.List[string]]::new()
+            $script:PairScrubbed = [System.Collections.Generic.List[string]]::new()
+            Mock Initialize-OERAuth {}
+            Mock Read-OERGroupPimHold { [PSCustomObject]@{ Read = $true; Held = @{}; Cause = $null } }
+            Mock Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $true; Reason = 'x'; Manageable = $true } }
+            Mock Resolve-OERGroupId { '66666666-6666-6666-6666-6666666666e5' }
+            Mock Get-OERGroup {
+                [PSCustomObject]@{ Id = '66666666-6666-6666-6666-6666666666e5'; DisplayName = 'role_sec_pair'; Description = $null; MailNickname = $null
+                    GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @() }
+            }
+            Mock Get-OERGroupPimPolicy {
+                ConvertTo-OERGroupPimPolicy -Rules @($script:PairLiveRules) -GroupId '66666666-6666-6666-6666-6666666666e5' -PolicyId 'pol-pair' -AccessType 'member'
+            }
+            Mock Get-OERPimGroupPolicyId { 'pol-pair' }
+            Mock Get-OERAuthenticationContext { [PSCustomObject]@{ AuthenticationContextId = 'c1'; DisplayName = 'Context one'; IsAvailable = $true } }
+            # The id each layer's scrub saw, at the moment it scrubbed: the cmdlet's catch scrubs the read's
+            # record as thrown, the handler's catch the record as the cmdlet published it.
+            Mock Remove-OERErrorRecord { $script:PairScrubbed.Add([string]$Record.FullyQualifiedErrorId) }
+            Mock Invoke-OERGraphRequest {
+                param([string]$Method = 'GET', [string]$Uri, $Body)
+                $RuleId = ($Uri -split '/')[-1]
+                $script:PairCalls.Add(('{0} {1}' -f $Method, $RuleId))
+                if ($Method -eq 'PATCH') { return @{} }
+                if ($Uri -like '*policies/roleManagementPolicies/pol-pair/rules/*') {
+                    if ($script:PairAnswer -eq 'Throw') {
+                        throw [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new("Insufficient privileges to read rule '$RuleId'."),
+                            'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, $RuleId)
+                    }
+                    if ($script:PairAnswer -eq 'NoRule') { return $null }
+                    $Live = @($script:PairLiveRules | Where-Object { $_.id -eq $RuleId })
+                    if ($Live.Count -eq 1) { return $Live[0] }
+                }
+                throw "unexpected $Method $Uri"
+            }
+        }
+    }
+
+    It 'a real run: a failed read of the other half is one Failed row with the read''s record, and nothing is sent (<Name>)' -ForEach $PairCases {
+        $Result = InModuleScope $script:moduleName -Parameters @{ Json = $Json } {
+            param($Json)
+            $script:PairAnswer = 'Throw'
+            Invoke-PairRun -Json $Json -WhatIfRun $false
+        }
+        $Message = "Insufficient privileges to read rule '$ReadRuleId'."
+        $Policy = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy (member)*' })
+        $Policy.Count | Should -Be 1
+        $Policy[0].Section | Should -BeExactly 'groups'
+        $Policy[0].Item | Should -BeExactly 'role_sec_pair'
+        $Policy[0].Action | Should -BeExactly 'Failed'
+        $Policy[0].Detail | Should -BeExactly "pimPolicy (member) update failed: $Message"
+        [string]$Policy[0].Error.FullyQualifiedErrorId | Should -BeLike 'Authorization_RequestDenied,*'
+        [string]$Policy[0].Error.CategoryInfo.Category | Should -BeExactly 'PermissionDenied'
+        $Policy[0].Error.Exception.Message | Should -BeExactly $Message
+        # The record reached the handler as Set-OERGroupPimPolicy published it -- the read's own id with
+        # the cmdlet's suffix -- and each layer scrubbed it once: the cmdlet as thrown, the handler as
+        # published.
+        @($Result.Scrubbed) | Should -Be @('Authorization_RequestDenied', 'Authorization_RequestDenied,Set-OERGroupPimPolicy')
+        # Written once through the caller.
+        $Own = @($Result.Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncPairViaCaller' })
+        $Own.Count | Should -Be 1
+        $Own[0].FullyQualifiedErrorId | Should -BeExactly 'Authorization_RequestDenied,Invoke-SyncPairViaCaller'
+        # Reached: the real cmdlet resolved its policy id and read the other half, once. Nothing was sent,
+        # and no warning stood in for the refusal.
+        Should -Invoke -ModuleName $script:moduleName Get-OERPimGroupPolicyId -Times 1 -Exactly
+        @($Result.Calls) | Should -Be @("GET $ReadRuleId")
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+        @($Result.Warn).Count | Should -Be 0
+    }
+
+    It 'a real run: the other half read as no rule is one Failed PimRuleValueUnknown row, and nothing is sent (<Name>)' -ForEach $PairCases {
+        $Result = InModuleScope $script:moduleName -Parameters @{ Json = $Json } {
+            param($Json)
+            $script:PairAnswer = 'NoRule'
+            Invoke-PairRun -Json $Json -WhatIfRun $false
+        }
+        $Policy = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy (member)*' })
+        $Policy.Count | Should -Be 1
+        $Policy[0].Action | Should -BeExactly 'Failed'
+        $Policy[0].Detail | Should -BeExactly "pimPolicy (member) update failed: $NoRule"
+        [string]$Policy[0].Error.FullyQualifiedErrorId | Should -BeLike 'PimRuleValueUnknown,*'
+        [string]$Policy[0].Error.CategoryInfo.Category | Should -BeExactly 'InvalidData'
+        [string]$Policy[0].Error.TargetObject | Should -BeExactly 'pol-pair'
+        $Own = @($Result.Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncPairViaCaller' })
+        $Own.Count | Should -Be 1
+        $Own[0].FullyQualifiedErrorId | Should -BeExactly 'PimRuleValueUnknown,Invoke-SyncPairViaCaller'
+        @($Result.Calls) | Should -Be @("GET $ReadRuleId")
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+        @($Result.Warn).Count | Should -Be 0
+    }
+
+    It '-WhatIf: the plan row, and the cmdlet and its read of the other half are never reached, a failing read included (<Name>)' -ForEach $PairCases {
+        $Result = InModuleScope $script:moduleName -Parameters @{ Json = $Json } {
+            param($Json)
+            $script:PairAnswer = 'Throw'
+            Invoke-PairRun -Json $Json -WhatIfRun $true
+        }
+        $Policy = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy (member)*' })
+        $Policy.Count | Should -Be 1
+        $Policy[0].Action | Should -BeExactly 'Skipped'
+        $Policy[0].Detail | Should -BeExactly "would set pimPolicy (member): $Change"
+        @($Result.Err).Count | Should -Be 0
+        @($Result.Calls).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERPimGroupPolicyId -Times 0
+        # Reached: the handler read the live policy it planned from.
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroupPimPolicy -Times 1 -Exactly
+    }
+
+    It 'the control, a real run: the other half answering a rule, the declared half alone is sent and the row is Updated (<Name>)' -ForEach $PairCases {
+        $Result = InModuleScope $script:moduleName -Parameters @{ Json = $Json } {
+            param($Json)
+            Invoke-PairRun -Json $Json -WhatIfRun $false
+        }
+        $Policy = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy (member)*' })
+        $Policy.Count | Should -Be 1
+        $Policy[0].Action | Should -BeExactly 'Updated'
+        $Policy[0].Detail | Should -BeExactly "pimPolicy (member) set: $Change"
+        @($Result.Err).Count | Should -Be 0
+        @($Result.Calls) | Should -Be @("GET $ReadRuleId", "PATCH $SentRuleId")
+    }
+}
+
+Describe 'Sync-OERStructureGroup: approval required with no approver is refused before the gate (BL-113)' {
+    # Set-OERGroupPimPolicy refuses, with ApproverRequired and before anything is sent, a call that would
+    # require approval with no approver on the live approval stage. Under -WhatIf the engine never calls it,
+    # so the plan said "would set pimPolicy" while the run reported Failed. Step 4 now takes the cmdlet's
+    # decision itself, through the same owner (Resolve-OERGraphApproverSet), from the live approval rule its
+    # policy read returned (Rules) and the approver parameters the diff binds -- after the Unchanged
+    # check and before the onboarding question, the MFA / authentication context warning and
+    # ShouldProcess: the plan and the run report the same Failed row for that access type, the other
+    # access type still runs, and the cmdlet is never called for it. The live policy is the beta rule set,
+    # projected by the real converter, so the projection the diff reads and the raw rule the owner reads
+    # agree. Defined here, in the discovery phase, since -ForEach is read then.
+    $RefusalCases = @(
+        @{
+            Name     = 'a declared empty users side beside an empty live groups side'
+            Reason   = 'Bound'
+            Required = $true; Users = @('user-1'); Groups = @(); Manager = $false; Mfa = $false
+            Json     = '{ "displayName": "role_sec_appr", "members": null, "pimPolicy": { "member": { "requireApproval": true, "approvers": { "users": [] } } } }'
+        }
+        @{
+            Name     = 'requireApproval true declared alone, the live first stage without approvers'
+            Reason   = 'Live'
+            Required = $false; Users = @(); Groups = @(); Manager = $false; Mfa = $false
+            Json     = '{ "displayName": "role_sec_appr", "members": null, "pimPolicy": { "member": { "requireApproval": true } } }'
+        }
+        @{
+            Name     = 'requireApproval true and an empty users side, the live policy without approvers'
+            Reason   = 'Live'
+            Required = $false; Users = @(); Groups = @(); Manager = $false; Mfa = $false
+            Json     = '{ "displayName": "role_sec_appr", "members": null, "pimPolicy": { "member": { "requireApproval": true, "approvers": { "users": [] } } } }'
+        }
+        @{
+            # The diff reconciles the pair (the context clears a live MFA), and the handler would warn about
+            # it in every mode: the refusal comes first.
+            Name     = 'requireApproval true declared beside an authentication context that clears a live MFA'
+            Reason   = 'Live'
+            Required = $false; Users = @(); Groups = @(); Manager = $false; Mfa = $true
+            Json     = '{ "displayName": "role_sec_appr", "members": null, "pimPolicy": { "member": { "requireApproval": true, "authenticationContextId": "c1" } } }'
+        }
+    )
+    $ApproverLeftCases = @(
+        @{
+            Name     = 'a group approver'
+            Required = $true; Users = @('user-1'); Groups = @('grp-1'); Manager = $false; Mfa = $false
+            Json     = '{ "displayName": "role_sec_appr", "members": null, "pimPolicy": { "member": { "requireApproval": true, "approvers": { "users": [] } } } }'
+        }
+        @{
+            Name     = 'an approver of another kind (a requestor manager)'
+            Required = $true; Users = @('user-1'); Groups = @(); Manager = $true; Mfa = $false
+            Json     = '{ "displayName": "role_sec_appr", "members": null, "pimPolicy": { "member": { "requireApproval": true, "approvers": { "users": [] } } } }'
+        }
+    )
+
+    BeforeAll {
+        InModuleScope $script:moduleName {
+            function script:Invoke-SyncGpApprViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item)
+                Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet
+            }
+            # The live rules in the beta shape Get-OERGroupPimPolicy reads: the approval rule with one stage
+            # holding the given approvers, and the MFA / authentication context pair (context disabled).
+            function script:New-GpApprRule {
+                param([bool]$Required, [string[]]$Users, [string[]]$Groups, [bool]$Manager, [bool]$Mfa)
+                $Primary = @(
+                    foreach ($Id in @($Users)) { if ($Id) { @{ '@odata.type' = '#microsoft.graph.singleUser'; id = $Id; description = 'Person One' } } }
+                    foreach ($Id in @($Groups)) { if ($Id) { @{ '@odata.type' = '#microsoft.graph.groupMembers'; id = $Id; description = 'Approvers' } } }
+                    if ($Manager) { @{ '@odata.type' = '#microsoft.graph.requestorManager'; managerLevel = 1 } }
+                )
+                $Enabled = @(if ($Mfa) { 'MultiFactorAuthentication', 'Justification' } else { 'Justification' })
+                @(
+                    @{ '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyEnablementRule'; id = 'Enablement_EndUser_Assignment'; enabledRules = $Enabled }
+                    @{ '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyAuthenticationContextRule'; id = 'AuthenticationContext_EndUser_Assignment'
+                        isEnabled = $false; claimValue = '' }
+                    @{
+                        '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyApprovalRule'
+                        id            = 'Approval_EndUser_Assignment'
+                        setting       = @{
+                            isApprovalRequired               = $Required
+                            isApprovalRequiredForExtension   = $false
+                            isRequestorJustificationRequired = $true
+                            approvalMode                     = 'SingleStage'
+                            approvalStages                   = @(@{
+                                    approvalStageTimeOutInDays      = 1
+                                    isApproverJustificationRequired = $true
+                                    escalationTimeInMinutes         = 0
+                                    isEscalationEnabled             = $false
+                                    primaryApprovers                = $Primary
+                                    escalationApprovers             = @()
+                                })
+                        }
+                    }
+                )
+            }
+            # One run of the handler: its rows, the records its caller collected and the warnings written.
+            function script:Invoke-GpApprRun {
+                param([string]$Json, [bool]$WhatIfRun)
+                $Switches = if ($WhatIfRun) { @{ WhatIf = $true } } else { @{ Confirm = $false } }
+                $Err = $null
+                $Warn = $null
+                $Rows = @(Invoke-SyncGpApprViaCaller -Item ($Json | ConvertFrom-Json) @Switches -ErrorAction SilentlyContinue -ErrorVariable Err `
+                        -WarningAction SilentlyContinue -WarningVariable Warn)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err); Warn = @($Warn) }
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            Mock Initialize-OERAuth {}
+            Mock Read-OERGroupPimHold { [PSCustomObject]@{ Read = $true; Held = @{}; Cause = $null } }
+            Mock Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $true; Reason = 'x'; Manageable = $true } }
+            Mock Resolve-OERGroupId { '66666666-6666-6666-6666-6666666666f1' }
+            Mock Get-OERGroup {
+                [PSCustomObject]@{ Id = '66666666-6666-6666-6666-6666666666f1'; DisplayName = 'role_sec_appr'; Description = $null; MailNickname = $null
+                    GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @() }
+            }
+            Mock Get-OERGroupPimPolicy {
+                ConvertTo-OERGroupPimPolicy -Rules @($script:GpApprRules) -GroupId '66666666-6666-6666-6666-6666666666f1' -PolicyId 'pol-appr' -AccessType $AccessType
+            }
+            Mock Resolve-OERPrincipal { throw 'no approver value should need resolving: only an empty side is declared' }
+            # What the real Set-OERGroupPimPolicy reads (the parity test below): its policy id, the
+            # authentication context list and its rule reads. Anything else, a PATCH included, throws.
+            Mock Get-OERPimGroupPolicyId { 'pol-appr' }
+            Mock Get-OERAuthenticationContext { [PSCustomObject]@{ AuthenticationContextId = 'c1'; DisplayName = 'Context one'; IsAvailable = $true } }
+            Mock Invoke-OERGraphRequest {
+                param([string]$Method = 'GET', [string]$Uri, $Body)
+                if ($Method -ne 'PATCH' -and $Uri -like '*policies/roleManagementPolicies/pol-appr/rules/*') {
+                    $RuleId = ($Uri -split '/')[-1]
+                    $Live = @($script:GpApprRules | Where-Object { $_.id -eq $RuleId })
+                    if ($Live.Count -eq 1) { return $Live[0] }
+                }
+                throw "unexpected $Method $Uri"
+            }
+        }
+    }
+
+    It 'refuses <Name> with ApproverRequired, the same Failed row in a plan and in a run, before the onboarding question, and never calls the cmdlet' -ForEach $RefusalCases {
+        $Result = InModuleScope $script:moduleName -Parameters @{ Json = $Json; Required = $Required; Users = $Users; Groups = $Groups; Manager = $Manager; Mfa = $Mfa } {
+            param($Json, $Required, $Users, $Groups, $Manager, $Mfa)
+            $script:GpApprRules = New-GpApprRule -Required $Required -Users $Users -Groups $Groups -Manager $Manager -Mfa $Mfa
+            Mock Set-OERGroupPimPolicy { [PSCustomObject]@{ Applied = $true; FailedRules = @() } }
+            [PSCustomObject]@{
+                Plan = Invoke-GpApprRun -Json $Json -WhatIfRun $true
+                Run  = Invoke-GpApprRun -Json $Json -WhatIfRun $false
+            }
+        }
+        $Message = if ($Reason -eq 'Bound') {
+            "Approval cannot be required with no approver: after -ApproverUser/-ApproverGroup are applied, PIM policy 'pol-appr' would have none. Pass at least one approver."
+        } else {
+            "Approval cannot be required with no approver: PIM policy 'pol-appr' has none on its live approval rule and none was supplied. Pass -ApproverUser or -ApproverGroup."
+        }
+        $Detail = if ($Reason -eq 'Bound') {
+            'pimPolicy (member) not applied: approval would be required with no approver (ApproverRequired): the declared approvers, with what the document does not declare kept from the live approval rule, name nobody; the policy was not changed'
+        } else {
+            'pimPolicy (member) not applied: approval would be required with no approver (ApproverRequired): the live approval rule names no approver and the document declares none; the policy was not changed'
+        }
+        foreach ($Mode in @($Result.Plan, $Result.Run)) {
+            $Policy = @($Mode.Rows | Where-Object { $_.Detail -like '*pimPolicy*' })
+            $Policy.Count | Should -Be 1
+            $Policy[0].Section | Should -BeExactly 'groups'
+            $Policy[0].Item | Should -BeExactly 'role_sec_appr'
+            $Policy[0].Action | Should -BeExactly 'Failed'
+            $Policy[0].Detail | Should -BeExactly $Detail
+            [string]$Policy[0].Error.FullyQualifiedErrorId | Should -BeLike 'ApproverRequired,*'
+            # Written once through the caller, with the cmdlet's message, category and the group's name.
+            $Own = @($Mode.Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncGpApprViaCaller' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -BeExactly 'ApproverRequired,Invoke-SyncGpApprViaCaller'
+            [string]$Own[0].CategoryInfo.Category | Should -BeExactly 'InvalidArgument'
+            $Own[0].TargetObject | Should -BeExactly 'role_sec_appr'
+            $Own[0].Exception.Message | Should -BeExactly $Message
+            @($Mode.Err).Count | Should -Be 1
+            # Refused before the onboarding warning and the MFA / authentication context warning.
+            @($Mode.Warn).Count | Should -Be 0
+        }
+        # Reached: the live policy was read in both modes. Neither the onboarding question nor the cmdlet was.
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroupPimPolicy -Times 2 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 0
+    }
+
+    It 'refuses the member access type and still processes the owner access type, in a plan and in a run' {
+        $Result = InModuleScope $script:moduleName {
+            $script:GpApprRules = New-GpApprRule -Required $false -Users @() -Groups @() -Manager $false -Mfa $false
+            Mock Set-OERGroupPimPolicy { [PSCustomObject]@{ Applied = $true; FailedRules = @() } }
+            $Json = '{ "displayName": "role_sec_appr", "members": null, "pimPolicy": { "member": { "requireApproval": true }, "owner": { "activationMaxHours": 4 } } }'
+            [PSCustomObject]@{
+                Plan = Invoke-GpApprRun -Json $Json -WhatIfRun $true
+                Run  = Invoke-GpApprRun -Json $Json -WhatIfRun $false
+            }
+        }
+        foreach ($Mode in @($Result.Plan, $Result.Run)) {
+            @($Mode.Rows | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -like 'pimPolicy (member) not applied: approval would be required with no approver (ApproverRequired):*' }).Count | Should -Be 1
+            @($Mode.Rows | Where-Object { $_.Detail -like '*pimPolicy (member)*' }).Count | Should -Be 1
+        }
+        @($Result.Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq 'would set pimPolicy (owner): activationMaxHours=4' }).Count | Should -Be 1
+        @($Result.Run.Rows | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -eq 'pimPolicy (owner) set: activationMaxHours=4' }).Count | Should -Be 1
+        Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter { $AccessType -eq 'owner' -and $ActivationMaxHours -eq 4 }
+    }
+
+    It 'leaves <Name> on the live stage: no refusal, the run sends the emptied side and the plan reports it' -ForEach $ApproverLeftCases {
+        $Result = InModuleScope $script:moduleName -Parameters @{ Json = $Json; Required = $Required; Users = $Users; Groups = $Groups; Manager = $Manager; Mfa = $Mfa } {
+            param($Json, $Required, $Users, $Groups, $Manager, $Mfa)
+            $script:GpApprRules = New-GpApprRule -Required $Required -Users $Users -Groups $Groups -Manager $Manager -Mfa $Mfa
+            Mock Set-OERGroupPimPolicy { [PSCustomObject]@{ Applied = $true; FailedRules = @() } }
+            [PSCustomObject]@{
+                Plan = Invoke-GpApprRun -Json $Json -WhatIfRun $true
+                Run  = Invoke-GpApprRun -Json $Json -WhatIfRun $false
+            }
+        }
+        @($Result.Plan.Rows | Where-Object { $_.Detail -like '*pimPolicy*' }).Detail | Should -Be @('would set pimPolicy (member): approvers(users=[])')
+        @($Result.Plan.Err).Count | Should -Be 0
+        @($Result.Run.Rows | Where-Object { $_.Detail -like '*pimPolicy*' }).Detail | Should -Be @('pimPolicy (member) set: approvers(users=[])')
+        @($Result.Run.Err).Count | Should -Be 0
+        # Reached: past the check, the onboarding question was asked once per mode.
+        Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 2 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter {
+            $PesterBoundParameters.ContainsKey('ApproverUser') -and @($ApproverUser).Count -eq 0 -and -not $PesterBoundParameters.ContainsKey('ApproverGroup')
+        }
+    }
+
+    It 'refuses <Name> with the very message the real Set-OERGroupPimPolicy publishes for the same call' -ForEach $RefusalCases {
+        # The handler copies the cmdlet's text: the same splat the diff builds, sent to the REAL cmdlet
+        # against the same live rules, is refused with the same id and the same message, and sends nothing.
+        $Result = InModuleScope $script:moduleName -Parameters @{ Json = $Json; Required = $Required; Users = $Users; Groups = $Groups; Manager = $Manager; Mfa = $Mfa } {
+            param($Json, $Required, $Users, $Groups, $Manager, $Mfa)
+            $script:GpApprRules = New-GpApprRule -Required $Required -Users $Users -Groups $Groups -Manager $Manager -Mfa $Mfa
+            $Handler = Invoke-GpApprRun -Json $Json -WhatIfRun $true
+            $Declared = Resolve-OERDeclaredApprover -Declared ($Json | ConvertFrom-Json).pimPolicy.member
+            $Current = Get-OERGroupPimPolicy -Id '66666666-6666-6666-6666-6666666666f1' -AccessType 'member'
+            $Splat = (Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current).SetParams
+            $CmdErr = $null
+            $null = Set-OERGroupPimPolicy -Id 'role_sec_appr' -AccessType 'member' @Splat -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable CmdErr
+            [PSCustomObject]@{ Handler = $Handler; CmdErr = @($CmdErr) }
+        }
+        $HandlerOwn = @($Result.Handler.Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncGpApprViaCaller' })
+        $CmdOwn = @($Result.CmdErr | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Set-OERGroupPimPolicy' })
+        $HandlerOwn.Count | Should -Be 1
+        $CmdOwn.Count | Should -Be 1
+        $CmdOwn[0].FullyQualifiedErrorId | Should -BeExactly 'ApproverRequired,Set-OERGroupPimPolicy'
+        ($HandlerOwn[0].Exception.Message -ceq $CmdOwn[0].Exception.Message) | Should -BeTrue -Because "the handler must publish the cmdlet's own text: '$($HandlerOwn[0].Exception.Message)' against '$($CmdOwn[0].Exception.Message)'"
+        [string]$HandlerOwn[0].CategoryInfo.Category | Should -BeExactly ([string]$CmdOwn[0].CategoryInfo.Category)
+        # Reached: the real cmdlet read the live approval rule, once, and sent nothing.
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*rules/Approval_EndUser_Assignment' }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
     }
 }

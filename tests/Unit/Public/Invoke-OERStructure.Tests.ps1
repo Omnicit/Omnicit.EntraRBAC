@@ -125,8 +125,9 @@ Describe 'Invoke-OERStructure' {
         # The validator reads an explicit null as "not declared", yet @($null) is ONE element, and the
         # scope pre-pass runs outside the per-entry try/catch: a null entry made it throw a
         # parameter-binding error that aborted the whole run inside an operator's try/catch, after the
-        # earlier sections had been written. The engine drops the null before the pre-pass and skips
-        # the section.
+        # earlier sections had been written. Since BL-38 the engine reads the section as the validator
+        # does (Test-OERDeclaredProperty) and skips it before its entries are read, so the pre-pass never
+        # sees it.
         InModuleScope $script:moduleName {
             $script:RaPreCalls = 0
             Mock Resolve-OERStructureRoleAssignmentScope { $script:RaPreCalls++; @() }
@@ -1204,6 +1205,233 @@ Describe 'Invoke-OERStructure roleManagementPolicies touches only the declared p
         }
         Should -Invoke -ModuleName $script:moduleName Set-OERRoleManagementPolicy -Times 0 -ParameterFilter { $Role -ne 'Reader' }
         Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0
+    }
+}
+
+Describe 'Invoke-OERStructure roleManagementPolicies: a failed policy read writes nothing (BL-40)' {
+    # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere above
+    # it, as at a prompt, with the runspace's own error preference (Continue). The REAL
+    # Get-OERRoleManagementPolicy reads the live policy: the role definition lookup is answered and the
+    # policy assignment list fails, so the cmdlet reports PolicyNotFound as a non-terminating error and
+    # returns nothing. The entry declares only approvers.users; a read taken as $null seeded the groups side
+    # EMPTY and the write removed every live group approver. The script installs its own fakes in ITS copy
+    # of the module scope and logs every ARM request, approver lookup and policy write with AppendAllText,
+    # whose path is substituted into the text. A second scenario replaces the read with one that returns no
+    # policy and no error. In the control the policy list answers, so the scenario can tell a refusal from
+    # silence.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        function script:New-RfNoTryScenario {
+            param([string]$Log, [string]$PolicyList)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Get-OERSubscriptionHomeTenant -Value { [pscustomobject]@{ Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'; SubscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null } }
+    Set-Item -Path function:script:Resolve-OERDeclaredApprover -Value { param($Declared) [System.IO.File]::AppendAllText('#LOG#', "APPROVER LOOKUP`n"); $Declared }
+    Set-Item -Path function:script:Set-OERRoleManagementPolicy -Value {
+        [CmdletBinding(SupportsShouldProcess)]
+        param([string]$Role, [string]$Scope, [string[]]$ApproverUser, [string[]]$ApproverGroup)
+        [System.IO.File]::AppendAllText('#LOG#', "POLICY SET users=$($ApproverUser -join ',') groups=$($ApproverGroup -join ',')`n")
+        [pscustomobject]@{ PolicyId = 'p-1' }
+    }
+    Set-Item -Path function:script:Invoke-OERArmRequest -Value {
+        param([string]$Method = 'GET', [string]$Path, [hashtable]$Body, [switch]$All)
+        [System.IO.File]::AppendAllText('#LOG#', "$Method $Path`n")
+        $Sub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $Reader = "$Sub/providers/Microsoft.Authorization/roleDefinitions/bbbb4040-0000-0000-0000-000000000001"
+        if ($Method -eq 'GET' -and $Path -like '*/roleDefinitions?*') { return [pscustomobject]@{ value = @([pscustomobject]@{ id = $Reader }) } }
+        if ($Method -eq 'GET' -and $Path -like '*/roleManagementPolicyAssignments?*') {
+            if ('#POLICYLIST#' -eq 'fails') { throw 'ARM 403 AuthorizationFailed' }
+            return [pscustomobject]@{ value = @([pscustomobject]@{ properties = [pscustomobject]@{
+                policyId = "$Sub/providers/Microsoft.Authorization/roleManagementPolicies/eeee4040-0000-0000-0000-000000000001"
+                roleDefinitionId = $Reader; scope = $Sub; effectiveRules = @() } }) }
+        }
+        throw "unexpected $Method $Path"
+    }
+    if ('#POLICYLIST#' -eq 'noobject') {
+        # A read that answers with no policy and no error.
+        Set-Item -Path function:script:Get-OERRoleManagementPolicy -Value {
+            [CmdletBinding()]
+            param([string]$Role, [string]$Scope)
+            [System.IO.File]::AppendAllText('#LOG#', "POLICY GET $Scope`n")
+        }
+    }
+}
+$Json = '{ "version": "1.0", "roleManagementPolicies": [ { "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "approvers": { "users": [ "dddd4040-0000-0000-0000-000000000001" ] } } ] }'
+Invoke-OERStructure -Json $Json -Confirm:$false -ErrorVariable RunErrors | ForEach-Object { "ROW:$($_.Action):$($_.Item)" }
+$RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' } | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#POLICYLIST#', $PolicyList))
+        }
+        $script:RfLabel = 'Reader @ /subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $script:RfPolicyList = 'GET /subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleManagementPolicyAssignments?api-version=2020-10-01'
+    }
+
+    It 'reaches the end of a script with no try above it, with one Failed row and the read''s record, and writes nothing' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-RfNoTryScenario -Log $Log -PolicyList 'fails')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        # Reached: the real cmdlet sent the policy list request, and it failed.
+        $Logged | Should -Contain $script:RfPolicyList
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @("ROW:Failed:$($script:RfLabel)")
+        # The read's own record reached the error stream, once, and no other error did.
+        @($Run.Errors).Count | Should -Be 1
+        $Run.Errors[0] | Should -BeExactly 'ARM 403 AuthorizationFailed'
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @('ERRID:PolicyNotFound,Invoke-OERStructure')
+        # Nothing after the read ran: no approver lookup and no policy write.
+        @($Logged | Where-Object { $_ -like 'POLICY SET*' }) | Should -BeNullOrEmpty -Because "the requests were:`n$($Logged -join "`n")"
+        $Logged | Should -Not -Contain 'APPROVER LOOKUP'
+        @($Logged | Where-Object { $_ -notlike 'GET *' }) | Should -BeNullOrEmpty
+        @($Run.Prompts).Count | Should -Be 0
+    }
+
+    It 'reaches the end of a script with no try above it, with one Failed PolicyNotFound row, when the read returns no policy and no error, and writes nothing' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-RfNoTryScenario -Log $Log -PolicyList 'noobject')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        # Reached: the read was made at the scope the engine resolved.
+        $Logged | Should -Contain 'POLICY GET /subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @("ROW:Failed:$($script:RfLabel)")
+        @($Run.Errors).Count | Should -Be 1
+        $Run.Errors[0] | Should -BeExactly ("Get-OERRoleManagementPolicy returned no role management policy for 'Reader' at " +
+            "'/subscriptions/aaaa1111-0000-0000-0000-000000000001' and no error, so the live policy is unknown. The policy was not changed.")
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @('ERRID:PolicyNotFound,Invoke-OERStructure')
+        @($Logged | Where-Object { $_ -like 'POLICY SET*' }) | Should -BeNullOrEmpty -Because "the requests were:`n$($Logged -join "`n")"
+        $Logged | Should -Not -Contain 'APPROVER LOOKUP'
+        @($Run.Prompts).Count | Should -Be 0
+    }
+
+    It 'writes the declared side in the same script when the read answers, so the scenario can tell a refusal from silence' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-RfNoTryScenario -Log $Log -PolicyList 'answers')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        $Logged | Should -Contain 'APPROVER LOOKUP'
+        $Logged | Should -Contain 'POLICY SET users=dddd4040-0000-0000-0000-000000000001 groups='
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @("ROW:Updated:$($script:RfLabel)")
+        @($Run.Errors).Count | Should -Be 0
+    }
+}
+
+Describe 'Invoke-OERStructure groups: a failed live pimPolicy read writes nothing (BL-40)' {
+    # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere above
+    # it, as at a prompt, with the runspace's own error preference (Continue). The document declares the
+    # member policy's eligibleDurationDays alone and the owner policy's activationMaxHours: a member read
+    # taken as "no policy" defaulted allowPermanentEligibility and sent both halves of the pair. The script
+    # installs its own fakes in ITS copy of the module scope and logs every policy read and write with
+    # AppendAllText, whose path is substituted into the text. The member read fails (a non-terminating
+    # error written through $PSCmdlet.WriteError, as the real cmdlet does) or returns no policy and no
+    # error; the owner read answers. In the control both reads answer, so the scenario can tell a refusal
+    # from silence.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        function script:New-GpNoTryScenario {
+            param([string]$Log, [string]$MemberRead, [string]$Mode)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERStructureDefault -Value { $null }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { 'g-1' }
+    Set-Item -Path function:script:Get-OERGroup -Value {
+        [pscustomobject]@{ Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null; GroupType = 'Assigned'
+            IsAssignableToRole = $false; Members = @(); PimEligibility = @() }
+    }
+    Set-Item -Path function:script:Test-OERGroupPimInUse -Value { [pscustomobject]@{ InUse = $true; Reason = 'x'; Manageable = $true } }
+    Set-Item -Path function:script:Get-OERGroupPimPolicy -Value {
+        [CmdletBinding()]
+        param([Alias('GroupId', 'Id')][string]$Group, [string]$AccessType = 'member', [string]$TenantId)
+        [System.IO.File]::AppendAllText('#LOG#', "POLICY GET $AccessType`n")
+        if ($AccessType -eq 'member' -and '#MEMBERREAD#' -eq 'fails') {
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Graph 403 Forbidden: policy read denied'), 'PimPolicyReadFailed',
+                    [System.Management.Automation.ErrorCategory]::ReadError, $Group))
+            return
+        }
+        if ($AccessType -eq 'member' -and '#MEMBERREAD#' -eq 'noobject') { return }
+        [pscustomobject]@{ PolicyId = 'pol-live'; ActivationMaxHours = 8; AuthenticationContextId = $null; ActivationEnabledRules = @()
+            AllowPermanentEligibility = $false; EligibleDurationDays = 365; AllowPermanentActive = $false; ActiveDurationDays = 180
+            ActiveEnabledRules = @(); Notifications = [pscustomobject]@{ EligibleAlert = @(); ActiveAlert = @(); ActivationAlert = @() } }
+    }
+    Set-Item -Path function:script:Set-OERGroupPimPolicy -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "POLICY SET $($args -join ' ')`n")
+        [pscustomobject]@{ Applied = $true; FailedRules = @() }
+    }
+}
+$Json = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_x", "members": null, "pimPolicy": { "member": { "eligibleDurationDays": 90 }, "owner": { "activationMaxHours": 4 } } } ] }'
+Invoke-OERStructure -Json $Json #MODE# -ErrorVariable RunErrors | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+$RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' } | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#MEMBERREAD#', $MemberRead).Replace('#MODE#', $Mode))
+        }
+    }
+
+    It 'reaches the end of a script with no try above it, with one Failed member row and the read''s record, and writes nothing for member, when <Name>' -ForEach @(
+        @{ Name = 'the read fails non-terminating'; MemberRead = 'fails'; ErrorId = 'PimPolicyReadFailed'; Message = 'Graph 403 Forbidden: policy read denied'
+            Detail = "pimPolicy (member) not applied: could not read the live PIM-for-groups policy: Graph 403 Forbidden: policy read denied; nothing was changed for 'member'" }
+        @{ Name = 'the read returns no policy and no error'; MemberRead = 'noobject'; ErrorId = 'PimPolicyNotFound'
+            Message = ("Get-OERGroupPimPolicy returned no PIM-for-groups policy for 'member' access on group 'role_sec_x' and no error, " +
+                "so the live policy is unknown. Nothing was changed for 'member'.")
+            Detail = "pimPolicy (member) not applied: could not read the live PIM-for-groups policy: Get-OERGroupPimPolicy returned no policy and no error; nothing was changed for 'member'" }
+    ) {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-GpNoTryScenario -Log $Log -MemberRead $MemberRead -Mode '-Confirm:$false')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        # Reached: both access types were read, and the owner policy was written.
+        $Logged | Should -Contain 'POLICY GET member'
+        $Logged | Should -Contain 'POLICY GET owner'
+        @($Logged | Where-Object { $_ -like 'POLICY SET*-AccessType owner*' }).Count | Should -Be 1 -Because "the requests were:`n$($Logged -join "`n")"
+        $Rows = @($Run.Output | Where-Object { $_ -like 'ROW:*pimPolicy*' })
+        $Rows | Should -Contain "ROW:Failed:$Detail"
+        @($Rows | Where-Object { $_ -like 'ROW:Failed:*' }).Count | Should -Be 1
+        @($Rows | Where-Object { $_ -like 'ROW:Updated:pimPolicy (owner) set:*' }).Count | Should -Be 1
+        $Rows.Count | Should -Be 2
+        # The read's own record reached the error stream, once, and no other error did.
+        @($Run.Errors).Count | Should -Be 1
+        $Run.Errors[0] | Should -BeExactly $Message
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @("ERRID:$ErrorId,Invoke-OERStructure")
+        # Nothing was written for member: not one policy write names it.
+        @($Logged | Where-Object { $_ -like 'POLICY SET*member*' }) | Should -BeNullOrEmpty -Because "the requests were:`n$($Logged -join "`n")"
+        @($Run.Prompts).Count | Should -Be 0
+    }
+
+    It 'plans the same Failed member row and the owner change, and writes nothing, under -WhatIf in a script with no try above it, when <Name>' -ForEach @(
+        @{ Name = 'the read fails non-terminating'; MemberRead = 'fails'; ErrorId = 'PimPolicyReadFailed' }
+        @{ Name = 'the read returns no policy and no error'; MemberRead = 'noobject'; ErrorId = 'PimPolicyNotFound' }
+    ) {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-GpNoTryScenario -Log $Log -MemberRead $MemberRead -Mode '-WhatIf')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        $Logged | Should -Contain 'POLICY GET member'
+        $Logged | Should -Contain 'POLICY GET owner'
+        $Rows = @($Run.Output | Where-Object { $_ -like 'ROW:*pimPolicy*' })
+        @($Rows | Where-Object { $_ -like 'ROW:Failed:pimPolicy (member) not applied: could not read the live PIM-for-groups policy:*' }).Count | Should -Be 1
+        @($Rows | Where-Object { $_ -like 'ROW:Skipped:would set pimPolicy (owner): *' }).Count | Should -Be 1
+        $Rows.Count | Should -Be 2
+        # The read's own record reached the error stream, once, and no other error did, as in the run.
+        @($Run.Errors).Count | Should -Be 1
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @("ERRID:$ErrorId,Invoke-OERStructure")
+        @($Logged | Where-Object { $_ -like 'POLICY SET*' }) | Should -BeNullOrEmpty -Because "the requests were:`n$($Logged -join "`n")"
+        # The plan reached the host as 'What if:' lines for the owner change only.
+        @($Run.Events | Where-Object { $_ -like 'Line: What if:*Set PIM policy (owner)*' }).Count | Should -Be 1
+        @($Run.Events | Where-Object { $_ -like '*Set PIM policy (member)*' }).Count | Should -Be 0
+    }
+
+    It 'writes both access types in the same script when both reads answer, so the scenario can tell a refusal from silence' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-GpNoTryScenario -Log $Log -MemberRead 'answers' -Mode '-Confirm:$false')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        @($Logged | Where-Object { $_ -like 'POLICY SET*-AccessType member*' }).Count | Should -Be 1
+        @($Logged | Where-Object { $_ -like 'POLICY SET*-AccessType owner*' }).Count | Should -Be 1
+        @($Run.Output | Where-Object { $_ -like 'ROW:Updated:pimPolicy (member) set:*' }).Count | Should -Be 1
+        @($Run.Output | Where-Object { $_ -like 'ROW:Updated:pimPolicy (owner) set:*' }).Count | Should -Be 1
+        @($Run.Errors).Count | Should -Be 0
     }
 }
 
@@ -5357,5 +5585,969 @@ Describe 'Invoke-OERStructure applies the scoped roles an export writes with pri
             $Id -eq $script:RtAuId -and $ScopedRoleMembershipId -eq 'srm-sp'
         }
         Should -Invoke -ModuleName $script:moduleName Add-OERAdministrativeUnitScopedRole -Times 0
+    }
+}
+
+Describe 'Invoke-OERStructure administrativeUnits: an unread directory role name map stops only the scopedRoles (BL-47)' {
+    # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere above
+    # it, as at a prompt, with the runspace's own error preference (Continue). One unit declares a property
+    # change, a member and a scoped role by GUID (the role's template id, while the live membership carries
+    # its object id); the directory role name map the handler reads to match that GUID cannot be read. The
+    # property update and the member add are sent, no scoped role is added or removed, the scopedRoles step
+    # reports one Failed row, and the read's record reaches the error stream once. The script installs its
+    # own fakes in ITS copy of the module scope and logs every read and write with AppendAllText, whose path
+    # is substituted into the text. The map stub throws as the real Get-OERDirectoryRoleNameMap does with
+    # -ThrowOnFailure. No id below is version-4 shaped.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        function script:New-AuMapNoTryScenario {
+            param([string]$Log, [string]$Switches)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERAdministrativeUnitId -Value { param([string]$DisplayName) 'abab8888-0000-0000-0000-000000000001' }
+    Set-Item -Path function:script:Get-OERAdministrativeUnit -Value {
+        [CmdletBinding()]
+        param([string]$Id, [switch]$IncludeMembers, [switch]$IncludeScopedRoles)
+        [System.IO.File]::AppendAllText('#LOG#', "READ unit scopedRoles=$IncludeScopedRoles`n")
+        [pscustomobject]@{
+            Id = $Id; DisplayName = 'AU-Map'; Description = 'old description'; IsMemberManagementRestricted = $false
+            MembershipType = 'Assigned'; Visibility = $null; Members = @()
+            ScopedRoles = @([pscustomobject]@{
+                    ScopedRoleMembershipId = 'srm-seed-1'; RoleName = 'User Administrator'; RoleId = 'aaaaaaaa-0000-0000-0000-000000000001'
+                    PrincipalId = 'cccccccc-0000-0000-0000-000000000003'; PrincipalDisplayName = 'Person One' })
+        }
+    }
+    Set-Item -Path function:script:Get-OERDirectoryRoleNameMap -Value {
+        param([switch]$ThrowOnFailure)
+        [System.IO.File]::AppendAllText('#LOG#', "READ role-name-map`n")
+        throw 'TooManyRequests (injected map failure)'
+    }
+    Set-Item -Path function:script:Resolve-OERStructurePrincipal -Value {
+        param([string]$Reference)
+        if ($Reference -eq 'person1@example.com') { 'cccccccc-0000-0000-0000-000000000003' }
+        elseif ($Reference -eq 'person2@example.com') { 'cccccccc-0000-0000-0000-000000000013' }
+    }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value { [System.IO.File]::AppendAllText('#LOG#', "CALL Invoke-OERGraphRequest`n") }
+    foreach ($Write in @('New-OERAdministrativeUnit', 'Set-OERAdministrativeUnit', 'Add-OERAdministrativeUnitMember', 'Remove-OERAdministrativeUnitMember',
+            'Add-OERAdministrativeUnitScopedRole', 'Remove-OERAdministrativeUnitScopedRole')) {
+        Set-Item -Path "function:script:$Write" -Value ([scriptblock]::Create("[System.IO.File]::AppendAllText('#LOG#', 'WRITE $Write' + [char]10)"))
+    }
+}
+$Json = '{ "version": "1.0", "administrativeUnits": [ { "displayName": "AU-Map", "description": "new description", "members": [ "person2@example.com" ], "scopedRoles": [ { "role": "bbbbbbbb-0000-0000-0000-000000000002", "principal": "person1@example.com" } ] } ] }'
+Invoke-OERStructure -Json $Json -Prune #SWITCHES# -ErrorVariable RunErrors | ForEach-Object { "ROW:$($_.Section):$($_.Item):$($_.Action):$($_.Detail)" }
+$RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' } | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#SWITCHES#', $Switches))
+        }
+    }
+
+    It 'reaches the end of a script with no try above it, sends the property update and the member add, adds and removes no scoped role, and reports one Failed scopedRoles row with the read''s record' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-AuMapNoTryScenario -Log $Log -Switches '-Confirm:$false')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log | Where-Object { $_ })
+        # Reached: the unit was read with its scoped roles and the map read was made, once.
+        $Logged | Should -Contain 'READ unit scopedRoles=True'
+        @($Logged | Where-Object { $_ -eq 'READ role-name-map' }).Count | Should -Be 1 -Because "the calls were:`n$($Logged -join "`n")"
+        # Properties and members ran as usual; the scoped role was neither added nor removed, though a
+        # null map would have added the declared template id and pruned the live object id.
+        @($Logged | Where-Object { $_ -like 'WRITE *' }) | Should -Be @('WRITE Set-OERAdministrativeUnit', 'WRITE Add-OERAdministrativeUnitMember') -Because "the calls were:`n$($Logged -join "`n")"
+        $Logged | Should -Not -Contain 'CALL Invoke-OERGraphRequest'
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
+            'ROW:administrativeUnits:AU-Map:Updated:updated administrative unit properties (Description)'
+            "ROW:administrativeUnits:AU-Map:Updated:added member 'person2@example.com'"
+            'ROW:administrativeUnits:AU-Map:Failed:failed to read the directory roles that match a scopedRole declared by role id: TooManyRequests (injected map failure); no scopedRole change was made'
+        )
+        # The read's own record reached the error stream, once, and no other error did.
+        @($Run.Errors).Count | Should -Be 1
+        $Run.Errors[0] | Should -BeExactly 'Could not read scoped roles for administrative unit abab8888-0000-0000-0000-000000000001: TooManyRequests (injected map failure). No scopedRole change was made.'
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @('ERRID:AdministrativeUnitScopedRoleReadFailed,Invoke-OERStructure')
+        @($Run.Prompts).Count | Should -Be 0
+    }
+
+    It 'plans the property update and the member add and the same one Failed row under -WhatIf in a script with no try above it, and sends nothing' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-AuMapNoTryScenario -Log $Log -Switches '-WhatIf')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log | Where-Object { $_ })
+        @($Logged | Where-Object { $_ -eq 'READ role-name-map' }).Count | Should -Be 1 -Because "the calls were:`n$($Logged -join "`n")"
+        @($Logged | Where-Object { $_ -like 'WRITE *' }) | Should -BeNullOrEmpty -Because "the calls were:`n$($Logged -join "`n")"
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
+            'ROW:administrativeUnits:AU-Map:Skipped:would update administrative unit properties (Description)'
+            "ROW:administrativeUnits:AU-Map:Skipped:would add member 'person2@example.com'"
+            'ROW:administrativeUnits:AU-Map:Failed:failed to read the directory roles that match a scopedRole declared by role id: TooManyRequests (injected map failure); no scopedRole change was made'
+        )
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @('ERRID:AdministrativeUnitScopedRoleReadFailed,Invoke-OERStructure')
+        @($Run.Errors).Count | Should -Be 1
+        # The plan reached the host as 'What if:' lines for the property update and the member add only.
+        @($Run.Events | Where-Object { $_ -like 'Line: What if:*' }).Count | Should -Be 2
+        @($Run.Events | Where-Object { $_ -like 'Line: What if:*scopedRole*' }).Count | Should -Be 0
+    }
+}
+
+Describe 'Invoke-OERStructure: a top-level section that is null is not declared (BL-38)' {
+    # R-3: the engine decides on a top-level section the way the validator does, with Test-OERDeclaredProperty
+    # (present and not null): the dispatch loop, the Azure Resource Manager decision, the undecided-rename
+    # pre-pass and the administrative unit pre-pass. A null section is read as an omitted one: no handler call,
+    # no row, no ARM token on its account and never the subscription home tenant check. An empty array stays
+    # declared. Every handler is mocked to return one row, so a call cannot go unseen.
+    BeforeAll {
+        $script:NsSection = @(
+            @{ Key = 'groups'; Handler = 'Sync-OERStructureGroup' }
+            @{ Key = 'administrativeUnits'; Handler = 'Sync-OERStructureAdministrativeUnit' }
+            @{ Key = 'catalogs'; Handler = 'Sync-OERStructureCatalog' }
+            @{ Key = 'accessPackages'; Handler = 'Sync-OERStructureAccessPackage' }
+            @{ Key = 'accessReviews'; Handler = 'Sync-OERStructureAccessReview' }
+            @{ Key = 'directoryRoleManagementPolicies'; Handler = 'Sync-OERStructureDirectoryRoleManagementPolicy' }
+            @{ Key = 'directoryRoleAssignments'; Handler = 'Sync-OERStructureDirectoryRoleAssignment' }
+            @{ Key = 'roleAssignments'; Handler = 'Sync-OERStructureRoleAssignment' }
+            @{ Key = 'roleManagementPolicies'; Handler = 'Sync-OERStructureRoleManagementPolicy' }
+        )
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Get-OERDocumentTenantMismatch { }
+        Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { [PSCustomObject]@{ Scope = $null; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null } }
+        Mock -ModuleName $script:moduleName Resolve-OERStructureRoleAssignmentScope { @() }
+        foreach ($Section in $script:NsSection) {
+            Mock -ModuleName $script:moduleName -CommandName $Section.Handler -MockWith ([scriptblock]::Create(
+                    "[PSCustomObject]@{ Section = '$($Section.Key)'; Item = 'stub'; Action = 'Unchanged'; Detail = 'stub row' }"))
+        }
+    }
+
+    It 'gives no row and calls no handler for "<Key>": null, and applies the declared section beside it' -TestCases @(
+        @{ Key = 'groups'; Handler = 'Sync-OERStructureGroup' }
+        @{ Key = 'administrativeUnits'; Handler = 'Sync-OERStructureAdministrativeUnit' }
+        @{ Key = 'catalogs'; Handler = 'Sync-OERStructureCatalog' }
+        @{ Key = 'accessPackages'; Handler = 'Sync-OERStructureAccessPackage' }
+        @{ Key = 'accessReviews'; Handler = 'Sync-OERStructureAccessReview' }
+        @{ Key = 'directoryRoleManagementPolicies'; Handler = 'Sync-OERStructureDirectoryRoleManagementPolicy' }
+        @{ Key = 'directoryRoleAssignments'; Handler = 'Sync-OERStructureDirectoryRoleAssignment' }
+        @{ Key = 'roleAssignments'; Handler = 'Sync-OERStructureRoleAssignment' }
+        @{ Key = 'roleManagementPolicies'; Handler = 'Sync-OERStructureRoleManagementPolicy' }
+    ) {
+        $ControlKey = if ($Key -eq 'groups') { 'catalogs' } else { 'groups' }
+        $ControlHandler = if ($Key -eq 'groups') { 'Sync-OERStructureCatalog' } else { 'Sync-OERStructureGroup' }
+        $Json = "{ `"version`": `"1.0`", `"$Key`": null, `"$ControlKey`": [ { `"displayName`": `"control`" } ] }"
+        $Rows = @(Invoke-OERStructure -Json $Json -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable NullErr)
+
+        # Reached: the run passed validation and dispatched the declared section beside the null one.
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)" }) | Should -Be @("$ControlKey|stub|Unchanged")
+        Should -Invoke -ModuleName $script:moduleName -CommandName $ControlHandler -Times 1 -Exactly
+        # The null section: no handler call, no row (a handler that rejects a null item would leave a Failed
+        # row), no error record.
+        Should -Invoke -ModuleName $script:moduleName -CommandName $Handler -Times 0
+        @($Rows | Where-Object { $_.Section -eq $Key }) | Should -BeNullOrEmpty
+        @($NullErr) | Should -BeNullOrEmpty
+        # The other eight handlers -- the null section's own included -- are not called either; only the control's is.
+        foreach ($Other in @($script:NsSection | Where-Object { $_.Handler -ne $ControlHandler })) {
+            Should -Invoke -ModuleName $script:moduleName -CommandName $Other.Handler -Times 0
+        }
+    }
+
+    It 'requests no ARM token and never checks a subscription for "<Key>": null alone' -TestCases @(
+        @{ Key = 'roleAssignments' }
+        @{ Key = 'roleManagementPolicies' }
+    ) {
+        $Json = "{ `"version`": `"1.0`", `"$Key`": null, `"groups`": [ { `"displayName`": `"control`" } ] }"
+        $Rows = @(Invoke-OERStructure -Json $Json -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable NullErr)
+
+        # Reached: one sign-in, made without -IncludeARM, and the declared section was applied.
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0 -ParameterFilter { $PSBoundParameters.ContainsKey('IncludeARM') }
+        # The document tenant comparison after the sign-in follows the same decision: no ARM token compared.
+        Should -Invoke -ModuleName $script:moduleName Get-OERDocumentTenantMismatch -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERDocumentTenantMismatch -Times 0 -ParameterFilter { $IncludeARM }
+        Should -Invoke -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERStructureRoleAssignmentScope -Times 0
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)" }) | Should -Be @('groups|stub|Unchanged')
+        @($NullErr) | Should -BeNullOrEmpty
+    }
+
+    It 'still requests an ARM token for "<Key>": [] (an empty array is declared)' -TestCases @(
+        @{ Key = 'roleAssignments' }
+        @{ Key = 'roleManagementPolicies' }
+    ) {
+        $Json = "{ `"version`": `"1.0`", `"$Key`": [], `"groups`": [ { `"displayName`": `"control`" } ] }"
+        $null = @(Invoke-OERStructure -Json $Json -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $IncludeARM -eq $true }
+        Should -Invoke -ModuleName $script:moduleName Get-OERDocumentTenantMismatch -Times 1 -Exactly -ParameterFilter { $IncludeARM }
+        # An empty section has no entry, so no subscription is checked.
+        Should -Invoke -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant -Times 0
+    }
+
+    It 'runs no administrative unit pre-pass for "administrativeUnits": null while a group names a unit' {
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "administrativeUnit": "AU-1" } ], "administrativeUnits": null }'
+        $Rows = @(Invoke-OERStructure -Json $Json -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable NullErr)
+
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)" }) | Should -Be @('groups|stub|Unchanged')
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureGroup -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit -Times 0
+        @($NullErr) | Should -BeNullOrEmpty
+    }
+
+    It 'runs no administrative unit pre-pass for "administrativeUnits": null while a group names the empty unit name, and completes the run' {
+        # The validator accepts an empty administrativeUnit (only a string is required). Read by key presence, a
+        # null administrativeUnits section was ONE null unit whose name, '' as a string, matched that empty name:
+        # the pre-pass called the unit handler with a null item, and the catch's own row for an item with no name
+        # threw a binding error that ended the whole run. Declared means present and not null, so no unit is
+        # looked at, and the group is applied.
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "administrativeUnit": "" } ], "administrativeUnits": null }'
+        $Caught = $null
+        $Rows = @()
+        try {
+            $Rows = @(Invoke-OERStructure -Json $Json -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable NullErr)
+        } catch {
+            $Caught = $PSItem
+        }
+
+        $Caught | Should -BeNullOrEmpty
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)" }) | Should -Be @('groups|stub|Unchanged')
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureGroup -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit -Times 0
+        @($NullErr) | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Invoke-OERStructure refuses a run the host cannot confirm (BL-53)' {
+    # R-4: Invoke-OERStructure asks for confirmation before each change (ConfirmImpact High). A host with no user
+    # interface cannot ask, and its ShouldProcess throws at the first change. The Default Host is the one such
+    # host that can be told beforehand (Test-OERHostCanConfirm, mocked here): a run that would prompt -- no
+    # -WhatIf, and $ConfirmPreference not None -- is refused there with ConfirmationUnavailable after the
+    # document is read and validated, before every sign-in step, the tenant comparisons and the sections. In
+    # every other host the engine's two handler-error rows say what is missing when a handler stopped at that
+    # prompt (Test-OERConfirmPromptFailure).
+    BeforeAll {
+        $script:CuMessage = 'Invoke-OERStructure asks for confirmation before each change (ConfirmImpact High), and this host cannot show a confirmation prompt, so nothing was read or changed; run it with -Confirm:$false to apply without prompts, or with -WhatIf to plan.'
+        $script:CuRowText = 'the host cannot show the confirmation prompt Invoke-OERStructure asks before each change ({0}); nothing was written for this entry. Run Invoke-OERStructure with -Confirm:$false to apply without prompts, or with -WhatIf to plan.'
+        $script:CuJson = '{ "version": "1.0", "groups": [ { "displayName": "g1" } ] }'
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Get-OERDocumentTenantMismatch { }
+        Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { [PSCustomObject]@{ Scope = $null; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null } }
+        Mock -ModuleName $script:moduleName Test-OERHostCanConfirm { $false }
+        Mock -ModuleName $script:moduleName Sync-OERStructureGroup { [PSCustomObject]@{ Section = 'groups'; Item = [string]$Item.displayName; Action = 'Unchanged'; Detail = 'stub row' } }
+        Mock -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit { }
+    }
+
+    It 'refuses a run that would prompt (<Case>) with ConfirmationUnavailable: no sign-in, no tenant check, no handler and no row' -TestCases @(
+        @{ Case = 'no -Confirm and no -WhatIf, with the default $ConfirmPreference'; Params = @{}; Target = 'Json' }
+        @{ Case = '-Confirm'; Params = @{ Confirm = $true }; Target = 'Json' }
+        @{ Case = '-TenantId naming a tenant ID'; Params = @{ TenantId = '00000000-0000-0000-0000-000000000001' }; Target = 'Json' }
+        @{ Case = '-Prune'; Params = @{ Prune = $true }; Target = 'Json' }
+    ) {
+        # The default preference prompts for a ConfirmImpact High command; the test host keeps it.
+        $global:ConfirmPreference | Should -Not -Be 'None'
+        $Rows = @(Invoke-OERStructure -Json $script:CuJson @Params -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable CuErr)
+
+        # Reached: the host question was asked, once.
+        Should -Invoke -ModuleName $script:moduleName Test-OERHostCanConfirm -Times 1 -Exactly
+        @($CuErr).Count | Should -Be 1
+        $CuErr[0].FullyQualifiedErrorId | Should -BeExactly 'ConfirmationUnavailable,Invoke-OERStructure'
+        $CuErr[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidOperation)
+        $CuErr[0].TargetObject | Should -BeExactly $Target
+        $CuErr[0].Exception.Message | Should -BeExactly $script:CuMessage
+        $Rows | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERDocumentTenantMismatch -Times 0
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureGroup -Times 0
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit -Times 0
+    }
+
+    It 'names the -Path it was given as the target' {
+        $Path = Join-Path $TestDrive 'cu-structure.json'
+        Set-Content -LiteralPath $Path -Value $script:CuJson -Encoding utf8
+        $null = @(Invoke-OERStructure -Path $Path -ErrorAction SilentlyContinue -ErrorVariable CuErr)
+        @($CuErr).Count | Should -Be 1
+        $CuErr[0].FullyQualifiedErrorId | Should -BeExactly 'ConfirmationUnavailable,Invoke-OERStructure'
+        $CuErr[0].TargetObject | Should -BeExactly $Path
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+    }
+
+    It 'refuses each piped document the same way' {
+        $Docs = @(($script:CuJson | ConvertFrom-Json), ($script:CuJson | ConvertFrom-Json))
+        $Rows = @($Docs | Invoke-OERStructure -ErrorAction SilentlyContinue -ErrorVariable CuErr)
+        @($CuErr | ForEach-Object { $_.FullyQualifiedErrorId }) | Should -Be @('ConfirmationUnavailable,Invoke-OERStructure', 'ConfirmationUnavailable,Invoke-OERStructure')
+        $Rows | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Test-OERHostCanConfirm -Times 2 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureGroup -Times 0
+    }
+
+    It 'refuses a document that does not validate with StructureValidationFailed first, before the host is asked about' {
+        $null = @(Invoke-OERStructure -Json '{ "groups": [] }' -ErrorAction SilentlyContinue -ErrorVariable CuErr)
+        @($CuErr | ForEach-Object { $_.FullyQualifiedErrorId }) | Should -Be @('StructureValidationFailed,Invoke-OERStructure')
+        Should -Invoke -ModuleName $script:moduleName Test-OERHostCanConfirm -Times 0
+    }
+
+    It 'is not refused <Case>, and applies the document' -TestCases @(
+        @{ Case = 'under -WhatIf'; Params = @{ WhatIf = $true }; HostCanConfirm = $false; GlobalNone = $false }
+        @{ Case = 'under -Confirm:$false'; Params = @{ Confirm = $false }; HostCanConfirm = $false; GlobalNone = $false }
+        @{ Case = 'under $ConfirmPreference None'; Params = @{}; HostCanConfirm = $false; GlobalNone = $true }
+        @{ Case = 'when the host can confirm'; Params = @{}; HostCanConfirm = $true; GlobalNone = $false }
+    ) {
+        if ($HostCanConfirm) { Mock -ModuleName $script:moduleName Test-OERHostCanConfirm { $true } }
+        $SavedPreference = $global:ConfirmPreference
+        try {
+            # Set where an operator sets it, at the prompt: a module reads the global preference.
+            if ($GlobalNone) { $global:ConfirmPreference = 'None' }
+            $Rows = @(Invoke-OERStructure -Json $script:CuJson @Params -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable CuErr)
+        } finally {
+            $global:ConfirmPreference = $SavedPreference
+        }
+
+        @($CuErr) | Should -BeNullOrEmpty
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)" }) | Should -Be @('groups|g1|Unchanged')
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureGroup -Times 1 -Exactly
+    }
+
+    It 'words the dispatch row for a handler that stopped at a confirmation prompt the host could not show (<Kind>)' -TestCases @(
+        @{ Kind = 'HostException'; Type = 'System.Management.Automation.Host.HostException' }
+        @{ Kind = 'PSInvalidOperationException'; Type = 'System.Management.Automation.PSInvalidOperationException' }
+        @{ Kind = 'NullReferenceException'; Type = 'System.NullReferenceException' }
+    ) {
+        Mock -ModuleName $script:moduleName Test-OERHostCanConfirm { $true }
+        InModuleScope $script:moduleName -Parameters @{ Type = $Type } {
+            param($Type)
+            $script:CuInnerType = $Type
+            Mock Sync-OERStructureGroup {
+                $Inner = New-Object -TypeName $script:CuInnerType -ArgumentList 'the prompt failed'
+                throw [System.Management.Automation.MethodInvocationException]::new('Exception calling "ShouldProcess" with "2" argument(s): "the prompt failed"', $Inner)
+            }
+        }
+        $Rows = @(Invoke-OERStructure -Json $script:CuJson -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable CuErr)
+
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)|$($_.Detail)" }) | Should -BeExactly @(
+            "groups|g1|Failed|handler error: $($script:CuRowText -f 'the prompt failed')"
+        )
+        # The record is published as itself, once by the engine (-ErrorVariable also holds the mock's inner layers).
+        $Own = @($CuErr | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' })
+        $Own.Count | Should -Be 1
+        $Own[0].Exception | Should -BeOfType ([System.Management.Automation.MethodInvocationException])
+        $Own[0].Exception.InnerException.GetType().FullName | Should -BeExactly $Type
+    }
+
+    It 'keeps the dispatch row''s own message for <Kind>' -TestCases @(
+        @{ Kind = 'a ShouldProcess failure of another inner type'; Message = 'Exception calling "ShouldProcess" with "2" argument(s): "not a prompt"'; Inner = $true }
+        @{ Kind = 'another handler error'; Message = 'transport failure'; Inner = $false }
+    ) {
+        Mock -ModuleName $script:moduleName Test-OERHostCanConfirm { $true }
+        InModuleScope $script:moduleName -Parameters @{ Message = $Message; Inner = $Inner } {
+            param($Message, $Inner)
+            $script:CuMessageThrown = $Message
+            $script:CuWithInner = $Inner
+            Mock Sync-OERStructureGroup {
+                if ($script:CuWithInner) {
+                    throw [System.Management.Automation.MethodInvocationException]::new($script:CuMessageThrown, [System.InvalidOperationException]::new('not a prompt'))
+                }
+                throw [System.Exception]::new($script:CuMessageThrown)
+            }
+        }
+        $Rows = @(Invoke-OERStructure -Json $script:CuJson -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)|$($_.Detail)" }) | Should -BeExactly @("groups|g1|Failed|handler error: $Message")
+    }
+
+    It 'words the pre-pass row the same way, keeping its pre-pass prefix, and keeps it for another error' -TestCases @(
+        @{ Kind = 'a prompt failure'; Prompt = $true }
+        @{ Kind = 'another error'; Prompt = $false }
+    ) {
+        Mock -ModuleName $script:moduleName Test-OERHostCanConfirm { $true }
+        InModuleScope $script:moduleName -Parameters @{ Prompt = $Prompt } {
+            param($Prompt)
+            $script:CuPrompt = $Prompt
+            Mock Sync-OERStructureAdministrativeUnit {
+                param($Item, $Caller, $Prune, $TenantAlias, $EnsureOnly, $CreatedUnitMembership, $RenameMap)
+                if (-not $EnsureOnly) { return }
+                if ($script:CuPrompt) {
+                    throw [System.Management.Automation.MethodInvocationException]::new('Exception calling "ShouldProcess" with "2" argument(s): "the prompt failed"',
+                        [System.Management.Automation.PSInvalidOperationException]::new('the prompt failed'))
+                }
+                throw [System.Exception]::new('lookup failed')
+            }
+        }
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "administrativeUnit": "AU-1" } ], "administrativeUnits": [ { "displayName": "AU-1" } ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+        $Expected = if ($Prompt) { "pre-pass handler error: $($script:CuRowText -f 'the prompt failed')" } else { 'pre-pass handler error: lookup failed' }
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)|$($_.Detail)" }) | Should -BeExactly @(
+            "administrativeUnits|AU-1|Failed|$Expected"
+            'groups|g1|Unchanged|stub row'
+        )
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit -Times 1 -Exactly -ParameterFilter { $EnsureOnly }
+    }
+
+    Context 'in a script with no try above it' {
+        # The public engine in a runspace made without a PSHost -- the Default Host, as in a [powershell]::Create()
+        # runspace or a thread job -- so no try stands anywhere above it and the REAL Test-OERHostCanConfirm
+        # answers. The script installs its own fakes in ITS copy of the module scope and logs every sign-in,
+        # tenant check and handler call with AppendAllText, whose path is substituted into the text.
+        BeforeAll {
+            function script:Invoke-CuDefaultHostScript {
+                param([scriptblock]$Script)
+                $Runspace = [runspacefactory]::CreateRunspace()
+                $Runspace.Open()
+                $Shell = [powershell]::Create()
+                try {
+                    Install-OERTransportTripwireInRunspace -Runspace $Runspace
+                    $Shell.Runspace = $Runspace
+                    $null = $Shell.AddScript($Script.ToString())
+                    $Output = $Shell.Invoke()
+                    Test-OERTransportTripwireInRunspace -Runspace $Runspace
+                    [PSCustomObject]@{
+                        Output = @($Output)
+                        Errors = @($Shell.Streams.Error | ForEach-Object { $_.ToString() })
+                    }
+                } finally {
+                    $Shell.Dispose()
+                    $Runspace.Dispose()
+                }
+            }
+            $script:CuFakes = @'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { [System.IO.File]::AppendAllText('#LOG#', "AUTH`n") }
+    Set-Item -Path function:script:Get-OERDocumentTenantMismatch -Value {
+        param($Document, $Target, $RequestedTenantId, [switch]$IncludeARM)
+        [System.IO.File]::AppendAllText('#LOG#', "TENANTCHECK`n")
+    }
+    Set-Item -Path function:script:Sync-OERStructureGroup -Value {
+        param($Item, $Caller, [switch]$Prune, $TenantAlias, $CreatedUnitMembership, $RenameMap)
+        [System.IO.File]::AppendAllText('#LOG#', "ASK group $($Item.displayName)`n")
+        if ($Caller.ShouldProcess([string]$Item.displayName, 'Update group')) { [System.IO.File]::AppendAllText('#LOG#', "WRITE group`n") }
+        ConvertTo-OERStructureResult -Section 'groups' -Item ([string]$Item.displayName) -Action 'Unchanged' -Detail 'stub row'
+    }
+    Set-Item -Path function:script:Sync-OERStructureAdministrativeUnit -Value {
+        param($Item, $Caller, [switch]$Prune, $TenantAlias, [switch]$EnsureOnly, $CreatedUnitMembership, $RenameMap)
+        [System.IO.File]::AppendAllText('#LOG#', "ASK unit $($Item.displayName) ensure=$EnsureOnly`n")
+        if ($Caller.ShouldProcess([string]$Item.displayName, 'Update administrative unit')) { [System.IO.File]::AppendAllText('#LOG#', "WRITE unit`n") }
+    }
+    #EXTRA#
+}
+'@
+        }
+
+        It 'refuses a run that would prompt in the Default Host and reaches the end of the script, while -WhatIf, -Confirm:$false and $ConfirmPreference None run' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Script = [scriptblock]::Create(($script:CuFakes + @'
+
+"HOST:$($Host.Name)"
+$Json = '{ "version": "1.0", "groups": [ { "displayName": "g1" } ] }'
+[System.IO.File]::AppendAllText('#LOG#', "STEP plain`n")
+Invoke-OERStructure -Json $Json -ErrorVariable RunErrors | ForEach-Object { "ROW:plain:$($_.Item):$($_.Action)" }
+$RunErrors | ForEach-Object { "ERRID:plain:$($_.FullyQualifiedErrorId)" }
+'AFTER'
+[System.IO.File]::AppendAllText('#LOG#', "STEP whatif`n")
+Invoke-OERStructure -Json $Json -WhatIf -ErrorVariable RunErrors | ForEach-Object { "ROW:whatif:$($_.Item):$($_.Action)" }
+$RunErrors | ForEach-Object { "ERRID:whatif:$($_.FullyQualifiedErrorId)" }
+[System.IO.File]::AppendAllText('#LOG#', "STEP confirmfalse`n")
+Invoke-OERStructure -Json $Json -Confirm:$false -ErrorVariable RunErrors | ForEach-Object { "ROW:confirmfalse:$($_.Item):$($_.Action)" }
+$RunErrors | ForEach-Object { "ERRID:confirmfalse:$($_.FullyQualifiedErrorId)" }
+[System.IO.File]::AppendAllText('#LOG#', "STEP none`n")
+$ConfirmPreference = 'None'
+Invoke-OERStructure -Json $Json -ErrorVariable RunErrors | ForEach-Object { "ROW:none:$($_.Item):$($_.Action)" }
+$RunErrors | ForEach-Object { "ERRID:none:$($_.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#EXTRA#', '').Replace('#LOG#', $Log.Replace("'", "''")))
+            $Run = Invoke-CuDefaultHostScript -Script $Script
+
+            $Run.Output | Should -Be @(
+                'HOST:Default Host'
+                'ERRID:plain:ConfirmationUnavailable,Invoke-OERStructure'
+                'AFTER'
+                'ROW:whatif:g1:Unchanged'
+                'ROW:confirmfalse:g1:Unchanged'
+                'ROW:none:g1:Unchanged'
+                'END'
+            )
+            @($Run.Errors) | Should -Be @($script:CuMessage)
+            # The refused run signed nothing in, compared no tenant and called no handler; each of the other
+            # three did, and none of them asked the host (the -WhatIf plan writes no change).
+            @(Get-Content -LiteralPath $Log) | Should -Be @(
+                'STEP plain'
+                'STEP whatif'
+                'AUTH', 'TENANTCHECK', 'ASK group g1'
+                'STEP confirmfalse'
+                'AUTH', 'TENANTCHECK', 'ASK group g1', 'WRITE group'
+                'STEP none'
+                'AUTH', 'TENANTCHECK', 'ASK group g1', 'WRITE group'
+            )
+        }
+
+        It 'reports, in a host the refusal misses, each entry whose prompt failed Failed with the row that says what is missing, and reaches the end of the script' {
+            # Test-OERHostCanConfirm is stubbed to $true there, standing for a host that fails only when it asks
+            # (pwsh -NonInteractive, standard input at its end): the handlers' real ShouldProcess then throws in
+            # the Default Host, and the engine's two catches word the rows.
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Script = [scriptblock]::Create(($script:CuFakes + @'
+
+$Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "administrativeUnit": "AU-1" } ], "administrativeUnits": [ { "displayName": "AU-1" } ] }'
+Invoke-OERStructure -Json $Json -ErrorVariable RunErrors | ForEach-Object { "ROW:$($_.Section):$($_.Item):$($_.Action):$(([string]$_.Detail).Replace("`r", '').Replace("`n", ' | '))" }
+$RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' } | ForEach-Object { "INNER:$($_.Exception.GetType().Name):$($_.Exception.InnerException.GetType().Name):$(([string]$_.Exception.InnerException.Message).Replace("`r", '').Replace("`n", ' | '))" }
+'END'
+'@).Replace('#EXTRA#', 'Set-Item -Path function:script:Test-OERHostCanConfirm -Value { $true }').Replace('#LOG#', $Log.Replace("'", "''")))
+            $Run = Invoke-CuDefaultHostScript -Script $Script
+
+            $Run.Output[-1] | Should -BeExactly 'END'
+            $Inner = @($Run.Output | Where-Object { $_ -like 'INNER:*' })
+            $Inner.Count | Should -Be 3 -Because "the output was:`n$($Run.Output -join "`n")"
+            # Every record is the real ShouldProcess failure of the Default Host, published as itself.
+            foreach ($Line in $Inner) { $Line | Should -BeLike 'INNER:MethodInvocationException:HostException:?*' }
+            $Message = @($Inner | ForEach-Object { $_.Substring('INNER:MethodInvocationException:HostException:'.Length) })
+            @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -BeExactly @(
+                "ROW:administrativeUnits:AU-1:Failed:pre-pass handler error: $($script:CuRowText -f $Message[0])"
+                "ROW:groups:g1:Failed:handler error: $($script:CuRowText -f $Message[1])"
+                "ROW:administrativeUnits:AU-1:Failed:handler error: $($script:CuRowText -f $Message[2])"
+            )
+            @($Run.Errors).Count | Should -Be 3
+            # Each handler asked once and wrote nothing.
+            @(Get-Content -LiteralPath $Log) | Should -Be @('AUTH', 'TENANTCHECK', 'ASK unit AU-1 ensure=True', 'ASK group g1', 'ASK unit AU-1 ensure=False')
+        }
+    }
+}
+
+Describe 'Invoke-OERStructure refuses a document the validator refuses, in a script with no try above it (BL-139, BL-154)' {
+    # The two validator refusals of this step, through the public engine in a runspace through
+    # Invoke-OERWithConfirmAnswer, so no try stands anywhere above it: a group template the naming engine cannot
+    # resolve, and a value the reader turned into a date and time (Test-OERJsonDateKindSupport answers $false in
+    # the runspace's module scope, as on PowerShell before 7.5). Each is refused with StructureValidationFailed,
+    # with no sign-in, no handler call and no row, and the script goes on. A control document in the same script
+    # is applied, so the scenario tells a refusal from silence.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        function script:New-VrNoTryScenario {
+            param([string]$Log, [string]$Json, [string]$ControlJson)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Test-OERJsonDateKindSupport -Value { $false }
+    Set-Item -Path function:script:Initialize-OERAuth -Value { [System.IO.File]::AppendAllText('#LOG#', "AUTH`n") }
+    Set-Item -Path function:script:Get-OERDocumentTenantMismatch -Value { param($Document, $Target, $RequestedTenantId, [switch]$IncludeARM) }
+    Set-Item -Path function:script:Sync-OERStructureGroup -Value {
+        param($Item, $Caller, [switch]$Prune, $TenantAlias, $CreatedUnitMembership, $RenameMap)
+        # A template group carries no displayName (the real handler computes it); the stub names it by its template.
+        $Label = if ($Item.displayName) { [string]$Item.displayName } else { [string]$Item.template }
+        [System.IO.File]::AppendAllText('#LOG#', "HANDLER $Label`n")
+        ConvertTo-OERStructureResult -Section 'groups' -Item $Label -Action 'Unchanged' -Detail 'stub row'
+    }
+}
+Invoke-OERStructure -Json '#JSON#' -ErrorVariable RunErrors | ForEach-Object { "ROW:$($_.Item):$($_.Action)" }
+$RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' } | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
+'AFTER'
+Invoke-OERStructure -Json '#CONTROLJSON#' -ErrorVariable RunErrors | ForEach-Object { "ROW:$($_.Item):$($_.Action)" }
+$RunErrors | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#JSON#', $Json).Replace('#CONTROLJSON#', $ControlJson))
+        }
+    }
+
+    It 'refuses <Case> with StructureValidationFailed, signs nothing in, calls no handler and reaches the end of the script' -TestCases @(
+        @{
+            Case        = 'a group template that cannot be resolved'
+            Json        = '{ "version": "1.0", "groups": [ { "template": "grp-{env}-{missing}", "tokens": { "env": "prd" } } ] }'
+            ControlJson = '{ "version": "1.0", "groups": [ { "template": "grp-{env}", "tokens": { "env": "prd" } } ] }'
+            Control     = 'grp-{env}'
+            Finding     = "groups[0].template: 'template' at groups[0] cannot be resolved to a group name: "
+        }
+        @{
+            Case        = 'a value the reader turned into a date and time'
+            Json        = '{ "version": "1.0", "groups": [ { "displayName": "g1", "description": "2026-01-01T00:00:00Z" } ] }'
+            ControlJson = '{ "version": "1.0", "groups": [ { "displayName": "g1", "description": "plain text" } ] }'
+            Control     = 'g1'
+            Finding     = 'groups[0].description: The value at groups[0].description was read as a date and time, not as the text written'
+        }
+    ) {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&No' -Script (New-VrNoTryScenario -Log $Log -Json $Json -ControlJson $ControlJson)
+
+        $Run.Output | Should -Be @(
+            'ERRID:StructureValidationFailed,Invoke-OERStructure'
+            'AFTER'
+            "ROW:$($Control):Unchanged"
+            'END'
+        )
+        @($Run.Errors).Count | Should -Be 1
+        $Run.Errors[0] | Should -Match ('^' + [regex]::Escape("Structure document failed validation: $Finding"))
+        # The refused document signed nothing in and reached no handler; the control document did both.
+        @(Get-Content -LiteralPath $Log) | Should -Be @('AUTH', "HANDLER $Control")
+        @($Run.Prompts).Count | Should -Be 0
+    }
+}
+
+Describe 'Invoke-OERStructure groups: the pair rule the real Set-OERGroupPimPolicy reads itself refuses the update when the read fails (Sprint 11 step 11, A24)' {
+    # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere above
+    # it, as at a prompt, with the runspace's own error preference (Continue). The document declares the
+    # member policy's authenticationContextId alone, and the live policy carries no MFA, so the diff binds
+    # that half alone and the REAL Set-OERGroupPimPolicy reads the activation enablement rule itself before
+    # it sends anything. The script installs its own fakes in ITS copy of the module scope -- everything
+    # above and beside the cmdlet, and the Graph transport below it -- and logs every request with
+    # AppendAllText, whose path is substituted into the text. The read fails (the record a refused read
+    # throws) or, in the control, answers, so the scenario can tell a refusal from silence.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        function script:New-PrNoTryScenario {
+            param([string]$Log, [string]$Read)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERStructureDefault -Value { $null }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { 'g-1' }
+    Set-Item -Path function:script:Get-OERGroup -Value {
+        [pscustomobject]@{ Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null; GroupType = 'Assigned'
+            IsAssignableToRole = $false; Members = @(); PimEligibility = @() }
+    }
+    Set-Item -Path function:script:Read-OERGroupPimHold -Value { [pscustomobject]@{ Read = $true; Held = @{}; Cause = $null } }
+    Set-Item -Path function:script:Test-OERGroupPimInUse -Value { [pscustomobject]@{ InUse = $true; Reason = 'x'; Manageable = $true } }
+    Set-Item -Path function:script:Get-OERGroupPimPolicy -Value {
+        [CmdletBinding()]
+        param([Alias('GroupId', 'Id')][string]$Group, [string]$AccessType = 'member', [string]$TenantId)
+        [pscustomobject]@{ PolicyId = 'pol-live'; ActivationMaxHours = 8; AuthenticationContextId = ''; ActivationEnabledRules = @('Justification')
+            AllowPermanentEligibility = $false; EligibleDurationDays = 365; AllowPermanentActive = $false; ActiveDurationDays = 180
+            ActiveEnabledRules = @(); Notifications = [pscustomobject]@{ EligibleAlert = @(); ActiveAlert = @(); ActivationAlert = @() } }
+    }
+    Set-Item -Path function:script:Get-OERPimGroupPolicyId -Value { 'pol-live' }
+    Set-Item -Path function:script:Get-OERAuthenticationContext -Value {
+        [CmdletBinding()] param()
+        [pscustomobject]@{ AuthenticationContextId = 'c1'; DisplayName = 'Context one'; IsAvailable = $true }
+    }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        $RuleId = ($Uri -split '/')[-1]
+        [System.IO.File]::AppendAllText('#LOG#', "$Method $RuleId`n")
+        if ($Method -eq 'PATCH') { return @{} }
+        if ('#READ#' -eq 'fails') {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new("Insufficient privileges to read rule '$RuleId'."),
+                'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, $RuleId)
+        }
+        @{ id = $RuleId; enabledRules = @('Justification') }
+    }
+}
+$Json = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_x", "members": null, "pimPolicy": { "member": { "authenticationContextId": "c1" } } } ] }'
+Invoke-OERStructure -Json $Json -Confirm:$false -ErrorVariable RunErrors | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+$RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' } | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#READ#', $Read))
+        }
+        function script:Get-PrLoggedLine ([string]$Log) {
+            if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
+        }
+    }
+
+    It 'reaches the end of a script with no try above it, with one Failed row and the read''s record, and sends nothing' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-PrNoTryScenario -Log $Log -Read 'fails')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Rows = @($Run.Output | Where-Object { $_ -like 'ROW:*pimPolicy*' })
+        $Rows | Should -Be @("ROW:Failed:pimPolicy (member) update failed: Insufficient privileges to read rule 'Enablement_EndUser_Assignment'.")
+        # The read's own record reached the error stream, once, and no other error did.
+        @($Run.Errors).Count | Should -Be 1
+        $Run.Errors[0] | Should -BeExactly "Insufficient privileges to read rule 'Enablement_EndUser_Assignment'."
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @('ERRID:Authorization_RequestDenied,Invoke-OERStructure')
+        # Reached: the real cmdlet read the enablement rule, once; nothing was sent after it.
+        $Logged = @(Get-PrLoggedLine -Log $Log)
+        $Logged | Should -Be @('GET Enablement_EndUser_Assignment') -Because "the requests were:`n$($Logged -join "`n")"
+        @($Run.Warnings).Count | Should -Be 0
+        @($Run.Prompts).Count | Should -Be 0
+    }
+
+    It 'the control: the same script, the read answering, sends the context rule and reports it Updated' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-PrNoTryScenario -Log $Log -Read 'answers')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        @($Run.Output | Where-Object { $_ -like 'ROW:*pimPolicy*' }) | Should -Be @('ROW:Updated:pimPolicy (member) set: authenticationContextId=c1')
+        @($Run.Errors).Count | Should -Be 0
+        @(Get-PrLoggedLine -Log $Log) | Should -Be @('GET Enablement_EndUser_Assignment', 'PATCH AuthenticationContext_EndUser_Assignment')
+    }
+}
+
+Describe 'Invoke-OERStructure directoryRoleManagementPolicies: approval required with no approver is refused before the gate, in a script with no try above it (BL-113)' {
+    # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere above
+    # it, as at a prompt, with the runspace's own error preference (Continue). The document declares
+    # requireApproval true and an empty users side; the live policy does not require approval and its
+    # approval stage names nobody, so Set-OERDirectoryRoleManagementPolicy would refuse the change with
+    # ApproverRequired. The handler refuses it first, before ShouldProcess, so the run and the -WhatIf plan
+    # report the same Failed row and the cmdlet is never called. The script installs its own fakes in ITS
+    # copy of the module scope -- the live policy is projected by the real converter from the rules -- and
+    # logs every policy read and write with AppendAllText, whose path is substituted into the text. In the
+    # control the live stage holds a group approver, so the scenario can tell a refusal from silence.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        function script:New-DaNoTryScenario {
+            param([string]$Log, [string]$Approvers, [string]$Mode)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERPrincipal -Value { [System.IO.File]::AppendAllText('#LOG#', "APPROVER LOOKUP`n"); throw 'no approver value should need resolving' }
+    Set-Item -Path function:script:Get-OERDirectoryRoleManagementPolicy -Value {
+        [CmdletBinding()]
+        param([string]$Role)
+        [System.IO.File]::AppendAllText('#LOG#', "POLICY GET $Role`n")
+        $Primary = @(#APPROVERS#)
+        $Rules = @(@{ id = 'Approval_EndUser_Assignment'; setting = @{ isApprovalRequired = $false; approvalMode = 'SingleStage'
+                    approvalStages = @(@{ approvalStageTimeOutInDays = 1; isApproverJustificationRequired = $true; primaryApprovers = $Primary; escalationApprovers = @() }) } })
+        ConvertTo-OERRoleManagementPolicy -Rules $Rules -PolicyId 'DirectoryRole_11111111-1111-1111-1111-111111111111_aaaaaaaa-0000-0000-0000-000000000010' `
+            -Scope '/' -RoleName $Role -ApproverShape Graph
+    }
+    Set-Item -Path function:script:Set-OERDirectoryRoleManagementPolicy -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "POLICY SET $($args -join ' ')`n")
+        [pscustomobject]@{ PolicyId = 'p-1' }
+    }
+}
+$Json = '{ "version": "1.0", "directoryRoleManagementPolicies": [ { "role": "Reports Reader", "requireApproval": true, "approvers": { "users": [] } } ] }'
+Invoke-OERStructure -Json $Json #MODE# -ErrorVariable RunErrors | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+$RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' } | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#APPROVERS#', $Approvers).Replace('#MODE#', $Mode))
+        }
+        $script:DaRow = 'ROW:Failed:approval would be required with no approver (ApproverRequired): the live approval rule names no approver and the document declares none; the policy was not changed'
+        $script:DaMessage = ("Approval cannot be required with no approver: directory role management policy 'DirectoryRole_11111111-1111-1111-1111-111111111111_aaaaaaaa-0000-0000-0000-000000000010' " +
+            'has none on its live approval rule and none was supplied. Pass -ApproverUser or -ApproverGroup.')
+    }
+
+    It 'reaches the end of a script with no try above it, with one Failed row and the ApproverRequired record, and writes nothing (<Mode>)' -ForEach @(
+        @{ Mode = 'a real run'; Switch = '-Confirm:$false' }
+        @{ Mode = 'a -WhatIf plan'; Switch = '-WhatIf' }
+    ) {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-DaNoTryScenario -Log $Log -Approvers '' -Mode $Switch)
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        # Reached: the live policy was read.
+        $Logged | Should -Contain 'POLICY GET Reports Reader'
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @($script:DaRow)
+        # The handler's record reached the error stream, once, and no other error did.
+        @($Run.Errors).Count | Should -Be 1
+        $Run.Errors[0] | Should -BeExactly $script:DaMessage
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @('ERRID:ApproverRequired,Invoke-OERStructure')
+        # Nothing was written, no approver was looked up, and no 'What if:' line or prompt was shown.
+        @($Logged | Where-Object { $_ -like 'POLICY SET*' }) | Should -BeNullOrEmpty -Because "the requests were:`n$($Logged -join "`n")"
+        $Logged | Should -Not -Contain 'APPROVER LOOKUP'
+        @($Run.Events | Where-Object { $_ -like 'Line: What if:*' }).Count | Should -Be 0
+        @($Run.Prompts).Count | Should -Be 0
+    }
+
+    It 'writes the change in the same script when the live stage holds an approver, so the scenario can tell a refusal from silence' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Approver = "@{ '@odata.type' = '#microsoft.graph.groupMembers'; groupId = 'bbbbbbbb-0000-0000-0000-000000000002'; description = 'Approvers' }"
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-DaNoTryScenario -Log $Log -Approvers $Approver -Mode '-Confirm:$false')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        @($Logged | Where-Object { $_ -like 'POLICY SET*-RequireApproval*' }).Count | Should -Be 1 -Because "the requests were:`n$($Logged -join "`n")"
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @("ROW:Updated:updated directory role management policy for 'Reports Reader' (requireApproval=True)")
+        @($Run.Errors).Count | Should -Be 0
+    }
+}
+
+Describe 'Invoke-OERStructure groups: approval required with no approver is refused before the gate, in a script with no try above it (BL-113)' {
+    # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere above
+    # it, as at a prompt, with the runspace's own error preference (Continue). The document declares the
+    # member policy's requireApproval true with an empty users side, and the owner policy's
+    # activationMaxHours; the live member policy does not require approval and its approval stage names
+    # nobody, so Set-OERGroupPimPolicy would refuse the member change with ApproverRequired. Step 4 refuses
+    # it first, before ShouldProcess, so the run and the -WhatIf plan report the same Failed member row, the
+    # cmdlet is never called for member, and the owner policy is still processed. The script installs its
+    # own fakes in ITS copy of the module scope -- the live policy is projected by the real converter from
+    # the rules -- and logs every policy read and write with AppendAllText, whose path is substituted into
+    # the text. In the control the live member stage holds a group approver.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        function script:New-GaNoTryScenario {
+            param([string]$Log, [string]$Approvers, [string]$Mode)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERStructureDefault -Value { $null }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { 'g-1' }
+    Set-Item -Path function:script:Get-OERGroup -Value {
+        [pscustomobject]@{ Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null; GroupType = 'Assigned'
+            IsAssignableToRole = $false; Members = @(); PimEligibility = @() }
+    }
+    Set-Item -Path function:script:Read-OERGroupPimHold -Value { [pscustomobject]@{ Read = $true; Held = @{}; Cause = $null } }
+    Set-Item -Path function:script:Test-OERGroupPimInUse -Value { [pscustomobject]@{ InUse = $true; Reason = 'x'; Manageable = $true } }
+    Set-Item -Path function:script:Resolve-OERPrincipal -Value { [System.IO.File]::AppendAllText('#LOG#', "APPROVER LOOKUP`n"); throw 'no approver value should need resolving' }
+    Set-Item -Path function:script:Get-OERGroupPimPolicy -Value {
+        [CmdletBinding()]
+        param([Alias('GroupId', 'Id')][string]$Group, [string]$AccessType = 'member', [string]$TenantId)
+        [System.IO.File]::AppendAllText('#LOG#', "POLICY GET $AccessType`n")
+        $Primary = @(#APPROVERS#)
+        $Rules = @(@{ id = 'Approval_EndUser_Assignment'; setting = @{ isApprovalRequired = $false; approvalMode = 'SingleStage'
+                    approvalStages = @(@{ approvalStageTimeOutInDays = 1; isApproverJustificationRequired = $true; primaryApprovers = $Primary; escalationApprovers = @() }) } })
+        ConvertTo-OERGroupPimPolicy -Rules $Rules -GroupId $Group -PolicyId 'pol-live' -AccessType $AccessType
+    }
+    Set-Item -Path function:script:Set-OERGroupPimPolicy -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "POLICY SET $($args -join ' ')`n")
+        [pscustomobject]@{ Applied = $true; FailedRules = @() }
+    }
+}
+$Json = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_x", "members": null, "pimPolicy": { "member": { "requireApproval": true, "approvers": { "users": [] } }, "owner": { "activationMaxHours": 4 } } } ] }'
+Invoke-OERStructure -Json $Json #MODE# -ErrorVariable RunErrors | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+$RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' } | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#APPROVERS#', $Approvers).Replace('#MODE#', $Mode))
+        }
+        $script:GaRow = 'ROW:Failed:pimPolicy (member) not applied: approval would be required with no approver (ApproverRequired): the live approval rule names no approver and the document declares none; the policy was not changed'
+        $script:GaMessage = "Approval cannot be required with no approver: PIM policy 'pol-live' has none on its live approval rule and none was supplied. Pass -ApproverUser or -ApproverGroup."
+    }
+
+    It 'reaches the end of a script with no try above it, with one Failed member row and the ApproverRequired record, writes nothing for member and still processes owner (<Mode>)' -ForEach @(
+        @{ Mode = 'a real run'; Switch = '-Confirm:$false'; Owner = 'ROW:Updated:pimPolicy (owner) set: activationMaxHours=4' }
+        @{ Mode = 'a -WhatIf plan'; Switch = '-WhatIf'; Owner = 'ROW:Skipped:would set pimPolicy (owner): activationMaxHours=4' }
+    ) {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-GaNoTryScenario -Log $Log -Approvers '' -Mode $Switch)
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        # Reached: both access types were read.
+        $Logged | Should -Contain 'POLICY GET member'
+        $Logged | Should -Contain 'POLICY GET owner'
+        @($Run.Output | Where-Object { $_ -like 'ROW:*pimPolicy*' }) | Should -Be @($script:GaRow, $Owner)
+        # The handler's record reached the error stream, once, and no other error did.
+        @($Run.Errors).Count | Should -Be 1
+        $Run.Errors[0] | Should -BeExactly $script:GaMessage
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @('ERRID:ApproverRequired,Invoke-OERStructure')
+        # Nothing was written for member, and no approver was looked up.
+        @($Logged | Where-Object { $_ -like 'POLICY SET*member*' }) | Should -BeNullOrEmpty -Because "the requests were:`n$($Logged -join "`n")"
+        $Logged | Should -Not -Contain 'APPROVER LOOKUP'
+        if ($Switch -eq '-WhatIf') {
+            @($Logged | Where-Object { $_ -like 'POLICY SET*' }) | Should -BeNullOrEmpty
+            # The plan reached the host as a 'What if:' line for the owner change only.
+            @($Run.Events | Where-Object { $_ -like 'Line: What if:*Set PIM policy (owner)*' }).Count | Should -Be 1
+            @($Run.Events | Where-Object { $_ -like '*Set PIM policy (member)*' }).Count | Should -Be 0
+        } else {
+            @($Logged | Where-Object { $_ -like 'POLICY SET*-AccessType owner*' }).Count | Should -Be 1
+        }
+        @($Run.Prompts).Count | Should -Be 0
+    }
+
+    It 'writes both access types in the same script when the live member stage holds an approver, so the scenario can tell a refusal from silence' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Approver = "@{ '@odata.type' = '#microsoft.graph.groupMembers'; id = 'grp-1'; description = 'Approvers' }"
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-GaNoTryScenario -Log $Log -Approvers $Approver -Mode '-Confirm:$false')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        @($Logged | Where-Object { $_ -like 'POLICY SET*-AccessType member*' }).Count | Should -Be 1 -Because "the requests were:`n$($Logged -join "`n")"
+        @($Logged | Where-Object { $_ -like 'POLICY SET*-AccessType owner*' }).Count | Should -Be 1
+        @($Run.Output | Where-Object { $_ -like 'ROW:*pimPolicy*' }) | Should -Be @('ROW:Updated:pimPolicy (member) set: requireApproval=True', 'ROW:Updated:pimPolicy (owner) set: activationMaxHours=4')
+        @($Run.Errors).Count | Should -Be 0
+    }
+}
+
+Describe 'Invoke-OERStructure groups: an undeclared half of an expiration pair whose live value is unknown is refused, in a script with no try above it (final review of Sprint 11 step 11, Important 1)' {
+    # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere above
+    # it, as at a prompt, with the runspace's own error preference (Continue). The document declares ONE
+    # half of the member policy's eligible expiration pair -- eligibleDurationDays alone (probe P2) or
+    # allowPermanentEligibility alone (probe P3) -- and the owner policy's activationMaxHours. The live
+    # member policy is projected by the real converter from a rule list that holds no
+    # Expiration_Admin_Eligibility rule, so the half the document leaves out has no live value: the diff
+    # used to fill it with a default and Set-OERGroupPimPolicy sent it. Now the member access type is
+    # Failed with PimRuleValueUnknown before ShouldProcess, in the run and the -WhatIf plan alike, and the
+    # owner policy is still processed. The script installs its own fakes in ITS copy of the module scope
+    # and logs every policy read and write with AppendAllText, whose path is substituted into the text. In
+    # the control the live member rules hold the expiration rule, so the scenario can tell a refusal from
+    # silence.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        function script:New-PuNoTryScenario {
+            param([string]$Log, [string]$MemberJson, [string]$Rules, [string]$Mode)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERStructureDefault -Value { $null }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { 'g-1' }
+    Set-Item -Path function:script:Get-OERGroup -Value {
+        [pscustomobject]@{ Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null; GroupType = 'Assigned'
+            IsAssignableToRole = $false; Members = @(); PimEligibility = @() }
+    }
+    Set-Item -Path function:script:Read-OERGroupPimHold -Value { [pscustomobject]@{ Read = $true; Held = @{}; Cause = $null } }
+    Set-Item -Path function:script:Test-OERGroupPimInUse -Value { [pscustomobject]@{ InUse = $true; Reason = 'x'; Manageable = $true } }
+    Set-Item -Path function:script:Get-OERGroupPimPolicy -Value {
+        [CmdletBinding()]
+        param([Alias('GroupId', 'Id')][string]$Group, [string]$AccessType = 'member', [string]$TenantId)
+        [System.IO.File]::AppendAllText('#LOG#', "POLICY GET $AccessType`n")
+        $Rules = if ($AccessType -eq 'member') { @(#RULES#) } else {
+            @(@{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT8H' },
+                @{ id = 'Expiration_Admin_Eligibility'; isExpirationRequired = $true; maximumDuration = 'P365D' })
+        }
+        ConvertTo-OERGroupPimPolicy -Rules $Rules -GroupId $Group -PolicyId "pol-$AccessType" -AccessType $AccessType
+    }
+    Set-Item -Path function:script:Set-OERGroupPimPolicy -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "POLICY SET $($args -join ' ')`n")
+        [pscustomobject]@{ Applied = $true; FailedRules = @() }
+    }
+}
+$Json = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_x", "members": null, "pimPolicy": { "member": { #MEMBER# }, "owner": { "activationMaxHours": 4 } } } ] }'
+Invoke-OERStructure -Json $Json #MODE# -ErrorVariable RunErrors | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+$RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' } | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#MEMBER#', $MemberJson).Replace('#RULES#', $Rules).Replace('#MODE#', $Mode))
+        }
+    }
+
+    It 'reaches the end of a script with no try above it, with one Failed member row and the PimRuleValueUnknown record, writes nothing for member and still processes owner (<Probe>, <Mode>)' -ForEach @(
+        foreach ($Probe in @(
+                @{ Probe = 'eligibleDurationDays alone'; MemberJson = '"eligibleDurationDays": 90'
+                    Entry = 'eligibleDurationDays is declared without allowPermanentEligibility, and whether the live policy allows permanent eligible assignment (Expiration_Admin_Eligibility isExpirationRequired) is unknown: the read returned no value for it' }
+                @{ Probe = 'allowPermanentEligibility alone'; MemberJson = '"allowPermanentEligibility": true'
+                    Entry = 'allowPermanentEligibility is declared without eligibleDurationDays, and the live eligible assignment expiration (Expiration_Admin_Eligibility maximumDuration) is unknown: the read returned no value for it' }
+            )) {
+            foreach ($ModeCase in @(
+                    @{ Mode = 'a real run'; Switch = '-Confirm:$false'; Owner = 'ROW:Updated:pimPolicy (owner) set: activationMaxHours=4' }
+                    @{ Mode = 'a -WhatIf plan'; Switch = '-WhatIf'; Owner = 'ROW:Skipped:would set pimPolicy (owner): activationMaxHours=4' }
+                )) { $Probe + $ModeCase }
+        }
+    ) {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Rules = "@{ id = 'Enablement_EndUser_Assignment'; enabledRules = @('Justification') }"
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-PuNoTryScenario -Log $Log -MemberJson $MemberJson -Rules $Rules -Mode $Switch)
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        # Reached: both access types were read.
+        $Logged | Should -Contain 'POLICY GET member'
+        $Logged | Should -Contain 'POLICY GET owner'
+        $MemberRow = "ROW:Failed:pimPolicy (member) not applied: a value the document leaves to the live policy is unknown (PimRuleValueUnknown): $Entry; nothing was changed for 'member'. Declare both values of the pair in the document."
+        @($Run.Output | Where-Object { $_ -like 'ROW:*pimPolicy*' }) | Should -Be @($MemberRow, $Owner)
+        # The handler's record reached the error stream, once, and no other error did.
+        @($Run.Errors).Count | Should -Be 1
+        $Run.Errors[0] | Should -BeExactly "pimPolicy (member) of group 'role_sec_x' was not applied: $Entry. A value the document leaves out is taken from the live policy, never from a default, so nothing was changed for 'member'. Declare both values of the pair in the document."
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @('ERRID:PimRuleValueUnknown,Invoke-OERStructure')
+        # Nothing was written for member.
+        @($Logged | Where-Object { $_ -like 'POLICY SET*member*' }) | Should -BeNullOrEmpty -Because "the requests were:`n$($Logged -join "`n")"
+        if ($Switch -eq '-WhatIf') {
+            @($Logged | Where-Object { $_ -like 'POLICY SET*' }) | Should -BeNullOrEmpty
+            @($Run.Events | Where-Object { $_ -like 'Line: What if:*Set PIM policy (owner)*' }).Count | Should -Be 1
+            @($Run.Events | Where-Object { $_ -like '*Set PIM policy (member)*' }).Count | Should -Be 0
+        } else {
+            @($Logged | Where-Object { $_ -like 'POLICY SET*-AccessType owner*' }).Count | Should -Be 1
+        }
+        @($Run.Prompts).Count | Should -Be 0
+    }
+
+    It 'writes both access types in the same script when the live member rules hold the expiration rule, so the scenario can tell a refusal from silence' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Rules = "@{ id = 'Expiration_Admin_Eligibility'; isExpirationRequired = `$false; maximumDuration = 'P365D' }"
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-PuNoTryScenario -Log $Log -MemberJson '"eligibleDurationDays": 90' -Rules $Rules -Mode '-Confirm:$false')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        # The live permanence (allowed: isExpirationRequired false) is sent beside the declared duration.
+        @($Logged | Where-Object { $_ -like 'POLICY SET*-AccessType member*' }).Count | Should -Be 1 -Because "the requests were:`n$($Logged -join "`n")"
+        # A splatted hashtable reaches a plain function's $args as '-Name:' and its value, in no fixed order.
+        @($Logged | Where-Object { $_ -like 'POLICY SET*-AccessType member*' -and $_ -like '*-EligibleDuration: 90*' -and
+                $_ -like '*-AllowPermanentEligibility: True*' }).Count | Should -Be 1
+        @($Logged | Where-Object { $_ -like 'POLICY SET*-AccessType owner*' }).Count | Should -Be 1
+        @($Run.Output | Where-Object { $_ -like 'ROW:*pimPolicy*' }) | Should -Be @('ROW:Updated:pimPolicy (member) set: eligible(perm=True,days=90)', 'ROW:Updated:pimPolicy (owner) set: activationMaxHours=4')
+        @($Run.Errors).Count | Should -Be 0
     }
 }

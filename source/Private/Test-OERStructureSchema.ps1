@@ -98,6 +98,42 @@ function Test-OERStructureSchema {
     splat key cannot be dropped, and New-OERAccessPackageApprovalStage's own duration encoder rejects
     a value below 1, so the build throws and the whole assignmentPolicy is reported Failed instead of
     being created or updated (issue #70).
+    An assignmentPolicies entry whose requestorScope.scope is AllExternalUsers (any letter case) and
+    that declares no approval is a Warning at its requestorScope.scope path (BL-54): Microsoft Graph
+    refuses such a policy with AnyUserPolicyValidationError ("An access package policy with Any User
+    option must have an approval configured"). The entry has approval when it declares at least one
+    approvalStages entry and does not declare requireApproval false (with requireApproval omitted the
+    apply derives it from the stage count). One text names a requireApproval false, the other the
+    missing stage; the second says what the engine does with what the entry omits, and what it says
+    depends on the entry: a created policy gets no approval; an existing policy keeps what the entry
+    leaves out, so with requireApproval left out the update is accepted only when the live policy
+    already requires approval with at least one stage, and with requireApproval true declared (the flag
+    is sent as declared) only the live stages matter, so it is accepted only when the live policy has
+    at least one; an approvalStages declared as an empty array is sent as the empty stage list, so the
+    write carries no approval stage on create or on update whatever the live policy holds, and Microsoft
+    Graph is expected to refuse it (that answer is not measured for this combination). It is a Warning
+    because the validator cannot see the live policy. An accessPackages displayName that is a canonical GUID (Test-OERGuid)
+    is a Warning at its displayName path (BL-24): the engine creates the package with that name, and
+    a GUID is read as an object id wherever an access review or another reference names the package.
+    A group that declares template and no displayName, and whose template Resolve-OERName cannot
+    resolve with the tokens given (a placeholder no token supplies, a name over 256 characters), is an Error at
+    groups[i].template carrying Resolve-OERName's reason (BL-139); a value in tokens is inserted as
+    text, so a '$' in it or a value that looks like a token resolves. A principalType of a
+    roleAssignments or administrativeUnits scopedRoles entry, and the recurrence of an accessReviews
+    entry, that is not a string (for example an array holding the right word) is an Error that names
+    the type of the value it found (BL-155, BL-117).
+    A date value anywhere in the document -- a [datetime] or a [DateTimeOffset] in any property or array
+    element, at any depth -- is an Error at its own path (Rule 2b, BL-154): ConvertFrom-Json on PowerShell
+    before 7.5 converts a string that holds an ISO 8601 date and time with seconds while it parses, so
+    the text the author wrote is lost, and the Error says to run on PowerShell 7.5 or later to apply the
+    document as written.
+    Read-OERStructureDocument parses with -DateKind String where the PowerShell has it, so on 7.5 or later
+    a document it read raises none; a caller who builds a document with ConvertFrom-Json on any version
+    gets the dates the default parse gives. The displayName of a groups, administrativeUnits, catalogs,
+    accessPackages, assignmentPolicies or accessReviews entry must be a string: a number, a boolean, an
+    object or an array is an Error at the displayName path that names the type found, and a date gets
+    only the date Error. An absent or explicit null displayName is not declared and keeps its required
+    finding.
     Every closed enum value (accessType, enablement, membershipRuleProcessingState,
     catalogResourceType, approverInfoVisibility, accessReviewRecurrence, accessReviewDefaultDecision,
     principalType, directoryRoleAssignmentType, principalStatus) is accepted in any casing, but a non-canonically cased
@@ -293,9 +329,13 @@ function Test-OERStructureSchema {
     previousDisplayName is never checked. A group with onPremisesSynced true is skipped, with a Warning
     that says so, unless the standard includes synced groups; then it is checked and each finding says
     its name can only change in the on-premises directory. Every finding is a Warning and never an
-    Error, so Valid does not change, and a node that is not the shape it should be (a section that is
-    not an array, a null or non-object item, a displayName that is not a non-empty string) is left to
-    the findings the validator already raises for it and adds no naming row.
+    Error, so Valid does not change. A node that is not the shape it should be (a section that is not an
+    array, a null or non-object item, an empty or null displayName) is left to the findings the
+    validator already raises for it and adds no naming row. A displayName that is declared but is not a
+    string (a number, a boolean, an object, an array, a date) gets one Warning at its displayName path
+    instead (BL-154): "The name at <path> was not checked against the naming standard: displayName is
+    not a string (<type>)", so a standard that is meant to check a section never leaves an object out
+    without a word; the type Error is the section rule's.
     .PARAMETER Document
     The parsed document object (from Read-OERStructureDocument or ConvertFrom-Json) to validate.
     .PARAMETER NamingStandard
@@ -461,16 +501,13 @@ function Test-OERStructureSchema {
         $Seen[$Key] = $Index
     }
 
-    # The name a groups[] entry claims: its displayName, or for a template-based entry the name the
-    # naming engine computes from template and tokens, with the token conversion Sync-OERStructureGroup
-    # applies. Returns $null when the entry declares neither, or when the name cannot be computed --
-    # an unknown token, or any other refusal, makes Resolve-OERName throw -- since the apply engine
-    # reports such an entry Failed on its own. The one owner of that computation here: the duplicate
-    # check (BL-02) and the administrativeUnit placement rule (Rule 12) both call it.
-    function Get-GroupEntryName {
+    # BL-139 (R-12): the one computation of a template-based group's name, with the token conversion
+    # Sync-OERStructureGroup applies, and the reason when it cannot be computed. Returns a record with
+    # Name (the name Resolve-OERName computes, or $null) and Reason (Resolve-OERName's own message when it
+    # throws -- an unknown token, a name over the length limit -- or $null). Get-GroupEntryName and the
+    # groups rule both read it, so the name a rule uses and the Error the groups rule gives never disagree.
+    function Resolve-GroupTemplateName {
         param([object]$Group)
-        if (Test-HasProp -Node $Group -Name 'displayName') { return [string]$Group.displayName }
-        if (-not (Test-HasProp -Node $Group -Name 'template') -or [string]::IsNullOrEmpty([string]$Group.template)) { return $null }
         $TokenHash = @{}
         if ((Test-HasProp -Node $Group -Name 'tokens') -and $Group.tokens -is [PSCustomObject]) {
             foreach ($TokenProp in $Group.tokens.PSObject.Properties) {
@@ -478,10 +515,109 @@ function Test-OERStructureSchema {
             }
         }
         try {
-            return Resolve-OERName -Template ([string]$Group.template) -Tokens $TokenHash
+            [PSCustomObject]@{ Name = (Resolve-OERName -Template ([string]$Group.template) -Tokens $TokenHash); Reason = $null }
         } catch {
-            return $null
+            [PSCustomObject]@{ Name = $null; Reason = $PSItem.Exception.Message }
         }
+    }
+
+    # The name a groups[] entry claims: its displayName, or for a template-based entry the name the
+    # naming engine computes from template and tokens (Resolve-GroupTemplateName). Returns $null when the
+    # entry declares neither, or when the name cannot be computed -- an unknown token, or any other refusal,
+    # makes Resolve-OERName throw. A rule that needs a name claims none then; the groups rule reports the
+    # template itself as an Error (BL-139), so the apply engine's Failed row for it is no longer the first
+    # place it shows. The one owner of that computation here: the duplicate check (BL-02) and the
+    # administrativeUnit placement rule (Rule 12) both call it.
+    function Get-GroupEntryName {
+        param([object]$Group)
+        if (Test-HasProp -Node $Group -Name 'displayName') { return [string]$Group.displayName }
+        if (-not (Test-HasProp -Node $Group -Name 'template') -or [string]::IsNullOrEmpty([string]$Group.template)) { return $null }
+        return (Resolve-GroupTemplateName -Group $Group).Name
+    }
+
+    # The value a "must be ..." Error found, in the words every enum Error here uses: a string is shown
+    # quoted, and a value that is not a string is named by its type, so an array holding 'User' is never
+    # shown as if it were the string 'User'. The value is never $null where this is called (an explicit
+    # null is not declared, Test-HasProp having said so first), so there is no null branch.
+    function Get-FoundValueText {
+        param([object]$Value)
+        if ($Value -is [string]) { return "'$Value'" }
+        return "a value that is not a string ($($Value.GetType().Name))"
+    }
+
+    # BL-154 (R-11): ConvertFrom-Json before PowerShell 7.5 turns a string that holds an ISO 8601 date
+    # and time with seconds into a [datetime] while it parses, and Read-OERStructureDocument asks for
+    # -DateKind String where the PowerShell has it. A date value in the document therefore means the
+    # text the author wrote is lost.
+    # [datetime] and [DateTimeOffset] are the two types a parse can produce (-DateKind Offset gives the
+    # second); nothing else is a date value here.
+    function Test-IsDateValue {
+        param([object]$Value)
+        $Value -is [datetime] -or $Value -is [System.DateTimeOffset]
+    }
+
+    # Rule 2b: one Error per date value, at its own path, at any depth. The walk follows only what a JSON
+    # parse produces -- a JSON object (PSCustomObject), a dictionary and an array -- and stops at a date
+    # (a [datetime] has a Date property that is a [datetime] again, so descending into one would never
+    # end), at a string and at any other value type. -Depth is a backstop against a cyclic object graph a
+    # caller built by hand: a parsed document is at most 32 levels deep (the reader's -Depth). A leaf that
+    # cannot be a date (null, a string, a number, a boolean) is skipped where it stands instead of being
+    # passed to a call of its own, and its path is not built: an export holds tens of thousands of member
+    # strings, and a call for each cost seconds (measured: 52,000 leaves, 2.5 s against 0.15 s).
+    function Find-DateValue {
+        param([object]$Node, [string]$Path, [string]$Section, [string]$Item, [int]$Depth = 0)
+        if ($null -eq $Node -or $Depth -gt 64) { return }
+        if (Test-IsDateValue -Value $Node) {
+            Add-Finding -Section $Section -Item $Item -Path $Path `
+                -Message ("The value at $Path was read as a date and time, not as the text written, since ConvertFrom-Json on " +
+                    'PowerShell before 7.5 converts a string that holds an ISO 8601 date and time with seconds. Run on PowerShell 7.5 ' +
+                    'or later to apply it as written.')
+            return
+        }
+        if ($Node -is [string] -or $Node -is [ValueType]) { return }
+        if ($Node -is [System.Collections.IDictionary]) {
+            foreach ($DictionaryKey in @($Node.Keys)) {
+                $DictionaryValue = $Node[$DictionaryKey]
+                if ($null -eq $DictionaryValue -or $DictionaryValue -is [string] -or
+                    ($DictionaryValue -is [ValueType] -and $DictionaryValue -isnot [datetime] -and $DictionaryValue -isnot [System.DateTimeOffset])) { continue }
+                Find-DateValue -Node $DictionaryValue -Path "$Path.$DictionaryKey" -Section $Section -Item $Item -Depth ($Depth + 1)
+            }
+            return
+        }
+        if ($Node -is [System.Collections.IEnumerable]) {
+            $ElementIndex = 0
+            foreach ($Element in $Node) {
+                if ($null -ne $Element -and $Element -isnot [string] -and
+                    ($Element -isnot [ValueType] -or $Element -is [datetime] -or $Element -is [System.DateTimeOffset])) {
+                    Find-DateValue -Node $Element -Path "$Path[$ElementIndex]" -Section $Section -Item $Item -Depth ($Depth + 1)
+                }
+                $ElementIndex++
+            }
+            return
+        }
+        if ($Node -is [System.Management.Automation.PSCustomObject]) {
+            foreach ($Property in $Node.PSObject.Properties) {
+                $PropertyValue = $Property.Value
+                if ($null -eq $PropertyValue -or $PropertyValue -is [string] -or
+                    ($PropertyValue -is [ValueType] -and $PropertyValue -isnot [datetime] -and $PropertyValue -isnot [System.DateTimeOffset])) { continue }
+                Find-DateValue -Node $PropertyValue -Path "$Path.$($Property.Name)" -Section $Section -Item $Item -Depth ($Depth + 1)
+            }
+        }
+    }
+
+    # BL-154 (R-11): displayName names the object an entry of groups, administrativeUnits, catalogs,
+    # accessPackages, an access package's assignmentPolicies and accessReviews is matched and created by, so it
+    # must be a string. A number, a boolean, an object or an array is an Error at the displayName path that
+    # names the type found (the words recurrence uses). A date gets no second Error: the date finding of
+    # Rule 2b already says what happened to it, and the value was a string as written. An absent or explicit
+    # null displayName is not declared and is left to the required finding.
+    function Add-DisplayNameTypeFinding {
+        param([object]$Node, [string]$Section, [string]$Path)
+        if (-not (Test-HasProp -Node $Node -Name 'displayName')) { return }
+        $NameValue = $Node.displayName
+        if ($NameValue -is [string] -or (Test-IsDateValue -Value $NameValue)) { return }
+        Add-Finding -Section $Section -Item $Path -Path "$Path.displayName" `
+            -Message "'displayName' at $Path must be a string. Got: $(Get-FoundValueText -Value $NameValue)."
     }
 
     $KnownTop = @('version', 'tenantId', 'tenantAlias', 'groups', 'administrativeUnits', 'catalogs',
@@ -523,6 +659,37 @@ function Test-OERStructureSchema {
         if ($KnownTop -inotcontains $Key) {
             Add-Finding -Section '(root)' -Item $Key -Path $Key `
                 -Message "Unknown top-level key '$Key'."
+        }
+    }
+
+    # Rule 2b (BL-154, R-11): every date value in the document is an Error at its own path, whatever the
+    # depth (Find-DateValue). Read-OERStructureDocument parses with -DateKind String on PowerShell 7.5 or
+    # later, so no string becomes a date there; on 7.2 to 7.4 a string that holds an ISO 8601 date and
+    # time with seconds does, and the text the author wrote is lost before any rule or apply handler sees
+    # it. Refused rather than guessed at, since the value can no longer be told from a date the author
+    # meant. A top-level key of a section carries the section as Section and, for each entry of its
+    # array, the entry's displayName (or its path) as Item; any other key is '(root)'.
+    $DateSectionNames = @('groups', 'administrativeUnits', 'catalogs', 'accessPackages', 'accessReviews',
+        'directoryRoleManagementPolicies', 'directoryRoleAssignments', 'roleAssignments', 'roleManagementPolicies')
+    foreach ($DateTopProperty in $Document.PSObject.Properties) {
+        $DateTopName = $DateTopProperty.Name
+        $DateTopValue = $DateTopProperty.Value
+        $DateTopSection = if ($DateSectionNames -icontains $DateTopName) { $DateTopName } else { '(root)' }
+        if ($DateTopSection -ne '(root)' -and $DateTopValue -is [System.Collections.IEnumerable] -and
+            $DateTopValue -isnot [string] -and $DateTopValue -isnot [System.Collections.IDictionary]) {
+            $DateEntryIndex = 0
+            foreach ($DateEntry in $DateTopValue) {
+                $DateEntryPath = "$DateTopName[$DateEntryIndex]"
+                $DateEntryItem = if ((Test-HasProp -Node $DateEntry -Name 'displayName') -and $DateEntry.displayName -is [string]) {
+                    $DateEntry.displayName
+                } else {
+                    $DateEntryPath
+                }
+                Find-DateValue -Node $DateEntry -Path $DateEntryPath -Section $DateTopSection -Item $DateEntryItem
+                $DateEntryIndex++
+            }
+        } else {
+            Find-DateValue -Node $DateTopValue -Path $DateTopName -Section $DateTopSection -Item $DateTopName
         }
     }
 
@@ -587,7 +754,22 @@ function Test-OERStructureSchema {
                         Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.tokens" `
                             -Message "Group at $GPath with 'template' must also have a 'tokens' object."
                     }
+                    # BL-139 (R-12): a template Resolve-OERName cannot resolve -- a token no tokens entry
+                    # supplies, a name over its length limit -- is an Error here, with its own reason,
+                    # since Invoke-OERStructure would otherwise find out only when it reaches the group.
+                    # It is read from the tokens the engine would pass (none when tokens is missing or
+                    # not an object), so the tokens finding above and this one can stand together. An
+                    # empty template names nothing to resolve. An entry that also declares displayName is
+                    # the 'not both' Error above and gets no template finding.
+                    if (-not [string]::IsNullOrEmpty([string]$G.template)) {
+                        $TemplateResolution = Resolve-GroupTemplateName -Group $G
+                        if ($null -ne $TemplateResolution.Reason) {
+                            Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.template" `
+                                -Message "'template' at $GPath cannot be resolved to a group name: $($TemplateResolution.Reason)"
+                        }
+                    }
                 }
+                Add-DisplayNameTypeFinding -Node $G -Section 'groups' -Path $GPath
 
                 # previousDisplayName renames the group found under it to displayName. An empty or
                 # non-string value names no group at all; one equal to displayName (Graph matches
@@ -930,6 +1112,7 @@ function Test-OERStructureSchema {
                         -What "display name '$($AU.displayName)'" `
                         -Consequence $AUConsequence
                 }
+                Add-DisplayNameTypeFinding -Node $AU -Section 'administrativeUnits' -Path $AUPath
                 # A unit renamed through the document is found under its previousDisplayName too, so that
                 # name is a claim of its own, checked after the displayName claim just as the groups' is.
                 $AUPrev = Test-SupportedRename -Node $AU -Section 'administrativeUnits' -Item $AUItem -Path $AUPath `
@@ -1011,12 +1194,16 @@ function Test-OERStructureSchema {
                             # outside it is an Error, and one in another letter case is the casing Warning, since
                             # schema.json declares the enum case-sensitively. An entry without it is valid as
                             # before, and the apply engine does not use it to match or write.
+                            #
+                            # BL-155: the value must be a string. -inotcontains reads a one-element array as its
+                            # element, so ["User"] used to pass as 'User'; a value that is not a string is named
+                            # by its type, as principalStatus does.
                             if (Test-HasProp -Node $SR -Name 'principalType') {
                                 $ValidSrPrincipalTypes = @(Resolve-OERStructureEnumCasing -EnumName 'principalType' -List)
-                                if ($ValidSrPrincipalTypes -inotcontains $SR.principalType) {
+                                if ($SR.principalType -isnot [string] -or $ValidSrPrincipalTypes -inotcontains $SR.principalType) {
                                     Add-Finding -Section 'administrativeUnits' -Item $AUItem `
                                         -Path "$SRPath.principalType" `
-                                        -Message "'principalType' at $SRPath must be one of: $($ValidSrPrincipalTypes -join ', '). Got: '$($SR.principalType)'."
+                                        -Message "'principalType' at $SRPath must be one of: $($ValidSrPrincipalTypes -join ', '). Got: $(Get-FoundValueText -Value $SR.principalType)."
                                 } else {
                                     Add-EnumCasingWarning -EnumName 'principalType' -Key 'principalType' -Value $SR.principalType `
                                         -Section 'administrativeUnits' -Item $AUItem -Path "$SRPath.principalType"
@@ -1051,6 +1238,7 @@ function Test-OERStructureSchema {
                         -What "display name '$($Cat.displayName)'" `
                         -Consequence $CatConsequence
                 }
+                Add-DisplayNameTypeFinding -Node $Cat -Section 'catalogs' -Path $CatPath
                 # The previous name is a claim of its own, as for administrative units.
                 $CatPrev = Test-SupportedRename -Node $Cat -Section 'catalogs' -Item $CatItem -Path $CatPath `
                     -SetCommand 'Set-OERCatalog'
@@ -1136,7 +1324,17 @@ function Test-OERStructureSchema {
                 if (-not (Test-HasProp -Node $AP -Name 'displayName')) {
                     Add-Finding -Section 'accessPackages' -Item $APItem -Path $APPath `
                         -Message "'displayName' is required at $APPath."
+                } elseif ($AP.displayName -is [string] -and (Test-OERGuid -Value $AP.displayName)) {
+                    # BL-24: the engine creates the package with the displayName it is given, and
+                    # Resolve-OERAccessPackageId reads a canonical GUID (Test-OERGuid) as an object id, so
+                    # an access review or another reference that names the package by that name looks for
+                    # an id instead of the name. A Warning: the package itself can still be created.
+                    Add-Finding -Section 'accessPackages' -Item $APItem -Path "$APPath.displayName" -Severity 'Warning' `
+                        -Message ("'displayName' at $APPath is the GUID '$($AP.displayName)': Invoke-OERStructure creates the access package with that name, " +
+                            "and a GUID is read as an object id wherever an access review's 'accessPackage' (or another reference) names the package, " +
+                            'so a reference by that name looks for an object id and does not find the package. Give the access package a name that is not a GUID.')
                 }
+                Add-DisplayNameTypeFinding -Node $AP -Section 'accessPackages' -Path $APPath
                 if (-not (Test-HasProp -Node $AP -Name 'catalog')) {
                     Add-Finding -Section 'accessPackages' -Item $APItem -Path $APPath `
                         -Message "'catalog' is required at $APPath."
@@ -1236,6 +1434,7 @@ function Test-OERStructureSchema {
                                     -What "display name '$PolName'" `
                                     -Consequence $PolConsequence -EarlierCollection "$APPath.assignmentPolicies"
                             }
+                            Add-DisplayNameTypeFinding -Node $Pol -Section 'accessPackages' -Path $PolPath
                             $PolPrev = Test-SupportedRename -Node $Pol -Section 'accessPackages' -Item $APItem -Path $PolPath `
                                 -SetCommand 'Set-OERAccessPackageAssignmentPolicy' -NameParameter '-DisplayName' `
                                 -NameQualifier ' together with another property' `
@@ -1502,6 +1701,76 @@ function Test-OERStructureSchema {
                                 }
                             }
 
+                            # BL-54: Microsoft Graph refuses an assignment policy for "all users (any new external
+                            # users)" -- allowedTargetScope allExternalUsers -- that has no approval configured:
+                            # AnyUserPolicyValidationError, "An access package policy with Any User option must
+                            # have an approval configured" (measured in Sprint 8 step 3; Microsoft Learn, entitlement
+                            # management, onboard external users: Require approval Yes is mandatory for that option).
+                            # The engine sends only the approval settings an entry declares, and reads an omitted
+                            # field differently on the two paths (Build-OERPolicyParts, ConvertTo-OERPolicyBody):
+                            #   - a policy it CREATES gets no approval unless the entry declares it;
+                            #   - an EXISTING policy keeps its live approval settings for whatever the entry omits
+                            #     (Set-OERAccessPackageAssignmentPolicy hands the live policy to the body builder);
+                            #   - approvalStages declared with at least one stage and requireApproval OMITTED derives
+                            #     isApprovalRequiredForAdd true from the stage count, so approval is configured; an
+                            #     explicit requireApproval false wins over the stages.
+                            # So the entry has approval when it declares at least one stage and does not declare
+                            # requireApproval false. A Warning and never an Error: an existing policy may already
+                            # carry the approval, which this offline check cannot see, and the write is the one
+                            # Microsoft Graph refuses. Exactly one of the two texts fires for any one policy.
+                            # The no-stage text says when an update of an EXISTING policy is accepted, and that
+                            # depends on what the entry leaves out (ConvertTo-OERPolicyBody): with requireApproval
+                            # true the flag is sent as declared and the stages are carried from the live policy, so
+                            # only the live STAGES matter; with requireApproval left out both are carried; with
+                            # approvalStages declared empty the empty list IS sent, so no stage reaches the write
+                            # whatever the live policy holds, and a refusal is expected (not measured for this
+                            # combination). One clause for each of the three.
+                            if ((Test-HasProp -Node $Pol -Name 'requestorScope') -and
+                                (Test-HasProp -Node $Pol.requestorScope -Name 'scope') -and
+                                ([string]$Pol.requestorScope.scope -ieq 'AllExternalUsers')) {
+                                $ExtApprovalOff = (Test-HasProp -Node $Pol -Name 'requireApproval') -and
+                                    ($Pol.requireApproval -is [bool]) -and (-not $Pol.requireApproval)
+                                $ExtApprovalOn = (Test-HasProp -Node $Pol -Name 'requireApproval') -and
+                                    ($Pol.requireApproval -is [bool]) -and $Pol.requireApproval
+                                $ExtHasStage = $false
+                                $ExtStagesEmpty = $false
+                                if (Test-HasProp -Node $Pol -Name 'approvalStages') {
+                                    $ExtStagesVal = $Pol.approvalStages
+                                    $ExtHasStage = ($ExtStagesVal -is [System.Collections.IEnumerable]) -and
+                                        ($ExtStagesVal -isnot [string]) -and (@($ExtStagesVal).Count -gt 0)
+                                    $ExtStagesEmpty = ($ExtStagesVal -is [System.Collections.IEnumerable]) -and
+                                        ($ExtStagesVal -isnot [string]) -and (@($ExtStagesVal).Count -eq 0)
+                                }
+                                $ExtReason = 'Microsoft Graph refuses an access package policy with the Any User option that has no approval configured ' +
+                                    "(AnyUserPolicyValidationError: 'An access package policy with Any User option must have an approval configured')."
+                                if ($ExtApprovalOff) {
+                                    Add-Finding -Section 'accessPackages' -Item $APItem `
+                                        -Path "$PolPath.requestorScope.scope" -Severity 'Warning' `
+                                        -Message ("assignmentPolicy at $PolPath has requestorScope.scope 'AllExternalUsers' but declares 'requireApproval' false. $ExtReason " +
+                                            'Approval is switched off by that declaration, so creating or updating the policy this way is refused and the policy is reported Failed. ' +
+                                            "Declare 'requireApproval' true and at least one 'approvalStages' entry.")
+                                } elseif (-not $ExtHasStage) {
+                                    $ExtEngineClause = if ($ExtStagesEmpty) {
+                                        'Invoke-OERStructure sends only the approval settings the entry declares: the empty approvalStages is sent as the policy''s stage list, ' +
+                                        'so the write carries no approval stage on create or on update, whatever the live policy has, and Microsoft Graph is expected to refuse it ' +
+                                        '(not measured for this combination). '
+                                    } elseif ($ExtApprovalOn) {
+                                        'Invoke-OERStructure sends only the approval settings the entry declares: creating the policy from this entry is refused, ' +
+                                        'and an existing policy keeps the approval stages it has live, since the entry leaves them out and requireApproval true is sent as declared, ' +
+                                        'so the update is accepted only when the live policy already has at least one approval stage. '
+                                    } else {
+                                        'Invoke-OERStructure sends only the approval settings the entry declares: creating the policy from this entry is refused, ' +
+                                        'and an existing policy keeps the approval settings it has live for what the entry omits, so the update is accepted only when ' +
+                                        'the live policy already requires approval with at least one stage. '
+                                    }
+                                    Add-Finding -Section 'accessPackages' -Item $APItem `
+                                        -Path "$PolPath.requestorScope.scope" -Severity 'Warning' `
+                                        -Message ("assignmentPolicy at $PolPath has requestorScope.scope 'AllExternalUsers' but declares no 'approvalStages' entry. $ExtReason " +
+                                            $ExtEngineClause +
+                                            "Declare 'requireApproval' true and at least one 'approvalStages' entry.")
+                                }
+                            }
+
                             if (Test-HasProp -Node $Pol -Name 'durationInDays') {
                                 if (-not (Test-IsInt -Value $Pol.durationInDays -Min 1 -Max 3650)) {
                                     Add-Finding -Section 'accessPackages' -Item $APItem `
@@ -1568,6 +1837,7 @@ function Test-OERStructureSchema {
                         -What "display name '$($AR.displayName)'" `
                         -Consequence $ARConsequence
                 }
+                Add-DisplayNameTypeFinding -Node $AR -Section 'accessReviews' -Path $ARPath
                 # A review renamed through the document is found under its previousDisplayName too (tenant-wide,
                 # as its displayName is), so that name is a claim of its own, checked after the displayName
                 # claim just as the units' and catalogs' is.
@@ -1580,11 +1850,14 @@ function Test-OERStructureSchema {
                         -Consequence $ARConsequence
                 }
 
+                # BL-117 (fifth point): the value must be a string. -inotcontains reads a one-element array
+                # as its element, so ["Monthly"] used to pass as 'Monthly'; a value that is not a string is
+                # named by its type, as principalStatus does.
                 if (Test-HasProp -Node $AR -Name 'recurrence') {
-                    if ($ValidRecurrence -inotcontains $AR.recurrence) {
+                    if ($AR.recurrence -isnot [string] -or $ValidRecurrence -inotcontains $AR.recurrence) {
                         Add-Finding -Section 'accessReviews' -Item $ARItem `
                             -Path "$ARPath.recurrence" `
-                            -Message "'recurrence' at $ARPath must be one of: $($ValidRecurrence -join ', '). Got: '$($AR.recurrence)'."
+                            -Message "'recurrence' at $ARPath must be one of: $($ValidRecurrence -join ', '). Got: $(Get-FoundValueText -Value $AR.recurrence)."
                     } else {
                         Add-EnumCasingWarning -EnumName 'accessReviewRecurrence' -Key 'recurrence' -Value $AR.recurrence `
                             -Section 'accessReviews' -Item $ARItem -Path "$ARPath.recurrence"
@@ -1799,12 +2072,15 @@ function Test-OERStructureSchema {
                             'the document would rewrite its condition and description on every run.')
                 }
 
+                # BL-155: the value must be a string. -inotcontains reads a one-element array as its element,
+                # so ["User"] used to pass as 'User'; a value that is not a string is named by its type, as
+                # principalStatus below does.
                 if (Test-HasProp -Node $RA -Name 'principalType') {
                     $ValidPrincipalTypes = @(Resolve-OERStructureEnumCasing -EnumName 'principalType' -List)
-                    if ($ValidPrincipalTypes -inotcontains $RA.principalType) {
+                    if ($RA.principalType -isnot [string] -or $ValidPrincipalTypes -inotcontains $RA.principalType) {
                         Add-Finding -Section 'roleAssignments' -Item $RAItem `
                             -Path "$RAPath.principalType" `
-                            -Message "'principalType' at $RAPath must be one of: $($ValidPrincipalTypes -join ', '). Got: '$($RA.principalType)'."
+                            -Message "'principalType' at $RAPath must be one of: $($ValidPrincipalTypes -join ', '). Got: $(Get-FoundValueText -Value $RA.principalType)."
                     } else {
                         Add-EnumCasingWarning -EnumName 'principalType' -Key 'principalType' -Value $RA.principalType `
                             -Section 'roleAssignments' -Item $RAItem -Path "$RAPath.principalType"
@@ -1823,30 +2099,20 @@ function Test-OERStructureSchema {
                     if ($RA.principalStatus -isnot [string] -or $ValidPrincipalStatuses -inotcontains $RA.principalStatus) {
                         # A value that is not a string is named by its type, as the principal rule below does,
                         # so an array holding 'Deleted' is never shown as if it were the string 'Deleted'.
-                        $StatusFound = if ($RA.principalStatus -is [string]) {
-                            "'$($RA.principalStatus)'"
-                        } else {
-                            "a value that is not a string ($($RA.principalStatus.GetType().Name))"
-                        }
                         Add-Finding -Section 'roleAssignments' -Item $RAItem `
                             -Path "$RAPath.principalStatus" `
-                            -Message "'principalStatus' at $RAPath must be one of: $($ValidPrincipalStatuses -join ', '). Got: $StatusFound."
+                            -Message "'principalStatus' at $RAPath must be one of: $($ValidPrincipalStatuses -join ', '). Got: $(Get-FoundValueText -Value $RA.principalStatus)."
                     } else {
                         Add-EnumCasingWarning -EnumName 'principalStatus' -Key 'principalStatus' -Value $RA.principalStatus `
                             -Section 'roleAssignments' -Item $RAItem -Path "$RAPath.principalStatus"
                     }
                     if ((Test-HasProp -Node $RA -Name 'principal') -and
                         ($RA.principal -isnot [string] -or -not (Test-OERGuid -Value $RA.principal))) {
-                        $PrincipalFound = if ($RA.principal -is [string]) {
-                            "'$($RA.principal)'"
-                        } else {
-                            "a value that is not a string ($($RA.principal.GetType().Name))"
-                        }
                         Add-Finding -Section 'roleAssignments' -Item $RAItem `
                             -Path "$RAPath.principal" `
                             -Message ("'principal' at $RAPath must be an object id (a GUID) when 'principalStatus' is declared: the entry stands for a " +
                                 'principal the directory did not return when the document was exported, so the engine looks no principal up for it. ' +
-                                "Got: $PrincipalFound. Name the principal by its object id, or remove 'principalStatus' to have the principal looked up by name.")
+                                "Got: $(Get-FoundValueText -Value $RA.principal). Name the principal by its object id, or remove 'principalStatus' to have the principal looked up by name.")
                     }
                 }
 
@@ -2688,13 +2954,28 @@ function Test-OERStructureSchema {
         }
     }
 
+    # A displayName that is not a string is never checked: a Warning says so (BL-154), at the node's
+    # displayName path with the node's own path as Item, instead of leaving the object out without a word.
+    # The type Error is the section rule's (Add-DisplayNameTypeFinding), and a date displayName has the
+    # date Error besides; this row only tells the operator that the standard was not applied to the name.
+    function Add-NamingNotStringFinding {
+        param([string]$Section, [string]$Path, [object]$Value)
+        Add-Finding -Section $Section -Item $Path -Path "$Path.displayName" -Severity 'Warning' `
+            -Message "The name at $Path.displayName was not checked against the naming standard: displayName is not a string ($($Value.GetType().Name))."
+    }
+
     # The displayName of one node, when it is a non-empty string, checked at -Path (the node's own path).
-    # -Section is the name the finding carries.
+    # -Section is the name the finding carries. A displayName that is declared but not a string gets the
+    # Add-NamingNotStringFinding row; an empty one, an explicit null and an absent key add nothing.
     function Add-NamingDisplayNameFinding {
         param([string]$Section, [string]$Path, [object]$Node)
         if (-not (Test-HasProp -Node $Node -Name 'displayName')) { return }
         $DisplayName = $Node.displayName
-        if ($DisplayName -isnot [string] -or $DisplayName.Length -eq 0) { return }
+        if ($DisplayName -isnot [string]) {
+            Add-NamingNotStringFinding -Section $Section -Path $Path -Value $DisplayName
+            return
+        }
+        if ($DisplayName.Length -eq 0) { return }
         Add-NamingFinding -Section $Section -Name $DisplayName -Path "$Path.displayName"
     }
 
@@ -2718,7 +2999,9 @@ function Test-OERStructureSchema {
                     ($NamingGroup.onPremisesSynced -is [bool]) -and $NamingGroup.onPremisesSynced
                 if (Test-HasProp -Node $NamingGroup -Name 'displayName') {
                     $GroupDisplayName = $NamingGroup.displayName
-                    if ($GroupDisplayName -is [string] -and $GroupDisplayName.Length -gt 0) {
+                    if ($GroupDisplayName -isnot [string]) {
+                        Add-NamingNotStringFinding -Section 'groups' -Path "groups[$I]" -Value $GroupDisplayName
+                    } elseif ($GroupDisplayName.Length -gt 0) {
                         Add-NamingFinding -Section 'groups' -Name $GroupDisplayName -Path "groups[$I].displayName" -Synced $NamingSynced
                     }
                     continue

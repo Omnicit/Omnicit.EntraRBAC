@@ -14,7 +14,7 @@ function ConvertTo-OERInventoryRoleManagementPolicy {
     activationMaxHours, emitted even when null so every such entry carries the same leading keys. With
     -Directory there is no scope key, and allowPermanentEligibility and activationMaxHours are
     emitted only when the live policy carries a value. role is the role name, or the role definition
-    id when there is no name. Every other field is emitted the same way on both sides: the eligible
+    id when there is no name or the name is only white space. Every other field is emitted the same way on both sides: the eligible
     and active durations and active permanence only when set, the activation and active-assignment
     toggles always, and the authentication context only when one is enabled -- in which case
     requireMfaOnActivation is left out, since PIM treats the two as mutually exclusive and the
@@ -53,7 +53,9 @@ function ConvertTo-OERInventoryRoleManagementPolicy {
         [switch]$Directory
     )
 
-    $Role = $(if ($Policy.RoleName) { $Policy.RoleName } else { $Policy.RoleDefinitionId })
+    # A name of white space is not a name (BL-157): it falls back to the role definition id, as the role
+    # assignment entry does (BL-45). A name that is not blank is written as it is.
+    $Role = $(if (-not [string]::IsNullOrWhiteSpace([string]$Policy.RoleName)) { $Policy.RoleName } else { $Policy.RoleDefinitionId })
     if ($Directory) {
         # A directory role policy always lives at tenant scope, so the entry has no scope. The two
         # fields the Azure entry emits unconditionally are emitted here only when set: a null would

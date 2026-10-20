@@ -49,6 +49,15 @@ function Resolve-OERAccessReviewChange {
     SemiAnnually keeps the review, and Set-OERAccessReviewDefinition -Recurrence Monthly with
     -StartDate changes it on purpose. Every other transition is unaffected.
 
+    A fifth rule covers a live numbered range with fewer than one occurrence. Graph can report 0, and
+    a count below 1 cannot be carried forward, since Set-OERAccessReviewDefinition takes -Occurrences
+    as 1 or more. When the document declares neither endDate nor occurrences, the
+    recurrence/startDate/endDate/occurrences unit is suppressed and reported in NotApplied, exactly
+    like the unrepresentable case, with the remedy: declaring endDate or occurrences replaces the
+    range outright and is written as usual. A missing or unreadable count is held back the same way,
+    and the reason says the range has no readable occurrence count. The cadence a live pattern
+    reads as, and whether the module can write it back, come from Get-OERAccessReviewCadence.
+
     Reviewer sets are compared on RESOLVED OBJECT IDS supplied by the caller in -DeclaredReviewer, so
     a display-name change in the tenant does not look like drift. The live keys are derived from each
     reviewer scope query by Resolve-OERReviewerScopeQuery, the module's single owner of that grammar:
@@ -344,40 +353,29 @@ function Resolve-OERAccessReviewChange {
         $CurrentPattern = $Current.Recurrence.pattern
         $CurrentRange   = $Current.Recurrence.range
     }
+    # Get-OERAccessReviewCadence owns the table that reads a live pattern as a cadence.
+    # New-OERAccessReviewRecurrence can emit only weekly interval 1 and absoluteMonthly interval
+    # 1/3/6/12, and the table maps every other interval onto one of those names (as the inventory
+    # does). Rebuilding the recurrence object from a collapsed cadence therefore REWRITES a live
+    # bi-monthly or n-weekly review -- silently, while reporting Updated. So whether the live pattern
+    # is representable is tracked here, and refused on below.
     $CurrentCadence = 'OneTime'
+    $CurrentPatternRepresentable = $true
     if ($CurrentPattern) {
         $PatternType = [string]$CurrentPattern.type
         $Interval    = [int]$CurrentPattern.interval
-        $CurrentCadence = switch ($PatternType) {
-            'weekly' { 'Weekly' }
-            'absoluteMonthly' {
-                switch ($Interval) {
-                    1 { 'Monthly' }
-                    3 { 'Quarterly' }
-                    6 { 'SemiAnnually' }
-                    12 { 'Annually' }
-                    default { 'Monthly' }
-                }
-            }
-            default { 'OneTime' }
-        }
-    }
-
-    # New-OERAccessReviewRecurrence can emit only weekly interval 1 and absoluteMonthly interval
-    # 1/3/6/12, and both the inventory and the collapse above map every other interval onto one of
-    # those names. Rebuilding the recurrence object from a collapsed cadence therefore REWRITES a live
-    # bi-monthly or n-weekly review -- silently, while reporting Updated. Track it and refuse.
-    $CurrentPatternRepresentable = $true
-    if ($CurrentPattern) {
-        $CurrentPatternRepresentable = switch ([string]$CurrentPattern.type) {
-            'weekly'          { [int]$CurrentPattern.interval -eq 1 }
-            'absoluteMonthly' { [int]$CurrentPattern.interval -in 1, 3, 6, 12 }
-            default           { $false }
-        }
+        $CurrentShape = Get-OERAccessReviewCadence -PatternType $PatternType -Interval $Interval
+        $CurrentCadence = $CurrentShape.Cadence
+        $CurrentPatternRepresentable = $CurrentShape.Representable
     }
     $CurrentStart       = [string]$CurrentRange.startDate
     $CurrentEnd         = [string]$CurrentRange.endDate
+    $CurrentRangeType   = [string]$CurrentRange.type
     $CurrentOccurrences = $CurrentRange.numberOfOccurrences
+    # A numbered range reports how many occurrences it has. Graph can report 0, and the range then
+    # cannot be rebuilt, since -Occurrences takes 1 or more. A count that is missing or unreadable is
+    # read as 0 for the same reason: there is no count to send back.
+    $CurrentOccurrenceCount = [int]($CurrentOccurrences -as [int])
 
     $HasRecurrence  = Test-DeclHas $Declared 'recurrence'
     $HasStartDate   = Test-DeclHas $Declared 'startDate'
@@ -450,6 +448,29 @@ function Resolve-OERAccessReviewChange {
                         [string]$CurrentPattern.type, [int]$CurrentPattern.interval) +
                     'the recurrence and start date were left untouched so it is not rewritten to a coarser cadence')
             }
+            elseif (-not $IsOneTime -and -not $HasEndDate -and -not $HasOccurrences -and
+                $CurrentRangeType -ieq 'numbered' -and $CurrentOccurrenceCount -lt 1) {
+                # BL-117, first point (R-8). The document declares no range of its own, so the live range
+                # would be carried forward below -- but a numbered range with fewer than one occurrence
+                # cannot be: Set-OERAccessReviewDefinition takes -Occurrences as 1 or more, and sending
+                # the live 0 made the whole write fail at binding. Without it the rebuild would default
+                # the range to noEnd and destroy the numbered one. Suppress the whole unit (Recurrence,
+                # StartDate, EndDate, Occurrences), exactly as for a pattern the module cannot rebuild,
+                # and name the remedy: a declared endDate or occurrences replaces the range outright.
+                # A count that is missing or unreadable is named as such, never as 0 occurrences. The
+                # blank test comes first: PowerShell converts $null and '' to 0 under -as [int].
+                $LiveCountText = if ([string]::IsNullOrWhiteSpace([string]$CurrentOccurrences) -or
+                    $null -eq ($CurrentOccurrences -as [int])) {
+                    'no readable occurrence count'
+                }
+                else {
+                    '{0} occurrence(s)' -f $CurrentOccurrenceCount
+                }
+                $NotApplied.Add(
+                    "the live recurrence range is numbered with $LiveCountText, which cannot be sent back; " +
+                    'the recurrence, start date and range were left untouched. ' +
+                    "Declare 'endDate' or 'occurrences' to change the recurrence")
+            }
             else {
                 $SetParams.Recurrence = $DeclaredCadence
                 $SetParams.StartDate = $EffectiveStart
@@ -463,14 +484,14 @@ function Resolve-OERAccessReviewChange {
                         # object and New-OERAccessReviewRecurrence defaults the range to noEnd, so a live
                         # endDate or numbered range would be destroyed by a write that only changed the
                         # cadence or the start date. The two range kinds are mutually exclusive, so at
-                        # most one is ever seeded.
-                        $CurrentRangeType = [string]$CurrentRange.type
+                        # most one is ever seeded. A numbered range below one occurrence never gets here: the
+                        # branch above suppresses the whole unit for it.
                         if ($CurrentRangeType -ieq 'endDate') {
                             $SeededEnd = [datetime]::MinValue
                             if ([datetime]::TryParse($CurrentEnd, [ref]$SeededEnd)) { $SetParams.EndDate = $SeededEnd }
                         }
-                        elseif ($CurrentRangeType -ieq 'numbered' -and $null -ne $CurrentOccurrences) {
-                            $SetParams.Occurrences = [int]$CurrentOccurrences
+                        elseif ($CurrentRangeType -ieq 'numbered') {
+                            $SetParams.Occurrences = $CurrentOccurrenceCount
                         }
                     }
                 }

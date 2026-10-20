@@ -497,4 +497,80 @@ Describe 'Resolve-OERInventoryScopeTree' {
             Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times (2 * $Requests) -Exactly
         }
     }
+
+    # BL-157: Scopes is the list Export-OERInventory walks and the denominator of its "N of M Azure scopes
+    # could not be read" (ScopesEnumerated is @($Tree.Scopes).Count). A ResourceId of white space is truthy,
+    # so it used to enter that list and be walked as a scope. The scope list takes a ResourceId only when it
+    # is not null, empty or white space. The hierarchy (scopeHierarchy.json) is context, and is not changed.
+    Context 'a management group or subscription whose ResourceId is blank (BL-157)' {
+        BeforeDiscovery {
+            $BlankCases = @(
+                @{ Case = 'spaces'; Blank = '   ' }
+                @{ Case = 'a tab and a line break'; Blank = "`t`r`n" }
+                @{ Case = 'empty'; Blank = '' }
+                @{ Case = 'null'; Blank = $null }
+            )
+        }
+
+        BeforeAll {
+            $script:BlOwnSub = [PSCustomObject]@{ ResourceId = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'; SubscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; DisplayName = 'Own'; State = 'Enabled'; TenantId = 'eeee0000-0000-0000-0000-000000000001' }
+        }
+
+        BeforeEach {
+            # A request the tree must not send for a listed subscription: answered, and counted.
+            Mock -ModuleName $script:moduleName Invoke-OERArmRequest { [PSCustomObject]@{ subscriptionId = 'unexpected'; tenantId = 'eeee0000-0000-0000-0000-000000000001' } }
+        }
+
+        It 'leaves a management group and a subscription whose ResourceId is <Case> out of Scopes, and keeps the others' -ForEach $BlankCases {
+            $script:BlBlank = $Blank
+            Mock -ModuleName $script:moduleName Get-OERManagementGroup { }
+            Mock -ModuleName $script:moduleName Get-OERManagementGroupList {
+                [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg1'; name = 'mg1'; properties = [PSCustomObject]@{ tenantId = 't'; displayName = 'MG 1' } }
+                [PSCustomObject]@{ id = $script:BlBlank; name = 'mg-blank'; properties = [PSCustomObject]@{ tenantId = 't'; displayName = 'MG Blank' } }
+            }
+            Mock -ModuleName $script:moduleName Get-OERSubscription {
+                $script:BlOwnSub
+                [PSCustomObject]@{ ResourceId = $script:BlBlank; SubscriptionId = 'aaaa1111-0000-0000-0000-000000000004'; DisplayName = 'Blank'; State = 'Enabled'; TenantId = 'eeee0000-0000-0000-0000-000000000001' }
+            }
+            $All = @(InModuleScope $script:moduleName { Resolve-OERInventoryScopeTree 3>&1 })
+            $Tree = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })[0]
+            @($Tree.Scopes) | Should -Be @('/providers/Microsoft.Management/managementGroups/mg1', '/subscriptions/aaaa1111-0000-0000-0000-000000000001')
+            # Reached: both blank-id objects were listed and decided as the tenant's own, so only the scope
+            # list left them out; the hierarchy still holds the two nodes of each level.
+            @($Tree.Hierarchy.managementGroups).Count | Should -Be 2
+            @($Tree.Hierarchy.subscriptions).Count | Should -Be 2
+            @($Tree.ForeignSubscriptions).Count | Should -Be 0
+            @($Tree.UndecidedSubscriptions).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERManagementGroupList -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERSubscription -Times 1 -Exactly
+        }
+
+        It 'leaves the named management group of a -ManagementGroup branch out of Scopes when its ResourceId is <Case>' -ForEach $BlankCases {
+            $script:BlBlank = $Blank
+            Mock -ModuleName $script:moduleName Get-OERManagementGroupList { }
+            Mock -ModuleName $script:moduleName Get-OERManagementGroup {
+                [PSCustomObject]@{ Name = 'mg-blank'; DisplayName = 'MG Blank'; ResourceId = $script:BlBlank }
+            }
+            Mock -ModuleName $script:moduleName Get-OERSubscription { $script:BlOwnSub }
+            $All = @(InModuleScope $script:moduleName { Resolve-OERInventoryScopeTree -ManagementGroup 'mg-blank' 3>&1 })
+            $Tree = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })[0]
+            @($Tree.Scopes) | Should -Be @('/subscriptions/aaaa1111-0000-0000-0000-000000000001')
+            @($Tree.Hierarchy.managementGroups).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Get-OERManagementGroup -Times 1 -Exactly -ParameterFilter { $Name -eq 'mg-blank' }
+            Should -Invoke -ModuleName $script:moduleName Get-OERManagementGroupList -Times 0
+        }
+
+        It 'puts a ResourceId that is not blank into Scopes as it is, surrounding white space included' {
+            Mock -ModuleName $script:moduleName Get-OERManagementGroup { }
+            Mock -ModuleName $script:moduleName Get-OERManagementGroupList {
+                [PSCustomObject]@{ id = ' /providers/Microsoft.Management/managementGroups/mg1 '; name = 'mg1'; properties = [PSCustomObject]@{ tenantId = 't'; displayName = 'MG 1' } }
+            }
+            Mock -ModuleName $script:moduleName Get-OERSubscription {
+                [PSCustomObject]@{ ResourceId = ' /subscriptions/aaaa1111-0000-0000-0000-000000000001 '; SubscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; DisplayName = 'Own'; State = 'Enabled'; TenantId = 'eeee0000-0000-0000-0000-000000000001' }
+            }
+            $All = @(InModuleScope $script:moduleName { Resolve-OERInventoryScopeTree 3>&1 })
+            $Tree = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })[0]
+            @($Tree.Scopes) | Should -BeExactly @(' /providers/Microsoft.Management/managementGroups/mg1 ', ' /subscriptions/aaaa1111-0000-0000-0000-000000000001 ')
+        }
+    }
 }

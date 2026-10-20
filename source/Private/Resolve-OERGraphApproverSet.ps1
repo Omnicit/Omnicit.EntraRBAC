@@ -5,8 +5,13 @@ function Resolve-OERGraphApproverSet {
 
     .DESCRIPTION
     The single owner of the Microsoft Graph approver semantics shared by Set-OERGroupPimPolicy and
-    Set-OERDirectoryRoleManagementPolicy. Given the live Approval_EndUser_Assignment rule and what
-    the caller bound, it decides the effective approvers and whether approval can be required:
+    Set-OERDirectoryRoleManagementPolicy, and by the two apply handlers that call those cmdlets,
+    Sync-OERStructureGroup (its pimPolicy step) and Sync-OERStructureDirectoryRoleManagementPolicy:
+    each handler asks it, with the live approval rule it read and the approver parameters its diff
+    binds, whether the change would require approval with no approver, and refuses that change
+    before its ShouldProcess gate, so a -WhatIf plan reports what a run does (BL-113). Given the live
+    Approval_EndUser_Assignment rule and what the caller bound, it decides the effective approvers
+    and whether approval can be required:
 
       - Only the FIRST approval stage counts (PIM uses one). Its primary approvers are read through
         ConvertFrom-OERGraphApprover, the single reader of a Graph approver, so a beta-shaped { id }
@@ -20,9 +25,10 @@ function Resolve-OERGraphApproverSet {
       - Supplying approvers on either side implies approval is required (EffRequired $true) when
         -RequireApproval is not bound, or is bound to $true; otherwise -RequireApproval decides when
         it is bound, and EffRequired is $false when neither is bound. Approvers bound beside
-        -RequireApproval $false are a contradiction that this helper does not answer: both callers
-        refuse it first, with MutuallyExclusiveParameter and before any lookup, and the helper throws
-        that same id as a backstop (see below).
+        -RequireApproval $false are a contradiction that this helper does not answer: both cmdlets
+        refuse it first, with MutuallyExclusiveParameter and before any lookup, the two handlers'
+        diffs never bind approvers beside requireApproval false, and the helper throws that same id
+        as a backstop (see below).
       - ApproverCount is what will be sent: with approvers bound, EffUser + EffGroup + LiveOther;
         otherwise the live primary approvers as they are (every kind counted).
       - NoApprover is $true when approval is required with ApproverCount 0. NoApproverReason says
@@ -30,7 +36,8 @@ function Resolve-OERGraphApproverSet {
         none was supplied), or '' when NoApprover is $false.
 
     The ApproverRequired message stays with each caller, chosen by NoApproverReason, because it names
-    the caller's own policy. Pure; no Graph call.
+    the caller's own policy (the two handlers copy their cmdlet's message word for word). Pure; no
+    Graph call.
 
     Backstop: when -RequireApprovalBound, -RequireApproval is $false and either side is bound (an empty
     list counts), the helper throws an ErrorRecord with the id MutuallyExclusiveParameter, category

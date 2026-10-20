@@ -7094,6 +7094,29 @@ Describe 'Export-OERInventory stays in the home tenant''s subscriptions (BL-150,
         Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0
     }
 
+    It 'counts and walks neither a management group nor a subscription whose ResourceId is white space, through the real tree (BL-157)' {
+        # The scope list is the denominator of "N of M Azure scopes could not be read" and the list the walk
+        # reads, so a ResourceId of spaces must not enter it: one scope, the own subscription, is enumerated
+        # and read, and its failed read is "1 of 1".
+        $script:HtxBlankMg = [PSCustomObject]@{ id = '   '; name = 'mg-blank'; properties = [PSCustomObject]@{ tenantId = 't'; displayName = 'MG Blank' } }
+        $script:HtxBlankIdSub = [PSCustomObject]@{ ResourceId = '   '; SubscriptionId = 'aaaa1111-0000-0000-0000-000000000004'; DisplayName = 'Blank id'; State = 'Enabled'; TenantId = $script:HtxSession }
+        Mock -ModuleName $script:moduleName Get-OERManagementGroupList { $script:HtxBlankMg }
+        Mock -ModuleName $script:moduleName Get-OERSubscription { $script:HtxOwn; $script:HtxBlankIdSub }
+        Mock -ModuleName $script:moduleName Get-OERInventory -ParameterFilter { $Scope -ceq '/subscriptions/aaaa1111-0000-0000-0000-000000000001' } -MockWith { throw 'Forbidden' }
+        $Run = Invoke-HtxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'htx-blank-resourceid'); Include = @('RoleAssignments') }
+        $Run.Result.ScopesEnumerated | Should -Be 1
+        $Run.Result.ScopeCount | Should -Be 0
+        @($Run.Result.SkippedScopes) | Should -Be @($script:HtxOwnScope)
+        $Run.Partial.Count | Should -Be 1
+        $Run.Partial[0].Exception.Message | Should -Match ([regex]::Escape('1 of 1 Azure scopes could not be read'))
+        # Reached: the own scope was read once, and nothing was read at a scope of white space.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly -ParameterFilter { $Scope -ceq '/subscriptions/aaaa1111-0000-0000-0000-000000000001' }
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 0 -ParameterFilter { [string]::IsNullOrWhiteSpace($Scope) }
+        Should -Invoke -ModuleName $script:moduleName Get-OERManagementGroupList -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0
+    }
+
     It 'reads nothing at a -Scope in a subscription of another tenant: one read of the subscription, the warning and the README name the scope, and it is not partial' {
         Mock -ModuleName $script:moduleName Invoke-OERArmRequest { [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000002'; displayName = 'Customer'; tenantId = 'eeee0000-0000-0000-0000-000000000002' } }
         $Given = '/subscriptions/aaaa1111-0000-0000-0000-000000000002/resourceGroups/rg1'

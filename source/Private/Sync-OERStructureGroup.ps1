@@ -70,10 +70,15 @@ function Sync-OERStructureGroup {
         holds or makes eligible is neither added nor pruned -- see "PIM for Groups" below), gated on
         the document's owners key being DECLARED (present and non-null) -- an omitted owners key never
         reconciles or prunes, unlike members. Owners are not rule-derived, so this step runs even on a
-        dynamic group. Microsoft Learn states a group's last (user) owner cannot be removed; a -Prune
-        run that would remove the last remaining owner reports a Skipped record instead of firing a
-        call Microsoft Graph rejects. A service principal owner, and an owner PIM for Groups holds or
-        makes eligible, is withheld before that guard and counts as an owner still standing.
+        dynamic group. Microsoft Learn states a group's last (user) owner cannot be removed, and
+        Microsoft Graph was measured (2026-10-20) to refuse that removal also while a service
+        principal is an owner; a -Prune run that would remove the last remaining user owner, or the
+        last remaining owner of any type, reports a Skipped record instead of firing a call Microsoft
+        Graph rejects. A service principal owner, and an owner PIM for Groups holds or makes eligible,
+        is withheld before that guard and counts as an owner still standing. An owner this step added
+        in the same run counts as standing too (a -WhatIf plan counts one it reports it would add),
+        and as a user owner when the document names it by user principal name; an add that failed or
+        was declined at the confirmation prompt counts nowhere.
     3. Reconcile time-bound eligibility entries (those with durationDays) -- the first eligibility
        request onboards the group to PIM for Groups if it was not onboarded yet. Each entry is matched
        on the (principal, accessType) pair and its declared window is diffed against the live schedule
@@ -120,17 +125,31 @@ function Sync-OERStructureGroup {
        (member/owner) and every later step still run. The row carries ApproverNotFound for an
        approver that matches nothing, AmbiguousApproverName (naming the candidate ids) for a group
        display name several groups share, and the lookup's own error for a lookup that failed.
+       A changed policy that would require approval with no approver -- a declared approver side
+       emptied while the live approval stage holds no other approver, or requireApproval true against
+       a live stage that names nobody -- reports Failed for THAT access type, with the ApproverRequired
+       error Set-OERGroupPimPolicy publishes for the same refusal, before the PIM-in-use question, the
+       MFA / authentication context warning and the ShouldProcess gate (BL-113): the decision is
+       Resolve-OERGraphApproverSet's, the owner the cmdlet uses, taken from the live approval rule the
+       policy read returned and the approver parameters the diff binds, so a real run and a -WhatIf
+       plan report the same row, nothing is written for that access type, and the other access type is
+       processed as usual.
        When the diff reconciles the MFA / authentication context pair (Resolve-OERGroupPimPolicyChange
        clears MultiFactorAuthentication, or disables the authentication context, and reports why in
        ConflictReason), Set-OERGroupPimPolicy -- called with the reconciled parameters -- has nothing
        left to resolve and writes no warning. The handler therefore writes it, before the ShouldProcess
        gate and in every mode, so -WhatIf shows it and a real run writes it once: "Policy '<id>':
        <reason>", the text the cmdlet writes for a direct call, with the id of the policy it read, or
-       "pimPolicy (<accessType>) of group '<name>': <reason>" when no policy was read. The warning
-       states the diff's decision, not the outcome: Set-OERGroupPimPolicy can still refuse the call
+       "pimPolicy (<accessType>) of group '<name>': <reason>" for a policy object that carries no id
+       (a policy is always read by then: a read that failed ended that access type, as described
+       further on). The warning states the diff's decision, not the outcome: Set-OERGroupPimPolicy can still refuse the call
        after it (an authentication context the tenant does not define or has not published, a failed
        policy lookup, an unreadable approval rule), and the Failed row then shows that nothing was
-       changed.
+       changed. When the diff finds no conflict and binds only one half of the pair, the cmdlet reads
+       the other half itself and refuses the whole call when that read fails or returns no rule (the
+       read's own error, or PimRuleValueUnknown): the row is Failed in a real run and nothing is
+       written for that access type, while a -WhatIf plan, which never calls the cmdlet, says "would
+       set".
        For a group THIS RUN created, the handler first asks Get-OERPimGroupPolicyId whether Graph lists
        that access type's policy yet, then reads the listed policy through Get-OERListedGroupPimPolicy,
        and waits while either comes back empty -- one shared budget of at most about 30 seconds
@@ -150,6 +169,23 @@ function Sync-OERStructureGroup {
        single read decides it as for any other group. That one budget is also spent by the eligibility
        waits of steps 3 and 5, so a 404 on a new group's eligibility leaves that much less for its
        policy, and a second entry never gets a fresh 30 seconds of its own.
+       The single read of the live policy is no best-effort lookup (BL-40). A read that fails (a 403, an
+       exhausted 429, a 5xx, a policy Graph does not list), or that answers with no policy and no error
+       (PimPolicyNotFound), reports Failed for THAT access type, with the read's own error record and
+       a row that says nothing was changed for it, before the diff, the PIM-in-use question and the
+       ShouldProcess gate: a real run and a -WhatIf plan report the same row, and the other access type
+       is processed as usual. A policy taken as "none" would have the diff treat every declared field as
+       changed and default the undeclared half of a duration pair, and the write would overwrite live
+       values the document never declared. A read that answers can still give no value for the half
+       of an expiration pair the document leaves out (allowPermanentEligibility or
+       eligibleDurationDays declared alone, allowPermanentActive or activeDurationDays alone): an empty
+       rules list, the expiration rule absent, its isExpirationRequired missing, or a maximumDuration
+       that is not a positive whole number of days. Unless the declared half already matches its live
+       value, the diff names that pair (UnknownLiveValues) instead of filling it with a default, and
+       THAT access type reports Failed with a PimRuleValueUnknown record (target the group name)
+       before the approver check, the PIM-in-use question and the ShouldProcess gate, in a real run
+       and under -WhatIf alike; nothing is written for it, and the other access type is processed as
+       usual.
     5. Reconcile permanent eligibility entries (those without durationDays) -- must come after
        pimPolicy has been set to allow permanent eligibility. Matched and diffed the same way, so a
        time-bound eligibility that the document declares permanent is re-issued as permanent, again
@@ -1024,6 +1060,21 @@ function Sync-OERStructureGroup {
             # Same rule as $MemberUnresolved: an unresolved declared owner withholds every owner
             # candidate in the Extra/prune loop below.
             $OwnerUnresolved = [System.Collections.Generic.List[string]]::new()
+            # The owners this pass adds stand as much as the owners the read found, so the floors of the
+            # prune pass below count them (final review of Sprint 11 step 11, Important 2): always as an
+            # owner, and as a user owner when the declared-owner resolution knows the owner is a user --
+            # a reference with an at sign, which Resolve-OERStructurePrincipal resolves as a user
+            # principal name. Any other reference (an object id, a name) tells no type, so that owner
+            # counts as an owner only, the conservative reading. An add that went through counts, and
+            # under -WhatIf an add the plan reports; a failed add, or one declined at the confirmation
+            # prompt, counts nowhere. Keyed on the id, so a reference declared twice counts once.
+            $AddedOwnerIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $AddedUserOwnerIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            function Add-StandingOwner {
+                param([string]$Id, [string]$Reference)
+                [void]$AddedOwnerIds.Add($Id)
+                if ($Reference -like '*@*') { [void]$AddedUserOwnerIds.Add($Id) }
+            }
             foreach ($ORef in @($Item.owners)) {
                 $Oid = Resolve-OERStructurePrincipal -Reference $ORef
                 if (-not $Oid) {
@@ -1067,8 +1118,12 @@ function Sync-OERStructureGroup {
                             ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "failed to add owner '$ORef': $($PSItem.Exception.Message)" -ErrorRecord $PSItem
                             continue
                         }
+                        Add-StandingOwner -Id $Oid -Reference $ORef
                         ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Updated' -Detail "added owner '$ORef'"
                     } else {
+                        # A plan (-WhatIf) counts the add it reports, as it counts the removals it reports
+                        # below; a declined confirmation prompt adds nothing, so nothing is counted.
+                        if ($WhatIfPreference) { Add-StandingOwner -Id $Oid -Reference $ORef }
                         ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' -Detail "would add owner '$ORef'"
                     }
                 }
@@ -1076,20 +1131,36 @@ function Sync-OERStructureGroup {
 
             # Extra/prune undeclared current owners. Microsoft Learn: "Once owners are assigned to a
             # group, the last owner (a user object) of the group cannot be removed" -- note the exact
-            # wording, "a user object": Learn scopes the restriction to a USER owner specifically, so a
-            # group whose sole remaining owner is a service principal may in fact be removable. This
-            # guard is nonetheless DELIBERATELY conservative and counts owners of every type, not just
-            # user owners: whether the restriction also applies to a lone service-principal owner is an
-            # OPEN question on this PR's live-verification checklist, and narrowing the guard now would
-            # encode an unverified assumption into a destructive path. Do NOT make this guard type-aware
-            # without first confirming the behaviour against a real tenant -- see the checklist. The
-            # number of owners still standing is tracked as removals are applied, and the removal that
-            # would leave none is refused with a Skipped record instead of firing a call that may fail.
+            # wording, "a user object": Learn scopes the restriction to a USER owner. Measured on
+            # 2026-10-20 (Sprint 11 step 11, check 1.2, BL-84): Microsoft Graph refuses to remove a
+            # group's only USER owner EVEN WHILE a service principal is also an owner (400
+            # Request_BadRequest, "The group must have at least one owner, hence this owner cannot be
+            # removed."). So two floors stand here, both our own guards that send no request:
+            #   1. The user-owner floor: an undeclared owner typed 'user' (ObjectType compared as the
+            #      A9 check compares 'servicePrincipal', without regard to letter case) that is the
+            #      last user owner still standing is Skipped. An owner of any other type, or of no
+            #      type, is NOT counted as a user owner: the count errs towards refusing a removal.
+            #   2. The any-type floor: whatever is left that is the last owner of ANY type is Skipped
+            #      too. It is kept for an owner not typed 'user', since what Graph does with the last
+            #      owner of another type has not been measured (a service principal never reaches it,
+            #      see below).
+            # The owners still standing, of any type and of type user, are the owners the read found
+            # plus the owners the add pass above added in this run (an add that failed, or a declined
+            # confirmation, adds no one; a -WhatIf plan counts an add it reports; an added owner counts
+            # as a user owner only when its reference is a user principal name, see the add pass). They
+            # are tracked as removals go through (a removal that failed, or a declined confirmation,
+            # leaves its owner standing; a -WhatIf plan counts the removal it reports as done, so it
+            # refuses the same owner the run does), and the removal that would leave no owner, or no
+            # user owner, is refused with a Skipped record instead of firing a call Graph rejects. So a
+            # document that replaces an owner adds the new one first and then removes the old one in
+            # the same run (final review of Sprint 11 step 11, Important 2).
             # Since A9 an owner the read types servicePrincipal is withheld before this guard and never
             # removed, and since BL-125 so is an owner PIM for Groups holds or makes eligible (and every
             # owner while that cannot be read), so the guard decides only for the other owners, and a
-            # withheld owner counts as one still standing.
-            $RemainingOwnerCount = $CurrentOwners.Count
+            # withheld owner counts as one still standing -- a withheld user owner counts as a user
+            # owner still standing too.
+            $RemainingOwnerCount = $CurrentOwners.Count + $AddedOwnerIds.Count
+            $RemainingUserOwnerCount = @($CurrentOwners | Where-Object { $_.ObjectType -eq 'user' }).Count + $AddedUserOwnerIds.Count
             foreach ($CurOwner in $CurrentOwners) {
                 $CurId = $CurOwner.id
                 if ($DeclaredOwnerIds -notcontains $CurId) {
@@ -1120,9 +1191,18 @@ function Sync-OERStructureGroup {
                         continue
                     }
                     if ($Prune) {
+                        $CurIsUserOwner = ($CurOwner.ObjectType -eq 'user')
+                        # BL-84 (R-15): the last user owner is never removed, also while another owner of
+                        # another type (a service principal) stands. Asked first, since it is the more
+                        # specific floor: a user owner that is the only owner left is also refused here.
+                        if ($CurIsUserOwner -and $RemainingUserOwnerCount -le 1) {
+                            ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
+                                -Detail "did not remove owner '$CurId': it is the last remaining user owner of group '$Name', and Microsoft Graph refuses to remove a group's last user owner, also while a service principal is an owner (measured: 400 `"The group must have at least one owner, hence this owner cannot be removed.`"), so no request was sent (our own guard)."
+                            continue
+                        }
                         if ($RemainingOwnerCount -le 1) {
                             ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
-                                -Detail "did not remove owner '$CurId': it is the last remaining owner of group '$Name', and this pass refuses to remove it (this is our own guard, not a Graph rejection). Microsoft Graph's documented restriction names a USER owner specifically, so if this is a service principal it may in fact be removable; this guard is deliberately conservative pending live verification."
+                                -Detail "did not remove owner '$CurId': it is the last remaining owner of group '$Name', and this pass refuses to remove it (this is our own guard, not a Graph rejection). Microsoft Graph refuses to remove a group's last user owner (measured 2026-10-20), and this pass holds the last owner of any other type the same way, since what Graph does with one has not been measured."
                             continue
                         }
                         $PruneVerb = if ($WhatIfPreference) { 'would remove' } else { 'removing' }
@@ -1137,8 +1217,18 @@ function Sync-OERStructureGroup {
                                 continue
                             }
                             $RemainingOwnerCount--
+                            if ($CurIsUserOwner) { $RemainingUserOwnerCount-- }
                             ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Removed' -Detail "removed undeclared owner '$CurId'"
                         } else {
+                            # A plan (-WhatIf) says what the run does: the removal it reports is taken as
+                            # done, so the next owner is judged against the owners that would still stand
+                            # and the last one is refused in the plan as in the run (BL-113, A23). A
+                            # declined confirmation prompt (ShouldProcess false, $WhatIfPreference false)
+                            # removes nothing, so that owner stays standing and counts nowhere.
+                            if ($WhatIfPreference) {
+                                $RemainingOwnerCount--
+                                if ($CurIsUserOwner) { $RemainingUserOwnerCount-- }
+                            }
                             ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' -Detail "would remove undeclared owner '$CurId'"
                         }
                     } else {
@@ -1357,8 +1447,8 @@ function Sync-OERStructureGroup {
             # 3 and 5 -- not one budget each.
 
             # Whether this item has already asked Test-OERGroupPimInUse. Asked at most ONCE per item,
-            # at the first access type whose diff is Changed: one question and one warning cover both
-            # access types of the same group.
+            # at the first access type whose diff is Changed and not refused for approval with no
+            # approver (BL-113): one question and one warning cover both access types of the same group.
             $PimUsageAsked = $false
 
             foreach ($AccessType in $DesiredByAccess.Keys) {
@@ -1374,31 +1464,38 @@ function Sync-OERStructureGroup {
                 # Declared approver names are resolved to object ids BEFORE the diff, so the diff
                 # compares ids with ids (a UPN or a group name never equals a live approver id).
                 # Three outcomes, three records, one Failed row each and no read or write of this
-                # access type's policy: an ambiguous name is AmbiguousApproverName (the resolver's text
-                # names the candidate ids), only an approver that matches nothing (ApproverUnresolved)
-                # is ApproverNotFound, and anything else -- a 403, an exhausted 429, a 5xx -- is not
-                # evidence that the approver is missing, so it is published as itself.
+                # access type's policy, the class decided by Get-OERApproverErrorClass: an ambiguous
+                # name is AmbiguousApproverName (the resolver's text names the candidate ids), only an
+                # approver that matches nothing (ApproverUnresolved) is ApproverNotFound, and anything
+                # else -- a 403, an exhausted 429, a 5xx -- is not evidence that the approver is
+                # missing, so it is published as itself. The caught record is kept in $LookupError:
+                # inside the switch, $PSItem is the class, and the switch holds no continue (one there
+                # would act on the switch, not on this loop).
                 try {
                     $Declared = Resolve-OERDeclaredApprover -Declared $Declared
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
-                    $ErrRec = $PSItem
-                    if (Test-OERAmbiguousNameError -Record $PSItem) {
-                        $ErrRec = [System.Management.Automation.ErrorRecord]::new(
-                            [System.Exception]::new("Could not resolve an approver declared in pimPolicy ($AccessType) of group '$Name': $($PSItem.Exception.Message)", $PSItem.Exception),
-                            'AmbiguousApproverName',
-                            [System.Management.Automation.ErrorCategory]::InvalidArgument,
-                            $PSItem.TargetObject)
-                    } elseif (([string]$PSItem.FullyQualifiedErrorId).StartsWith('ApproverUnresolved', [System.StringComparison]::Ordinal)) {
-                        $ErrRec = [System.Management.Automation.ErrorRecord]::new(
-                            [System.Exception]::new("Could not resolve an approver declared in pimPolicy ($AccessType) of group '$Name': $($PSItem.Exception.Message)", $PSItem.Exception),
-                            'ApproverNotFound',
-                            [System.Management.Automation.ErrorCategory]::ObjectNotFound,
-                            $Name)
+                    $LookupError = $PSItem
+                    $ErrRec = $LookupError
+                    switch (Get-OERApproverErrorClass -Record $LookupError) {
+                        'Ambiguous' {
+                            $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                                [System.Exception]::new("Could not resolve an approver declared in pimPolicy ($AccessType) of group '$Name': $($LookupError.Exception.Message)", $LookupError.Exception),
+                                'AmbiguousApproverName',
+                                [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                                $LookupError.TargetObject)
+                        }
+                        'NotFound' {
+                            $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                                [System.Exception]::new("Could not resolve an approver declared in pimPolicy ($AccessType) of group '$Name': $($LookupError.Exception.Message)", $LookupError.Exception),
+                                'ApproverNotFound',
+                                [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                                $Name)
+                        }
                     }
                     $Caller.WriteError($ErrRec)
                     ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
-                        -Detail "pimPolicy ($AccessType) not applied: could not resolve an approver: $($PSItem.Exception.Message)" `
+                        -Detail "pimPolicy ($AccessType) not applied: could not resolve an approver: $($LookupError.Exception.Message)" `
                         -ErrorRecord $ErrRec
                     continue
                 }
@@ -1475,22 +1572,127 @@ function Sync-OERStructureGroup {
                     }
                 }
 
-                # Read the current policy for this access type, unless the wait above already did
-                # (best-effort -- Graph may not list it, or the read may be refused). A failure leaves
-                # $CurrentPolicy null, the diff treats every declared field as changed, and the Set call
-                # reports its own error. Never retried here: the wait above is the only one.
+                # Read the current policy for this access type, unless the wait above already did: the
+                # one read for an existing group, and for a new group whose wait fell through to it.
+                # Never retried here: the wait above is the only one.
+                #
+                # BL-40: a read that FAILS, or that answers with no policy and no error, is no evidence
+                # of the live policy, and is never taken as "no policy". It used to be swallowed here:
+                # $CurrentPolicy stayed $null, the diff treated every declared field as changed AND
+                # defaulted the undeclared half of a duration pair (365 days / not permanent for
+                # eligibleDurationDays and allowPermanentEligibility, 180 days / not permanent for
+                # activeDurationDays and allowPermanentActive), and Set-OERGroupPimPolicy, given both
+                # halves, skipped its own carry-forward from the live policy -- so it overwrote values
+                # the document never declared, and -WhatIf planned it with no error. So it is refused
+                # here, before the diff, the PIM-in-use question and ShouldProcess, in a real run and
+                # under -WhatIf alike: one Failed row for THIS access type, with the read's own record,
+                # nothing written for it, and the loop moves on to the next access type.
                 if (-not $CurrentPolicy) {
                     try {
                         $CurrentPolicy = Get-OERGroupPimPolicy -Id $Gid -AccessType $AccessType -ErrorAction Stop
                     } catch {
                         Remove-OERErrorRecord -Record $PSItem
+                        $Caller.WriteError($PSItem)
+                        ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
+                            -Detail "pimPolicy ($AccessType) not applied: could not read the live PIM-for-groups policy: $($PSItem.Exception.Message); nothing was changed for '$AccessType'" `
+                            -ErrorRecord $PSItem
+                        continue
+                    }
+                    if ($null -eq $CurrentPolicy) {
+                        # No error and no object either: the live policy is just as unknown. PimPolicyNotFound
+                        # is the id the wait above and Get-OERGroupPimPolicy publish for a policy that is not
+                        # there.
+                        $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new("Get-OERGroupPimPolicy returned no PIM-for-groups policy for '$AccessType' access on group '$Name' and no error, so the live policy is unknown. Nothing was changed for '$AccessType'."),
+                            'PimPolicyNotFound',
+                            [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                            $Name)
+                        $Caller.WriteError($ErrRec)
+                        ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
+                            -Detail "pimPolicy ($AccessType) not applied: could not read the live PIM-for-groups policy: Get-OERGroupPimPolicy returned no policy and no error; nothing was changed for '$AccessType'" `
+                            -ErrorRecord $ErrRec
+                        continue
                     }
                 }
 
                 $Change = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $CurrentPolicy
+
+                # A read that succeeded can still give no value for the half of an expiration pair the
+                # document leaves out (an empty rules list, the rule absent, no isExpirationRequired, or a
+                # maximumDuration that is not a positive whole number of days). The diff used to fill
+                # that half with a default and bind both, so Set-OERGroupPimPolicy sent the guess and never
+                # made its own read. The diff now names such a pair in UnknownLiveValues and binds
+                # neither half, and it is refused here, before the approver check, the PIM-in-use question
+                # and ShouldProcess, in a real run and under -WhatIf alike: one Failed row for THIS access
+                # type with a PimRuleValueUnknown record, nothing written for it, and the loop moves on to
+                # the next access type. Final review of Sprint 11 step 11, Important 1.
+                if (@($Change.UnknownLiveValues).Count -gt 0) {
+                    $UnknownText = @($Change.UnknownLiveValues) -join '; '
+                    $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("pimPolicy ($AccessType) of group '$Name' was not applied: $UnknownText. A value the document leaves out is taken from the live policy, never from a default, so nothing was changed for '$AccessType'. Declare both values of the pair in the document."),
+                        'PimRuleValueUnknown',
+                        [System.Management.Automation.ErrorCategory]::InvalidData,
+                        $Name)
+                    $Caller.WriteError($ErrRec)
+                    ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
+                        -Detail "pimPolicy ($AccessType) not applied: a value the document leaves to the live policy is unknown (PimRuleValueUnknown): $UnknownText; nothing was changed for '$AccessType'. Declare both values of the pair in the document." `
+                        -ErrorRecord $ErrRec
+                    continue
+                }
+
                 if (-not $Change.Changed) {
                     ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Unchanged' -Detail "pimPolicy ($AccessType) already matches"
                     continue
+                }
+
+                # BL-113: Set-OERGroupPimPolicy refuses, with ApproverRequired and before anything is
+                # sent, a change that would require approval with no approver on the live approval
+                # stage, so the run reported Failed while the -WhatIf plan, which never calls it, said
+                # "would set pimPolicy". The decision is taken here exactly as the cmdlet takes it:
+                # through Resolve-OERGraphApproverSet, the owner of the Graph approver semantics, from
+                # the live approval rule the read above returned (Rules, the raw rules the converter
+                # keeps; the cmdlet reads the same rule again by its id) and the approver parameters the
+                # diff binds. Refused before the onboarding question, the MFA / authentication context
+                # warning and ShouldProcess, in a real run and under -WhatIf alike, with the cmdlet's own
+                # ErrorId and message (the cmdlet's target is the group id it is given; this record's is
+                # the group's name): one
+                # Failed row for THIS access type, nothing written for it, and the loop moves on. The
+                # cmdlet keeps its own refusal as the backstop. A live policy whose rules hold no
+                # Approval_EndUser_Assignment rule has no live approver here, so a change that would
+                # leave approval required with no approver is refused here as ApproverRequired, where
+                # the cmdlet, which reads that rule by its id, would refuse it as
+                # ApprovalRuleReadFailed (a read that fails) or PimRuleValueUnknown (a read that
+                # answers no rule); nothing is written either way.
+                $SetSplat = $Change.SetParams
+                $ApproverUserBound = $SetSplat.ContainsKey('ApproverUser')
+                $ApproverGroupBound = $SetSplat.ContainsKey('ApproverGroup')
+                $RequireApprovalBound = $SetSplat.ContainsKey('RequireApproval')
+                if ($ApproverUserBound -or $ApproverGroupBound -or $RequireApprovalBound) {
+                    $LiveApprovalRule = @(@($CurrentPolicy.Rules) | Where-Object { $null -ne $_ }) |
+                        Where-Object { [string]$_.id -eq 'Approval_EndUser_Assignment' } | Select-Object -First 1
+                    $ApproverSet = Resolve-OERGraphApproverSet -LiveApprovalRule $LiveApprovalRule `
+                        -UserBound $ApproverUserBound -GroupBound $ApproverGroupBound `
+                        -ResolvedUser $SetSplat.ApproverUser -ResolvedGroup $SetSplat.ApproverGroup `
+                        -RequireApprovalBound $RequireApprovalBound -RequireApproval ($RequireApprovalBound -and [bool]$SetSplat.RequireApproval)
+                    if ($ApproverSet.NoApprover) {
+                        if ($ApproverSet.NoApproverReason -eq 'Bound') {
+                            $NoApproverMessage = "Approval cannot be required with no approver: after -ApproverUser/-ApproverGroup are applied, PIM policy '$($CurrentPolicy.PolicyId)' would have none. Pass at least one approver."
+                            $NoApproverDetail = 'the declared approvers, with what the document does not declare kept from the live approval rule, name nobody'
+                        } else {
+                            $NoApproverMessage = "Approval cannot be required with no approver: PIM policy '$($CurrentPolicy.PolicyId)' has none on its live approval rule and none was supplied. Pass -ApproverUser or -ApproverGroup."
+                            $NoApproverDetail = 'the live approval rule names no approver and the document declares none'
+                        }
+                        $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new($NoApproverMessage),
+                            'ApproverRequired',
+                            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                            $Name)
+                        $Caller.WriteError($ErrRec)
+                        ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
+                            -Detail "pimPolicy ($AccessType) not applied: approval would be required with no approver (ApproverRequired): $NoApproverDetail; the policy was not changed" `
+                            -ErrorRecord $ErrRec
+                        continue
+                    }
                 }
 
                 # Microsoft Graph lists a group's PIM-for-Groups policies whether or not the group was
@@ -1534,11 +1736,18 @@ function Sync-OERStructureGroup {
                 # left to resolve and never writes its own warning about the pair. The warning is
                 # written here instead, before the gate and in EVERY mode (Ruling R5), with the text the
                 # cmdlet writes for a direct call: the plan shows it, and a real run writes it once.
-                # The policy id is the one the read above gave; without a read policy the item names it.
+                # The policy id is the one the read above gave. A policy is always read by now (a failed
+                # or empty read ended this access type above), and a read policy carries its id; the item
+                # names it only as the fallback for a policy object without one.
                 # The warning states the diff's decision: Set-OERGroupPimPolicy can still refuse the
                 # call after it (an authentication context the tenant does not define or has not
                 # published, a failed policy lookup, an unreadable approval rule), and the Failed row
-                # then shows that nothing was changed.
+                # then shows that nothing was changed. When the diff finds no conflict and binds only ONE
+                # half of the pair (authenticationContextId alone, or MultiFactorAuthentication alone),
+                # the cmdlet reads the other half itself, and a read that fails, or that returns no rule,
+                # refuses the whole call (Sprint 11 step 11, A24: the read's own error, or
+                # PimRuleValueUnknown): a Failed row in a real run with nothing written for this access
+                # type. Under -WhatIf the cmdlet is not called, so the plan still says "would set".
                 if ($Change.ConflictReason) {
                     $ConflictTarget = if ($CurrentPolicy -and $CurrentPolicy.PolicyId) { "Policy '$($CurrentPolicy.PolicyId)'" } else { "pimPolicy ($AccessType) of group '$Name'" }
                     Write-Warning "${ConflictTarget}: $($Change.ConflictReason)"

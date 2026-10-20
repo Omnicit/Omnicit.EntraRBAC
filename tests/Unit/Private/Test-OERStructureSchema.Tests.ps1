@@ -7025,6 +7025,98 @@ Describe 'Test-OERStructureSchema (Rule 17, naming standard, Sprint 11 step 7)' 
         }
     }
 
+    Context 'a displayName that is not a string (BL-154)' {
+        # Rule 17 used to leave such a name out without a word, so a standard that is meant to check a
+        # section gave no sign that one object was never checked. Each such displayName now gets a Warning
+        # that says so, at the node's displayName path, and the other names of the section are still
+        # checked. The type Error itself belongs to the section rules (the Describe at the end of the file).
+        BeforeAll {
+            $script:NsNotStringSections = @(
+                @{ Section = 'groups'; Fact = 'groups'; Document = '{ "version": "1.0", "groups": [ { "displayName": %V% } ] }'; Entry = 'groups[0]' }
+                @{ Section = 'administrativeUnits'; Fact = 'administrativeUnits'; Document = '{ "version": "1.0", "administrativeUnits": [ { "displayName": %V% } ] }'; Entry = 'administrativeUnits[0]' }
+                @{ Section = 'catalogs'; Fact = 'catalogs'; Document = '{ "version": "1.0", "catalogs": [ { "displayName": %V% } ] }'; Entry = 'catalogs[0]' }
+                @{ Section = 'accessPackages'; Fact = 'accessPackages'; Document = '{ "version": "1.0", "accessPackages": [ { "displayName": %V%, "catalog": "c" } ] }'; Entry = 'accessPackages[0]' }
+                @{ Section = 'accessPackages'; Fact = 'assignmentPolicies'; Document = '{ "version": "1.0", "accessPackages": [ { "displayName": "AP-Finance-One", "catalog": "c", "assignmentPolicies": [ { "displayName": %V% } ] } ] }'; Entry = 'accessPackages[0].assignmentPolicies[0]' }
+                @{ Section = 'accessReviews'; Fact = 'accessReviews'; Document = '{ "version": "1.0", "accessReviews": [ { "displayName": %V%, "accessPackage": "a", "assignmentPolicy": "p" } ] }'; Entry = 'accessReviews[0]' }
+            )
+        }
+
+        It 'says the name was not checked, once, for a <Kind> displayName of <Fact>' -ForEach @(
+            foreach ($S in @('groups', 'administrativeUnits', 'catalogs', 'accessPackages', 'assignmentPolicies', 'accessReviews')) {
+                foreach ($K in @(
+                        @{ Kind = 'number'; Value = '42'; TypeName = 'Int64' }
+                        @{ Kind = 'boolean'; Value = 'true'; TypeName = 'Boolean' }
+                        @{ Kind = 'object'; Value = '{ "a": "bad_name" }'; TypeName = 'PSCustomObject' }
+                        @{ Kind = 'array'; Value = '[ "bad_name" ]'; TypeName = 'Object[]' }
+                    )) {
+                    @{ Fact = $S; Kind = $K.Kind; Value = $K.Value; TypeName = $K.TypeName }
+                }
+            }
+        ) {
+            $Case = $script:NsNotStringSections | Where-Object { $_.Fact -eq $Fact }
+            $V = Invoke-NsValidation -Standard (Get-NsStandard) -Json $Case.Document.Replace('%V%', $Value)
+            $Hit = @(Get-NsFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Section | Should -BeExactly $Case.Section
+            $Hit[0].Item | Should -BeExactly $Case.Entry
+            $Hit[0].Path | Should -BeExactly "$($Case.Entry).displayName"
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Message | Should -BeExactly "The name at $($Case.Entry).displayName was not checked against the naming standard: displayName is not a string ($TypeName)."
+            $Hit[0].Message | Should -Not -BeLike "*does not follow*"
+        }
+
+        It 'says so for a date displayName too (the date Error is beside it), and names its type' {
+            $V = Invoke-NsValidation -Standard (Get-NsStandard) -Json '{ "version": "1.0", "groups": [ { "displayName": "2026-01-01T10:00:00" } ] }'
+            $Hit = @(Get-NsFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -BeExactly 'The name at groups[0].displayName was not checked against the naming standard: displayName is not a string (DateTime).'
+        }
+
+        It 'still checks the other names of the section, in document order' {
+            $V = Invoke-NsValidation -Standard (Get-NsStandard) -Json '{ "version": "1.0", "groups": [ { "displayName": 42 }, { "displayName": "bad_group" }, { "displayName": true } ] }'
+            $Hit = @(Get-NsFinding -Validation $V)
+            @($Hit | ForEach-Object { $_.Path }) | Should -BeExactly @('groups[0].displayName', 'groups[1].displayName', 'groups[2].displayName')
+            $Hit[0].Message | Should -BeLike '*displayName is not a string (Int64).'
+            $Hit[1].Message | Should -BeExactly "Name 'bad_group' at groups[1].displayName does not follow the naming standard (rule 'separator'): $script:NsSeparatorDetail"
+            $Hit[2].Message | Should -BeLike '*displayName is not a string (Boolean).'
+        }
+
+        It 'adds nothing for a section the standard does not list' {
+            $V = Invoke-NsValidation -Standard (Get-NsStandard -Sections '[ "catalogs" ]') -Json '{ "version": "1.0", "groups": [ { "displayName": 42 } ], "administrativeUnits": [ { "displayName": 42 } ] }'
+            @(Get-NsFinding -Validation $V).Count | Should -Be 0
+        }
+
+        It 'adds nothing without a naming standard' {
+            $V = Invoke-NsValidation -Json '{ "version": "1.0", "groups": [ { "displayName": 42 } ] }'
+            @(Get-NsFinding -Validation $V).Count | Should -Be 0
+        }
+
+        It 'stays silent for an empty or an explicit null displayName of <Fact>: <Value>' -ForEach @(
+            foreach ($S in @('groups', 'administrativeUnits', 'catalogs', 'accessPackages', 'assignmentPolicies', 'accessReviews')) {
+                foreach ($Text in @('""', 'null')) {
+                    @{ Fact = $S; Value = $Text }
+                }
+            }
+        ) {
+            $Case = $script:NsNotStringSections | Where-Object { $_.Fact -eq $Fact }
+            $V = Invoke-NsValidation -Standard (Get-NsStandard) -Json $Case.Document.Replace('%V%', $Value)
+            @(Get-NsFinding -Validation $V).Count | Should -Be 0
+        }
+
+        It 'is the last finding, after the type Error of the section rule, and never an Error itself' {
+            $V = Invoke-NsValidation -Standard (Get-NsStandard) -Json '{ "version": "1.0", "groups": [ { "displayName": 42 } ] }'
+            $V.Valid | Should -BeFalse -Because 'the section rule refuses a displayName that is not a string'
+            $After = @($V.Errors)
+            $After[-1].Message | Should -BeLike '*was not checked against the naming standard: displayName is not a string*'
+            $After[-1].Severity | Should -BeExactly 'Warning'
+            @($After | Where-Object { $_.Severity -eq 'Error' -and $_.Path -eq 'groups[0].displayName' }).Count | Should -Be 1
+        }
+
+        It 'does not throw for any of the shapes' {
+            { Invoke-NsValidation -Standard (Get-NsStandard) -Json '{ "version": "1.0", "groups": [ { "displayName": [ [ 1 ] ] }, { "displayName": { } }, { "displayName": 1.5 } ], "accessReviews": [ { "displayName": [ ] } ] }' } | Should -Not -Throw
+        }
+    }
+
     Context 'a document whose name-carrying node is malformed (review focus 5)' {
         It 'adds no naming row and does not throw for <Text>' -ForEach @(
             @{ Text = 'groups as a string'; Json = '{ "version": "1.0", "groups": "x" }' }
@@ -7036,16 +7128,12 @@ Describe 'Test-OERStructureSchema (Rule 17, naming standard, Sprint 11 step 7)' 
             @{ Text = 'a group that is an array'; Json = '{ "version": "1.0", "groups": [ [ "bad_group" ] ] }' }
             @{ Text = 'a null displayName'; Json = '{ "version": "1.0", "groups": [ { "displayName": null } ] }' }
             @{ Text = 'an empty displayName'; Json = '{ "version": "1.0", "groups": [ { "displayName": "" } ] }' }
-            @{ Text = 'a numeric displayName'; Json = '{ "version": "1.0", "groups": [ { "displayName": 42 } ] }' }
-            @{ Text = 'a boolean displayName'; Json = '{ "version": "1.0", "groups": [ { "displayName": true } ] }' }
-            @{ Text = 'an array displayName'; Json = '{ "version": "1.0", "groups": [ { "displayName": [ "bad_group" ] } ] }' }
-            @{ Text = 'an object displayName'; Json = '{ "version": "1.0", "groups": [ { "displayName": { "a": "bad_group" } } ] }' }
             @{ Text = 'a null template'; Json = '{ "version": "1.0", "groups": [ { "template": null } ] }' }
             @{ Text = 'an empty template'; Json = '{ "version": "1.0", "groups": [ { "template": "" } ] }' }
             @{ Text = 'a numeric template'; Json = '{ "version": "1.0", "groups": [ { "template": 42 } ] }' }
             @{ Text = 'a group with neither name nor template'; Json = '{ "version": "1.0", "groups": [ { "description": "d" } ] }' }
             @{ Text = 'administrativeUnits as a string'; Json = '{ "version": "1.0", "administrativeUnits": "x" }' }
-            @{ Text = 'a null administrative unit'; Json = '{ "version": "1.0", "administrativeUnits": [ null, "x", { "displayName": null }, { "displayName": 3 } ] }' }
+            @{ Text = 'a null administrative unit'; Json = '{ "version": "1.0", "administrativeUnits": [ null, "x", { "displayName": null } ] }' }
             @{ Text = 'catalogs as an object'; Json = '{ "version": "1.0", "catalogs": { "displayName": "bad_catalog" } }' }
             @{ Text = 'a catalog that is null or a string'; Json = '{ "version": "1.0", "catalogs": [ null, "bad_catalog", { "displayName": "" } ] }' }
             @{ Text = 'accessPackages as a string'; Json = '{ "version": "1.0", "accessPackages": "x" }' }
@@ -7053,7 +7141,7 @@ Describe 'Test-OERStructureSchema (Rule 17, naming standard, Sprint 11 step 7)' 
             @{ Text = 'a package with a null displayName'; Json = '{ "version": "1.0", "accessPackages": [ { "displayName": null, "catalog": "c" } ] }' }
             @{ Text = 'assignmentPolicies as a string'; Json = '{ "version": "1.0", "accessPackages": [ { "displayName": "AP-Finance-One", "catalog": "c", "assignmentPolicies": "x" } ] }' }
             @{ Text = 'assignmentPolicies as an object'; Json = '{ "version": "1.0", "accessPackages": [ { "displayName": "AP-Finance-One", "catalog": "c", "assignmentPolicies": { "displayName": "bad_policy" } } ] }' }
-            @{ Text = 'a policy that is null, a string or a number'; Json = '{ "version": "1.0", "accessPackages": [ { "displayName": "AP-Finance-One", "catalog": "c", "assignmentPolicies": [ null, "x", 5, { "displayName": 9 }, { "displayName": null } ] } ] }' }
+            @{ Text = 'a policy that is null, a string or a number'; Json = '{ "version": "1.0", "accessPackages": [ { "displayName": "AP-Finance-One", "catalog": "c", "assignmentPolicies": [ null, "x", 5, { "displayName": null } ] } ] }' }
             @{ Text = 'accessReviews as a number'; Json = '{ "version": "1.0", "accessReviews": 5 }' }
             @{ Text = 'a review that is null or a string'; Json = '{ "version": "1.0", "accessReviews": [ null, "bad_review", { "displayName": "" } ] }' }
         ) {
@@ -7068,7 +7156,7 @@ Describe 'Test-OERStructureSchema (Rule 17, naming standard, Sprint 11 step 7)' 
         }
 
         It 'leaves the findings the validator itself raises for a malformed node as they were' {
-            $Json = '{ "version": "1.0", "groups": [ null, "x", { "displayName": 42 } ], "catalogs": "x" }'
+            $Json = '{ "version": "1.0", "groups": [ null, "x" ], "catalogs": "x" }'
             $Without = Invoke-NsValidation -Json $Json
             $With = Invoke-NsValidation -Json $Json -Standard (Get-NsStandard)
             @($With.Errors).Count | Should -Be @($Without.Errors).Count
@@ -7124,7 +7212,6 @@ Describe 'Test-OERStructureSchema administrativeUnits scopedRoles principalType 
         @{ Json = '"Device"'; Shown = 'Device' }
         @{ Json = '"ForeignGroup"'; Shown = 'ForeignGroup' }
         @{ Json = '""'; Shown = '' }
-        @{ Json = '7'; Shown = '7' }
     ) {
         $V = Invoke-SrValidation -Json (Get-SrDocument -Extra (', "principalType": ' + $Json))
         $V.Valid | Should -BeFalse
@@ -7154,5 +7241,791 @@ Describe 'Test-OERStructureSchema administrativeUnits scopedRoles principalType 
         }
         $Help | Should -Match ([regex]::Escape('An administrative unit scopedRoles entry'))
         $Help | Should -Match 'may also carry principalType, which Get-OERInventory writes for a principal the directory'
+    }
+}
+
+Describe 'Test-OERStructureSchema group template that cannot be resolved (BL-139, R-12)' {
+    # A group that declares template and no displayName is named by Resolve-OERName at apply time. A
+    # template it cannot resolve (a placeholder no token supplies, a name over the length limit) used to
+    # raise no finding at all: the validator computed the name only for its other rules and treated a
+    # failure as "no name". It is now an Error at groups[i].template carrying Resolve-OERName's own reason.
+    BeforeAll {
+        function Invoke-TplValidation {
+            param([string]$Json)
+            $Doc = $Json | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+        function Get-TplFinding {
+            param($Validation, [string]$Path = 'groups[0].template')
+            @($Validation.Errors | Where-Object { $_.Path -eq $Path })
+        }
+    }
+
+    It 'refuses a template with a token that no tokens entry supplies, naming the reason' {
+        $V = Invoke-TplValidation -Json '{ "version": "1.0", "groups": [ { "template": "grp-{Unknown}", "tokens": { "Region": "EU" } } ] }'
+        $Hit = @(Get-TplFinding -Validation $V)
+        $Hit.Count | Should -Be 1 -Because 'the rule must have been reached for the message to be read'
+        $Hit[0].Severity | Should -BeExactly 'Error'
+        $Hit[0].Section | Should -BeExactly 'groups'
+        $Hit[0].Item | Should -BeExactly 'groups[0]'
+        $Hit[0].Message | Should -BeExactly ("'template' at groups[0] cannot be resolved to a group name: Naming template 'grp-{Unknown}' " +
+            'has unresolved token(s): Unknown. Supply a value for each token.')
+        $V.Valid | Should -BeFalse
+        @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 1 -Because 'the template is the only Error (an omitted members key is a Warning)'
+    }
+
+    It 'names every unresolved token of the template' {
+        $V = Invoke-TplValidation -Json '{ "version": "1.0", "groups": [ { "template": "{a}-{b}-{c}", "tokens": { "b": "x" } } ] }'
+        $Hit = @(Get-TplFinding -Validation $V)
+        $Hit.Count | Should -Be 1
+        $Hit[0].Message | Should -BeLike "*has unresolved token(s): a, c. Supply a value for each token."
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'refuses a template whose resolved name exceeds 256 characters, naming the limit' {
+        $Long = 'x' * 300
+        $V = Invoke-TplValidation -Json ('{ "version": "1.0", "groups": [ { "template": "{a}", "tokens": { "a": "' + $Long + '" } } ] }')
+        $Hit = @(Get-TplFinding -Validation $V)
+        $Hit.Count | Should -Be 1
+        $Hit[0].Severity | Should -BeExactly 'Error'
+        $Hit[0].Message | Should -Be ("'template' at groups[0] cannot be resolved to a group name: Resolved name '" + $Long + "' exceeds the maximum length of 256 characters.")
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'reports the template beside the tokens finding when the entry has no tokens object: <Case>' -ForEach @(
+        @{ Case = 'no tokens key'; Group = '{ "template": "grp-{Region}" }' }
+        @{ Case = 'tokens is a string'; Group = '{ "template": "grp-{Region}", "tokens": "x" }' }
+        @{ Case = 'tokens is an explicit null'; Group = '{ "template": "grp-{Region}", "tokens": null }' }
+    ) {
+        $V = Invoke-TplValidation -Json ('{ "version": "1.0", "groups": [ ' + $Group + ' ] }')
+        @(Get-TplFinding -Validation $V -Path 'groups[0].tokens').Count | Should -Be 1 -Because 'the tokens finding is unchanged'
+        $Hit = @(Get-TplFinding -Validation $V)
+        $Hit.Count | Should -Be 1
+        $Hit[0].Message | Should -BeLike "*has unresolved token(s): Region. Supply a value for each token."
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'raises nothing for a template that resolves: <Case>' -ForEach @(
+        @{ Case = 'a plain token'; Group = '{ "template": "grp-{Region}", "tokens": { "Region": "EU" } }' }
+        @{ Case = 'a token matched without regard to letter case'; Group = '{ "template": "grp-{REGION}", "tokens": { "region": "EU" } }' }
+        @{ Case = 'a template with no token'; Group = '{ "template": "grp-plain", "tokens": { } }' }
+        @{ Case = 'a value holding $&'; Group = '{ "template": "grp-{Region}", "tokens": { "Region": "a$&b" } }' }
+        @{ Case = 'a value holding $$ and $1'; Group = '{ "template": "grp-{Region}", "tokens": { "Region": "$$-$1" } }' }
+        @{ Case = 'a value that looks like a token'; Group = '{ "template": "grp-{Region}", "tokens": { "Region": "{Zone}" } }' }
+        @{ Case = 'a name of exactly 256 characters'; Group = ('{ "template": "{a}", "tokens": { "a": "' + ('y' * 256) + '" } }') }
+    ) {
+        $V = Invoke-TplValidation -Json ('{ "version": "1.0", "groups": [ ' + $Group + ' ] }')
+        @(Get-TplFinding -Validation $V).Count | Should -Be 0 -Because "the template resolves: $(@($V.Errors | ForEach-Object { $_.Message }) -join ' | ')"
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'raises no template finding for an entry that declares displayName as well (the existing both-keys Error stands alone)' {
+        $V = Invoke-TplValidation -Json '{ "version": "1.0", "groups": [ { "displayName": "g", "template": "grp-{Unknown}", "tokens": { "Region": "EU" } } ] }'
+        @(Get-TplFinding -Validation $V).Count | Should -Be 0
+        @(Get-TplFinding -Validation $V -Path 'groups[0]').Count | Should -Be 1
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'raises no template finding for an empty template, a null template or a group without one' {
+        foreach ($Group in @('{ "template": "", "tokens": { } }', '{ "template": null, "displayName": "g" }', '{ "displayName": "g" }')) {
+            $V = Invoke-TplValidation -Json ('{ "version": "1.0", "groups": [ ' + $Group + ' ] }')
+            @(Get-TplFinding -Validation $V).Count | Should -Be 0 -Because $Group
+        }
+    }
+
+    It 'reports the entry that cannot be resolved by its own index beside entries that can' {
+        $V = Invoke-TplValidation -Json ('{ "version": "1.0", "groups": [ ' +
+            '{ "template": "ok-{a}", "tokens": { "a": "1" } }, { "template": "bad-{a}", "tokens": { } }, { "template": "ok-{a}", "tokens": { "a": "2" } } ] }')
+        @(Get-TplFinding -Validation $V -Path 'groups[0].template').Count | Should -Be 0
+        @(Get-TplFinding -Validation $V -Path 'groups[1].template').Count | Should -Be 1
+        @(Get-TplFinding -Validation $V -Path 'groups[2].template').Count | Should -Be 0
+        @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 1
+    }
+
+    It 'still computes the name of a template whose value holds a replacement pattern, for the duplicate check' {
+        $V = Invoke-TplValidation -Json ('{ "version": "1.0", "groups": [ ' +
+            '{ "template": "g-{a}", "tokens": { "a": "$&" }, "members": null }, { "template": "g-{a}", "tokens": { "a": "$&" }, "members": null } ] }')
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[1]' })
+        $Hit.Count | Should -Be 1 -Because 'both entries compute the name g-$&'
+        $Hit[0].Message | Should -BeLike "*the same group name 'g-`$&'*"
+        @($V.Errors | Where-Object { $_.Path -like '*.template' }).Count | Should -Be 0
+    }
+
+    It 'adds no new finding to a document whose templates resolve (the finding count of a clean document is unchanged)' {
+        $V = Invoke-TplValidation -Json '{ "version": "1.0", "groups": [ { "template": "role_sec_{area}_{tier}", "tokens": { "area": "hr", "tier": "t0" }, "members": null } ] }'
+        @($V.Errors).Count | Should -Be 0
+        $V.Valid | Should -BeTrue
+    }
+}
+
+Describe 'Test-OERStructureSchema principalType must be a string (BL-155)' {
+    # The enum check compared the value with a list of strings, and -inotcontains reads a one-element array
+    # as its element, so ["User"] passed as if it were the string 'User'. principalStatus already refuses a
+    # value that is not a string and names its type; roleAssignments and scopedRoles principalType now do the
+    # same. directoryRoleAssignments is not part of this step.
+    BeforeAll {
+        function Invoke-NstValidation {
+            param([string]$Json)
+            $Doc = $Json | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+        function Get-NstRoleAssignmentDocument {
+            param([string]$PrincipalType)
+            '{ "version": "1.0", "roleAssignments": [ { "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", ' +
+            '"principal": "person1@example.com", "principalType": ' + $PrincipalType + ' } ] }'
+        }
+        function Get-NstScopedRoleDocument {
+            param([string]$PrincipalType)
+            '{ "version": "1.0", "administrativeUnits": [ { "displayName": "AU-One", "members": [], "scopedRoles": [ ' +
+            '{ "role": "User Administrator", "principal": "aaaa8888-0000-0000-0000-000000000001", "principalType": ' + $PrincipalType + ' } ] } ] }'
+        }
+    }
+
+    It 'refuses a roleAssignments principalType <Shown> that is not a string, naming its type' -ForEach @(
+        @{ Shown = '["User"]'; Type = 'Object[]' }
+        @{ Shown = '["User", "Group"]'; Type = 'Object[]' }
+        @{ Shown = '[]'; Type = 'Object[]' }
+        @{ Shown = '1'; Type = 'Int64' }
+        @{ Shown = '7'; Type = 'Int64' }
+        @{ Shown = 'true'; Type = 'Boolean' }
+        @{ Shown = '1.5'; Type = 'Double' }
+        @{ Shown = '{ "a": 1 }'; Type = 'PSCustomObject' }
+    ) {
+        $V = Invoke-NstValidation -Json (Get-NstRoleAssignmentDocument -PrincipalType $Shown)
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'roleAssignments[0].principalType' })
+        $Hit.Count | Should -Be 1 -Because 'the rule must have been reached for the message to be read'
+        $Hit[0].Severity | Should -BeExactly 'Error'
+        $Hit[0].Section | Should -BeExactly 'roleAssignments'
+        $Hit[0].Item | Should -BeExactly 'Reader'
+        $Hit[0].Message | Should -BeExactly "'principalType' at roleAssignments[0] must be one of: User, Group, ServicePrincipal. Got: a value that is not a string ($Type)."
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'refuses a scopedRoles principalType <Shown> that is not a string, naming its type' -ForEach @(
+        @{ Shown = '["User"]'; Type = 'Object[]' }
+        @{ Shown = '["User", "Group"]'; Type = 'Object[]' }
+        @{ Shown = '1'; Type = 'Int64' }
+        @{ Shown = '7'; Type = 'Int64' }
+        @{ Shown = 'true'; Type = 'Boolean' }
+        @{ Shown = '{ "a": 1 }'; Type = 'PSCustomObject' }
+    ) {
+        $V = Invoke-NstValidation -Json (Get-NstScopedRoleDocument -PrincipalType $Shown)
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'administrativeUnits[0].scopedRoles[0].principalType' })
+        $Hit.Count | Should -Be 1 -Because 'the rule must have been reached for the message to be read'
+        $Hit[0].Severity | Should -BeExactly 'Error'
+        $Hit[0].Section | Should -BeExactly 'administrativeUnits'
+        $Hit[0].Item | Should -BeExactly 'AU-One'
+        $Hit[0].Message | Should -BeExactly ("'principalType' at administrativeUnits[0].scopedRoles[0] must be one of: User, Group, ServicePrincipal. " +
+            "Got: a value that is not a string ($Type).")
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'keeps the text for a string outside the enum (<Where>)' -ForEach @(
+        @{ Where = 'roleAssignments'; Path = 'roleAssignments[0].principalType'; Doc = 'RA' }
+        @{ Where = 'scopedRoles'; Path = 'administrativeUnits[0].scopedRoles[0].principalType'; Doc = 'SR' }
+    ) {
+        $Json = if ($Doc -eq 'RA') { Get-NstRoleAssignmentDocument -PrincipalType '"Device"' } else { Get-NstScopedRoleDocument -PrincipalType '"Device"' }
+        $V = Invoke-NstValidation -Json $Json
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq $Path })
+        $Hit.Count | Should -Be 1
+        $Hit[0].Message | Should -BeLike "*must be one of: User, Group, ServicePrincipal. Got: 'Device'."
+    }
+
+    It 'keeps accepting the enum values in any letter case (<Where>)' -ForEach @(
+        @{ Where = 'roleAssignments'; Doc = 'RA'; Path = 'roleAssignments[0].principalType' }
+        @{ Where = 'scopedRoles'; Doc = 'SR'; Path = 'administrativeUnits[0].scopedRoles[0].principalType' }
+    ) {
+        foreach ($Value in @('User', 'group', 'SERVICEPRINCIPAL')) {
+            $Json = if ($Doc -eq 'RA') { Get-NstRoleAssignmentDocument -PrincipalType ('"' + $Value + '"') } else { Get-NstScopedRoleDocument -PrincipalType ('"' + $Value + '"') }
+            $V = Invoke-NstValidation -Json $Json
+            @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0 -Because "principalType '$Value' is in the enum"
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'gives a value that is not a string no casing Warning (<Where>)' -ForEach @(
+        @{ Where = 'roleAssignments'; Doc = 'RA'; Path = 'roleAssignments[0].principalType' }
+        @{ Where = 'scopedRoles'; Doc = 'SR'; Path = 'administrativeUnits[0].scopedRoles[0].principalType' }
+    ) {
+        $Json = if ($Doc -eq 'RA') { Get-NstRoleAssignmentDocument -PrincipalType '["User"]' } else { Get-NstScopedRoleDocument -PrincipalType '["User"]' }
+        $V = Invoke-NstValidation -Json $Json
+        @($V.Errors | Where-Object { $_.Path -eq $Path -and $_.Severity -eq 'Warning' }).Count | Should -Be 0
+    }
+
+    It 'treats an explicit null principalType as not declared (<Where>)' -ForEach @(
+        @{ Where = 'roleAssignments'; Doc = 'RA' }
+        @{ Where = 'scopedRoles'; Doc = 'SR' }
+    ) {
+        $Json = if ($Doc -eq 'RA') { Get-NstRoleAssignmentDocument -PrincipalType 'null' } else { Get-NstScopedRoleDocument -PrincipalType 'null' }
+        $V = Invoke-NstValidation -Json $Json
+        @($V.Errors | Where-Object { $_.Path -like '*principalType' }).Count | Should -Be 0
+        $V.Valid | Should -BeTrue
+    }
+}
+
+Describe 'Test-OERStructureSchema accessReviews recurrence must be a string (BL-117 fifth point)' {
+    # The recurrence check compared the value with a list of strings, and -inotcontains reads a one-element
+    # array as its element, so ["Monthly"] passed as if it were the string 'Monthly' and the review was then
+    # applied with a recurrence that is not a string. It is now an Error that names the type, as
+    # principalStatus does.
+    BeforeAll {
+        function Invoke-RcValidation {
+            param([string]$Json)
+            $Doc = $Json | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+        function Get-RcDocument {
+            param([string]$Recurrence)
+            '{ "version": "1.0", "accessReviews": [ { "displayName": "r", "accessPackage": "ap", "assignmentPolicy": "p", "recurrence": ' + $Recurrence + ' } ] }'
+        }
+    }
+
+    It 'refuses a recurrence <Shown> that is not a string, naming its type' -ForEach @(
+        @{ Shown = '["Monthly"]'; Type = 'Object[]' }
+        @{ Shown = '["OneTime"]'; Type = 'Object[]' }
+        @{ Shown = '["Monthly", "Weekly"]'; Type = 'Object[]' }
+        @{ Shown = '[]'; Type = 'Object[]' }
+        @{ Shown = '1'; Type = 'Int64' }
+        @{ Shown = 'true'; Type = 'Boolean' }
+        @{ Shown = '{ "a": 1 }'; Type = 'PSCustomObject' }
+    ) {
+        $V = Invoke-RcValidation -Json (Get-RcDocument -Recurrence $Shown)
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'accessReviews[0].recurrence' })
+        $Hit.Count | Should -Be 1 -Because 'the rule must have been reached for the message to be read'
+        $Hit[0].Severity | Should -BeExactly 'Error'
+        $Hit[0].Section | Should -BeExactly 'accessReviews'
+        $Hit[0].Item | Should -BeExactly 'r'
+        $Hit[0].Message | Should -BeExactly "'recurrence' at accessReviews[0] must be one of: OneTime, Weekly, Monthly, Quarterly, SemiAnnually, Annually. Got: a value that is not a string ($Type)."
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'keeps the text for a string outside the enum' {
+        $V = Invoke-RcValidation -Json (Get-RcDocument -Recurrence '"Hourly"')
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'accessReviews[0].recurrence' })
+        $Hit.Count | Should -Be 1
+        $Hit[0].Message | Should -BeExactly "'recurrence' at accessReviews[0] must be one of: OneTime, Weekly, Monthly, Quarterly, SemiAnnually, Annually. Got: 'Hourly'."
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'gives a value that is not a string no casing Warning' {
+        $V = Invoke-RcValidation -Json (Get-RcDocument -Recurrence '["monthly"]')
+        @($V.Errors | Where-Object { $_.Path -eq 'accessReviews[0].recurrence' -and $_.Severity -eq 'Warning' }).Count | Should -Be 0
+    }
+
+    It 'treats an explicit null recurrence as not declared, as before' {
+        $V = Invoke-RcValidation -Json (Get-RcDocument -Recurrence 'null')
+        @($V.Errors | Where-Object { $_.Path -eq 'accessReviews[0].recurrence' }).Count | Should -Be 0
+    }
+
+    It 'keeps accepting every enum value in any letter case' {
+        foreach ($Value in @('OneTime', 'weekly', 'MONTHLY', 'Quarterly', 'semiannually', 'Annually')) {
+            $V = Invoke-RcValidation -Json (Get-RcDocument -Recurrence ('"' + $Value + '"'))
+            @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0 -Because "recurrence '$Value' is in the enum"
+        }
+    }
+}
+
+Describe 'Test-OERStructureSchema AllExternalUsers policy without approval (BL-54)' {
+    # Microsoft Graph refuses an access package assignment policy for "all users (any new external users)"
+    # that has no approval configured: AnyUserPolicyValidationError, "An access package policy with Any User
+    # option must have an approval configured" (measured in Sprint 8 step 3; Microsoft Learn, entitlement
+    # management, onboard external users: Require approval Yes is mandatory for that option). The engine
+    # sends only the approval settings an entry declares -- a created policy gets none by default, an
+    # existing policy keeps what it has live for whatever the entry omits, and when approvalStages is
+    # declared without requireApproval the flag is derived from the stage count (ConvertTo-OERPolicyBody).
+    # So the offline validator warns when the entry declares no approval stage, or declares requireApproval
+    # false. It is a Warning because an existing policy may already carry the approval.
+    BeforeAll {
+        function Invoke-ExtValidation {
+            param([string]$Policy)
+            $Doc = ('{ "version": "1.0", "accessPackages": [ { "displayName": "ap1", "catalog": "cat1", "assignmentPolicies": [ ' + $Policy + ' ] } ] }') | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+        function Get-ExtFinding {
+            param($Validation)
+            @($Validation.Errors | Where-Object { $_.Path -eq 'accessPackages[0].assignmentPolicies[0].requestorScope.scope' })
+        }
+        $script:ExtStage = '{ "durationDays": 7, "manager": true }'
+        $script:ExtReason = "Microsoft Graph refuses an access package policy with the Any User option that has no approval configured " +
+            "(AnyUserPolicyValidationError: 'An access package policy with Any User option must have an approval configured')."
+        $script:ExtNoStageMessage = "assignmentPolicy at accessPackages[0].assignmentPolicies[0] has requestorScope.scope 'AllExternalUsers' but declares no 'approvalStages' entry. " +
+            $script:ExtReason + ' Invoke-OERStructure sends only the approval settings the entry declares: creating the policy from this entry is refused, ' +
+            'and an existing policy keeps the approval settings it has live for what the entry omits, so the update is accepted only when the live policy ' +
+            "already requires approval with at least one stage. Declare 'requireApproval' true and at least one 'approvalStages' entry."
+        $script:ExtStageOnlyMessage = "assignmentPolicy at accessPackages[0].assignmentPolicies[0] has requestorScope.scope 'AllExternalUsers' but declares no 'approvalStages' entry. " +
+            $script:ExtReason + ' Invoke-OERStructure sends only the approval settings the entry declares: creating the policy from this entry is refused, ' +
+            'and an existing policy keeps the approval stages it has live, since the entry leaves them out and requireApproval true is sent as declared, ' +
+            "so the update is accepted only when the live policy already has at least one approval stage. Declare 'requireApproval' true and at least one 'approvalStages' entry."
+        $script:ExtEmptyStagesMessage = "assignmentPolicy at accessPackages[0].assignmentPolicies[0] has requestorScope.scope 'AllExternalUsers' but declares no 'approvalStages' entry. " +
+            $script:ExtReason + ' Invoke-OERStructure sends only the approval settings the entry declares: the empty approvalStages is sent as the policy''s stage list, ' +
+            'so the write carries no approval stage on create or on update, whatever the live policy has, and Microsoft Graph is expected to refuse it ' +
+            "(not measured for this combination). Declare 'requireApproval' true and at least one 'approvalStages' entry."
+        $script:ExtOffMessage = "assignmentPolicy at accessPackages[0].assignmentPolicies[0] has requestorScope.scope 'AllExternalUsers' but declares 'requireApproval' false. " +
+            $script:ExtReason + ' Approval is switched off by that declaration, so creating or updating the policy this way is refused and the policy is reported Failed. ' +
+            "Declare 'requireApproval' true and at least one 'approvalStages' entry."
+    }
+
+    It 'warns, and stays Valid, for an AllExternalUsers policy that declares no approval: <Case>' -ForEach @(
+        @{ Case = 'nothing about approval'; Variant = 'Default'; Policy = '{ "displayName": "p1", "requestorScope": { "scope": "AllExternalUsers" } }' }
+        @{ Case = 'requireApproval omitted, an unrelated field declared'; Variant = 'Default'; Policy = '{ "displayName": "p1", "requestorScope": { "scope": "AllExternalUsers" }, "durationInDays": 30 }' }
+        @{ Case = 'requireApproval true without stages'; Variant = 'StageOnly'; Policy = '{ "displayName": "p1", "requestorScope": { "scope": "AllExternalUsers" }, "requireApproval": true }' }
+        @{ Case = 'requireApproval null without stages'; Variant = 'Default'; Policy = '{ "displayName": "p1", "requestorScope": { "scope": "AllExternalUsers" }, "requireApproval": null }' }
+        @{ Case = 'approvalStages null'; Variant = 'StageOnly'; Policy = '{ "displayName": "p1", "requestorScope": { "scope": "AllExternalUsers" }, "requireApproval": true, "approvalStages": null }' }
+        @{ Case = 'approvalStages empty'; Variant = 'EmptyStages'; Policy = '{ "displayName": "p1", "requestorScope": { "scope": "AllExternalUsers" }, "requireApproval": true, "approvalStages": [] }' }
+        @{ Case = 'only requireApprovalForUpdate'; Variant = 'Default'; Policy = '{ "displayName": "p1", "requestorScope": { "scope": "AllExternalUsers" }, "requireApprovalForUpdate": true }' }
+    ) {
+        $V = Invoke-ExtValidation -Policy $Policy
+        $Hit = @(Get-ExtFinding -Validation $V)
+        $Hit.Count | Should -Be 1 -Because 'the rule must have been reached for the message to be read'
+        $Hit[0].Severity | Should -BeExactly 'Warning'
+        $Hit[0].Section | Should -BeExactly 'accessPackages'
+        $Hit[0].Item | Should -BeExactly 'ap1'
+        $Expected = switch ($Variant) { 'StageOnly' { $script:ExtStageOnlyMessage } 'EmptyStages' { $script:ExtEmptyStagesMessage } default { $script:ExtNoStageMessage } }
+        $Hit[0].Message | Should -BeExactly $Expected
+        @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'warns for requireApproval false, with or without stages, and says approval is switched off' -ForEach @(
+        @{ Case = 'without stages'; Policy = '{ "displayName": "p1", "requestorScope": { "scope": "AllExternalUsers" }, "requireApproval": false }' }
+        @{ Case = 'with a stage'; Policy = '{ "displayName": "p1", "requestorScope": { "scope": "AllExternalUsers" }, "requireApproval": false, "approvalStages": [ { "durationDays": 7, "manager": true } ] }' }
+    ) {
+        $V = Invoke-ExtValidation -Policy $Policy
+        $Hit = @(Get-ExtFinding -Validation $V)
+        $Hit.Count | Should -Be 1 -Because "exactly one of the two texts fires: $Case"
+        $Hit[0].Severity | Should -BeExactly 'Warning'
+        $Hit[0].Message | Should -BeExactly $script:ExtOffMessage
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'reads the scope without regard to letter case: <Scope>' -ForEach @(
+        @{ Scope = 'allexternalusers' }
+        @{ Scope = 'ALLEXTERNALUSERS' }
+        @{ Scope = 'allExternalUsers' }
+    ) {
+        $V = Invoke-ExtValidation -Policy ('{ "displayName": "p1", "requestorScope": { "scope": "' + $Scope + '" } }')
+        $Hit = @(Get-ExtFinding -Validation $V)
+        $Hit.Count | Should -Be 1
+        $Hit[0].Severity | Should -BeExactly 'Warning'
+        $Hit[0].Message | Should -BeLike "*has requestorScope.scope 'AllExternalUsers' but declares no 'approvalStages' entry.*"
+    }
+
+    It 'raises nothing for an AllExternalUsers policy that declares requireApproval true with a stage' {
+        $V = Invoke-ExtValidation -Policy ('{ "displayName": "p1", "requestorScope": { "scope": "AllExternalUsers" }, "requireApproval": true, "approvalStages": [ ' + $script:ExtStage + ' ] }')
+        @(Get-ExtFinding -Validation $V).Count | Should -Be 0
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'raises nothing when a stage is declared and requireApproval is left out (the engine derives it from the stage count)' {
+        $V = Invoke-ExtValidation -Policy ('{ "displayName": "p1", "requestorScope": { "scope": "AllExternalUsers" }, "approvalStages": [ ' + $script:ExtStage + ' ] }')
+        @(Get-ExtFinding -Validation $V).Count | Should -Be 0
+    }
+
+    It 'does not count an approvalStages that is a string as a stage: the not-an-array Error stands beside the Warning' {
+        $V = Invoke-ExtValidation -Policy '{ "displayName": "p1", "requestorScope": { "scope": "AllExternalUsers" }, "requireApproval": true, "approvalStages": "manager" }'
+        $Hit = @(Get-ExtFinding -Validation $V)
+        $Hit.Count | Should -Be 1 -Because 'a string holds no approval stage'
+        $Hit[0].Message | Should -BeExactly $script:ExtStageOnlyMessage
+        @($V.Errors | Where-Object { $_.Path -eq 'accessPackages[0].assignmentPolicies[0].approvalStages' -and $_.Severity -eq 'Error' }).Count | Should -Be 1
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'does not read a requireApproval that is not a boolean as false: the boolean Error stands alone' -ForEach @(
+        @{ Shown = '0' }
+        @{ Shown = '"false"' }
+    ) {
+        $V = Invoke-ExtValidation -Policy ('{ "displayName": "p1", "requestorScope": { "scope": "AllExternalUsers" }, "requireApproval": ' + $Shown + ', "approvalStages": [ ' + $script:ExtStage + ' ] }')
+        @(Get-ExtFinding -Validation $V).Count | Should -Be 0
+        @($V.Errors | Where-Object { $_.Path -eq 'accessPackages[0].assignmentPolicies[0].requireApproval' -and $_.Severity -eq 'Error' }).Count | Should -Be 1
+    }
+
+    It 'raises nothing for a stage with several entries' {
+        $V = Invoke-ExtValidation -Policy ('{ "displayName": "p1", "requestorScope": { "scope": "AllExternalUsers" }, "requireApproval": true, "approvalStages": [ ' + $script:ExtStage + ', ' + $script:ExtStage + ' ] }')
+        @(Get-ExtFinding -Validation $V).Count | Should -Be 0
+    }
+
+    It 'raises nothing for a scope other than AllExternalUsers: <Scope>' -ForEach @(
+        @{ Scope = 'AllMemberUsers' }
+        @{ Scope = 'AllDirectoryUsers' }
+        @{ Scope = 'AllConfiguredConnectedOrganizationUsers' }
+        @{ Scope = 'SpecificDirectoryUsers' }
+        @{ Scope = 'NoSubjects' }
+    ) {
+        $V = Invoke-ExtValidation -Policy ('{ "displayName": "p1", "requestorScope": { "scope": "' + $Scope + '" } }')
+        @($V.Errors | Where-Object { $_.Message -like '*AnyUserPolicyValidationError*' }).Count | Should -Be 0
+    }
+
+    It 'raises nothing for a policy without a requestorScope, or with a scope that is not declared' -ForEach @(
+        @{ Policy = '{ "displayName": "p1" }' }
+        @{ Policy = '{ "displayName": "p1", "requestorScope": { "scope": null, "users": [ "person1@example.com" ] } }' }
+        @{ Policy = '{ "displayName": "p1", "requestorScope": { "scope": null } }' }
+    ) {
+        $V = Invoke-ExtValidation -Policy $Policy
+        @($V.Errors | Where-Object { $_.Message -like '*AnyUserPolicyValidationError*' }).Count | Should -Be 0
+    }
+
+    It 'warns once for each policy of a package that needs it, at its own index' {
+        $Doc = ('{ "version": "1.0", "accessPackages": [ { "displayName": "ap1", "catalog": "cat1", "assignmentPolicies": [ ' +
+            '{ "displayName": "p0", "requestorScope": { "scope": "AllExternalUsers" } }, ' +
+            '{ "displayName": "p1", "requestorScope": { "scope": "AllExternalUsers" }, "requireApproval": true, "approvalStages": [ ' + $script:ExtStage + ' ] }, ' +
+            '{ "displayName": "p2", "requestorScope": { "scope": "AllMemberUsers" } }, ' +
+            '{ "displayName": "p3", "requestorScope": { "scope": "AllExternalUsers" }, "requireApproval": false } ] } ] }') | ConvertFrom-Json
+        $V = InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            Test-OERStructureSchema -Document $Doc
+        }
+        $Hits = @($V.Errors | Where-Object { $_.Message -like '*AnyUserPolicyValidationError*' })
+        @($Hits | ForEach-Object { $_.Path }) | Should -BeExactly @(
+            'accessPackages[0].assignmentPolicies[0].requestorScope.scope'
+            'accessPackages[0].assignmentPolicies[3].requestorScope.scope'
+        )
+    }
+
+    It 'keeps the empty-stages Warning of requireApproval true beside it (two different findings)' {
+        $V = Invoke-ExtValidation -Policy '{ "displayName": "p1", "requestorScope": { "scope": "AllExternalUsers" }, "requireApproval": true, "approvalStages": [] }'
+        @(Get-ExtFinding -Validation $V).Count | Should -Be 1
+        @($V.Errors | Where-Object { $_.Path -eq 'accessPackages[0].assignmentPolicies[0].approvalStages' }).Count | Should -Be 1
+    }
+}
+
+Describe 'Test-OERStructureSchema access package displayName that is a GUID (BL-24)' {
+    # The engine creates a package with the displayName it is given, and Resolve-OERAccessPackageId reads a
+    # GUID (Test-OERGuid) as an object id, so a review or a reference that names the package by that name
+    # looks for an id and not for the name. A Warning: the package can still be created. No id below is
+    # version-4 shaped.
+    BeforeAll {
+        function Invoke-GuidApValidation {
+            param([string]$DisplayName)
+            $Doc = ('{ "version": "1.0", "accessPackages": [ { "displayName": ' + $DisplayName + ', "catalog": "cat1" } ] }') | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+    }
+
+    It 'warns, and stays Valid, for the GUID displayName <Value>' -ForEach @(
+        @{ Value = 'aaaa1111-0000-0000-0000-000000000001' }
+        @{ Value = 'AAAA1111-0000-0000-0000-000000000001' }
+    ) {
+        $V = Invoke-GuidApValidation -DisplayName ('"' + $Value + '"')
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'accessPackages[0].displayName' })
+        $Hit.Count | Should -Be 1 -Because 'the rule must have been reached for the message to be read'
+        $Hit[0].Severity | Should -BeExactly 'Warning'
+        $Hit[0].Section | Should -BeExactly 'accessPackages'
+        $Hit[0].Item | Should -BeExactly $Value
+        $Hit[0].Message | Should -BeExactly ("'displayName' at accessPackages[0] is the GUID '$Value': Invoke-OERStructure creates the access package with that name, " +
+            "and a GUID is read as an object id wherever an access review's 'accessPackage' (or another reference) names the package, " +
+            'so a reference by that name looks for an object id and does not find the package. Give the access package a name that is not a GUID.')
+        $V.Valid | Should -BeTrue
+        @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0
+    }
+
+    It 'raises no GUID finding for a name that is not a canonical GUID: <Case>' -ForEach @(
+        @{ Case = 'a plain name'; Json = '"AP-Finance-Readers"' }
+        @{ Case = 'a name that holds a GUID'; Json = '"AP-aaaa1111-0000-0000-0000-000000000001"' }
+        @{ Case = 'a braced GUID'; Json = '"{aaaa1111-0000-0000-0000-000000000001}"' }
+        @{ Case = 'a GUID without hyphens'; Json = '"aaaa1111000000000000000000000001"' }
+        @{ Case = 'a number'; Json = '42' }
+        @{ Case = 'an array holding a GUID'; Json = '["aaaa1111-0000-0000-0000-000000000001"]' }
+    ) {
+        $V = Invoke-GuidApValidation -DisplayName $Json
+        @($V.Errors | Where-Object { $_.Path -eq 'accessPackages[0].displayName' -and $_.Message -like '*is the GUID*' }).Count | Should -Be 0
+    }
+
+    It 'does not warn about a previousDisplayName that is an object id (that is how a rename names its source)' {
+        $Doc = '{ "version": "1.0", "accessPackages": [ { "displayName": "AP-New", "catalog": "cat1", "previousDisplayName": "aaaa1111-0000-0000-0000-000000000001" } ] }' | ConvertFrom-Json
+        $V = InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            Test-OERStructureSchema -Document $Doc
+        }
+        @($V.Errors | Where-Object { $_.Message -like '*is the GUID*' }).Count | Should -Be 0
+    }
+
+    It 'does not warn about a GUID displayName in another section' {
+        $Doc = ('{ "version": "1.0", "catalogs": [ { "displayName": "aaaa1111-0000-0000-0000-000000000001" } ], ' +
+            '"groups": [ { "displayName": "aaaa1111-0000-0000-0000-000000000002", "members": null } ] }') | ConvertFrom-Json
+        $V = InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            Test-OERStructureSchema -Document $Doc
+        }
+        @($V.Errors | Where-Object { $_.Message -like '*is the GUID*' }).Count | Should -Be 0
+    }
+}
+
+Describe 'Test-OERStructureSchema date values (BL-154, R-11)' {
+    # ConvertFrom-Json before PowerShell 7.5 turns a string that holds an ISO 8601 date and time with
+    # seconds into a [datetime], and Read-OERStructureDocument asks for -DateKind String wherever the
+    # PowerShell has it. Where it does not, the validator cannot tell what the author wrote, so it
+    # refuses every date value the document holds, at any depth, with an Error at the value's own path.
+    # A document built here with a plain ConvertFrom-Json is such a document on every PowerShell: the
+    # default parse gives dates.
+    BeforeAll {
+        function Invoke-DateValidation {
+            param([string]$Json)
+            $Doc = $Json | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+        function Get-DateFinding {
+            param([object]$Validation)
+            @($Validation.Errors | Where-Object { $_.Message -like '*was read as a date and time*' })
+        }
+        function Get-DateMessage {
+            param([string]$Path)
+            "The value at $Path was read as a date and time, not as the text written, since ConvertFrom-Json on PowerShell before 7.5 converts a string that holds an ISO 8601 date and time with seconds. Run on PowerShell 7.5 or later to apply it as written."
+        }
+    }
+
+    It 'gives an Error at the value''s own path for a date in <Where>' -ForEach @(
+        @{ Where = 'version'; Json = '{ "version": "2026-01-01T10:00:00" }'; Path = 'version'; Section = '(root)'; Item = 'version' }
+        @{ Where = 'a group property'; Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "description": "2026-01-01T10:00:00Z" } ] }'; Path = 'groups[0].description'; Section = 'groups'; Item = 'g1' }
+        @{ Where = 'an array element'; Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "members": [ "person1@example.com", "2026-01-01T10:00:00" ] } ] }'; Path = 'groups[0].members[1]'; Section = 'groups'; Item = 'g1' }
+        @{ Where = 'a nested array'; Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "members": [ [ "2026-01-01T10:00:00" ] ] } ] }'; Path = 'groups[0].members[0][0]'; Section = 'groups'; Item = 'g1' }
+        @{ Where = 'a nested object'; Json = '{ "version": "1.0", "groups": [ { "template": "t", "tokens": { "when": "2026-01-01T10:00:00" } } ] }'; Path = 'groups[0].tokens.when'; Section = 'groups'; Item = 'groups[0]' }
+        @{ Where = 'a block four levels down'; Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "pimPolicy": { "member": { "approvers": { "users": [ "2026-01-01T10:00:00" ] } } } } ] }'; Path = 'groups[0].pimPolicy.member.approvers.users[0]'; Section = 'groups'; Item = 'g1' }
+        @{ Where = 'a unit property'; Json = '{ "version": "1.0", "administrativeUnits": [ { "displayName": "au1", "description": "2026-01-01T10:00:00" } ] }'; Path = 'administrativeUnits[0].description'; Section = 'administrativeUnits'; Item = 'au1' }
+        @{ Where = 'a catalog resource'; Json = '{ "version": "1.0", "catalogs": [ { "displayName": "c1", "resources": [ { "name": "r", "url": "2026-01-01T10:00:00" } ] } ] }'; Path = 'catalogs[0].resources[0].url'; Section = 'catalogs'; Item = 'c1' }
+        @{ Where = 'an assignment policy'; Json = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap1", "catalog": "c1", "assignmentPolicies": [ { "displayName": "p1", "expirationDateTime": "2026-01-01T10:00:00Z" } ] } ] }'; Path = 'accessPackages[0].assignmentPolicies[0].expirationDateTime'; Section = 'accessPackages'; Item = 'ap1' }
+        @{ Where = 'an approval stage'; Json = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap1", "catalog": "c1", "assignmentPolicies": [ { "displayName": "p1", "approvalStages": [ { "durationDays": 7, "note": "2026-01-01T10:00:00" } ] } ] } ] }'; Path = 'accessPackages[0].assignmentPolicies[0].approvalStages[0].note'; Section = 'accessPackages'; Item = 'ap1' }
+        @{ Where = 'an access review start date'; Json = '{ "version": "1.0", "accessReviews": [ { "displayName": "ar1", "accessPackage": "ap1", "assignmentPolicy": "p1", "startDate": "2026-03-01T00:00:00Z" } ] }'; Path = 'accessReviews[0].startDate'; Section = 'accessReviews'; Item = 'ar1' }
+        @{ Where = 'an access review end date'; Json = '{ "version": "1.0", "accessReviews": [ { "displayName": "ar1", "accessPackage": "ap1", "assignmentPolicy": "p1", "endDate": "2026-09-01T00:00:00" } ] }'; Path = 'accessReviews[0].endDate'; Section = 'accessReviews'; Item = 'ar1' }
+        @{ Where = 'a role assignment (no displayName)'; Json = '{ "version": "1.0", "roleAssignments": [ { "scope": "/s", "role": "Reader", "principal": "p", "condition": "2026-01-01T10:00:00" } ] }'; Path = 'roleAssignments[0].condition'; Section = 'roleAssignments'; Item = 'roleAssignments[0]' }
+        @{ Where = 'a key the validator does not know'; Json = '{ "version": "1.0", "extra": { "when": "2026-01-01T10:00:00" } }'; Path = 'extra.when'; Section = '(root)'; Item = 'extra' }
+        @{ Where = 'a section that is not an array'; Json = '{ "version": "1.0", "groups": { "description": "2026-01-01T10:00:00" } }'; Path = 'groups.description'; Section = 'groups'; Item = 'groups' }
+        @{ Where = 'an entry that is itself a date'; Json = '{ "version": "1.0", "groups": [ "2026-01-01T10:00:00" ] }'; Path = 'groups[0]'; Section = 'groups'; Item = 'groups[0]' }
+    ) {
+        $V = Invoke-DateValidation -Json $Json
+        $Hit = @(Get-DateFinding -Validation $V)
+        $Hit.Count | Should -Be 1
+        $Hit[0].Severity | Should -BeExactly 'Error'
+        $Hit[0].Section | Should -BeExactly $Section
+        $Hit[0].Item | Should -BeExactly $Item
+        $Hit[0].Path | Should -BeExactly $Path
+        $Hit[0].Message | Should -BeExactly (Get-DateMessage -Path $Path)
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'gives one Error per date value, in document order' {
+        $V = Invoke-DateValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "g1", "description": "2026-01-01T10:00:00", "members": [ "2026-02-01T10:00:00Z", "x", "2026-03-01T10:00:00+02:00" ] } ], ' +
+            '"accessReviews": [ { "displayName": "ar1", "accessPackage": "ap1", "assignmentPolicy": "p1", "startDate": "2026-03-01T00:00:00Z", "endDate": "2026-09-01T00:00:00Z" } ] }')
+        $Hit = @(Get-DateFinding -Validation $V)
+        @($Hit | ForEach-Object { $_.Path }) | Should -BeExactly @(
+            'groups[0].description', 'groups[0].members[0]', 'groups[0].members[2]', 'accessReviews[0].startDate', 'accessReviews[0].endDate')
+    }
+
+    It 'gives an Error for a DateTimeOffset value too' {
+        $Doc = [PSCustomObject]@{
+            version = '1.0'
+            groups  = @([PSCustomObject]@{ displayName = 'g1'; description = [System.DateTimeOffset]::new(2026, 1, 1, 10, 0, 0, [System.TimeSpan]::FromHours(2)) })
+        }
+        $V = InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            Test-OERStructureSchema -Document $Doc
+        }
+        $Hit = @(Get-DateFinding -Validation $V)
+        $Hit.Count | Should -Be 1
+        $Hit[0].Path | Should -BeExactly 'groups[0].description'
+        $Hit[0].Message | Should -BeExactly (Get-DateMessage -Path 'groups[0].description')
+    }
+
+    It 'follows a dictionary a caller built by hand, by its key' {
+        $Doc = [PSCustomObject]@{
+            version = '1.0'
+            groups  = @([PSCustomObject]@{ displayName = 'g1'; tokens = @{ when = [datetime]::new(2026, 1, 1, 10, 0, 0) } })
+        }
+        $V = InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            Test-OERStructureSchema -Document $Doc
+        }
+        $Hit = @(Get-DateFinding -Validation $V)
+        $Hit.Count | Should -Be 1
+        $Hit[0].Path | Should -BeExactly 'groups[0].tokens.when'
+        $Hit[0].Item | Should -BeExactly 'g1'
+    }
+
+    It 'raises nothing for text that merely looks like a date: a string, a date without a time, a number' {
+        $Doc = [PSCustomObject]@{
+            version = '1.0'
+            groups  = @([PSCustomObject]@{
+                    displayName = '2026-01-01T10:00:00'
+                    description = '2026-01-01T10:00:00Z'
+                    members     = @('2026-01-01', 'x', 20260101)
+                })
+            accessReviews = @([PSCustomObject]@{ displayName = 'ar1'; accessPackage = 'ap1'; assignmentPolicy = 'p1'; startDate = '2026-03-01T00:00:00Z'; endDate = '2026-09-01' })
+        }
+        $V = InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            Test-OERStructureSchema -Document $Doc
+        }
+        @(Get-DateFinding -Validation $V).Count | Should -Be 0
+        @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'walks past a null, a string and an empty array without stopping' {
+        $V = Invoke-DateValidation -Json '{ "version": "1.0", "groups": [ null, "x", [ ], { "members": [ null, "2026-01-01T10:00:00" ] } ] }'
+        $Hit = @(Get-DateFinding -Validation $V)
+        $Hit.Count | Should -Be 1
+        $Hit[0].Path | Should -BeExactly 'groups[3].members[1]'
+    }
+
+    It 'stops at a depth limit instead of following a cyclic object graph a caller built by hand' {
+        # A parsed document is at most 32 levels deep, so the walk's limit of 64 never touches one. Without
+        # the limit a cycle runs into PowerShell's call depth overflow and the whole validation throws.
+        $Cyclic = [PSCustomObject]@{ version = '1.0'; when = [datetime]::new(2026, 1, 1, 10, 0, 0) }
+        $Cyclic | Add-Member -NotePropertyName self -NotePropertyValue $Cyclic
+        $Thrown = $null
+        $V = $null
+        try {
+            $V = InModuleScope $script:moduleName -Parameters @{ Doc = $Cyclic } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        } catch { $Thrown = $PSItem }
+        $Thrown | Should -BeNullOrEmpty
+        $V | Should -Not -BeNullOrEmpty
+        $Hit = @(Get-DateFinding -Validation $V)
+        $Hit.Count | Should -BeGreaterThan 0 -Because 'the walk reached the date before it met the limit'
+        $Hit[0].Path | Should -BeExactly 'when'
+    }
+
+    It 'reads the date through the reader on a PowerShell without -DateKind and gives the Error at the path' {
+        $V = InModuleScope $script:moduleName {
+            Mock Test-OERJsonDateKindSupport { $false }
+            $Doc = Read-OERStructureDocument -Json '{ "version": "1.0", "groups": [ { "displayName": "2026-01-01T10:00:00" } ], "accessReviews": [ { "displayName": "ar1", "accessPackage": "ap1", "assignmentPolicy": "p1", "startDate": "2026-03-01T00:00:00Z" } ] }'
+            Test-OERStructureSchema -Document $Doc
+        }
+        $Hit = @(Get-DateFinding -Validation $V)
+        @($Hit | ForEach-Object { $_.Path }) | Should -BeExactly @('groups[0].displayName', 'accessReviews[0].startDate')
+        $Hit[0].Message | Should -BeExactly (Get-DateMessage -Path 'groups[0].displayName')
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'reads the same document through the reader with -DateKind String and raises no date Error' -Skip:(-not ($PSVersionTable.PSVersion -ge [version]'7.5')) {
+        $V = InModuleScope $script:moduleName {
+            Mock Test-OERJsonDateKindSupport { $true }
+            $Doc = Read-OERStructureDocument -Json '{ "version": "1.0", "groups": [ { "displayName": "2026-01-01T10:00:00" } ], "accessReviews": [ { "displayName": "ar1", "accessPackage": "ap1", "assignmentPolicy": "p1", "startDate": "2026-03-01T00:00:00Z" } ] }'
+            Test-OERStructureSchema -Document $Doc
+        }
+        @(Get-DateFinding -Validation $V).Count | Should -Be 0
+        @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'adds the date Errors after the findings of Rule 2 and before the section findings' {
+        $V = Invoke-DateValidation -Json '{ "version": "1.0", "grops": [ ], "groups": [ { "displayName": "g1", "description": "2026-01-01T10:00:00", "mailNickname": "" } ] }'
+        $Paths = @($V.Errors | ForEach-Object { $_.Path })
+        $Paths[0] | Should -BeExactly 'grops'
+        $Paths[1] | Should -BeExactly 'groups[0].description'
+        $Paths | Should -Contain 'groups[0].mailNickname'
+    }
+}
+
+Describe 'Test-OERStructureSchema displayName must be a string (BL-154, R-11)' {
+    # Every section that names its objects by displayName holds it to a string. A number, a boolean, an
+    # object or an array is an Error at the displayName path that names the type it found (the way
+    # recurrence does); a date gets only the date Error, since the value was a string as written.
+    BeforeAll {
+        function Invoke-NameTypeValidation {
+            param([string]$Json)
+            $Doc = $Json | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+        $script:NameTypeSections = @(
+            @{ Fact = 'groups'; Section = 'groups'; Entry = 'groups[0]'; Document = '{ "version": "1.0", "groups": [ { "displayName": %V% } ] }' }
+            @{ Fact = 'administrativeUnits'; Section = 'administrativeUnits'; Entry = 'administrativeUnits[0]'; Document = '{ "version": "1.0", "administrativeUnits": [ { "displayName": %V% } ] }' }
+            @{ Fact = 'catalogs'; Section = 'catalogs'; Entry = 'catalogs[0]'; Document = '{ "version": "1.0", "catalogs": [ { "displayName": %V% } ] }' }
+            @{ Fact = 'accessPackages'; Section = 'accessPackages'; Entry = 'accessPackages[0]'; Document = '{ "version": "1.0", "accessPackages": [ { "displayName": %V%, "catalog": "c1" } ] }' }
+            @{ Fact = 'assignmentPolicies'; Section = 'accessPackages'; Entry = 'accessPackages[0].assignmentPolicies[0]'; Document = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap1", "catalog": "c1", "assignmentPolicies": [ { "displayName": %V% } ] } ] }' }
+            @{ Fact = 'accessReviews'; Section = 'accessReviews'; Entry = 'accessReviews[0]'; Document = '{ "version": "1.0", "accessReviews": [ { "displayName": %V%, "accessPackage": "ap1", "assignmentPolicy": "p1" } ] }' }
+        )
+        function Get-NameTypeFinding {
+            param([object]$Validation, [string]$Entry)
+            @($Validation.Errors | Where-Object { $_.Path -eq "$Entry.displayName" -and $_.Message -like '*must be a string*' })
+        }
+    }
+
+    It 'gives an Error for a <Kind> displayName of <Fact>' -ForEach @(
+        foreach ($S in @('groups', 'administrativeUnits', 'catalogs', 'accessPackages', 'assignmentPolicies', 'accessReviews')) {
+            foreach ($K in @(
+                    @{ Kind = 'number'; Value = '42'; TypeName = 'Int64' }
+                    @{ Kind = 'boolean'; Value = 'true'; TypeName = 'Boolean' }
+                    @{ Kind = 'object'; Value = '{ "a": "bad_name" }'; TypeName = 'PSCustomObject' }
+                    @{ Kind = 'array'; Value = '[ "bad_name" ]'; TypeName = 'Object[]' }
+                )) {
+                @{ Fact = $S; Kind = $K.Kind; Value = $K.Value; TypeName = $K.TypeName }
+            }
+        }
+    ) {
+        $Case = $script:NameTypeSections | Where-Object { $_.Fact -eq $Fact }
+        $V = Invoke-NameTypeValidation -Json $Case.Document.Replace('%V%', $Value)
+        $Hit = @(Get-NameTypeFinding -Validation $V -Entry $Case.Entry)
+        $Hit.Count | Should -Be 1
+        $Hit[0].Severity | Should -BeExactly 'Error'
+        $Hit[0].Section | Should -BeExactly $Case.Section
+        $Hit[0].Item | Should -BeExactly $Case.Entry
+        $Hit[0].Message | Should -BeExactly "'displayName' at $($Case.Entry) must be a string. Got: a value that is not a string ($TypeName)."
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'gives a date displayName of <Fact> only the date Error' -ForEach @(
+        @{ Fact = 'groups' }
+        @{ Fact = 'administrativeUnits' }
+        @{ Fact = 'catalogs' }
+        @{ Fact = 'accessPackages' }
+        @{ Fact = 'assignmentPolicies' }
+        @{ Fact = 'accessReviews' }
+    ) {
+        $Case = $script:NameTypeSections | Where-Object { $_.Fact -eq $Fact }
+        $V = Invoke-NameTypeValidation -Json $Case.Document.Replace('%V%', '"2026-01-01T10:00:00"')
+        @(Get-NameTypeFinding -Validation $V -Entry $Case.Entry).Count | Should -Be 0
+        $OnPath = @($V.Errors | Where-Object { $_.Path -eq "$($Case.Entry).displayName" })
+        $OnPath.Count | Should -Be 1 -Because 'the date Error is the only finding at the displayName path'
+        $OnPath[0].Message | Should -BeLike '*was read as a date and time*'
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'raises no type Error for a string, an empty string or an explicit null displayName of <Fact>' -ForEach @(
+        foreach ($S in @('groups', 'administrativeUnits', 'catalogs', 'accessPackages', 'assignmentPolicies', 'accessReviews')) {
+            foreach ($Text in @('"name"', '""', 'null')) {
+                @{ Fact = $S; Value = $Text }
+            }
+        }
+    ) {
+        $Case = $script:NameTypeSections | Where-Object { $_.Fact -eq $Fact }
+        $V = Invoke-NameTypeValidation -Json $Case.Document.Replace('%V%', $Value)
+        @(Get-NameTypeFinding -Validation $V -Entry $Case.Entry).Count | Should -Be 0
+    }
+
+    It 'leaves a missing displayName to the required finding it already had' {
+        $V = Invoke-NameTypeValidation -Json '{ "version": "1.0", "catalogs": [ { "description": "d" } ] }'
+        @($V.Errors | Where-Object { $_.Path -eq 'catalogs[0]' -and $_.Message -eq "'displayName' is required at catalogs[0]." }).Count | Should -Be 1
+        @($V.Errors | Where-Object { $_.Message -like '*must be a string*' -and $_.Path -like '*displayName' }).Count | Should -Be 0
+    }
+
+    It 'does not throw for a displayName of any shape, and keeps raising the other findings of the entry' {
+        $V = Invoke-NameTypeValidation -Json '{ "version": "1.0", "administrativeUnits": [ { "displayName": [ [ 1 ] ], "dynamic": "yes" }, { "displayName": { }, "restricted": 1 } ] }'
+        @($V.Errors | Where-Object { $_.Path -eq 'administrativeUnits[0].dynamic' -and $_.Message -eq "'dynamic' at administrativeUnits[0] must be a boolean." }).Count | Should -Be 1
+        @($V.Errors | Where-Object { $_.Path -eq 'administrativeUnits[1].restricted' -and $_.Message -eq "'restricted' at administrativeUnits[1] must be a boolean." }).Count | Should -Be 1
+        @(Get-NameTypeFinding -Validation $V -Entry 'administrativeUnits[0]').Count | Should -Be 1
+        @(Get-NameTypeFinding -Validation $V -Entry 'administrativeUnits[1]').Count | Should -Be 1
     }
 }

@@ -6,8 +6,11 @@ function Resolve-OERName {
     .DESCRIPTION
     Substitutes {token} placeholders in a naming template with values from the Tokens hashtable to
     produce a standardized name for a group, Administrative Unit, catalog, or other object. Token
-    matching is case-insensitive. Any placeholder left unresolved is treated as a caller error and
-    raises a terminating error so that no malformed name is ever returned. The result is validated
+    matching is case-insensitive. The template is read in a single pass and each value is inserted as
+    text: a '$' in a value is never interpreted (it is not a replacement pattern), and a value is
+    never read again as a template, so a value that looks like a {token} stays as it is. Any
+    placeholder of the template that has no value is treated as a caller error and raises a
+    terminating error so that no malformed name is ever returned. The result is validated
     against an optional maximum length and, when -Strict is set, against a set of characters that
     are disallowed in Entra ID object names.
 
@@ -39,12 +42,29 @@ function Resolve-OERName {
         [switch]$Strict
     )
 
-    $Result = $Template
+    # BL-139: the template is read in ONE pass and each value is inserted as text. The earlier loop ran a
+    # -replace per token, which read a value as a .NET replacement pattern (a '$&' in a value inserted the
+    # matched '{token}' text, '$$' became '$') and read it again as a template for the tokens that came
+    # after it (a value of '{other}' was replaced by other's value, or left behind to be reported as an
+    # unresolved token). A MatchEvaluator returns the value as it is and never scans it again, and the
+    # unresolved tokens are the template's own: the ones with no key.
+    $Lookup = [System.Collections.Generic.Dictionary[string, string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($Key in $Tokens.Keys) {
-        $Result = $Result -replace ('\{' + [regex]::Escape($Key) + '\}'), [string]$Tokens[$Key]
+        $Lookup[[string]$Key] = [string]$Tokens[$Key]
     }
 
-    $Unresolved = [regex]::Matches($Result, '\{(?<token>[^}]+)\}') | ForEach-Object { $_.Groups['token'].Value }
+    $Unresolved = [System.Collections.Generic.List[string]]::new()
+    $Substitute = [System.Text.RegularExpressions.MatchEvaluator] {
+        param($Match)
+        $TokenName = $Match.Groups['token'].Value
+        if ($Lookup.ContainsKey($TokenName)) {
+            return $Lookup[$TokenName]
+        }
+        $Unresolved.Add($TokenName)
+        return $Match.Value
+    }
+    $Result = [regex]::Replace($Template, '\{(?<token>[^}]+)\}', $Substitute)
+
     if ($Unresolved.Count -gt 0) {
         throw "Naming template '$Template' has unresolved token(s): $($Unresolved -join ', '). Supply a value for each token."
     }

@@ -199,6 +199,90 @@ Describe 'Get-OERInventoryAzureEligibility' {
         @($Result.SkippedScopes) | Should -Be @('/subscriptions/33333333-3333-3333-3333-333333333333')
     }
 
+    # BL-157: a name of white space is truthy, so it used to be written as the role and as the principal
+    # (the same defect BL-45 closed for the role assignment entry). A blank name falls back to the id the
+    # row carries, decided by [string]::IsNullOrWhiteSpace; a name that is not blank is written as it is.
+    It 'falls back to the role definition id and the principal id when both names are <Case>' -ForEach @(
+        @{ Case = 'spaces'; Name = '   ' }
+        @{ Case = 'a tab and a line break'; Name = "`t`r`n" }
+        @{ Case = 'empty'; Name = '' }
+        @{ Case = 'null'; Name = $null }
+    ) {
+        $script:EligBlankName = $Name
+        Mock -ModuleName $script:moduleName Get-OEREligibleRoleAssignment {
+            [PSCustomObject]@{
+                RoleEligibilityScheduleId = 'sched-blank'
+                Scope                     = '/subscriptions/11111111-1111-1111-1111-111111111111'
+                RoleDefinitionId          = '/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleDefinitions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+                RoleName                  = $script:EligBlankName
+                PrincipalId               = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+                PrincipalDisplayName      = $script:EligBlankName
+                PrincipalType             = 'User'
+                MemberType                = 'Direct'
+                Status                    = 'Provisioned'
+                StartDateTime             = $null
+                EndDateTime               = $null
+            }
+        }
+        $Result = InModuleScope $script:moduleName {
+            Get-OERInventoryAzureEligibility -Scope '/subscriptions/11111111-1111-1111-1111-111111111111'
+        }
+        @($Result.Eligibilities).Count | Should -Be 1
+        $Result.Eligibilities[0].role | Should -BeExactly '/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleDefinitions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        $Result.Eligibilities[0].principal | Should -BeExactly 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+    }
+
+    It 'falls back for the role alone when only the role name is blank, and for the principal alone when only the principal name is' {
+        # Each name is decided on its own: a blank role name must not take the principal's fallback with it.
+        $script:EligMixedRows = @(
+            [PSCustomObject]@{
+                RoleEligibilityScheduleId = 'sched-role-blank'
+                Scope                     = '/subscriptions/11111111-1111-1111-1111-111111111111'
+                RoleDefinitionId          = '/providers/Microsoft.Authorization/roleDefinitions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+                RoleName                  = '  '
+                PrincipalId               = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+                PrincipalDisplayName      = 'Anna Berg'
+                PrincipalType             = 'User'
+            }
+            [PSCustomObject]@{
+                RoleEligibilityScheduleId = 'sched-principal-blank'
+                Scope                     = '/subscriptions/11111111-1111-1111-1111-111111111111'
+                RoleDefinitionId          = '/providers/Microsoft.Authorization/roleDefinitions/cccccccc-cccc-cccc-cccc-cccccccccccc'
+                RoleName                  = 'Reader'
+                PrincipalId               = 'dddddddd-dddd-dddd-dddd-dddddddddddd'
+                PrincipalDisplayName      = "`t"
+                PrincipalType             = 'User'
+            }
+        )
+        Mock -ModuleName $script:moduleName Get-OEREligibleRoleAssignment { $script:EligMixedRows }
+        $Result = InModuleScope $script:moduleName {
+            Get-OERInventoryAzureEligibility -Scope '/subscriptions/11111111-1111-1111-1111-111111111111'
+        }
+        $ByRole = @($Result.Eligibilities | ForEach-Object { "$($_.role)|$($_.principal)" })
+        $ByRole | Should -Contain '/providers/Microsoft.Authorization/roleDefinitions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa|Anna Berg'
+        $ByRole | Should -Contain 'Reader|dddddddd-dddd-dddd-dddd-dddddddddddd'
+        $ByRole.Count | Should -Be 2
+    }
+
+    It 'writes a role name and a principal name that are not blank as they are, surrounding white space included' {
+        Mock -ModuleName $script:moduleName Get-OEREligibleRoleAssignment {
+            [PSCustomObject]@{
+                RoleEligibilityScheduleId = 'sched-padded'
+                Scope                     = '/subscriptions/11111111-1111-1111-1111-111111111111'
+                RoleDefinitionId          = '/providers/Microsoft.Authorization/roleDefinitions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+                RoleName                  = ' Owner '
+                PrincipalId               = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+                PrincipalDisplayName      = ' Anna Berg '
+                PrincipalType             = 'User'
+            }
+        }
+        $Result = InModuleScope $script:moduleName {
+            Get-OERInventoryAzureEligibility -Scope '/subscriptions/11111111-1111-1111-1111-111111111111'
+        }
+        $Result.Eligibilities[0].role | Should -BeExactly ' Owner '
+        $Result.Eligibilities[0].principal | Should -BeExactly ' Anna Berg '
+    }
+
     It 'is tagged Omnicit.EntraRBAC.InventoryAzureEligibility' {
         Mock -ModuleName $script:moduleName Get-OEREligibleRoleAssignment { @() }
         $Result = InModuleScope $script:moduleName {

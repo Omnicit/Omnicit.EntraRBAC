@@ -10,10 +10,27 @@ function Read-OERStructureDocument {
     already-parsed document), which is serialized and re-parsed; a file path string; or a
     System.IO.FileInfo (for example piped from Get-ChildItem or Get-Item) -- the latter two are read
     from disk exactly like -Path. A System.IO.DirectoryInfo piped to -InputObject is an error, since
-    there is no single document to read from a directory. Malformed JSON, a missing file, an empty
-    document, and a document whose root is not a single JSON object all throw, so the public callers
-    (Test-OERStructure and Invoke-OERStructure) can catch and surface a clean error before any
-    validation or write. Exactly one of -Path, -Json, or -InputObject must be supplied.
+    there is no single document to read from a directory. Malformed JSON, a missing file, a file that
+    exists but cannot be read, an empty document, and a document whose root is not a single JSON object
+    all throw, so the public callers (Test-OERStructure and Invoke-OERStructure) can catch and surface a
+    clean error before any validation or write. A file that cannot be read (locked, or no read
+    permission) throws "The structure document at '<path>' could not be read: <reason>", the one error
+    with the real reason: Get-Content runs with -ErrorAction Stop, so the non-terminating read error it
+    would write is caught here and the document is never reported as empty. Exactly one of -Path, -Json,
+    or -InputObject must be supplied.
+
+    Text stays as written (BL-154). On PowerShell 7.5 or later the parse runs with -DateKind String, so a
+    string that holds an ISO 8601 date and time with seconds (a startDate, a displayName that looks like
+    a time stamp) reaches the validator and the apply engine as the string the author wrote. On
+    PowerShell 7.2 to 7.4 ConvertFrom-Json has no such parameter and turns that string into a
+    [datetime]; Test-OERStructureSchema then refuses every date value in the document with an Error at
+    its path, and the document is not applied. Test-OERJsonDateKindSupport decides which, and the parse
+    calls the same module-qualified Microsoft.PowerShell.Utility\ConvertFrom-Json it asks about, so a
+    function of that name in the session is never the one called. On PowerShell 7.5 or later an
+    -InputObject whose values the caller already turned into dates is read as ConvertTo-Json writes them
+    (a documented limit): the date becomes the ISO 8601 string ConvertTo-Json produced, not the text the
+    caller first wrote. On 7.2 to 7.4 the re-parse turns that string into a date again, which the
+    validator refuses like any other.
 
     Before returning, every recognized enum value in the document is rewritten to the canonical
     spelling Get-OERStructureSchemaJson declares (as resolved by Resolve-OERStructureEnumCasing), so a
@@ -121,13 +138,31 @@ function Read-OERStructureDocument {
         if (-not (Test-Path -LiteralPath $EffectivePath -PathType Leaf)) {
             throw "Structure document not found at path '$EffectivePath'."
         }
-        $Json = Get-Content -LiteralPath $EffectivePath -Raw
+        try {
+            # -ErrorAction Stop (BL-154): for a file it cannot open (a lock, no read permission) Get-Content
+            # writes a NON-terminating GetContentReaderIOError and returns nothing, which used to reach the
+            # operator as that raw error and then as 'The structure document is empty.' beside it. The
+            # real reason is now the one error, as Read-OERNamingStandard reports it.
+            $Json = Get-Content -LiteralPath $EffectivePath -Raw -ErrorAction Stop
+        } catch {
+            Remove-OERErrorRecord -Record $PSItem
+            throw "The structure document at '$EffectivePath' could not be read: $($PSItem.Exception.Message)"
+        }
     }
     if ([string]::IsNullOrWhiteSpace($Json)) {
         throw 'The structure document is empty.'
     }
+    # BL-154 (R-11): ConvertFrom-Json before PowerShell 7.5 turns a string that holds an ISO 8601 date and
+    # time with seconds into a [datetime] while it parses, so the text the author wrote never reaches the
+    # validator or an apply handler. PowerShell 7.5 added -DateKind, and String leaves every string as
+    # written. Without the parameter (7.2 to 7.4) the dates stay and Test-OERStructureSchema refuses each
+    # one with an Error at its path. Test-OERJsonDateKindSupport is the one place that asks, about the
+    # module-qualified cmdlet, so the parse calls that same cmdlet by the same name: a function named
+    # ConvertFrom-Json in the session would otherwise be called in its place.
+    $ParseParameters = @{ Depth = 32; ErrorAction = 'Stop' }
+    if (Test-OERJsonDateKindSupport) { $ParseParameters['DateKind'] = 'String' }
     try {
-        $Doc = $Json | ConvertFrom-Json -Depth 32 -ErrorAction Stop
+        $Doc = $Json | Microsoft.PowerShell.Utility\ConvertFrom-Json @ParseParameters
     } catch {
         Remove-OERErrorRecord -Record $PSItem
         throw "The structure document is not valid JSON: $($PSItem.Exception.Message)"

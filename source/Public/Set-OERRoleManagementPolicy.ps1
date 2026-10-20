@@ -269,10 +269,12 @@ function Set-OERRoleManagementPolicy {
         # Approvers are resolved before the scope, the role and the policy, all or nothing. This cmdlet
         # calls Resolve-OERPrincipal itself (its approver body and blank-value rule differ from
         # Resolve-OERApproverInput's), so a value that matches nothing reaches this catch as the
-        # resolver's own PrincipalUnresolved record. Three outcomes, three reports: an ambiguous name
-        # is AmbiguousApproverName (the resolver's text names the candidate ids), only an approver
-        # that matches nothing is ApproverNotFound, and anything else -- a 403, an exhausted 429, a
-        # 5xx -- is not evidence that the approver is missing, so it is published as itself.
+        # resolver's own PrincipalUnresolved record. Three outcomes, three reports, the class decided
+        # by Get-OERApproverErrorClass: an ambiguous name is AmbiguousApproverName (the resolver's text
+        # names the candidate ids), only an approver that matches nothing is ApproverNotFound, and
+        # anything else -- a 403, an exhausted 429, a 5xx -- is not evidence that the approver is
+        # missing, so it is published as itself. The caught record is kept in $LookupError: inside the
+        # switch, $PSItem is the class.
         if ($PSBoundParameters.ContainsKey('ApproverUser') -or $PSBoundParameters.ContainsKey('ApproverGroup')) {
             $Approvers = [System.Collections.Generic.List[object]]::new()
             try {
@@ -288,15 +290,18 @@ function Set-OERRoleManagementPolicy {
                 }
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                if (Test-OERAmbiguousNameError -Record $PSItem) {
-                    Write-CmdletError -Message ([System.Exception]::new("Could not resolve approver '$Value': $($PSItem.Exception.Message)")) -ErrorId 'AmbiguousApproverName' -Category InvalidArgument -TargetObject $Value -Cmdlet $PSCmdlet
-                    return
+                $LookupError = $PSItem
+                switch (Get-OERApproverErrorClass -Record $LookupError) {
+                    'Ambiguous' {
+                        Write-CmdletError -Message ([System.Exception]::new("Could not resolve approver '$Value': $($LookupError.Exception.Message)")) -ErrorId 'AmbiguousApproverName' -Category InvalidArgument -TargetObject $Value -Cmdlet $PSCmdlet
+                    }
+                    'NotFound' {
+                        Write-CmdletError -Message ([System.Exception]::new($LookupError.Exception.Message)) -ErrorId 'ApproverNotFound' -Category ObjectNotFound -TargetObject $Value -Cmdlet $PSCmdlet
+                    }
+                    default {
+                        $PSCmdlet.WriteError($LookupError)
+                    }
                 }
-                if (([string]$PSItem.FullyQualifiedErrorId).StartsWith('PrincipalUnresolved', [System.StringComparison]::Ordinal)) {
-                    Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'ApproverNotFound' -Category ObjectNotFound -TargetObject $Value -Cmdlet $PSCmdlet
-                    return
-                }
-                $PSCmdlet.WriteError($PSItem)
                 return
             }
             $Setting.PrimaryApprovers = $Approvers.ToArray()

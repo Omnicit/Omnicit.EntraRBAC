@@ -11,6 +11,20 @@ function Invoke-OERStructure {
     DirectoryRoleManagementPolicies, DirectoryRoleAssignments, RoleAssignments, RoleManagementPolicies
     -- and calls the matching Sync-OERStructure* handler for each item.
 
+    Reading and validation: the document reaches the validation as written on PowerShell 7.5 or later.
+    On PowerShell 7.2 to 7.4 the JSON reader turns a string that holds an ISO 8601 date and time with
+    seconds -- an assignment policy's expirationDateTime such as "2027-01-01T00:00:00Z", for example --
+    into a date, so the text written is lost; the validation then gives an Error at each such value and
+    the document is refused (StructureValidationFailed). A date alone ("2026-07-01"), or a time without
+    seconds ("2026-07-01T10:00"), stays a string. A displayName
+    that is not a string is an Error, and so is a groups entry whose template cannot be turned into a
+    name with its tokens (a placeholder no token supplies, a name over 256 characters), which earlier versions
+    reported as that group's Failed row: the whole document is now refused, before anything is signed
+    in to, read or written. A token value is inserted as text, so a '$' in it, or a value that looks
+    like a token, stays as written. A file that cannot be read is refused with InvalidStructureDocument
+    and the reason the file system gave. A section set to null is not declared (see Include filter
+    below).
+
     Dependency order: Groups must exist before AUs can reference them as members; Catalogs before
     AccessPackages; the PIM settings of Microsoft Entra directory roles before the directory role
     assignments, so a policy that must allow a permanent assignment is applied first; all Entra sections,
@@ -129,6 +143,62 @@ function Invoke-OERStructure {
     terminating error, recorded as a Failed StructureResult, and the engine continues to the next
     item. A single bad item never aborts the run.
 
+    Failed live reads: a live read that decides what is written is never taken as "nothing there". A
+    roleManagementPolicies entry whose live policy read fails, or returns no policy, is reported Failed
+    with the read's own error (PolicyNotFound for an empty answer) before any approver lookup,
+    comparison or ShouldProcess, and nothing is written for it; a group's pimPolicy is handled the same
+    way for each access type (PimPolicyNotFound for an empty answer), and the other access type is
+    applied as usual. A -WhatIf plan reports the same Failed row. Before this, such a read could make
+    every declared field look changed, and the write could replace live values the document never
+    declared. A group's pimPolicy read that answers can still give no value for the half of an
+    expiration pair the document leaves out -- allowPermanentEligibility or eligibleDurationDays
+    declared alone, or allowPermanentActive or activeDurationDays alone, over a policy whose rule
+    for the other half is absent or carries no value, or whose duration is not a whole number of
+    days. That access type is then reported Failed with PimRuleValueUnknown, also under -WhatIf,
+    and nothing is written for it, unless the declared half already matches its live value (then
+    nothing is sent): no default is sent in place of the unknown half. Declare both halves to set
+    them. A group's pimPolicy change that sends only one half of the multi-factor authentication /
+    authentication context pair -- an authentication context to enable, or an activationEnablement
+    that holds MultiFactorAuthentication -- makes Set-OERGroupPimPolicy read the other half itself;
+    when that read fails or returns no rule, the access type is reported Failed with the read's error
+    (PimRuleValueUnknown for no rule) and nothing is written for it, while a -WhatIf plan, which does
+    not call Set-OERGroupPimPolicy, reports that it would set the policy. When the directory roles
+    needed to match an administrative unit's scoped role declared by role id cannot be read, only that
+    unit's scopedRoles are left alone -- one Failed row with AdministrativeUnitScopedRoleReadFailed, no
+    scoped role added or removed, with or without -Prune -- while its properties and members are
+    applied as usual; a failed read of the unit itself, its scoped roles included, still fails the
+    whole unit.
+
+    Approval with no approver: a change that would leave approval required with no approver -- an
+    approver side the document empties while no other approver remains -- is reported Failed with
+    ApproverRequired before ShouldProcess, for a roleManagementPolicies entry, a
+    directoryRoleManagementPolicies entry and a group's pimPolicy alike; the last two are refused the
+    same way when requireApproval true meets a live approval stage that names nobody. Nothing is
+    written for that policy (for a group, for that access type), and a -WhatIf plan reports the same
+    Failed row as a run, where for a directory role or a group it used to say "would update" or
+    "would set".
+
+    A run right after a write: Microsoft Graph can answer a read with the value from before a write for
+    a while after it -- measured once, on a group description: reads within seconds of the write still
+    returned the old value, and reads 25 seconds later all matched -- so a run started soon after
+    another (within about 30 seconds, the wait the module's own live checks use) can find a change the
+    previous run made still missing and send the same update again. The update is idempotent and
+    changes nothing more, but its row reads Updated again; a later run reports it Unchanged.
+
+    Confirmation: the command asks for confirmation before each change (ConfirmImpact High), unless
+    -WhatIf plans the run or -Confirm:$false, or a $ConfirmPreference of None, turns the prompt off. A
+    host with no user interface cannot ask. In the Default Host -- a runspace made with
+    [powershell]::Create() without a host of its own, or a thread job (Start-ThreadJob) -- a document
+    run without -WhatIf or -Confirm:$false (or a $ConfirmPreference of None) is refused with
+    ConfirmationUnavailable once it has been read and validated, before the sign-in, also one that
+    would change nothing, since the refusal is decided before anything is read: nothing is signed in
+    to, read or changed for it, and the next piped document is handled the same way. Another host may
+    fail only when it asks -- pwsh -NonInteractive, or a process whose standard input is at its end --
+    which cannot be told beforehand: there an entry whose handler stops at that prompt is reported
+    Failed with a Detail saying that the host cannot show the confirmation prompt and that nothing was
+    written for the entry. Run the command with -Confirm:$false to apply without prompts, or with
+    -WhatIf to plan.
+
     Prune mode (-Prune): passed through to every handler. Each handler gates its prune pass
     with $Caller.ShouldProcess, honouring -WhatIf. Prune is child-scope only -- no handler ever
     deletes a top-level object (a group, catalog, etc.) that is absent from the document. A declared
@@ -177,12 +247,15 @@ function Invoke-OERStructure {
     uncreated. A real run reads the catalog as before.
 
     Include filter (-Include): only sections listed in -Include are dispatched. Sections whose
-    key is absent from the document or whose array is empty are also silently skipped.
+    key is absent from the document, whose value is null, or whose array is empty are also silently
+    skipped. A section that is null is not declared, as for Test-OERStructure: it gives no row, does
+    not count toward the Azure Resource Manager token below, and no subscription is checked for it.
 
     ARM sections: RoleAssignments and RoleManagementPolicies require an ARM token. If either is
-    selected (via -Include) or -IncludeARM is explicitly set, Initialize-OERAuth is called with
-    -IncludeARM so the ARM token is acquired up front. For a pure Entra document that does not
-    include those sections and does not pass -IncludeARM, no ARM token is requested.
+    selected (via -Include) and declared in the document (present and not null; an empty array
+    counts), or -IncludeARM is explicitly set, Initialize-OERAuth is called with -IncludeARM so the
+    ARM token is acquired up front. For a pure Entra document that does not include those sections
+    and does not pass -IncludeARM, no ARM token is requested.
     DirectoryRoleManagementPolicies and DirectoryRoleAssignments are NOT ARM sections: the PIM settings
     and the eligible and active assignments of a Microsoft Entra directory role are applied through
     Microsoft Graph only, so a document holding either section never requests an ARM token on its
@@ -384,14 +457,29 @@ function Invoke-OERStructure {
     reported Extra without -Prune, with a hint that -Prune leaves it in place, and Skipped, with a
     Detail starting "prune withheld:", with -Prune, with no warning and no ShouldProcess prompt. A
     principal that is a standing member and also eligible for member access is covered too. An owner
-    withheld this way still counts as an owner in the group for the rule that the last owner is not
-    removed, so -Prune can remove the last standing owner while an activated or time-bound owner
-    remains, and when that activation ends the group has no owner. While the PIM for Groups
-    assignments or the eligibility of a group that already existed cannot be read, no member or owner
-    is removed from that group: each undeclared one is reported Skipped, with a Detail starting
-    "prune withheld:", with or without -Prune, and one warning for the group names the cause. Manage
-    the access in PIM for Groups, or remove a standing member with Remove-OERGroupMember, when it is
-    meant to go.
+    withheld this way still counts as an owner in the group for the rules that the last owner and the
+    last user owner are not removed (below), so -Prune can remove the last standing owner while an
+    activated or time-bound owner remains, and when that activation ends the group has no owner.
+    While the PIM for Groups assignments or the eligibility of a group that already existed cannot be
+    read, no member or owner is removed from that group: each undeclared one is reported Skipped, with
+    a Detail starting "prune withheld:", with or without -Prune, and one warning for the group names
+    the cause. Manage the access in PIM for Groups, or remove a standing member with
+    Remove-OERGroupMember, when it is meant to go.
+
+    -Prune never removes a group's last remaining owner, nor its last remaining user owner. Microsoft
+    Graph refuses to remove a group's last user owner, also while a service principal is an owner of
+    it (measured), so an undeclared owner that is the
+    last remaining user owner is reported Skipped with -Prune, with a Detail that says so, and so is
+    the last remaining owner of any other type (the module's own rule): no warning, no ShouldProcess
+    prompt and no request. A -WhatIf plan counts each removal it reports as done, so it holds back the
+    same owner a run does; a removal declined at the confirmation prompt, or one that fails, leaves
+    its owner standing. A service principal owner, and an owner withheld for PIM for Groups, count as
+    owners still standing, and a withheld user owner as a user owner. An owner the same run adds
+    counts as one standing too, and as a user owner when the document names it by user principal name
+    (an owner named by object id names no type, so it counts for the last-owner rule only), so a
+    document that replaces a user owner with one named that way completes in one run. A -WhatIf plan
+    counts an owner it reports it would add; an add that fails, or one declined at the confirmation
+    prompt, counts nowhere.
 
     A group the document creates into an administrative unit (a groups[] entry's
     administrativeUnit) is not removed from that unit by the run that creates it. administrativeUnit
@@ -553,6 +641,24 @@ function Invoke-OERStructure {
             return
         }
 
+        # -- 2a. Refuse a run this host cannot confirm (BL-53) -----------------------------
+        # Every change is confirmed first (ConfirmImpact High) unless -WhatIf plans the run or -Confirm:$false,
+        # or a $ConfirmPreference of None, turns the prompt off -- the same two preferences ShouldProcess
+        # reads. A host with no user interface cannot ask: its ShouldProcess throws at the first change. The
+        # Default Host (a [powershell]::Create() runspace, a thread job) is the one such host that can be told
+        # beforehand, and Test-OERHostCanConfirm owns that decision, so there a run without -WhatIf or
+        # -Confirm:$false (or a $ConfirmPreference of None) is refused here -- also one that would change
+        # nothing, since nothing has been read yet -- after the document is read and validated and before
+        # the ARM decision, the tenant comparisons and every sign-in step: nothing is signed in to, read
+        # or written. The next piped document is handled the same way. A host that fails only when it
+        # asks (pwsh -NonInteractive, standard input at its end) cannot be told beforehand; the two
+        # handler-error rows below name the cause instead (Test-OERConfirmPromptFailure).
+        if (-not $WhatIfPreference -and $ConfirmPreference -ne 'None' -and -not (Test-OERHostCanConfirm)) {
+            Write-CmdletError -Message ([System.Exception]::new('Invoke-OERStructure asks for confirmation before each change (ConfirmImpact High), and this host cannot show a confirmation prompt, so nothing was read or changed; run it with -Confirm:$false to apply without prompts, or with -WhatIf to plan.')) `
+                -ErrorId 'ConfirmationUnavailable' -Category InvalidOperation -TargetObject $DocumentTarget -Cmdlet $PSCmdlet
+            return
+        }
+
         # -- 3. Resolve tenant alias from document ---------------------------------------
         $TenantAlias = if ($Document.PSObject.Properties.Name -contains 'tenantAlias') { [string]$Document.tenantAlias } else { '' }
 
@@ -561,10 +667,13 @@ function Invoke-OERStructure {
         # declared in the document (so a pure-Entra document on the default -Include does not force
         # an ARM token), or when -IncludeARM is explicit. directoryRoleManagementPolicies and
         # directoryRoleAssignments are deliberately absent from both tests: directory-role PIM
-        # settings and directory role assignments are Graph-only.
+        # settings and directory role assignments are Graph-only. BL-38 (R-3): declared means what
+        # the validator means, Test-OERDeclaredProperty -- present and not null, an empty array
+        # included -- so a section that is null asks for no ARM token, and the tenant comparison
+        # after the sign-in compares none on its account.
         $AzureInInclude = ($Include -contains 'RoleAssignments') -or ($Include -contains 'RoleManagementPolicies')
-        $AzureInDoc     = ($Document.PSObject.Properties.Name -contains 'roleAssignments') -or
-                          ($Document.PSObject.Properties.Name -contains 'roleManagementPolicies')
+        $AzureInDoc     = (Test-OERDeclaredProperty -Node $Document -Name 'roleAssignments') -or
+                          (Test-OERDeclaredProperty -Node $Document -Name 'roleManagementPolicies')
         $NeedArm        = $IncludeARM -or ($AzureInInclude -and $AzureInDoc)
 
         # -- 5. Authenticate -------------------------------------------------------------
@@ -673,6 +782,12 @@ function Invoke-OERStructure {
         # A refused entry's Detail is the owner's Reason, its own closing period dropped, then '; ' and this.
         $ForeignScopeDetail = 'the apply engine reads and writes a role assignment or a role management policy in a subscription only when it can show that the subscription belongs to this session''s tenant, so none was read or written for this entry'
 
+        # BL-53 (R-4): the Detail of a handler-error row, after its 'handler error: ' or 'pre-pass handler
+        # error: ' prefix, when Test-OERConfirmPromptFailure says the handler stopped at a confirmation prompt
+        # this host could not show (a host the refusal above cannot tell beforehand); {0} is the host's own
+        # message (the inner exception's). Every other handler error keeps its exception's message.
+        $ConfirmPromptFailureText = 'the host cannot show the confirmation prompt Invoke-OERStructure asks before each change ({0}); nothing was written for this entry. Run Invoke-OERStructure with -Confirm:$false to apply without prompts, or with -WhatIf to plan.'
+
         # R12: a section -Include leaves out decides none of its renames, so a reference to an entry's new
         # name -- a group created into a unit, an access package in a catalog, an access review of a
         # package or of one of its assignment policies -- could only be looked up by name, and while
@@ -698,7 +813,8 @@ function Invoke-OERStructure {
         )
         foreach ($Undecided in $UndecidedSection) {
             if ($Include -contains $Undecided.IncludeName) { continue }
-            if ($Document.PSObject.Properties.Name -notcontains $Undecided.DocKey) { continue }
+            # BL-38 (R-3): a section that is null declares no entry, as an omitted one.
+            if (-not (Test-OERDeclaredProperty -Node $Document -Name $Undecided.DocKey)) { continue }
             $UndecidedReason = "the $($Undecided.DocKey) section is not selected by -Include, so its rename is not reconciled in this run"
             foreach ($Entry in @($Document.($Undecided.DocKey))) {
                 if (-not (Test-OERDeclaredProperty -Node $Entry -Name 'displayName')) { continue }
@@ -747,10 +863,11 @@ function Invoke-OERStructure {
         # BL-128 (A5): an entry that declares previousDisplayName is only resolved and registered in the
         # rename map here -- never created, never reported -- so the groups section creates a group into
         # the unit it renames by the unit's id, and refuses one into a unit whose rename was refused.
+        # BL-38 (R-3): both sections declared (Test-OERDeclaredProperty), so a null one runs no pre-pass.
         $AuNamesNeeded = [System.Collections.Generic.List[string]]::new()
         if ($Include -contains 'Groups' -and $Include -contains 'AdministrativeUnits' -and
-            ($Document.PSObject.Properties.Name -contains 'groups') -and
-            ($Document.PSObject.Properties.Name -contains 'administrativeUnits')) {
+            (Test-OERDeclaredProperty -Node $Document -Name 'groups') -and
+            (Test-OERDeclaredProperty -Node $Document -Name 'administrativeUnits')) {
             foreach ($G in @($Document.groups)) {
                 if (Test-OERDeclaredProperty -Node $G -Name 'administrativeUnit') {
                     $AuNamesNeeded.Add([string]$G.administrativeUnit)
@@ -766,19 +883,24 @@ function Invoke-OERStructure {
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
                     $PSCmdlet.WriteError($PSItem)
-                    $Results.Add((ConvertTo-OERStructureResult -Section 'administrativeUnits' -Item ([string]$AuItem.displayName) -Action 'Failed' -Detail "pre-pass handler error: $($PSItem.Exception.Message)" -ErrorRecord $PSItem))
+                    # BL-53 (R-4): a handler stopped at a confirmation prompt this host could not show.
+                    $FailureText = if (Test-OERConfirmPromptFailure -Record $PSItem) { $ConfirmPromptFailureText -f $PSItem.Exception.InnerException.Message } else { $PSItem.Exception.Message }
+                    $Results.Add((ConvertTo-OERStructureResult -Section 'administrativeUnits' -Item ([string]$AuItem.displayName) -Action 'Failed' -Detail "pre-pass handler error: $FailureText" -ErrorRecord $PSItem))
                 }
             }
         }
 
         foreach ($Section in $SectionOrder) {
             if ($Include -notcontains $Section.IncludeName) { continue }
-            if ($Document.PSObject.Properties.Name -notcontains $Section.DocKey) { continue }
+            # BL-38 (R-3): a section is dispatched only when it is declared (Test-OERDeclaredProperty:
+            # present and not null), as the validator reads it. A null section is not declared: no handler
+            # call and no row, like an omitted key. An empty array is declared and has no entry.
+            if (-not (Test-OERDeclaredProperty -Node $Document -Name $Section.DocKey)) { continue }
             $Items = @($Document.($Section.DocKey))
-            # An explicit top-level "roleAssignments": null is not declared (the validator says so),
-            # yet @($null) is one element. The scope pre-pass below cannot take a null entry, and it
-            # runs outside the per-entry try/catch, so drop the null here and skip the section when
-            # nothing is left. Only this section: every other handler runs inside the per-entry catch.
+            # A null ELEMENT of roleAssignments is dropped here, and the section skipped when nothing is
+            # left. The validator refuses such an element (its scope, role and principal are required), so
+            # this is a defence only: the scope pre-pass below cannot take a null entry, and it runs outside
+            # the per-entry try/catch. Only this section: every other handler runs inside the per-entry catch.
             if ($Section.IncludeName -eq 'RoleAssignments') {
                 $Items = @($Items | Where-Object { $null -ne $_ })
             }
@@ -933,7 +1055,9 @@ function Invoke-OERStructure {
                         }
                     }
                     if ([string]::IsNullOrWhiteSpace($ItemLabel)) { $ItemLabel = '(item)' }
-                    $Results.Add((ConvertTo-OERStructureResult -Section $Section.DocKey -Item $ItemLabel -Action 'Failed' -Detail "handler error: $($PSItem.Exception.Message)" -ErrorRecord $PSItem))
+                    # BL-53 (R-4): a handler stopped at a confirmation prompt this host could not show.
+                    $FailureText = if (Test-OERConfirmPromptFailure -Record $PSItem) { $ConfirmPromptFailureText -f $PSItem.Exception.InnerException.Message } else { $PSItem.Exception.Message }
+                    $Results.Add((ConvertTo-OERStructureResult -Section $Section.DocKey -Item $ItemLabel -Action 'Failed' -Detail "handler error: $FailureText" -ErrorRecord $PSItem))
                 }
             }
         }

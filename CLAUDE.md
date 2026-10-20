@@ -272,7 +272,9 @@ any of them as an orphan when auditing the one-test-file-per-function invariant:
   too); pins by name and text the twenty cmdlets that warn before their gate; and proves each moved
   warning at run time on `OERConfirmHost`, before the `What if:` line and before the `-Confirm`
   prompt, with no write request. `OER_COHORT_SOURCE_ROOT` points its AST parts at a mutated copy of
-  `source/` and is never set in CI. It imports the module, so it installs the transport tripwire.
+  `source/` and is never set in CI (the cadence scan in `Get-OERAccessReviewCadence.Tests.ps1`, the
+  `TenantIdNotEmpty` cohort and the scan in `Get-OERGroupRelation.Tests.ps1` read the same
+  variable). It imports the module, so it installs the transport tripwire.
 - `Unit/TestHelpers/OERTransportTripwire.Tests.ps1` -- the transport tripwire's known-answer suite:
   the six names, resolution from the module scope, parameter parity, mock precedence, the record
   and the refusal, a re-import, the `AfterAll` check, the answering runspace and the uninstall.
@@ -991,7 +993,7 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `AmbiguousApproverName`, a failed lookup is published as itself, and `ApproverNotFound` means only
   an approver that matches nothing, in the three policy cmdlets and the three apply handlers alike.
   They tell the three apart by the internal ids `PrincipalUnresolved` and `ApproverUnresolved`,
-  which no cmdlet or handler publishes.
+  which no cmdlet or handler publishes, through `Get-OERApproverErrorClass` (next bullet).
   `Why: docs/development/rationale.md#approver-lookup`
   `tests/Unit/Public/AmbiguousName.Guard.Tests.ps1` runs every call site on its hand-kept
   `$script:GuardCases` list with an ambiguous name and with a 403 -- the approver lookups of
@@ -999,10 +1001,36 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   included -- so a new public call site of an ambiguity-refusing `Resolve-OER*Id` helper, an
   approver lookup among them, joins that list. The 403 case narrows to the cmdlet's own record:
   `Why: docs/development/rationale.md#bearer-scrub-tests`
+- **`Get-OERApproverErrorClass` is the single owner of classifying an approver lookup failure**
+  (Sprint 11 step 11, BL-52): `Ambiguous` when `Test-OERAmbiguousNameError` says so, `NotFound` when
+  the record's FullyQualifiedErrorId starts, ordinally, with `ApproverUnresolved` or
+  `PrincipalUnresolved`, and `Other` for anything else, a null record included. The six approver call
+  sites -- the three policy cmdlets and the three apply handlers -- switch on its answer and keep
+  their own message, target, category and inner exception, so every published record stays
+  byte-identical. Never test either internal id anywhere else: the cohort in
+  `tests/Unit/Private/Get-OERApproverErrorClass.Tests.ps1` fails a string constant naming one as an
+  operand of a comparison operator, an argument of a string comparison method or a `switch` clause
+  outside the classifier and the three producers (`Resolve-OERPrincipal`, `Resolve-OERApproverInput`,
+  `Resolve-OERDeclaredApprover`); it does NOT see an id held in a variable, a command parameter value
+  (`Where-Object ... -like`, `Select-String -Pattern`) or a regular-expression method, which keep by
+  review. `Why: docs/development/rationale.md#approver-lookup`
 - **`Resolve-OERReviewerScopeQuery` is the single owner of the access review reviewer scope query
   grammar.** Never re-implement the `/users/` and `/groups/` regex pair inline; `./manager` is
   matched FIRST, always, and an `Unparsed` scope is NOT the same as an empty reviewers collection.
   `Why: docs/development/rationale.md#reviewer-scope-query`
+- **`Get-OERAccessReviewCadence` is the single owner of the access review cadence table** (Sprint 11
+  step 11, BL-117 third point): each cadence's Graph pattern type and interval (`Weekly` weekly 1;
+  `Monthly`, `Quarterly`, `SemiAnnually`, `Annually` absoluteMonthly 1, 3, 6, 12; `OneTime` no
+  pattern), a live pattern read back as a cadence, and whether that pattern is one the module can write
+  back (`Representable`). `New-OERAccessReviewRecurrence`, `Resolve-OERAccessReviewChange` and
+  `Get-OERInventory` ask it; never spell the interval numbers or an interval `switch` anywhere else. The
+  scan in `tests/Unit/Private/Get-OERAccessReviewCadence.Tests.ps1` fails an array of exactly 1, 3, 6
+  and 12, a `switch` clause between those integers and the cadence names in either direction, and a
+  `switch` clause on the pattern type, in any file under `source/` but the owner's; it does NOT see a
+  hashtable mapping, an `if` chain, an `-eq` comparison or a table split across variables, and
+  `OER_COHORT_SOURCE_ROOT` points it at a mutated copy (never set in CI). The cadence NAMES stay with
+  `Resolve-OERStructureEnumCasing` and the vocabulary cohort.
+  `Why: docs/development/rationale.md#access-review-cadence`
 - **`Test-OERGuid` is the single GUID predicate.** Never re-implement the canonical GUID regex
   inline. The wider `-as [guid]` cast in `Get-OERInventory` and `New-OERGroup` is a deliberate
   exception -- do not migrate those two -- and so are the places that read a group's
@@ -1090,7 +1118,34 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   beside a bound `-ApproverUser` or `-ApproverGroup` (an empty list included) is refused with
   `MutuallyExclusiveParameter` by the three policy cmdlets -- those two and `Set-OERRoleManagementPolicy`
   -- before any lookup or request, and `Resolve-OERGraphApproverSet` throws the same id as a backstop;
-  never let that combination reach a request.
+  never let that combination reach a request. The two apply handlers that call those cmdlets,
+  `Sync-OERStructureGroup` (pimPolicy) and `Sync-OERStructureDirectoryRoleManagementPolicy`, ask
+  `Resolve-OERGraphApproverSet` too, with the live approval rule they read and the parameters their
+  diff binds, and refuse a change that would need approval by nobody with the cmdlet's own
+  `ApproverRequired` message before their `ShouldProcess`, so a `-WhatIf` plan reports the run's row
+  (BL-113); the cmdlets keep their refusal as the backstop.
+  `Why: docs/development/rationale.md#approver-lookup`
+- **A public `Set-OER*` cmdlet's own read that decides a written value refuses the call when it fails
+  or answers without the value** (Sprint 11 step 11, A24): never fall back to a parameter default, a
+  declared-only write or a warning in its place. In `Set-OERGroupPimPolicy` the two duration reads and
+  the two reconcile reads of the MFA / authentication context pair publish a thrown read as itself,
+  the approval rule read refuses a thrown read as `ApprovalRuleReadFailed`, and all five refuse a read
+  that answers without the value with `PimRuleValueUnknown`, before `ShouldProcess` and every PATCH --
+  for the approval rule only a read that returns NO rule: a rule with no stage still takes
+  `New-OERPimRuleSet`'s defaults, the documented "no stage yet" case. Two reads only warn, by design,
+  since neither decides a written value: the put-back read of the pair's first half, whose failure only
+  loses the put-back (it warns before any PATCH and writes no default), and the authentication context
+  validation read, whose failure skips the validation. The apply engine reaches the pair reads when its
+  diff binds one half, and its row is then `Failed`. It never reaches the duration reads: its diff
+  binds both halves of an expiration pair, and when the half the document leaves out has no live value
+  (the read gave none, or its `maximumDuration` is not a positive whole number of days) and the
+  declared half does not already match, `Resolve-OERGroupPimPolicyChange` names the pair in
+  `UnknownLiveValues`, binds neither half, and `Sync-OERStructureGroup` refuses that access type with
+  `PimRuleValueUnknown` before `ShouldProcess` -- never a default in its place.
+  Known and NOT fixed, outside this cmdlet (unmeasured findings of the step's audit): a successful read
+  that lacks a key makes `Set-OERAccessPackageAssignmentPolicy` write the body builder's default, and
+  an empty Azure Resource Manager body makes `Set-OERResourceGroup` send an empty location.
+  `Why: docs/development/rationale.md#a-set-cmdlets-own-read-decides-a-written-value`
 - **`Send-OERPimRulePatch` is the single owner of sending a Microsoft Graph PIM rule set, one PATCH
   per rule.** That covers the pair put-back -- when Graph accepts the first rule of the MFA /
   authentication-context pair and rejects the second, the first is PATCHed straight back to its live
@@ -1105,7 +1160,9 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `tests/Unit/Public/Set-OERGroupPimPolicy.Tests.ps1` and
   `tests/Unit/Public/Set-OERDirectoryRoleManagementPolicy.Tests.ps1`, in a `try` and in a script with
   no `try`; `tests/QA/requiredscope.tests.ps1` counts a call to it as a Graph write by the caller, since
-  the helper carries no path literal of its own.
+  the helper carries no path literal of its own. `Set-OERGroupPimPolicy`'s warning for a split
+  `-Confirm` answer to the pair (BL-97 F2) is written after the helper returns and after its messages,
+  by the same rule.
   `Why: docs/development/rationale.md#pim-rule-pair-put-back`
 - **`Test-OERScheduleRequestFailed` is the single owner of which PIM schedule request status is an
   error: the Failed family, meaning `Failed`, `FailedAsResourceIsLocked` and any later status that
@@ -1153,6 +1210,26 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   the schema function's output, held identical by a test, and is never edited by hand. Never
   re-implement a rule, a Detail text or the file's validation elsewhere.
   `Why: docs/development/rationale.md#naming-standard`
+- **`Test-OERJsonDateKindSupport` is the single owner of whether the running `ConvertFrom-Json` has
+  `-DateKind`** (Sprint 11 step 11, BL-154): one `Get-Command` of the module-qualified
+  `Microsoft.PowerShell.Utility\ConvertFrom-Json`, true when it has the parameter (PowerShell 7.5 or
+  later). `Read-OERStructureDocument` adds `-DateKind String` to its parse when it answers true, so a
+  structure document reaches the validator and the engine as written; on PowerShell 7.2 to 7.4
+  `Test-OERStructureSchema` refuses every date value the parse made (Rule 2b), with no field exempted.
+  Never ask the question anywhere else, and never "repair" a parsed date into text. A test mocks it in
+  module scope to run the 7.2 to 7.4 path on a newer PowerShell.
+  `Why: docs/development/rationale.md#structure-document-text`
+- **`Test-OERHostCanConfirm` is the single owner of whether the host can show a confirmation prompt
+  that is decidable beforehand, and `Test-OERConfirmPromptFailure` of whether a caught record is a
+  `ShouldProcess` that failed because the host could not ask** (Sprint 11 step 11, BL-53). The first is
+  `$Host.Name -ne 'Default Host'`, the only host the measurement found safely decidable;
+  `Invoke-OERStructure` refuses with `ConfirmationUnavailable`, before the sign-in, a document whose run
+  would prompt (not `-WhatIf`, `$ConfirmPreference` not `None`) when it answers false. The second is
+  true only for a `MethodInvocationException` whose inner exception is a `HostException`,
+  `PSInvalidOperationException` or `NullReferenceException` (or derives from one) and whose message
+  names `ShouldProcess` (ordinal); the engine's two handler-error catches word the Detail through it.
+  Never decide either anywhere else.
+  `Why: docs/development/rationale.md#confirmation-unavailable`
 - **`Select-OERManagedDirectoryRoleAssignment` is the single owner of which live directory role
   assignment the apply engine may match or prune** (tenant scope, `memberType` Direct, Active only
   `assignmentType` Assigned), and `Get-OERTokenObjectId` the single owner of reading the signed-in

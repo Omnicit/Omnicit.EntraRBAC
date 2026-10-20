@@ -764,6 +764,38 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment section-wide prune pass' {
         }
     }
 
+    It 'words the row of a candidate withheld for an unknown signed-in identity the same for both kinds, with or without -Prune (<Kind>, Prune: <Prune>)' -TestCases @(
+        @{ Kind = 'Eligible'; Prune = $true }
+        @{ Kind = 'Eligible'; Prune = $false }
+        @{ Kind = 'Active'; Prune = $true }
+        @{ Kind = 'Active'; Prune = $false }
+    ) {
+        # The text names no access to the role, so the pair's kind (BL-24) changes only the candidate's
+        # own label in it. ConvertTo-OERPruneWithheldResult words the row; it is Skipped before -Prune
+        # is looked at, never Extra.
+        InModuleScope $script:moduleName -Parameters @{ Kind = $Kind; Prune = $Prune } {
+            param($Kind, $Prune)
+            Mock Get-OERSignedInObjectId { $null }
+            $Rows = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1] -Kind $Kind
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[2] -Kind $Kind
+            )
+            if ($Kind -eq 'Active') { $script:DraLiveActive = $Rows } else { $script:DraLiveEligible = $Rows }
+            $Section = @(New-DraSection "Reports Reader|person1@example.com|$Kind")
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune:$Prune -WarningAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Skipped', 'Unchanged')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DraP[2]) ($Kind)"
+            $Records[0].Detail | Should -BeExactly (
+                "prune withheld: the signed-in identity's object id is unknown (it could not be determined from the session's Microsoft Graph token), so " +
+                "undeclared $($Kind.ToLowerInvariant()) assignment of directory role 'Reports Reader' for principal '$($script:DraP[2])' may be its own " +
+                "assignment and is left in place (our own guard, not a Graph rejection). Sign in again with Connect-OER; if the token carries no oid " +
+                "claim, reconcile this pair from a session that does.")
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+            Should -Invoke Remove-OERActiveDirectoryRoleAssignment -Times 0
+            Should -Invoke Get-OERSignedInObjectId -Times 1 -Exactly
+        }
+    }
+
     It 'withholds the prune of a pair holding an entry whose principal lookup <Case>, and writes no error for it' -TestCases @(
         @{ Case = 'finds nothing'; Principal = 'nobody@example.com' }
         @{ Case = 'throws'; Principal = 'throws@example.com' }
@@ -1050,11 +1082,14 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment section-wide prune pass' {
                     -WarningAction SilentlyContinue -WarningVariable DraWarnings)
             @($Records).Action | Should -Be @('Skipped', 'Unchanged')
             $Records[0].Item | Should -BeExactly "Reports Reader -> $Group ($Kind)"
+            # An Active assignment is held; an Eligible one makes the identity eligible for the role
+            # until it activates it (BL-24), so the text says "holds" for one and "is eligible for" for the other.
+            $Holds = if ($Kind -eq 'Eligible') { 'is eligible for' } else { 'holds' }
             $Records[0].Detail | Should -BeExactly (
                 "undeclared $($Kind.ToLowerInvariant()) assignment of directory role 'Reports Reader' for principal '$Group' " +
                 "is a group the signed-in identity is a member of (directly or through nesting), so the signed-in identity " +
-                "holds directory role 'Reports Reader' through it; the apply engine never removes a role the signed-in " +
-                "identity holds (our own guard, not a Graph rejection)")
+                "$Holds directory role 'Reports Reader' through it; the apply engine never removes a role the signed-in " +
+                "identity $Holds (our own guard, not a Graph rejection)")
             Should -Invoke Get-OERMemberGroupId -Times 1 -Exactly -ParameterFilter { $ObjectId -eq 'aaaaaaaa-0000-0000-0000-0000000000ff' }
             Should -Invoke Get-OERMemberGroupId -Times 1 -Exactly
             Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
@@ -1154,7 +1189,7 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment section-wide prune pass' {
                 $Records[$Index].Detail | Should -BeExactly (
                     "prune withheld: the signed-in identity's group memberships could not be read, so undeclared eligible " +
                     "assignment of directory role 'Reports Reader' for principal '$Id' may be a group the signed-in identity " +
-                    "holds the role through and is left in place (our own guard, not a Graph rejection): Graph 403 Authorization_RequestDenied")
+                    "is eligible for the role through and is left in place (our own guard, not a Graph rejection): Graph 403 Authorization_RequestDenied")
             }
             Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0 -ParameterFilter {
                 $PrincipalId -in @('cccccccc-0000-0000-0000-000000000001', 'cccccccc-0000-0000-0000-000000000002')
@@ -1170,6 +1205,53 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment section-wide prune pass' {
             $CallerErrors = @(Select-DraCallerError $DraErrors)
             @($CallerErrors).Count | Should -Be 1
             "$($CallerErrors[0])" | Should -Match 'Authorization_RequestDenied'
+        }
+    }
+
+    It 'words the withheld group and unknown-type candidates of an Active pair as held when the membership read fails (Prune: <Prune>)' -TestCases @(
+        @{ Prune = $true }
+        @{ Prune = $false }
+    ) {
+        # An Active assignment is held, so the text says the signed-in identity "holds the role through"
+        # the group, word for word as before the wording was split by the pair's kind (BL-24); the
+        # Eligible pair above says "is eligible for the role through". The row is Skipped with or
+        # without -Prune, never Extra, and ConvertTo-OERPruneWithheldResult (not the handler) words it.
+        InModuleScope $script:moduleName -Parameters @{ Prune = $Prune } {
+            param($Prune)
+            Mock Get-OERMemberGroupId { throw 'Graph 403 Authorization_RequestDenied' }
+            Mock Remove-OERErrorRecord {}
+            $Group = 'cccccccc-0000-0000-0000-000000000001'
+            $Unknown = 'cccccccc-0000-0000-0000-000000000002'
+            $UnknownRow = New-DraPassRow -Role $script:RR -Principal $Unknown -Kind Active
+            $UnknownRow.PrincipalType = $null
+            $script:DraLiveActive = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1] -Kind Active
+                New-DraPassRow -Role $script:RR -Principal $Group -Kind Active -PrincipalType 'Group'
+                $UnknownRow
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[2] -Kind Active
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Active')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune:$Prune `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable DraErrors)
+            $UserAction = if ($Prune) { 'Removed' } else { 'Extra' }
+            @($Records).Action | Should -Be @('Skipped', 'Skipped', $UserAction, 'Unchanged')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $Group (Active)"
+            $Records[1].Item | Should -BeExactly "Reports Reader -> $Unknown (Active)"
+            foreach ($Index in 0, 1) {
+                $Id = @($Group, $Unknown)[$Index]
+                $Records[$Index].Detail | Should -BeExactly (
+                    "prune withheld: the signed-in identity's group memberships could not be read, so undeclared active " +
+                    "assignment of directory role 'Reports Reader' for principal '$Id' may be a group the signed-in identity " +
+                    "holds the role through and is left in place (our own guard, not a Graph rejection): Graph 403 Authorization_RequestDenied")
+            }
+            Should -Invoke Remove-OERActiveDirectoryRoleAssignment -Times 0 -ParameterFilter {
+                $PrincipalId -in @('cccccccc-0000-0000-0000-000000000001', 'cccccccc-0000-0000-0000-000000000002')
+            }
+            $RemoveCount = if ($Prune) { 1 } else { 0 }
+            Should -Invoke Remove-OERActiveDirectoryRoleAssignment -Times $RemoveCount -Exactly
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+            Should -Invoke Get-OERMemberGroupId -Times 1 -Exactly
+            @(Select-DraCallerError $DraErrors).Count | Should -Be 1
         }
     }
 
