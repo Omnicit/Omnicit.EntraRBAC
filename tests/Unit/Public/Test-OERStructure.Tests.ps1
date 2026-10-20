@@ -692,3 +692,89 @@ Describe 'Test-OERStructure help documents -NamingStandard (Sprint 11 step 7)' {
         $script:NsExamples | Should -Match ([regex]::Escape('Test-OERStructure -Path ./exports/oer-inventory-contoso-20261018-120000/inventory.json -NamingStandard ./naming-standard.json'))
     }
 }
+
+Describe 'Test-OERStructure structure document that cannot be read (BL-154)' {
+    # Get-Content writes a non-terminating GetContentReaderIOError for a file it cannot open (a lock, no read
+    # permission) and returns nothing. The reader reads with -ErrorAction Stop, so the caller sees ONE error,
+    # the command's own InvalidStructureDocument, with the real reason, and the file is not called empty. What
+    # the caller sees is the error STREAM (redirected, with -ErrorAction pinned to Continue so a global Stop
+    # preference does not turn the first write into a throw); -ErrorVariable also holds the records the
+    # command's inner layers raised and caught.
+    BeforeAll {
+        $script:DocFile = Join-Path -Path $TestDrive -ChildPath 'document.json'
+        [System.IO.File]::WriteAllText($script:DocFile, '{ "version": "1.0" }', [System.Text.UTF8Encoding]::new($false))
+    }
+
+    It 'gives one error, with its reason, for a document Get-Content throws on' {
+        Mock -ModuleName $script:moduleName Get-Content {
+            param($LiteralPath, $Raw)
+            throw [System.IO.IOException]::new("The process cannot access the file '$LiteralPath' as another process is using it.")
+        }
+        $Stream = @(Test-OERStructure -Path $script:DocFile -ErrorAction Continue 2>&1)
+
+        @($Stream | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0 -Because 'no result reaches the pipeline'
+        $Records = @($Stream | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+        $Records.Count | Should -Be 1
+        $Records[0].FullyQualifiedErrorId | Should -BeExactly 'InvalidStructureDocument,Test-OERStructure'
+        $Records[0].Exception.Message | Should -BeExactly "Could not read the structure document: The structure document at '$script:DocFile' could not be read: The process cannot access the file '$script:DocFile' as another process is using it."
+        Should -Invoke -ModuleName $script:moduleName Get-Content -Exactly -Times 1
+    }
+
+    It 'gives one error, not two, and does not call the file empty, for a document another process holds open' {
+        $Held = [System.IO.File]::Open($script:DocFile, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)
+        try {
+            # Whether the lock is honoured is the platform's: a system that ignores it reads the file. The
+            # probe opens the file the way Get-Content does, with .NET so that no GetContentReaderIOError
+            # of its own lands in $Error, which is checked below.
+            $Honoured = $false
+            try { [System.IO.File]::Open($script:DocFile, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite).Dispose() } catch [System.IO.IOException] { $Honoured = $true }
+            if (-not $Honoured) {
+                Set-ItResult -Skipped -Because 'this platform does not enforce FileShare.None against another reader'
+                return
+            }
+            $Stream = @(Test-OERStructure -Path $script:DocFile -ErrorAction Continue 2>&1)
+        } finally {
+            $Held.Dispose()
+        }
+
+        @($Stream | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0 -Because 'no result reaches the pipeline'
+        $Records = @($Stream | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+        $Records.Count | Should -Be 1
+        $Records[0].FullyQualifiedErrorId | Should -BeExactly 'InvalidStructureDocument,Test-OERStructure'
+        $Records[0].Exception.Message | Should -BeLike "Could not read the structure document: The structure document at '$script:DocFile' could not be read: *"
+        $Records[0].Exception.Message | Should -Not -BeLike '*is empty*'
+        @($global:Error | Where-Object { [string]$_.FullyQualifiedErrorId -like 'GetContentReaderIOError*' -and $_.Exception.Message -like '*document.json*' }).Count | Should -Be 0
+    }
+
+    It 'goes on after the refusal in a script with no try, and outputs only what comes after it' {
+        # A body-wide stop would end the script at the refusal. Pester stands in a try, so the command runs in a
+        # runspace and a script with no try. The runspace's copy of the module is the one under test; there
+        # Get-Content is replaced by a function that fails the way a locked file does, and Initialize-OERAuth
+        # logs a call (the command must never sign in).
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { Add-Content -LiteralPath '#LOG#' -WhatIf:$false -Value 'Initialize-OERAuth' }
+    Set-Item -Path function:script:Get-Content -Value {
+        [CmdletBinding()]
+        param([string[]]$LiteralPath, [switch]$Raw)
+        throw [System.IO.IOException]::new('read refused')
+    }
+}
+Test-OERStructure -Path '#DOC#' -ErrorVariable DocErr
+Add-Content -LiteralPath '#LOG#' -WhatIf:$false -Value ('IDS:' + (@($DocErr | Where-Object { [string]$_.FullyQualifiedErrorId -like 'InvalidStructureDocument,*' } | ForEach-Object { [string]$_.FullyQualifiedErrorId }) -join '|'))
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#DOC#', $script:DocFile.Replace("'", "''")))
+
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+
+        # The script reached its end, and no StructureValidation reached the pipeline.
+        ($Run.Output -join '|') | Should -BeExactly 'END'
+        $Run.Errors.Count | Should -Be 1
+        $Run.Errors[0] | Should -BeExactly "Could not read the structure document: The structure document at '$script:DocFile' could not be read: read refused"
+        $Lines = @(Get-Content -LiteralPath $Log)
+        $Lines | Should -Contain 'IDS:InvalidStructureDocument,Test-OERStructure'
+        $Lines | Should -Not -Contain 'Initialize-OERAuth'
+    }
+}

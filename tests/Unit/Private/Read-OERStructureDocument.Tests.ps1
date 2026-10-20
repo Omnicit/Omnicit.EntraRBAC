@@ -425,3 +425,187 @@ Describe 'Read-OERStructureDocument administrativeUnits scopedRoles principalTyp
         }
     }
 }
+
+Describe 'Read-OERStructureDocument reads the file with -ErrorAction Stop and says the real reason (BL-154)' {
+    # Get-Content writes a NON-terminating GetContentReaderIOError for a file it cannot open (a lock, no
+    # read permission) and returns nothing, so the reader used to answer "The structure document is
+    # empty." on top of the raw read error. Pester runs a mock body under its own Stop preference, so a
+    # mocked Get-Content cannot stand in for that write; the Its prove the halves apart -- the message and
+    # the scrub with a mock that throws, the -ErrorAction Stop the reader passes with a parameter filter
+    # (which sees the common parameter), and the whole path with a real file another process holds open.
+    BeforeAll {
+        function Write-DocumentFile {
+            param([string]$Name, [string]$Json = '{ "version": "1.0" }')
+            $Path = Join-Path -Path $TestDrive -ChildPath $Name
+            [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false))
+            $Path
+        }
+        # The message of the exception Read-OERStructureDocument -Path throws, or $null when it returns.
+        function Get-ReadFailure {
+            param([string]$Path)
+            InModuleScope $script:moduleName -Parameters @{ Path = $Path } {
+                param($Path)
+                # -ErrorAction Continue pins the preference the reader's own Get-Content inherits; the global one
+                # may be Stop (GitHub Actions, Azure Pipelines), which would end a non-terminating read error
+                # whether or not the reader asks for it.
+                try { $null = Read-OERStructureDocument -Path $Path -ErrorAction Continue } catch { return $PSItem.Exception.Message }
+                $null
+            }
+        }
+    }
+
+    It 'throws one message that says the file could not be read, with the reason, when Get-Content throws an IOException' {
+        Mock -ModuleName $script:moduleName Get-Content {
+            param($LiteralPath, $Raw)
+            throw [System.IO.IOException]::new("The process cannot access the file '$LiteralPath' as another process is using it.")
+        }
+        $File = Write-DocumentFile -Name 'locked.json'
+        Get-ReadFailure -Path $File | Should -BeExactly "The structure document at '$File' could not be read: The process cannot access the file '$File' as another process is using it."
+        Should -Invoke -ModuleName $script:moduleName Get-Content -Exactly -Times 1
+    }
+
+    It 'reads the file with -ErrorAction Stop, so a non-terminating read error cannot read as an empty document' {
+        Mock -ModuleName $script:moduleName Get-Content { '{ "version": "1.0" }' }
+        $File = Write-DocumentFile -Name 'stop.json'
+        Get-ReadFailure -Path $File | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Get-Content -ParameterFilter { $ErrorAction -ceq 'Stop' } -Exactly -Times 1
+    }
+
+    It 'removes the read error record before it throws for a file Get-Content cannot read' {
+        Mock -ModuleName $script:moduleName Remove-OERErrorRecord {}
+        Mock -ModuleName $script:moduleName Get-Content {
+            param($LiteralPath, $Raw)
+            throw [System.IO.IOException]::new('read refused')
+        }
+        $File = Write-DocumentFile -Name 'locked2.json'
+        Get-ReadFailure -Path $File | Should -BeExactly "The structure document at '$File' could not be read: read refused"
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
+    }
+
+    It 'throws that the file could not be read, not that it is empty, for a file another process holds open' {
+        $File = Write-DocumentFile -Name 'held.json'
+        $Held = [System.IO.File]::Open($File, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)
+        try {
+            # Whether the lock is honoured is the platform's: a system that ignores it reads the file. The
+            # probe opens the file the way Get-Content does, with FileShare.ReadWrite.
+            $Honoured = $false
+            try { [System.IO.File]::Open($File, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite).Dispose() } catch [System.IO.IOException] { $Honoured = $true }
+            if (-not $Honoured) {
+                Set-ItResult -Skipped -Because 'this platform does not enforce FileShare.None against another reader'
+                return
+            }
+            $Message = Get-ReadFailure -Path $File
+        } finally {
+            $Held.Dispose()
+        }
+        $Message | Should -BeLike "The structure document at '$File' could not be read: *"
+        $Message | Should -Not -BeLike '*is empty*'
+    }
+
+    It 'leaves a file it can read as it was: the document comes back, with no read error' {
+        $File = Write-DocumentFile -Name 'fine.json' -Json '{ "version": "1.0", "groups": [ { "displayName": "g1" } ] }'
+        $Doc = InModuleScope $script:moduleName -Parameters @{ Path = $File } {
+            param($Path)
+            Read-OERStructureDocument -Path $Path -ErrorAction Stop
+        }
+        $Doc.groups[0].displayName | Should -BeExactly 'g1'
+    }
+
+    It 'still says the document is empty for a readable file that holds only white space' {
+        $File = Write-DocumentFile -Name 'blank.json' -Json "   `n"
+        Get-ReadFailure -Path $File | Should -BeExactly 'The structure document is empty.'
+    }
+
+    It 'still says the file was not found for a path that is not a file, before it reads anything' {
+        Mock -ModuleName $script:moduleName Get-Content { '{ "version": "1.0" }' }
+        $Missing = Join-Path -Path $TestDrive -ChildPath 'missing.json'
+        Get-ReadFailure -Path $Missing | Should -BeExactly "Structure document not found at path '$Missing'."
+        Should -Invoke -ModuleName $script:moduleName Get-Content -Times 0
+    }
+}
+
+Describe 'Read-OERStructureDocument keeps a date-and-time string as written (BL-154, R-11)' {
+    # ConvertFrom-Json on PowerShell before 7.5 turns a string in ISO 8601 date-and-time form into a
+    # [datetime]; 7.5 added -DateKind, and -DateKind String leaves every string as written. The reader
+    # asks Test-OERJsonDateKindSupport, so a test mocks either answer whatever PowerShell runs it.
+    BeforeAll {
+        $script:DateJson = '{ "version": "1.0", "groups": [ { "displayName": "2026-01-01T10:00:00", "description": "2026-01-01T10:00:00Z", "members": [ "2026-01-01T10:00:00+02:00" ] } ], ' +
+            '"accessReviews": [ { "displayName": "ar1", "accessPackage": "ap1", "assignmentPolicy": "p1", "startDate": "2026-03-01T00:00:00Z", "endDate": "2026-09-01" } ] }'
+    }
+
+    It 'adds -DateKind String to the parse when the PowerShell supports it: every date-and-time string stays the text written' -Skip:(-not ($PSVersionTable.PSVersion -ge [version]'7.5')) {
+        InModuleScope $script:moduleName -Parameters @{ Json = $script:DateJson } {
+            param($Json)
+            Mock Test-OERJsonDateKindSupport { $true }
+            $Doc = Read-OERStructureDocument -Json $Json
+            $Doc.groups[0].displayName | Should -BeOfType [string]
+            $Doc.groups[0].displayName | Should -BeExactly '2026-01-01T10:00:00'
+            $Doc.groups[0].description | Should -BeExactly '2026-01-01T10:00:00Z'
+            $Doc.groups[0].members[0] | Should -BeExactly '2026-01-01T10:00:00+02:00'
+            $Doc.accessReviews[0].startDate | Should -BeExactly '2026-03-01T00:00:00Z'
+            $Doc.accessReviews[0].endDate | Should -BeExactly '2026-09-01'
+            Should -Invoke Test-OERJsonDateKindSupport -Exactly -Times 1
+        }
+    }
+
+    It 'leaves the parse as it was when the PowerShell has no -DateKind: the date-and-time strings come back as dates' {
+        InModuleScope $script:moduleName -Parameters @{ Json = $script:DateJson } {
+            param($Json)
+            Mock Test-OERJsonDateKindSupport { $false }
+            $Doc = Read-OERStructureDocument -Json $Json
+            $Doc.groups[0].displayName | Should -BeOfType [datetime]
+            $Doc.groups[0].description | Should -BeOfType [datetime]
+            $Doc.groups[0].members[0] | Should -BeOfType [datetime]
+            $Doc.accessReviews[0].startDate | Should -BeOfType [datetime]
+            $Doc.accessReviews[0].endDate | Should -BeOfType [string] -Because 'a date without a time is no date-and-time form, so no PowerShell converts it'
+            Should -Invoke Test-OERJsonDateKindSupport -Exactly -Times 1
+        }
+    }
+
+    It 'asks the seam for a file read through -Path too' -Skip:(-not ($PSVersionTable.PSVersion -ge [version]'7.5')) {
+        $File = Join-Path -Path $TestDrive -ChildPath 'dates.json'
+        [System.IO.File]::WriteAllText($File, $script:DateJson, [System.Text.UTF8Encoding]::new($false))
+        InModuleScope $script:moduleName -Parameters @{ File = $File } {
+            param($File)
+            Mock Test-OERJsonDateKindSupport { $true }
+            (Read-OERStructureDocument -Path $File).groups[0].displayName | Should -BeExactly '2026-01-01T10:00:00'
+            Should -Invoke Test-OERJsonDateKindSupport -Exactly -Times 1
+        }
+    }
+
+    It 'reads the real answer end to end: a string on PowerShell 7.5 or later, a date before' {
+        InModuleScope $script:moduleName -Parameters @{ Json = $script:DateJson } {
+            param($Json)
+            $Doc = Read-OERStructureDocument -Json $Json
+            if ($PSVersionTable.PSVersion -ge [version]'7.5') {
+                $Doc.groups[0].displayName | Should -BeOfType [string]
+            } else {
+                $Doc.groups[0].displayName | Should -BeOfType [datetime]
+            }
+        }
+    }
+
+    It 'canonicalizes enum values as before when -DateKind is in force' -Skip:(-not ($PSVersionTable.PSVersion -ge [version]'7.5')) {
+        InModuleScope $script:moduleName {
+            Mock Test-OERJsonDateKindSupport { $true }
+            $Doc = Read-OERStructureDocument -Json '{ "version": "1.0", "accessReviews": [ { "displayName": "ar1", "accessPackage": "ap1", "recurrence": "monthly", "startDate": "2026-03-01T00:00:00Z" } ] }'
+            $Doc.accessReviews[0].recurrence | Should -BeExactly 'Monthly'
+            $Doc.accessReviews[0].startDate | Should -BeExactly '2026-03-01T00:00:00Z'
+        }
+    }
+
+    It 'reads an -InputObject whose values the caller already turned into dates as ConvertTo-Json writes them (documented limit)' -Skip:(-not ($PSVersionTable.PSVersion -ge [version]'7.5')) {
+        InModuleScope $script:moduleName {
+            Mock Test-OERJsonDateKindSupport { $true }
+            $Object = [PSCustomObject]@{
+                version = '1.0'
+                groups  = @([PSCustomObject]@{ displayName = 'g1'; description = [datetime]::new(2026, 1, 1, 10, 0, 0, [System.DateTimeKind]::Utc) })
+            }
+            $Written = (($Object | ConvertTo-Json -Depth 32 | ConvertFrom-Json -DateKind String).groups[0].description)
+            $Written | Should -BeOfType [string]
+            $Doc = Read-OERStructureDocument -InputObject $Object
+            $Doc.groups[0].description | Should -BeOfType [string]
+            $Doc.groups[0].description | Should -BeExactly $Written
+        }
+    }
+}

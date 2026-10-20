@@ -114,6 +114,50 @@ Describe 'Resolve-OERName' {
         }
     }
 
+    # The one-pass read takes a token to be an opening brace, then one or more characters that are not a
+    # closing brace, then the closing brace (BL-139). Two edge cases follow from that and are pinned here
+    # (Task 8 review): a doubled opening brace does not substitute part of the text, and empty braces are
+    # no token at all.
+    Context 'the brace edge cases (BL-139)' {
+        It 'reads {{a} as the unresolved token "{a" and substitutes nothing, whatever key a holds' {
+            InModuleScope $script:moduleName {
+                $Thrown = $null
+                $Result = $null
+                try { $Result = Resolve-OERName -Template '{{a}' -Tokens @{ a = 'X' } } catch { $Thrown = $PSItem }
+                $Result | Should -BeNullOrEmpty -Because 'no name is returned for a template with an unresolved token'
+                $Thrown | Should -Not -BeNullOrEmpty
+                $Thrown.Exception.Message | Should -BeExactly "Naming template '{{a}' has unresolved token(s): {a. Supply a value for each token."
+            }
+        }
+
+        It 'reads {{a} as a token named "{a" when a key of that name exists, and keeps the closing text it does not own' {
+            InModuleScope $script:moduleName {
+                Resolve-OERName -Template '{{a}' -Tokens @{ '{a' = 'X' } | Should -BeExactly 'X'
+                Resolve-OERName -Template 'p-{{a}-s' -Tokens @{ '{a' = 'X' } | Should -BeExactly 'p-X-s'
+            }
+        }
+
+        It 'never substitutes {} for the empty key, and returns the braces as written' {
+            InModuleScope $script:moduleName {
+                Resolve-OERName -Template '{}' -Tokens @{ '' = 'x' } | Should -BeExactly '{}'
+                Resolve-OERName -Template 'a{}b' -Tokens @{ '' = 'x'; a = 'y' } | Should -BeExactly 'a{}b'
+            }
+        }
+
+        It 'resolves the token beside empty braces' {
+            InModuleScope $script:moduleName {
+                Resolve-OERName -Template '{} {a}' -Tokens @{ '' = 'x'; a = 'X' } | Should -BeExactly '{} X'
+            }
+        }
+
+        It 'does not report empty braces as an unresolved token' {
+            InModuleScope $script:moduleName {
+                { Resolve-OERName -Template '{}' -Tokens @{ unused = 'x' } } | Should -Not -Throw
+                Resolve-OERName -Template '{}' -Tokens @{ unused = 'x' } | Should -BeExactly '{}'
+            }
+        }
+    }
+
     Context 'the existing token rules (BL-139 leaves them as they were)' {
         It 'matches a token name without regard to letter case' {
             InModuleScope $script:moduleName {
