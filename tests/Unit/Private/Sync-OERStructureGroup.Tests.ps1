@@ -10531,3 +10531,193 @@ Describe 'Sync-OERStructureGroup: the PIM for Groups hold, read for real (BL-125
         Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 1 -Exactly -Scope It -ParameterFilter { $PrincipalId -eq 'id-new' }
     }
 }
+
+Describe 'Sync-OERStructureGroup: the pair rule the real Set-OERGroupPimPolicy reads itself, inside an apply (Sprint 11 step 11, A24)' {
+    # When the diff finds no conflict against the policy the handler read, Resolve-OERGroupPimPolicyChange
+    # binds only the declared half of the MFA / authentication context pair -- an authenticationContextId
+    # alone against a policy without MFA, or MultiFactorAuthentication alone against a disabled context --
+    # and the REAL Set-OERGroupPimPolicy then reads the other half itself, to decide whether that one has to
+    # change too. Since A24 (ruling R-14) a failed read there, or one that returns no rule, refuses the
+    # cmdlet's call, so the handler's -ErrorAction Stop call lands in its catch: one Failed row with the
+    # record, and nothing is sent. Before, the cmdlet warned and sent the declared half (an Updated row).
+    # Under -WhatIf the handler never calls the cmdlet, so that read is never made. Only auth, the group
+    # lookup and read, the handler's policy read, the PIM-in-use answer, the cmdlet's policy id and context
+    # lookups, the scrub (to record what each layer scrubbed) and the Graph transport below the cmdlet are
+    # mocked; the live rules feed both the handler's policy read and the cmdlet's rule read. Defined here,
+    # in the discovery phase, since -ForEach is read then.
+    $PairCases = @(
+        @{
+            Name       = 'an authenticationContextId declared alone'
+            Json       = '{ "displayName": "role_sec_pair", "members": null, "pimPolicy": { "member": { "authenticationContextId": "c1" } } }'
+            ReadRuleId = 'Enablement_EndUser_Assignment'
+            SentRuleId = 'AuthenticationContext_EndUser_Assignment'
+            Change     = 'authenticationContextId=c1'
+            NoRule     = ("Reading the live rule 'Enablement_EndUser_Assignment' of PIM policy 'pol-pair' returned no rule, so whether " +
+                "activation requires multi-factor authentication, which PIM cannot hold beside authentication context 'c1', is unknown; " +
+                'nothing was changed. Pass both -AuthenticationContextId and -ActivationEnabledRules, so that neither rule depends on this read.')
+        }
+        @{
+            Name       = 'MultiFactorAuthentication declared alone'
+            Json       = '{ "displayName": "role_sec_pair", "members": null, "pimPolicy": { "member": { "activationEnablement": [ "MultiFactorAuthentication" ] } } }'
+            ReadRuleId = 'AuthenticationContext_EndUser_Assignment'
+            SentRuleId = 'Enablement_EndUser_Assignment'
+            Change     = 'activationEnablement=[MultiFactorAuthentication]'
+            NoRule     = ("Reading the live rule 'AuthenticationContext_EndUser_Assignment' of PIM policy 'pol-pair' returned no rule, so " +
+                'whether an authentication context is enabled, which PIM cannot hold beside multi-factor authentication, is unknown; ' +
+                'nothing was changed. Pass both -AuthenticationContextId and -ActivationEnabledRules, so that neither rule depends on this read.')
+        }
+    )
+
+    BeforeAll {
+        InModuleScope $script:moduleName {
+            function script:Invoke-SyncPairViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item)
+                Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet
+            }
+            # One run of the handler for the document: its rows, the records and warnings its caller
+            # collected, every request below the cmdlet ("<METHOD> <rule id>") and every record scrubbed.
+            function script:Invoke-PairRun {
+                param([string]$Json, [bool]$WhatIfRun)
+                $Switches = if ($WhatIfRun) { @{ WhatIf = $true } } else { @{ Confirm = $false } }
+                $Err = $null
+                $Warn = $null
+                $Rows = @(Invoke-SyncPairViaCaller -Item ($Json | ConvertFrom-Json) @Switches -ErrorAction SilentlyContinue -ErrorVariable Err `
+                        -WarningAction SilentlyContinue -WarningVariable Warn)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err); Warn = @($Warn); Calls = @($script:PairCalls); Scrubbed = @($script:PairScrubbed) }
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            # The live policy: activation requires Justification only, and no authentication context is
+            # enabled -- so neither declared half conflicts with it, and the diff binds that half alone.
+            $script:PairLiveRules = @(
+                @{ '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyEnablementRule'; id = 'Enablement_EndUser_Assignment'; enabledRules = @('Justification') }
+                @{ '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyAuthenticationContextRule'; id = 'AuthenticationContext_EndUser_Assignment'
+                    isEnabled = $false; claimValue = '' }
+            )
+            # How the cmdlet's own rule read answers: Rule, Throw (a refused read) or NoRule.
+            $script:PairAnswer = 'Rule'
+            $script:PairCalls = [System.Collections.Generic.List[string]]::new()
+            $script:PairScrubbed = [System.Collections.Generic.List[string]]::new()
+            Mock Initialize-OERAuth {}
+            Mock Read-OERGroupPimHold { [PSCustomObject]@{ Read = $true; Held = @{}; Cause = $null } }
+            Mock Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $true; Reason = 'x'; Manageable = $true } }
+            Mock Resolve-OERGroupId { '66666666-6666-6666-6666-6666666666e5' }
+            Mock Get-OERGroup {
+                [PSCustomObject]@{ Id = '66666666-6666-6666-6666-6666666666e5'; DisplayName = 'role_sec_pair'; Description = $null; MailNickname = $null
+                    GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @() }
+            }
+            Mock Get-OERGroupPimPolicy {
+                ConvertTo-OERGroupPimPolicy -Rules @($script:PairLiveRules) -GroupId '66666666-6666-6666-6666-6666666666e5' -PolicyId 'pol-pair' -AccessType 'member'
+            }
+            Mock Get-OERPimGroupPolicyId { 'pol-pair' }
+            Mock Get-OERAuthenticationContext { [PSCustomObject]@{ AuthenticationContextId = 'c1'; DisplayName = 'Context one'; IsAvailable = $true } }
+            # The id each layer's scrub saw, at the moment it scrubbed: the cmdlet's catch scrubs the read's
+            # record as thrown, the handler's catch the record as the cmdlet published it.
+            Mock Remove-OERErrorRecord { $script:PairScrubbed.Add([string]$Record.FullyQualifiedErrorId) }
+            Mock Invoke-OERGraphRequest {
+                param([string]$Method = 'GET', [string]$Uri, $Body)
+                $RuleId = ($Uri -split '/')[-1]
+                $script:PairCalls.Add(('{0} {1}' -f $Method, $RuleId))
+                if ($Method -eq 'PATCH') { return @{} }
+                if ($Uri -like '*policies/roleManagementPolicies/pol-pair/rules/*') {
+                    if ($script:PairAnswer -eq 'Throw') {
+                        throw [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new("Insufficient privileges to read rule '$RuleId'."),
+                            'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, $RuleId)
+                    }
+                    if ($script:PairAnswer -eq 'NoRule') { return $null }
+                    $Live = @($script:PairLiveRules | Where-Object { $_.id -eq $RuleId })
+                    if ($Live.Count -eq 1) { return $Live[0] }
+                }
+                throw "unexpected $Method $Uri"
+            }
+        }
+    }
+
+    It 'a real run: a failed read of the other half is one Failed row with the read''s record, and nothing is sent (<Name>)' -ForEach $PairCases {
+        $Result = InModuleScope $script:moduleName -Parameters @{ Json = $Json } {
+            param($Json)
+            $script:PairAnswer = 'Throw'
+            Invoke-PairRun -Json $Json -WhatIfRun $false
+        }
+        $Message = "Insufficient privileges to read rule '$ReadRuleId'."
+        $Policy = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy (member)*' })
+        $Policy.Count | Should -Be 1
+        $Policy[0].Section | Should -BeExactly 'groups'
+        $Policy[0].Item | Should -BeExactly 'role_sec_pair'
+        $Policy[0].Action | Should -BeExactly 'Failed'
+        $Policy[0].Detail | Should -BeExactly "pimPolicy (member) update failed: $Message"
+        [string]$Policy[0].Error.FullyQualifiedErrorId | Should -BeLike 'Authorization_RequestDenied,*'
+        [string]$Policy[0].Error.CategoryInfo.Category | Should -BeExactly 'PermissionDenied'
+        $Policy[0].Error.Exception.Message | Should -BeExactly $Message
+        # The record reached the handler as Set-OERGroupPimPolicy published it -- the read's own id with
+        # the cmdlet's suffix -- and each layer scrubbed it once: the cmdlet as thrown, the handler as
+        # published.
+        @($Result.Scrubbed) | Should -Be @('Authorization_RequestDenied', 'Authorization_RequestDenied,Set-OERGroupPimPolicy')
+        # Written once through the caller.
+        $Own = @($Result.Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncPairViaCaller' })
+        $Own.Count | Should -Be 1
+        $Own[0].FullyQualifiedErrorId | Should -BeExactly 'Authorization_RequestDenied,Invoke-SyncPairViaCaller'
+        # Reached: the real cmdlet resolved its policy id and read the other half, once. Nothing was sent,
+        # and no warning stood in for the refusal.
+        Should -Invoke -ModuleName $script:moduleName Get-OERPimGroupPolicyId -Times 1 -Exactly
+        @($Result.Calls) | Should -Be @("GET $ReadRuleId")
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+        @($Result.Warn).Count | Should -Be 0
+    }
+
+    It 'a real run: the other half read as no rule is one Failed PimRuleValueUnknown row, and nothing is sent (<Name>)' -ForEach $PairCases {
+        $Result = InModuleScope $script:moduleName -Parameters @{ Json = $Json } {
+            param($Json)
+            $script:PairAnswer = 'NoRule'
+            Invoke-PairRun -Json $Json -WhatIfRun $false
+        }
+        $Policy = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy (member)*' })
+        $Policy.Count | Should -Be 1
+        $Policy[0].Action | Should -BeExactly 'Failed'
+        $Policy[0].Detail | Should -BeExactly "pimPolicy (member) update failed: $NoRule"
+        [string]$Policy[0].Error.FullyQualifiedErrorId | Should -BeLike 'PimRuleValueUnknown,*'
+        [string]$Policy[0].Error.CategoryInfo.Category | Should -BeExactly 'InvalidData'
+        [string]$Policy[0].Error.TargetObject | Should -BeExactly 'pol-pair'
+        $Own = @($Result.Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncPairViaCaller' })
+        $Own.Count | Should -Be 1
+        $Own[0].FullyQualifiedErrorId | Should -BeExactly 'PimRuleValueUnknown,Invoke-SyncPairViaCaller'
+        @($Result.Calls) | Should -Be @("GET $ReadRuleId")
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+        @($Result.Warn).Count | Should -Be 0
+    }
+
+    It '-WhatIf: the plan row, and the cmdlet and its read of the other half are never reached, a failing read included (<Name>)' -ForEach $PairCases {
+        $Result = InModuleScope $script:moduleName -Parameters @{ Json = $Json } {
+            param($Json)
+            $script:PairAnswer = 'Throw'
+            Invoke-PairRun -Json $Json -WhatIfRun $true
+        }
+        $Policy = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy (member)*' })
+        $Policy.Count | Should -Be 1
+        $Policy[0].Action | Should -BeExactly 'Skipped'
+        $Policy[0].Detail | Should -BeExactly "would set pimPolicy (member): $Change"
+        @($Result.Err).Count | Should -Be 0
+        @($Result.Calls).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERPimGroupPolicyId -Times 0
+        # Reached: the handler read the live policy it planned from.
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroupPimPolicy -Times 1 -Exactly
+    }
+
+    It 'the control, a real run: the other half answering a rule, the declared half alone is sent and the row is Updated (<Name>)' -ForEach $PairCases {
+        $Result = InModuleScope $script:moduleName -Parameters @{ Json = $Json } {
+            param($Json)
+            Invoke-PairRun -Json $Json -WhatIfRun $false
+        }
+        $Policy = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy (member)*' })
+        $Policy.Count | Should -Be 1
+        $Policy[0].Action | Should -BeExactly 'Updated'
+        $Policy[0].Detail | Should -BeExactly "pimPolicy (member) set: $Change"
+        @($Result.Err).Count | Should -Be 0
+        @($Result.Calls) | Should -Be @("GET $ReadRuleId", "PATCH $SentRuleId")
+    }
+}

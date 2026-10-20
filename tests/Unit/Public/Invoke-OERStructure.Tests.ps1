@@ -6179,3 +6179,91 @@ $RunErrors | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
         @($Run.Prompts).Count | Should -Be 0
     }
 }
+
+Describe 'Invoke-OERStructure groups: the pair rule the real Set-OERGroupPimPolicy reads itself refuses the update when the read fails (Sprint 11 step 11, A24)' {
+    # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere above
+    # it, as at a prompt, with the runspace's own error preference (Continue). The document declares the
+    # member policy's authenticationContextId alone, and the live policy carries no MFA, so the diff binds
+    # that half alone and the REAL Set-OERGroupPimPolicy reads the activation enablement rule itself before
+    # it sends anything. The script installs its own fakes in ITS copy of the module scope -- everything
+    # above and beside the cmdlet, and the Graph transport below it -- and logs every request with
+    # AppendAllText, whose path is substituted into the text. The read fails (the record a refused read
+    # throws) or, in the control, answers, so the scenario can tell a refusal from silence.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        function script:New-PrNoTryScenario {
+            param([string]$Log, [string]$Read)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERStructureDefault -Value { $null }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { 'g-1' }
+    Set-Item -Path function:script:Get-OERGroup -Value {
+        [pscustomobject]@{ Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null; GroupType = 'Assigned'
+            IsAssignableToRole = $false; Members = @(); PimEligibility = @() }
+    }
+    Set-Item -Path function:script:Read-OERGroupPimHold -Value { [pscustomobject]@{ Read = $true; Held = @{}; Cause = $null } }
+    Set-Item -Path function:script:Test-OERGroupPimInUse -Value { [pscustomobject]@{ InUse = $true; Reason = 'x'; Manageable = $true } }
+    Set-Item -Path function:script:Get-OERGroupPimPolicy -Value {
+        [CmdletBinding()]
+        param([Alias('GroupId', 'Id')][string]$Group, [string]$AccessType = 'member', [string]$TenantId)
+        [pscustomobject]@{ PolicyId = 'pol-live'; ActivationMaxHours = 8; AuthenticationContextId = ''; ActivationEnabledRules = @('Justification')
+            AllowPermanentEligibility = $false; EligibleDurationDays = 365; AllowPermanentActive = $false; ActiveDurationDays = 180
+            ActiveEnabledRules = @(); Notifications = [pscustomobject]@{ EligibleAlert = @(); ActiveAlert = @(); ActivationAlert = @() } }
+    }
+    Set-Item -Path function:script:Get-OERPimGroupPolicyId -Value { 'pol-live' }
+    Set-Item -Path function:script:Get-OERAuthenticationContext -Value {
+        [CmdletBinding()] param()
+        [pscustomobject]@{ AuthenticationContextId = 'c1'; DisplayName = 'Context one'; IsAvailable = $true }
+    }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        $RuleId = ($Uri -split '/')[-1]
+        [System.IO.File]::AppendAllText('#LOG#', "$Method $RuleId`n")
+        if ($Method -eq 'PATCH') { return @{} }
+        if ('#READ#' -eq 'fails') {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new("Insufficient privileges to read rule '$RuleId'."),
+                'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, $RuleId)
+        }
+        @{ id = $RuleId; enabledRules = @('Justification') }
+    }
+}
+$Json = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_x", "members": null, "pimPolicy": { "member": { "authenticationContextId": "c1" } } } ] }'
+Invoke-OERStructure -Json $Json -Confirm:$false -ErrorVariable RunErrors | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+$RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' } | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#READ#', $Read))
+        }
+        function script:Get-PrLoggedLine ([string]$Log) {
+            if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
+        }
+    }
+
+    It 'reaches the end of a script with no try above it, with one Failed row and the read''s record, and sends nothing' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-PrNoTryScenario -Log $Log -Read 'fails')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Rows = @($Run.Output | Where-Object { $_ -like 'ROW:*pimPolicy*' })
+        $Rows | Should -Be @("ROW:Failed:pimPolicy (member) update failed: Insufficient privileges to read rule 'Enablement_EndUser_Assignment'.")
+        # The read's own record reached the error stream, once, and no other error did.
+        @($Run.Errors).Count | Should -Be 1
+        $Run.Errors[0] | Should -BeExactly "Insufficient privileges to read rule 'Enablement_EndUser_Assignment'."
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @('ERRID:Authorization_RequestDenied,Invoke-OERStructure')
+        # Reached: the real cmdlet read the enablement rule, once; nothing was sent after it.
+        $Logged = @(Get-PrLoggedLine -Log $Log)
+        $Logged | Should -Be @('GET Enablement_EndUser_Assignment') -Because "the requests were:`n$($Logged -join "`n")"
+        @($Run.Warnings).Count | Should -Be 0
+        @($Run.Prompts).Count | Should -Be 0
+    }
+
+    It 'the control: the same script, the read answering, sends the context rule and reports it Updated' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-PrNoTryScenario -Log $Log -Read 'answers')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        @($Run.Output | Where-Object { $_ -like 'ROW:*pimPolicy*' }) | Should -Be @('ROW:Updated:pimPolicy (member) set: authenticationContextId=c1')
+        @($Run.Errors).Count | Should -Be 0
+        @(Get-PrLoggedLine -Log $Log) | Should -Be @('GET Enablement_EndUser_Assignment', 'PATCH AuthenticationContext_EndUser_Assignment')
+    }
+}

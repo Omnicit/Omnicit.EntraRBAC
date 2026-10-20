@@ -579,11 +579,17 @@ function Set-OERGroupPimPolicy {
                 $PSCmdlet.WriteError($PSItem)
                 return
             }
-            if ([string]::IsNullOrWhiteSpace([string]$LiveRule.maximumDuration)) {
+            # No rule at all is worded as the pair reads word it; a rule without a maximum as such.
+            $Unknown = if ($null -eq $LiveRule) {
+                "Reading the live rule 'Expiration_Admin_Eligibility' of PIM policy '$PolicyId' returned no rule"
+            } elseif ([string]::IsNullOrWhiteSpace([string]$LiveRule.maximumDuration)) {
+                "The live eligible-assignment expiration rule of PIM policy '$PolicyId' carries no maximum duration"
+            }
+            if ($Unknown) {
                 Write-CmdletError `
                     -Message ([System.Exception]::new(
-                        "The live eligible-assignment expiration rule of PIM policy '$PolicyId' carries no maximum duration, so the " +
-                        'duration to keep is unknown; nothing was changed. Pass -EligibleDuration with -AllowPermanentEligibility.')) `
+                        "$Unknown, so the duration to keep is unknown; nothing was changed. Pass -EligibleDuration with " +
+                        '-AllowPermanentEligibility.')) `
                     -ErrorId 'PimRuleValueUnknown' -Category InvalidData -TargetObject $PolicyId -Cmdlet $PSCmdlet
                 return
             }
@@ -598,11 +604,16 @@ function Set-OERGroupPimPolicy {
                 $PSCmdlet.WriteError($PSItem)
                 return
             }
-            if ([string]::IsNullOrWhiteSpace([string]$LiveRule.maximumDuration)) {
+            $Unknown = if ($null -eq $LiveRule) {
+                "Reading the live rule 'Expiration_Admin_Assignment' of PIM policy '$PolicyId' returned no rule"
+            } elseif ([string]::IsNullOrWhiteSpace([string]$LiveRule.maximumDuration)) {
+                "The live active-assignment expiration rule of PIM policy '$PolicyId' carries no maximum duration"
+            }
+            if ($Unknown) {
                 Write-CmdletError `
                     -Message ([System.Exception]::new(
-                        "The live active-assignment expiration rule of PIM policy '$PolicyId' carries no maximum duration, so the " +
-                        'duration to keep is unknown; nothing was changed. Pass -ActiveDuration with -AllowPermanentActive.')) `
+                        "$Unknown, so the duration to keep is unknown; nothing was changed. Pass -ActiveDuration with " +
+                        '-AllowPermanentActive.')) `
                     -ErrorId 'PimRuleValueUnknown' -Category InvalidData -TargetObject $PolicyId -Cmdlet $PSCmdlet
                 return
             }
@@ -817,8 +828,8 @@ function Set-OERGroupPimPolicy {
                     'requirements it had on activation before the call.'
                 } elseif ($EnablementSent) {
                     "$Declined applied, so multi-factor authentication was removed from activation on PIM policy '$PolicyId' and " +
-                    "authentication context '$AuthenticationContextId' was not enabled: activation may now require neither " +
-                    "multi-factor authentication nor an authentication context.$Remedy"
+                    "this call did not enable authentication context '$AuthenticationContextId': activation may now require " +
+                    "neither multi-factor authentication nor an authentication context.$Remedy"
                 } elseif ($Resolution.Action -eq 'ClearMfa') {
                     "$Declined applied, so PIM policy '$PolicyId' still requires both multi-factor authentication and an " +
                     "authentication context on activation.$Remedy"

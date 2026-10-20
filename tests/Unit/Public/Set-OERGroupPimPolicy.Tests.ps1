@@ -1230,8 +1230,8 @@ Describe 'Set-OERGroupPimPolicy: a split answer to the two prompts of the pair w
             First   = 'Enablement_EndUser_Assignment'
             Sent    = @('Enablement_EndUser_Assignment')
             Warning = "Rule 'AuthenticationContext_EndUser_Assignment' was declined while 'Enablement_EndUser_Assignment' was applied, so " +
-                "multi-factor authentication was removed from activation on PIM policy 'p1' and authentication context 'c1' was not " +
-                'enabled: activation may now require neither multi-factor authentication nor an authentication context.' + $Remedy
+                "multi-factor authentication was removed from activation on PIM policy 'p1' and this call did not enable authentication " +
+                "context 'c1': activation may now require neither multi-factor authentication nor an authentication context." + $Remedy
         }
         @{
             Name    = 'ClearMfa, the context rule applied and the enablement rule declined (the text it always had)'
@@ -2107,15 +2107,21 @@ Describe 'Set-OERGroupPimPolicy: a failed or empty read that decides a written v
         'to keep is unknown; nothing was changed. Pass -EligibleDuration with -AllowPermanentEligibility.'
     $ActiveUnknown = "The live active-assignment expiration rule of PIM policy 'pol-1' carries no maximum duration, so the duration " +
         'to keep is unknown; nothing was changed. Pass -ActiveDuration with -AllowPermanentActive.'
+    # No rule at all is worded as the pair reads word it (fix round 1).
+    $EligibleNoRule = "Reading the live rule 'Expiration_Admin_Eligibility' of PIM policy 'pol-1' returned no rule, so the duration " +
+        'to keep is unknown; nothing was changed. Pass -EligibleDuration with -AllowPermanentEligibility.'
+    $ActiveNoRule = "Reading the live rule 'Expiration_Admin_Assignment' of PIM policy 'pol-1' returned no rule, so the duration " +
+        'to keep is unknown; nothing was changed. Pass -ActiveDuration with -AllowPermanentActive.'
     # Answer: NoRule (the read returns nothing), Blank/Whitespace/Null (an expiration rule whose
     # maximumDuration is that).
     $UnknownCases = @(
         @{ Read = 'the activation enablement rule'; Answer = 'no rule'; RuleId = 'Enablement_EndUser_Assignment'; Splat = @{ AuthenticationContextId = 'c1' }; NoRule = $true; Maximum = 'P30D'; Message = $EnablementUnknown }
         @{ Read = 'the authentication context rule'; Answer = 'no rule'; RuleId = 'AuthenticationContext_EndUser_Assignment'; Splat = @{ ActivationEnabledRules = 'MultiFactorAuthentication' }; NoRule = $true; Maximum = 'P30D'; Message = $ContextUnknown }
         @{ Read = 'the eligible-assignment expiration rule'; Answer = 'an empty maximumDuration'; RuleId = 'Expiration_Admin_Eligibility'; Splat = @{ AllowPermanentEligibility = $true }; NoRule = $false; Maximum = ''; Message = $EligibleUnknown }
-        @{ Read = 'the eligible-assignment expiration rule'; Answer = 'no rule'; RuleId = 'Expiration_Admin_Eligibility'; Splat = @{ AllowPermanentEligibility = $true }; NoRule = $true; Maximum = 'P30D'; Message = $EligibleUnknown }
+        @{ Read = 'the eligible-assignment expiration rule'; Answer = 'no rule'; RuleId = 'Expiration_Admin_Eligibility'; Splat = @{ AllowPermanentEligibility = $true }; NoRule = $true; Maximum = 'P30D'; Message = $EligibleNoRule }
         @{ Read = 'the active-assignment expiration rule'; Answer = 'a white-space maximumDuration'; RuleId = 'Expiration_Admin_Assignment'; Splat = @{ AllowPermanentActive = $true }; NoRule = $false; Maximum = '  '; Message = $ActiveUnknown }
         @{ Read = 'the active-assignment expiration rule'; Answer = 'a null maximumDuration'; RuleId = 'Expiration_Admin_Assignment'; Splat = @{ AllowPermanentActive = $true }; NoRule = $false; Maximum = $null; Message = $ActiveUnknown }
+        @{ Read = 'the active-assignment expiration rule'; Answer = 'no rule'; RuleId = 'Expiration_Admin_Assignment'; Splat = @{ AllowPermanentActive = $true }; NoRule = $true; Maximum = 'P30D'; Message = $ActiveNoRule }
     )
     $UnknownModeCases = foreach ($Case in $UnknownCases) { foreach ($M in $Modes) { $Case + $M } }
 
