@@ -1,12 +1,12 @@
 # Live verification checklist -- a failed policy read writes nothing, and the engine and the validator say what they do (fix/engine-and-validator-findings)
 
-**This branch does not merge until every box in sections S, 0, 1, 2, 3, 4, 5, 6 and T has a written result.** A
+**This branch does not merge until every box in sections S, 0, 1, 2, 3, 4, 5, 6, 7 and T has a written result.** A
 box with no result line filled in is not a passed check -- it is an unrun one. If a check turns out to be
 impossible to run, write "cannot be verified, and therefore we do not know" on its result line and say why; do
 not leave it blank and do not tick it. A check that could not run for a stated reason is marked `[~]`, never
 `[x]`. **Section B lists what is proved offline only (class B).** No manual check (class C) is foreseen.
 
-**Status, 2026-10-20.** The step stopped after measurement 1.1 for a decision: a PUT with `allowedTargetScope` `unknownFutureValue` changed a policy's scope (see 1.1). Sections 0 and 1 ran, and T.1 removed every object; sections S and 2 to 6 have not run yet.
+**Status, 2026-10-20.** The step stopped after measurement 1.1 for a decision: a PUT with `allowedTargetScope` `unknownFutureValue` changed a policy's scope (see 1.1). Sections 0 and 1 ran, and T.1 removed every object. The architect decided (A24): `Set-OERAccessPackageAssignmentPolicy` refuses to carry a read `unknownFutureValue` forward when `-RequestorScope` is not given. The follow-up round runs S, 0 again (0.2 creates the objects again), 2 to 6, the new section 7 and T against the branch's final build; section 1 is not run again.
 
 **What this file writes to the tenant.** The prerequisite script writes only objects whose names start with
 `oer-s1111-`: a disabled user, four security groups (one owned by that user and by the service principal of
@@ -17,7 +17,9 @@ policy's baseline. The measurements in section 1 write to those objects only: a 
 package, a PUT of each policy, the removal of the user as an owner, the PIM-for-Groups policy rules of the two
 groups never used with PIM for Groups (which onboards them; their deletion removes the policies), and a PUT of
 the review. Section 2 applies a document to the Reader policy at the resource group. Sections 3 to 6 send no
-write request (a fence refuses one). Teardown (T.1) deletes the review, restores the Reader policy and the
+write request (a fence refuses one). Section 7 writes the scope of `oer-s1111-policy` twice: a raw PUT that
+stores `unknownFutureValue` (as 1.1 measured) before 7.1, and the update in 7.2 that sets it back; 7.3 sends no
+write request. Teardown (T.1) deletes the review, restores the Reader policy and the
 Reports Reader policy from their baselines, then removes every object and the resource group.
 
 **The tenant's object names are never printed.** The blocks print counts, True/False and the step's own
@@ -53,7 +55,12 @@ merges.
   section that is `null` is not declared: no row, no Azure Resource Manager token. The directory role and group
   PIM policy handlers report `ApproverRequired` before their `ShouldProcess`, so the plan says what the run does.
   An unread role name map stops only an administrative unit's scoped roles.
-- **B. Measured first** (BL-49, BL-84, BL-97 F3, BL-117 sixth point): section 1.
+- **B. Measured first** (BL-49, BL-84, BL-97 F3, BL-117 sixth point): section 1. From the measurements:
+  `Set-OERAccessPackageAssignmentPolicy` refuses to carry a read `unknownFutureValue` forward unless
+  `-RequestorScope` is given (`UnknownAllowedTargetScope`); the apply engine never removes a group's last user
+  owner, also while a service principal is an owner; `Set-OERGroupPimPolicy` refuses a call its own read of a
+  live rule cannot decide (the read's own error, or `PimRuleValueUnknown`) instead of writing a default.
+  Section 7 checks the first two live.
 - **C. The validator and the engine say what they do** (BL-139, BL-154, BL-155, BL-117, BL-54, BL-24, BL-53,
   BL-97 F2, BL-52, BL-86, BL-157, BL-121).
 
@@ -72,6 +79,9 @@ show a confirmation prompt, and for Microsoft Graph's own refusals that the plan
   PowerShell; the refusal of a value read as a date is proved offline through the seam that reports the parameter.
 - **A split answer to two `-Confirm` prompts of `Set-OERGroupPimPolicy` (class B, B.5),** which needs a person at
   the keyboard; the unit tests answer the prompts through a test host.
+- **A placeholder Microsoft Graph returns for a hidden scope (class B, B.6),** which no read produces today (1.1);
+  7.1 checks the refusal against a policy whose stored scope is the placeholder itself.
+- **A failed read of a live PIM rule by `Set-OERGroupPimPolicy` (class B, B.7),** for the same reason as B.1.
 
 ## Setup, once
 
@@ -207,9 +217,10 @@ function Save-S1111Doc {
 function Invoke-S1111Apply {
     # Invoke-OERStructure on one document, with -Confirm:$false; prints each row (prefixed names only) and returns
     # the rows, the first segment of every record's id, and how many warnings were written (not printed).
-    param([Parameter(Mandatory)][string]$Path, [switch]$WhatIf, [string[]]$Include)
+    param([Parameter(Mandatory)][string]$Path, [switch]$WhatIf, [string[]]$Include, [switch]$Prune)
     $Params = @{ Path = $Path; Confirm = $false; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'ApplyErrors'; WarningVariable = 'ApplyWarnings' }
     if ($WhatIf) { $Params.WhatIf = $true }
+    if ($Prune) { $Params.Prune = $true }
     if ($Include) { $Params.Include = $Include }
     $Rows = @(Invoke-OERStructure @Params 3>$null)
     foreach ($Row in $Rows) { Write-OerLiveStep "Row: [$($Row.Section)] $($Row.Item) $($Row.Action) -- $($Row.Detail)" }
@@ -829,6 +840,103 @@ text), or a write.
 
 Result:
 
+## 7. The measured refusals, live (A24, BL-49 and BL-84)
+
+### 7.1. BL-49: an assignment policy whose read scope is `unknownFutureValue` is not written back
+
+- [ ] **7.1** `oer-s1111-policy`, whose stored scope a raw PUT has set to `unknownFutureValue` (the write 1.1 measured), reads back the placeholder without the Prefer header; `Set-OERAccessPackageAssignmentPolicy` with a new description and no `-RequestorScope` is refused with `UnknownAllowedTargetScope` and sends no write request, and the policy is unchanged. #type/subtask
+
+```powershell
+Connect-OerLive -Arm
+Start-S1111NoPrompt
+$PkgId = [string](@(@((Invoke-OerLiveGraph -All -Uri "$Em/accessPackages?`$select=id,displayName").Body['value']) | Where-Object { [string]$_['displayName'] -ceq "${Prefix}ap" })[0]['id'])
+$Pol = @(@((Invoke-OerLiveGraph -All -Uri ("$Em/assignmentPolicies?`$filter={0}" -f [uri]::EscapeDataString("accessPackage/id eq '$PkgId'"))).Body['value']) | Where-Object { [string]$_['displayName'] -ceq "${Prefix}policy" })[0]
+$PolId = [string]$Pol['id']
+# Setup, as measured in 1.1: a raw PUT stores the placeholder as the policy's scope, so a read without the Prefer header returns it.
+$Read = Invoke-S1111Graph -Uri "$Em/assignmentPolicies/$PolId"
+if ([string]$Read.Body['allowedTargetScope'] -ne 'unknownFutureValue') {
+    $Put = @{}
+    foreach ($Key in 'displayName', 'description', 'specificAllowedTargets', 'expiration', 'requestorSettings', 'requestApprovalSettings') { $Put[$Key] = $Read.Body[$Key] }
+    $Put.allowedTargetScope = 'unknownFutureValue'
+    $Put.accessPackage = @{ id = $PkgId }
+    $Answer = Invoke-S1111Graph -Method PUT -Uri "$Em/assignmentPolicies/$PolId" -Body $Put
+    Write-OerLiveStep "Setup: PUT of ${Prefix}policy with allowedTargetScope 'unknownFutureValue': $($Answer.Status) $($Answer.Code)"
+    $null = Wait-OerLiveConverged -Activity 'the policy reads back the placeholder' -Read { [string](Invoke-S1111Graph -Uri "$Em/assignmentPolicies/$PolId").Body['allowedTargetScope'] } -Test { $args[0] -eq 'unknownFutureValue' }
+}
+$Before = Invoke-S1111Graph -Uri "$Em/assignmentPolicies/$PolId"
+Write-OerLiveStep "Before: allowedTargetScope '$([string]$Before.Body['allowedTargetScope'])' (read without the Prefer header)"
+Start-S1111Count
+$Out = @(Set-OERAccessPackageAssignmentPolicy -Id $PolId -DisplayName "${Prefix}policy" -Description "Omnicit.EntraRBAC live verification ($Prefix): BL-49, must not be written." -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable SetErrors)
+Write-OerLiveStep "Set without -RequestorScope: output objects $($Out.Count); records: $(@(Get-S1111FirstId $SetErrors) -join ', ')"
+Write-OerLiveStep (Get-S1111Sent)
+Stop-S1111Count
+$After = Invoke-S1111Graph -Uri "$Em/assignmentPolicies/$PolId"
+Write-OerLiveStep "After: allowedTargetScope '$([string]$After.Body['allowedTargetScope'])'; description unchanged: $([string]$After.Body['description'] -ceq [string]$Before.Body['description'])"
+Disconnect-OerLive
+```
+
+**Expect:** `Before: allowedTargetScope 'unknownFutureValue'`; output objects 0; records `UnknownAllowedTargetScope`
+(and nothing else of the command's own); Microsoft Graph writes 0; after: `unknownFutureValue`, description
+unchanged `True`.
+**Failure looks like:** a write request (the fence refuses it, so the record is the fence's), an output object,
+or a changed description. A placeholder that Microsoft Graph returns for a real, hidden scope cannot be produced
+on demand: that case is class B (B.6).
+
+Result:
+
+### 7.2. BL-49: with `-RequestorScope` the update is written, and the scope is set back
+
+- [ ] **7.2** The same policy updated with `-RequestorScope` (all member users): one write request, no record, and the policy then reads `allMemberUsers`. #type/subtask
+
+```powershell
+Connect-OerLive -Arm
+Start-S1111NoPrompt
+$PkgId = [string](@(@((Invoke-OerLiveGraph -All -Uri "$Em/accessPackages?`$select=id,displayName").Body['value']) | Where-Object { [string]$_['displayName'] -ceq "${Prefix}ap" })[0]['id'])
+$Pol = @(@((Invoke-OerLiveGraph -All -Uri ("$Em/assignmentPolicies?`$filter={0}" -f [uri]::EscapeDataString("accessPackage/id eq '$PkgId'"))).Body['value']) | Where-Object { [string]$_['displayName'] -ceq "${Prefix}policy" })[0]
+$PolId = [string]$Pol['id']
+$Scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
+Start-S1111Count -AllowWrite
+$Out = @(Set-OERAccessPackageAssignmentPolicy -Id $PolId -DisplayName "${Prefix}policy" -RequestorScope $Scope -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable SetErrors)
+Write-OerLiveStep "Set with -RequestorScope AllMemberUsers: output objects $($Out.Count); records: $(@(Get-S1111FirstId $SetErrors) -join ', ')"
+Write-OerLiveStep (Get-S1111Sent)
+Stop-S1111Count
+$Wait = Wait-OerLiveConverged -Activity 'the policy reads allMemberUsers' -Read { [string](Invoke-S1111Graph -Uri "$Em/assignmentPolicies/$PolId").Body['allowedTargetScope'] } -Test { $args[0] -eq 'allMemberUsers' }
+Write-OerLiveStep "After: allowedTargetScope '$($Wait.Value)'"
+Disconnect-OerLive
+```
+
+**Expect:** output objects 1; no record; Microsoft Graph writes 1 (the PUT); after: `allMemberUsers`.
+**Failure looks like:** `UnknownAllowedTargetScope` (the refusal caught a bound scope), no write, or another scope.
+
+Result:
+
+### 7.3. BL-84: the apply engine keeps the last user owner beside a service principal owner
+
+- [ ] **7.3** A document that declares no owner for `oer-s1111-owned` (owners: the user `oer-s1111-u1` and the service principal of `oer-live-cc-noperm`), applied with `-Prune` as a plan and as a run: the user owner is kept as the last remaining user owner, the service principal owner is withheld, and no write request is sent. #type/subtask
+
+```powershell
+Connect-OerLive -Arm
+Start-S1111NoPrompt
+$Doc = Save-S1111Doc -Name 'bl84' -Json '{ "version": "1.0", "groups": [ { "displayName": "oer-s1111-owned", "owners": [] } ] }'
+Start-S1111Count
+$Plan = Invoke-S1111Apply -Path $Doc -WhatIf -Include Groups -Prune
+$Run = Invoke-S1111Apply -Path $Doc -Include Groups -Prune
+foreach ($Pass in @(@{ Name = 'Plan'; R = $Plan }, @{ Name = 'Run'; R = $Run })) {
+    $Rows = @($Pass.R.Rows)
+    Write-OerLiveStep "$($Pass.Name): rows $($Rows.Count) ($(@($Rows | ForEach-Object { $_.Action }) -join ', ')); last remaining user owner: $(@($Rows | Where-Object { [string]$_.Detail -like '*last remaining user owner*' }).Count); prune withheld: $(@($Rows | Where-Object { [string]$_.Detail -like '*prune withheld*' }).Count); removed: $(@($Rows | Where-Object { $_.Action -eq 'Removed' }).Count); errors: $(@($Pass.R.Errors) -join ', ')"
+}
+Write-OerLiveStep (Get-S1111Sent)
+Stop-S1111Count
+Disconnect-OerLive
+```
+
+**Expect:** the plan and the run alike: one row naming the last remaining user owner (`Skipped`), one prune
+withheld row for the service principal owner (`Skipped`), no `Removed` row, no error; Microsoft Graph writes 0.
+**Failure looks like:** a removal attempt (the fence refuses it: a `Failed` row), "would remove" in the plan for
+the user owner, or a plan that differs from the run.
+
+Result:
+
 ## B. Proved offline (class B)
 
 - **B.1** A failed read of the live Azure role policy, non-terminating and terminating, with an entry that
@@ -843,6 +951,13 @@ Result:
   (`tests/Unit/Private/Read-OERStructureDocument.Tests.ps1`, `tests/Unit/Private/Test-OERStructureSchema.Tests.ps1`).
 - **B.5** A split answer to the two `-Confirm` prompts of `Set-OERGroupPimPolicy`
   (`tests/Unit/Public/Set-OERGroupPimPolicy.Tests.ps1`).
+- **B.6** A placeholder `unknownFutureValue` that Microsoft Graph returns for a real scope it hides from a client
+  without the Prefer header: `Set-OERAccessPackageAssignmentPolicy` refuses it the same way as in 7.1
+  (`tests/Unit/Public/Set-OERAccessPackageAssignmentPolicy.Tests.ps1`, a runspace without `try` included).
+- **B.7** A failed or empty read of a live rule by `Set-OERGroupPimPolicy` (the two duration rules and the
+  multi-factor authentication / authentication context pair): refused before any write with the read's own error
+  or `PimRuleValueUnknown`, also inside an apply (`tests/Unit/Public/Set-OERGroupPimPolicy.Tests.ps1`,
+  `tests/Unit/Private/Sync-OERStructureGroup.Tests.ps1`, `tests/Unit/Public/Invoke-OERStructure.Tests.ps1`).
 
 ## T. Teardown
 
