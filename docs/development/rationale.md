@@ -6396,6 +6396,63 @@ before it was caught. The mechanism, the executed proof and the repo-wide rule l
 test shapes that look like guards but are not, in
 [#bearer-scrub-tests](#bearer-scrub-tests).
 
+### CLAUDE.md text for changelog-budget
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **Write `[Unreleased]` in release-note voice** -- product-level and user-visible: what this
+  version is, and what changed for someone consuming the module. Budget **4,000 characters**,
+  gated in `tests/QA/module.tests.ps1` on the section's `RawData`, which includes the
+  `## [Unreleased]` heading and therefore reads slightly SHORT of what is actually published -- do
+  not spend the difference.
+
+- **The floor is on the BODY and is 50 characters -- about one sentence.** The section after its
+  heading line, trimmed, must reach it, in the source and in the built manifest alike. It is there
+  to catch a MECHANICAL failure, an emptied or hand-converted section that publishes `ReleaseNotes`
+  of length 0 while the build reports success, and it does not judge the text: whether a note says
+  enough is decided in review. Never pad the section to get past it -- every merge publishes the
+  padding to the Gallery for good.
+
+- **Close-out after a stable release.** The close-out is the FIRST merge after a `v<X.Y.Z>` tag. It
+  adds `## [X.Y.Z] - <date>` directly above the previous dated heading, moves the released notes
+  under it, and leaves `[Unreleased]` holding exactly this sentence and nothing else, with `X.Y.Z`
+  the version just released:
+
+  ```text
+  No changes to the module since X.Y.Z. A preview published from this point differs from X.Y.Z only in documentation, tests or the build.
+  ```
+
+  It has to come first because every merge publishes `[Unreleased]` as a preview's `ReleaseNotes`:
+  a merge landing between the tag and the close-out publishes a preview whose notes describe the
+  previous release's changes as new. **The first change under `source/` after a close-out REPLACES
+  the sentence** with a note of its own; it never adds the note after it. Wrapping the sentence
+  across lines is fine. `tests/QA/module.tests.ps1` holds both halves: while the sentence stands it
+  must be exactly that sentence for the latest dated section in `CHANGELOG.md`, and it must not
+  survive a diff that touches `source/`.
+
+- **Per-PR engineering detail belongs in the PR body and the commit message**, not in
+  `CHANGELOG.md`. The published note is read by module consumers, not by reviewers.
+
+- **Never convert, rename or delete the `## [Unreleased]` heading itself.** The build does that at
+  release time against its own OUTPUT copy; the source file is never modified by a build. A
+  hand-converted section leaves the source `[Unreleased]` empty, and the next build then publishes
+  `ReleaseNotes` of length 0 while reporting success.
+
+- **A PR that changes nothing under `source/` is not required to touch `CHANGELOG.md`.** The
+  changed-file gate fires only on a path matching `^source/`.
+
+- **The two gates that read the BUILT artefact need a build.** `build.yaml`'s `test` workflow does
+  not include `build`, so both measure whatever is already in `output/module/`. The published-notes
+  gate also compares that artefact against the CURRENT `CHANGELOG.md`, so a build older than your
+  changelog edit turns it red -- the right direction of failure, not a bug, since that is exactly
+  the state in which the source-side gates are green and the published note is wrong. The version
+  cap reads only the artefact's own version, so it reddens on staleness only if nothing resolves or
+  the stale build was itself outside the `1.x` line. Either way: build before test, exactly as
+  `## Build and Test Commands` already requires. Both gates resolve the module under test with
+  `Get-Module -ListAvailable | Select-Object -First 1`, so they measure whichever copy ranks first on
+  `PSModulePath` -- under `./build.ps1 -Tasks test` that is the built module, but a globally
+  installed copy would be measured instead.
+
 ## version-cap
 
 > **Lifted on 2026-09-13 (issue #62).** The cap below `1.0.0` described here is history; the
@@ -6713,6 +6770,79 @@ hand and `build.yaml` defined no `publish` workflow. That is now history on both
 is automated, and it lives in the workflow rather than in `build.yaml`. See
 [#publish-on-merge](#publish-on-merge).
 
+### CLAUDE.md text for version-cap
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+**The computed module version is held in the `1.x` line.** Issue #55 capped it below `1.0.0`;
+issue #62 lifted the cap to `1.0.0` on 2026-09-13 for the first public release. The two levers are
+both in `GitVersion.yml`: `next-version` (`1.0.0`), which supplies the base version when no tag
+outranks it (a `release/x.y.z` branch name is a third candidate -- see below), and
+`major-version-bump-message`, which carries BOTH halves of its original pattern: the explicit
+`+semver: breaking|major` token AND the conventional-commit `^[a-z]+(\(.+\))?!:` subject form. The
+`!:` half was disabled only for the duration of the private pre-1.0.0 history, where two reachable
+commits (`5816e87`, `715fb6d`) carried a `!:` subject and, with no tag to bound the increment
+window, made the original pattern build `2.0.0` (measured). **This repository is seeded from a clean
+tree without those commits and carries `v1.0.0` from its first commit, so neither condition can
+apply and P5 restored the original pattern deliberately.** `GitVersion.yml` is the truth here;
+`minor-version-bump-message` and `patch-version-bump-message` are working, so intent stays recorded
+in history.
+
+**How the version is computed.** The base is the greatest of three candidates: the highest reachable
+version tag, `next-version`, and the `x.y.z` of a `release/x.y.z` branch name -- either the branch
+being built, or one named by a standard merge commit message. One exception: a tag sitting on HEAD
+is returned verbatim and outranks every other tag and `next-version` however high they are, though a
+higher `release/x.y.z` still beats it. From the base comes **at most ONE increment**, never one per
+commit, sized from the commits since the NEAREST reachable tag -- every reachable commit when there
+is no tag at all. A TAG base not on HEAD takes an increment on any branch whose config sets a
+default one, and every branch this repo's convention produces does: it is the greater of the branch
+default (Patch on `main` and on every branch prefix this repo's convention uses) and the highest
+`+semver:` level in that window. A `release/*` branch is the exception, since the inherited
+`release:` block sets `increment: None` -- measured, `v3.0.0` on HEAD~1 builds `3.0.1` on `main` and
+`3.0.0` on `release/2.0.0`. A `next-version` or `release/x.y.z` base takes no default
+increment, so with no `+semver:` commit in the window it is used exactly as written -- but one
+`+semver: fix` there still makes `1.0.0` build `1.0.1`, and one `+semver: minor` makes it `1.1.0`. A
+PRERELEASE-labelled tag (`v0.9.0-preview.1`) is the exception to all of that: it takes no
+`MajorMinorPatch` increment at all, and no `+semver:` message moves it.
+
+**Do not create a version tag, or a `release/x.y.z` branch, outside a deliberate release.** Any tag
+at or above `next-version` becomes the base, one sitting on HEAD ships verbatim whatever its value,
+and a branch named `release/2.0.0` builds `2.0.0` on its own with no tag involved anywhere.
+`release/` is not one of the prefixes in the branch-naming table above. Bump messages now move the
+version: with no reachable tag the base is `1.0.0` and at most one increment applies, so one
+`+semver: fix` builds `1.0.1`, one `+semver: minor` builds `1.1.0`, one `+semver: major` builds
+`2.0.0` -- and so does a `!:` subject, through the other half of the same pattern.
+`tests/QA/module.tests.ps1` holds the built version at or
+above `1.0.0` and below `2.0.0`, independently of `GitVersion.yml` -- lift both together when
+`2.0.0` is called, and never raise that assertion just to make a build pass.
+
+**Two different shapes move the version from a message, and both must be kept out of commit
+messages, PR titles and PR bodies.**
+
+1. **Never quote a bump token** -- name it in words ("the semver major token"). A message that
+   merely quotes the major token builds `2.0.0`, and one that quotes the minor or fix token moves
+   the version silently.
+2. **Never write a conventional-commit `!:` subject.** `fix!: ...`, `feat(x)!: ...` and every other
+   `<verb>!:` or `<verb>(<scope>)!:` form matches the second half of `major-version-bump-message`
+   and builds `2.0.0`. This half is LIVE -- see the paragraph above, and do not rely on any older
+   note saying it is disabled.
+
+GitVersion reads every reachable commit message, and a squash merge copies the PR title and body
+into `main`, so a squash title of `fix!: ...` is enough on its own to do it. File content is never
+read and may quote either shape freely.
+
+**Since every merge to `main` publishes, this is no longer a rule about a number in a build log.**
+What one of those shapes does now splits by level, and only one level is caught:
+
+- **Major** (`!:`, or the quoted major token). `tests/QA/module.tests.ps1` caps the built version
+  below `2.0.0` independently of `GitVersion.yml`, so the merge turns `main` RED, `package` and
+  `publish` never run, and nothing is published. The repair then happens on `main` under a broken
+  required check instead of in an open PR, which is bad enough on its own.
+- **Minor or fix.** Nothing caps these. `main` carries `tag: preview`, so the merge publishes, for
+  example, `1.1.0-preview0001` in place of `1.0.1-preview0001` -- a real version, on the public
+  Gallery, that cannot be deleted, and a version line that was never chosen. There is no gate
+  behind this one: the rule about what you type IS the control.
+
 ---
 
 ## publish-on-merge
@@ -6951,6 +7081,35 @@ tags.
   under "The tag after each publish is the mechanism, not bookkeeping"), not something the offline
   suite runs: the suite plays the rebuilt artefact.
 
+#### CLAUDE.md text for the-tag-step-tags-only-the-build-that-was-published
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **The tag step tags only the commit whose tested build IS the package on the Gallery (A16,
+  BL-114).** On every run but a `v` tag run it first runs `PublishArtefact.ps1 -Compare`, which
+  reads the package back with `Save-PSResource` and compares it with the run's tested artefact,
+  file by file and SHA-256 by SHA-256; a different build, or a read that fails, refuses the step
+  before anything is tagged or released. So does a tag that already names another commit:
+  `gh release create` ignores `--target` for an existing tag, so a preview tag pushed by hand onto
+  the wrong commit would otherwise receive the release. Before this guard, a publish that no tag
+  followed made the NEXT merge compute the same version, skip the publish and tag ITS OWN commit
+  over the previous commit's package. Now:
+  - **A publish whose tag step failed, or whose publish step failed although the upload arrived:**
+    re-run the FAILED job of that same run. It reuses the tested artefact, matches and tags, as
+    the re-run after the Gallery's 500 on 2026-10-08 did.
+  - **A run that was refused** (a later merge whose build differs, carrying the same version; one
+    whose build is byte-identical IS the package and is tagged): push the missing tag by hand onto
+    the commit that published the version, then re-run ALL jobs of the newest refused run, which
+    counts up from that tag and publishes it. A re-run of only its failed jobs reuses its own
+    build and is refused again. The refusal message names the steps. A preview tag pushed onto the
+    wrong commit is named in either refusal -- by the tag check when the run's own build is the
+    package, and in the comparison's repair text otherwise: delete it with
+    `git push origin :refs/tags/v<version>` before tagging the right commit.
+  - **Never loosen the comparison to turn a refused run green.** A rebuild of the published commit
+    on a later day is a different build too (the release notes carry the build date), so
+    re-running ALL jobs of the run that published is refused as well; re-run only its failed jobs
+    instead.
+
 ### The published version comes from the MANIFEST, not from GitVersion
 
 `Publish-PSResource` publishes the version the manifest carries, and that string is not always
@@ -7186,6 +7345,45 @@ under `source/` after the close-out then REPLACES the sentence, since its openin
 true the moment the module changes; a note added after the sentence would publish both. The gate
 side of all this -- the body floor, the two close-out checks, and why the built notes are now
 compared whole instead of by a 400-character tail -- is under [#changelog-budget](#changelog-budget).
+
+### CLAUDE.md text for publish-on-merge
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **Publishing lives in `.github/workflows/build-and-test.yml`, in its `publish` job.** That job
+  is the only thing in this repository that can publish. `./build.ps1 -Tasks publish` is
+  deliberately undefined and must stay that way, so there is no local publishing path at all. Do
+  NOT restore Sampler's `Publish_Release_To_GitHub` / `publish_module_to_gallery` tasks in
+  `build.yaml`; the measured reasons are in that file's comment and in
+  `Why: docs/development/rationale.md#publish-on-merge`.
+
+- **The publish job tags every publish, and the tag is load-bearing.** `GitVersion.yml` runs
+  `mode: ContinuousDelivery`, where the preview counter advances on a TAG and not per commit:
+  measured, two merges with no tag between them build the SAME version: the second run finds that
+  version already on the Gallery and skips its publish, since a version cannot be published twice,
+  and its tag step tags it only when its tested build is the package already there (below).
+  `Why: docs/development/rationale.md#publish-on-merge`
+
+- **No approval stands between a merge or a `v` tag and the Gallery** (Philip's decision,
+  2026-09-23). The `Entra RBAC` environment has no required reviewers: it scopes `GALLERYAPITOKEN`
+  to the `publish` job and admits only branch `main` and the stable `v<X.Y.Z>` tag patterns. The
+  gate for a preview is the pull request and its required checks; the gate for a full release is
+  the tag, which only the `Stable Version` tag ruleset's bypass list can create, move or delete.
+  Both closures are repository SETTINGS on purpose: a tag push runs the workflow file at the tagged
+  commit, so a check in the workflow is removed by the same commit that abuses it. Never widen an
+  environment tag pattern past what the ruleset covers -- every pattern starts with `v` and admits
+  no hyphen, which is why `v*` was removed. Accepted residual: whoever can merge a pull request can
+  publish a preview, until `Require approvals` is switched on with a second reviewer.
+  `Why: docs/development/rationale.md#publish-on-merge`
+
+- **The publish job refuses a version its ref does not call for**, straight after the artefact is
+  verified and before anything is published: on a `v` tag the built version must equal the tag
+  exactly and the tagged commit must be on `main`; on `main` the build must carry a prerelease
+  label; any other ref is refused. It guards against MISTAKES, not an adversary -- the gate stays in
+  the settings, since a changed workflow writes the step away. **A refused or misplaced stable tag
+  stays where it is**, and nothing removes it for you: someone on the bypass list deletes it with
+  `git push origin :refs/tags/v<X.Y.Z>` and, for a misplaced one, pushes it again on the `main`
+  commit it was meant for. `Why: docs/development/rationale.md#publish-on-merge`
 
 ## directory-role-assignments
 
@@ -12522,3 +12720,23 @@ The Sampler test task measures coverage against the **built** module output, not
 run `-Tasks build` before `-Tasks test` after changing source files -- and never build while the
 gate is running.
 
+## publishing
+
+This section records the wording CLAUDE.md carried, before it was cut to the rules, for the Publishing rules that link no other anchor.
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **A merge that changes only documentation publishes a new preview too.** The workflow has no
+  path filter and must not be given one. Accepted in Decision 4 -- a preview per merge is the
+  price of the merge-to-main trigger, not a defect to be filtered away.
+
+1. Push `v<X.Y.Z>` on the `main` tip, once that commit's four required checks are green. Only the
+   `Stable Version` ruleset's bypass list can create that tag -- as measured on 2026-10-08, the
+   Repository admin role and the user PhilipHaglund -- and the push IS the release decision: nothing
+   asks for an approval after it. A tag outside the `Entra RBAC` environment's patterns (a major of
+   10 or more, or a minor or patch of 100 or more) is refused by the environment, visibly, and
+   publishes nothing; the repair is a new pattern the ruleset also covers, never a return to `v*`.
+
+2. Make the close-out the FIRST merge after the tag, exactly as the **close-out after a stable
+   release** rule under **CHANGELOG and Version** describes. The invariant to check it against is
+   `git show v<X.Y.Z>:CHANGELOG.md` -- the dated section must say what that tag actually shipped.
