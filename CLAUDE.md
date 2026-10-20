@@ -1081,16 +1081,15 @@ hyphens) for em-dash contexts in comments and help text, and straight quotes `'`
 function. The wrapper owns bearer-token scrubbing, ACRS claims-challenge retry, token-rejected retry
 and structured error conversion. `Why: docs/development/rationale.md#graph-wrapper`
 
-`Connect-MgGraph -Environment` is passed only when the session's cloud is not `Global` (the
-public-cloud path stays byte-identical); the environment name comes from `Get-OERCloudEndpoint`,
-never a literal. `Why: docs/development/rationale.md#sovereign-clouds`
+`Connect-MgGraph -Environment` is passed only when the session's cloud is not `Global`; the
+environment name comes from `Get-OERCloudEndpoint`, never a literal.
+`Why: docs/development/rationale.md#sovereign-clouds`
 
-**PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint.** All seventeen call sites, in
-twelve source files, route through the private `Get-OERPimGroupsGraphPath`, which owns the version
-constant: never hardcode `beta/` at a call site, change the constant in the helper.
-`tests/Unit/Private/Get-OERPimGroupsGraphPath.Tests.ps1` names every one of those files and fails
-when a new caller is not added to its list. The eligibility paths and the four policy paths migrate
-as ONE unit. Beta availability in US Government and China clouds is not established -- a standing
+**PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint.** Every call site routes
+through the private `Get-OERPimGroupsGraphPath`, which owns the version constant: never hardcode
+`beta/` at a call site, change the constant in the helper.
+`tests/Unit/Private/Get-OERPimGroupsGraphPath.Tests.ps1` holds the list of those files. The
+eligibility paths and the four policy paths migrate as ONE unit. Beta availability in US Government and China clouds is not established -- a standing
 risk, not a bug. `Why: docs/development/rationale.md#pim-beta-pin`,
 `docs/development/rationale.md#sovereign-clouds`
 
@@ -1108,39 +1107,30 @@ PIM-for-Groups `beta` constant only, and a directory-role call site must not bor
 token as a SecureString; the wrapper sends it directly, materializing the plaintext only at the
 request boundary and clearing it in a `finally`. The ARM host is read from the session's cloud
 (`Get-OERCloudEndpoint`'s `ArmResource` field via `-Environment`), never hardcoded to public-cloud
-ARM; a state without `ArmResourceUrl` takes its cloud's ARM host from `Get-OERCloudEndpoint`.
-`Invoke-OERArmRequest` keeps `https://management.azure.com` as a documented fallback for a call made
-before any auth state exists -- do not delete it. The wrapper never sends a request without an ARM
-token: it refuses it after its two gates, before the send, with the existing
-`ArmTokenAcquisitionFailed`, so the no-state fallback is refused too.
-`Why: docs/development/rationale.md#arm-requests`
+ARM. `Invoke-OERArmRequest` keeps `https://management.azure.com` as a documented fallback for a call
+made before any auth state exists -- do not delete it. The wrapper never sends a request without an
+ARM token: it refuses it with the existing `ArmTokenAcquisitionFailed`. The token is materialized
+only after the wrapper's last gate. `Why: docs/development/rationale.md#arm-requests`
 
-A 429, and a 503 carrying `Retry-After`, are retried with a bounded backoff whose constants mirror
-the Graph wrapper's name for name (`ThrottleWaitBudgetSeconds` 300 per request/page,
-`CallDeadlineSeconds` 900 per call, `ThrottleRetryHardCap` 10, single waits clamped to 1..120 s). The
-bounds are enforced at the decision to wait, never by stopping a paging loop part-way -- which is
-also the LIMIT of what `CallDeadlineSeconds` bounds: it caps a THROTTLED call only, and a
+The throttle retries (a 429, and a 503 carrying `Retry-After`; the constants and their values are
+under the Why link) are bounded at the decision to wait, never by stopping a paging loop part-way --
+which is also the LIMIT of what `CallDeadlineSeconds` bounds: it caps a THROTTLED call only, and a
 never-throttled `-All` walk never consults it. The two transports are deliberately MIRRORED, never
-shared -- their error shapes differ, and a helper covering both would fit neither; correct a wrong
-comment in both files together. The ARM `Retry-After` header is read in exactly one place,
-`Get-ArmRetryAfterHeaderValue`, and the header collection never leaves the wrapper. That is a
-convention kept by review, not a machine-checked rule: no gate in `tests/QA/sourcehygiene.tests.ps1`
-enforces it, and none should be added that checks something weaker than the rule (a gate green on a
-second header read elsewhere is guard-shaped but inert). Keep it by review.
+shared; correct a wrong comment in both files together. The ARM `Retry-After` header is read in
+exactly one place, `Get-ArmRetryAfterHeaderValue`, and the header collection never leaves the
+wrapper. That is a convention kept by review, not a machine-checked rule, and no gate should be
+added that checks something weaker than the rule. Keep it by review.
 `Why: docs/development/rationale.md#arm-requests`
 
 `roleDefinitionId` in a role assignment body is always the FULL ARM resource id, never a bare GUID.
 Pinned api-versions, paging and retry semantics: `Why: docs/development/rationale.md#arm-transport`;
 sovereign-cloud ARM endpoints: `Why: docs/development/rationale.md#sovereign-clouds`
 
-**`Get-OERManagementGroupParent` is the single owner of the Entities - List call**
-(`POST /providers/Microsoft.Management/getEntities`, api-version `2020-05-01`, `$view=GroupsOnly`,
-`-All`), which `Get-OERManagementGroup` sends at most once per list to fill the parent of every
-listed group (the Management Groups - List answer carries none). The inventory walk
-(`Resolve-OERInventoryScopeTree`) lists management groups through `Get-OERManagementGroupList`,
-converts them itself and never calls `Get-OERManagementGroup` without `-Name`, so the parent read
-cannot add a failure mode to an export. `Get-OERManagementGroupList` is NOT the single owner of the
-list call (`Resolve-OERScope` still sends its own): never describe it as one.
+**`Get-OERManagementGroupParent` is the single owner of the Entities - List call.** The inventory
+walk (`Resolve-OERInventoryScopeTree`) lists management groups through `Get-OERManagementGroupList`,
+converts them itself and never calls `Get-OERManagementGroup` without `-Name`.
+`Get-OERManagementGroupList` is NOT the single owner of the list call (`Resolve-OERScope` still
+sends its own): never describe it as one.
 `Why: docs/development/rationale.md#management-group-parents`
 
 ---
@@ -1223,65 +1213,19 @@ only if a `Justification` string is provided. Never suppress a rule that hides a
   "fix" a bare `-Times 0`, and never justify adding `-Exactly` at zero by calling the bare form
   vacuous. `Why: docs/development/rationale.md#bearer-scrub-tests`
 - **Eight rules in this file are machine-checked** by `tests/QA/sourcehygiene.tests.ps1` (ten
-  `Describe` blocks in total); the tripwire rule is checked separately, by
+  `Describe` blocks in total): encoding, bearer-scrub-first catches, the single owners
+  (`ConvertTo-OERDuration`, `Get-OERCloudEndpoint`, `Test-OERDeclaredProperty`/
+  `Test-OERDeclaredNull`), the `suffix.ps1` mirroring, no Az cmdlet that could establish an Az
+  context, and the transport gates. The tripwire rule is checked separately, by
   `tests/QA/testhygiene.tests.ps1`. When a new catch trips the scrub gate, add the scrub -- do not
-  add an exemption. The gate holds:
-  - ASCII/BOM encoding; bearer-scrub-first in every transport-reaching catch;
-    `ConvertTo-OERDuration` as the sole int-to-ISO encoder; the `suffix.ps1`/dev-mode-psm1 mirroring;
-    `Get-OERCloudEndpoint` as the sole owner of the cloud-to-endpoint table; no Az cmdlet that could
-    establish or mutate an Az PowerShell context (see **Dependencies**);
-  - `Test-OERDeclaredProperty`/`Test-OERDeclaredNull` as the single owners of the apply engine's
-    declared-value rule: no direct read of a node's `PSObject.Properties.Name` in a
-    `Sync-OERStructure*` handler outside the named, reasoned allowlist, flagged on the read itself
-    and not on the `-contains`-family operator that might consume it;
-  - the transport gates (the rules and their owners: **Authentication Architecture** and **Code
-    Style**). Call sites: `Get-MgContext` only in `Get-OERGraphSessionFingerprint`;
-    `Lock-OERSignIn`, `Unlock-OERSignIn` and `Register-OERSignInIdentity` only in
-    `Initialize-OERAuth`; `Get-OERSignInRefusal` only in the two transport wrappers and
-    `Initialize-OERAuth` (its one call there, before `Lock-OERSignIn`, is placed by its unit tests;
-    this gate checks the file only); `Get-OERSignInSupersession` only in the two transport wrappers;
-    `Get-OERSignInIdentity` only in `Register-OERSignInIdentity`, `Get-OERSignInSupersession` and
-    `Checkpoint-OERSignIn`; `Invoke-MgGraphRequest` only in the Graph wrapper; `Invoke-WebRequest`
-    only in the ARM wrapper; `Invoke-RestMethod` only in `Resolve-OERTenantDomain`, and
-    `Resolve-OERTenantDomain` only in `Initialize-OERAuth`; `Set-OERSessionUncertain` only in
-    `Initialize-OERAuth`, `Connect-OER` and `Disconnect-OER`; `Get-OERDocumentTenantMismatch` only in
-    `Invoke-OERStructure`; `Get-OERSubscriptionHomeTenant` only in `Resolve-OERInventoryScopeTree`,
-    `Invoke-OERStructure` and `Get-OERInventory`; every listed owner really calling it;
-  - the tenant lookup's one `Invoke-RestMethod` call carrying only `-Uri`, `-Method`, `-TimeoutSec`
-    and `-ErrorAction`, with no splat;
-  - `$script:_OERSessionUncertain` read and written only in `Set-OERSessionUncertain`, and in
-    `Initialize-OERAuth` exactly three `Set-OERSessionUncertain` calls: the statement directly after
-    the `Lock-OERSignIn` assignment and the statement directly after each
-    `Register-OERSignInIdentity`;
-  - the name `ReclaimGraphSession` (a parameter, a prefix of it on an `Initialize-OERAuth` call, a
-    variable, a member, a hashtable key, any string, or a prefix of it as a key the calling
-    function writes into a hashtable it splats into `Initialize-OERAuth`) only in `Connect-OER` and `Initialize-OERAuth`, both really naming it, and
-    no file under `source/` calling `Connect-OER`, which passes it on its own;
-  - every `Register-OERSignInIdentity` call the statement directly after an `Unlock-OERSignIn` call
-    with the same `-Invocation`, as many of the one as of the other;
-  - every send a wrapper makes in the body of a try that holds exactly one call path (Graph: one
-    `Invoke-MgGraphRequest` and one `Invoke-GraphAttempt`; ARM: one `Invoke-WebRequest`), that try
-    preceded, in the very block that holds it and in this order, by its session gate (Graph only),
-    its latch gate and its supersession gate, each a throw followed by a return, with no
-    `Initialize-OERAuth` or `Start-Sleep` between the earliest gate and any request, the ARM bearer
-    token (`.ArmToken` or `['ArmToken']`) materialized only after the last gate, and the transport
-    statements counted exactly (three Graph, one ARM) so a new send path cannot escape the scan;
-  - every `Initialize-OERAuth` call standing directly in its file's own function (in the two
-    wrappers, in `Invoke-GraphSingle` and `Invoke-ArmCallWithRefresh`), never in a nested function or
-    a scriptblock inside it;
-  - every `-TenantId` an internal call passes on to a command that signs in (`Initialize-OERAuth` and
-    every module function that reaches it) -- a parameter whose name is a prefix of it, or a
-    `TenantId` key the calling function writes into a splatted hashtable -- a non-empty literal or a
-    variable written under an `if` on that same variable, with `Connect-OER`'s call and the three
-    transport refreshes as named exemptions that must each match exactly one site; and no positional
-    argument written on any `Initialize-OERAuth` call, after a switch included (`-Verbose` and
-    `-Debug` among them).
-
-  Two further gates in the same file check rules stated only in `docs/development/rationale.md`
-  (every ARM api-version is documented under `#arm-transport`) or in no rule at all (every
-  `Verb-OER...` token in `source/` resolves to a real function).
+  add an exemption. Call-site rules the gate holds that no other section states: `Get-MgContext`
+  only in `Get-OERGraphSessionFingerprint`; `Get-OERSignInRefusal` only in the two transport
+  wrappers and `Initialize-OERAuth`; `Get-OERSignInIdentity` only in `Register-OERSignInIdentity`,
+  `Get-OERSignInSupersession` and `Checkpoint-OERSignIn`; `Invoke-WebRequest` only in the ARM
+  wrapper; no file under `source/` calls `Connect-OER`; no positional argument on any
+  `Initialize-OERAuth` call (`-TenantId` binds by position 0). What the gate holds in detail, what
+  it does not see, how it counts, and the two further gates in the same file:
   `Why: docs/development/rationale.md#static-source-gates`
-
 ---
 
 ## SECURITY (Hard Rules - High Privilege)
