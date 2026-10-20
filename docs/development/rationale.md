@@ -12650,6 +12650,20 @@ in the owner, whose shape R-6 fixed at `Rule` and `Message`: a rule added to the
 named by its `Rule` name, never left out of the reason. (c) The directory role sections are not
 affected: their `/` is the Microsoft Entra tenant scope.
 
+#### CLAUDE.md text for undeclarable-scope (step 11c)
+
+Moved from CLAUDE.md in step 11c (BL-160, A26): the mechanics; the rule stays in CLAUDE.md.
+
+The text stands in full under the older CLAUDE.md copy at
+[#role-assignment-key](#role-assignment-key) (its heading "CLAUDE.md text for role-assignment-key"),
+which holds the `Get-OERScopeSpellingProblem` bullet as CLAUDE.md worded it before this step. What
+moved out of the bullet, in short: the validator's two functions, `Add-ScopeSlashFinding` and
+`Add-ScopeSegmentFinding`, add one Error per problem the owner returns and decide no spelling;
+`Get-OERInventory` writes one warning and one `Omnicit.EntraRBAC.UndeclarableScope` record per call;
+`Get-OERSubscriptionHomeTenant` resolves and reads nothing for a raw scope it rates `Undecided`, so an
+`Export-OERInventory -Scope` spelled so is unread (the paragraph "The export leaves the row out"
+above holds the rest).
+
 ## restricted-unit-pim
 
 Sprint 11 step 6 (BL-134, ruling R-7) made the export name, and the validator warn about, a group that
