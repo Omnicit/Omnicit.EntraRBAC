@@ -1130,10 +1130,17 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   declared-only write or a warning in its place. In `Set-OERGroupPimPolicy` the two duration reads and
   the two reconcile reads of the MFA / authentication context pair publish a thrown read as itself,
   the approval rule read refuses a thrown read as `ApprovalRuleReadFailed`, and all five refuse a read
-  that answers without the value with `PimRuleValueUnknown`, before `ShouldProcess` and every PATCH.
-  The put-back read of the pair's first half is the one exception by design: it decides no written
-  value, so its failure only loses the put-back (it warns before any PATCH and writes no default). The
-  apply engine reaches the pair reads when its diff binds one half, and its row is then `Failed`.
+  that answers without the value with `PimRuleValueUnknown`, before `ShouldProcess` and every PATCH --
+  for the approval rule only a read that returns NO rule: a rule with no stage still takes
+  `New-OERPimRuleSet`'s defaults, the documented "no stage yet" case. Two reads only warn, by design,
+  since neither decides a written value: the put-back read of the pair's first half, whose failure only
+  loses the put-back (it warns before any PATCH and writes no default), and the authentication context
+  validation read, whose failure skips the validation. The apply engine reaches the pair reads when its
+  diff binds one half, and its row is then `Failed`. It never reaches the duration reads: its diff
+  binds both halves of an expiration pair, and when the half the document leaves out has no live value
+  (and the declared half does not already match), `Resolve-OERGroupPimPolicyChange` names the pair in
+  `UnknownLiveValues`, binds neither half, and `Sync-OERStructureGroup` refuses that access type with
+  `PimRuleValueUnknown` before `ShouldProcess` -- never a default in its place.
   Known and NOT fixed, outside this cmdlet (unmeasured findings of the step's audit): a successful read
   that lacks a key makes `Set-OERAccessPackageAssignmentPolicy` write the body builder's default, and
   an empty Azure Resource Manager body makes `Set-OERResourceGroup` send an empty location.

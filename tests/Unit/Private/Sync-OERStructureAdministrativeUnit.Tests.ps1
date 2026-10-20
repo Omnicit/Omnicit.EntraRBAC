@@ -2409,7 +2409,7 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
                 }
             }
 
-            It '9: control: with the map readable, the same document adds the declared template id and prunes the live object id it does not match (so the writes the stop prevents are real)' {
+            It '9: control: with the map readable, the same document matches the declared template id to the live object id and reports the scoped role Unchanged, adding and pruning none (a map taken as null would add the one and prune the other)' {
                 InModuleScope $script:moduleName {
                     function Invoke-SyncAuViaCaller {
                         [CmdletBinding(SupportsShouldProcess)]

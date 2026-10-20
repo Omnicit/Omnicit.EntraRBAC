@@ -653,7 +653,7 @@ schema.json. Any valid name works; these are common least-privilege choices:
 - expiration (assignmentPolicies[]): set exactly ONE of durationInDays, durationInHours, or
   expirationDateTime; setting more than one is a validation error. Use durationInHours for
   short-lived access (e.g. 8 for a JIT session); durationInDays for longer grants; expirationDateTime
-  for a hard expiry date (ISO 8601, e.g. "2026-12-31T00:00:00Z").
+  for a hard expiry date (ISO 8601 date, e.g. "2026-12-31").
 - notificationsDisabled: when true, suppresses approval-workflow email notifications for the policy.
 - Round-trip fidelity: an omitted key means "leave the live value alone" for description and
   requestorScope on an assignment policy. Declare a key only when you intend the document to own it.

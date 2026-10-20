@@ -949,26 +949,34 @@ On PowerShell 7.2 to 7.4 the JSON reader turns a string that holds an ISO 8601 d
 seconds, such as an assignment policy's `expirationDateTime` of `2027-01-01T00:00:00Z`, into a date,
 so the text written is lost: each such value is an `Error` at its path, and `Invoke-OERStructure`
 refuses the document. Run both on PowerShell 7.5 or later for such a document; a date alone, such as
-`2026-07-01`, or a time without seconds, such as `2026-07-01T10:00`, stays a string. A `displayName` that is not a string is an `Error` too, and so is a group `template` that
-cannot be turned into a name with its `tokens`, which used to be that group's `Failed` row and now
-refuses the whole document before anything is read or written. A token's value is inserted as text,
-so a `$` in it stays as written.
+`2026-07-01`, or a time without seconds, such as `2026-07-01T10:00`, stays a string. A `displayName`
+that is not a string is an `Error` too, and so is a group `template` that cannot be turned into a
+name with its `tokens`, which used to be that group's `Failed` row and now refuses the whole document
+before anything is read or written. A token's value is inserted as text, so a `$` in it stays as
+written.
 
 `Invoke-OERStructure` writes nothing for a policy whose live read fails or returns nothing: a
 `roleManagementPolicies` entry, or a group's `pimPolicy` for that access type, is `Failed` with the
 read's error (`PolicyNotFound` or `PimPolicyNotFound` for an empty answer), also under `-WhatIf`. A
-PIM policy change that empties an approver side while no other approver remains is `Failed` with
-`ApproverRequired` in a `-WhatIf` plan, as in a run, and so, for a directory role or a group policy,
-is `requireApproval` true over a live approval stage that names nobody. `-Prune` never removes
-a group's last remaining owner, nor its last remaining user owner, which Microsoft Graph refuses to
-remove even while a service principal is an owner (measured); the row is `Skipped`. A section set to
-`null` is not declared and gives no row. In a runspace with no host of its own, such as a thread job,
-a run that would ask for confirmation is refused with `ConfirmationUnavailable` before it signs in;
-run it with `-Confirm:$false` or `-WhatIf`. In another host that cannot show the prompt, an entry
-stopped by it is `Failed`, with a row that says the host cannot show the confirmation prompt and that
-nothing was written. A run within about 30 seconds of a write can send the same update again, since
-Microsoft Graph can still answer a read with the value from before the write; the update changes
-nothing more, but its row reads `Updated` again.
+group's `pimPolicy` access type that declares one half of an expiration pair alone
+(`allowPermanentEligibility` or `eligibleDurationDays`, `allowPermanentActive` or
+`activeDurationDays`) is `Failed` the same way, with `PimRuleValueUnknown`, when the live policy
+gives no value for the other half, or a duration that is not a whole number of days, and the
+declared half does not already match; declare both halves. A PIM policy change that empties an
+approver side while no other approver remains is `Failed` with `ApproverRequired` in a `-WhatIf`
+plan, as in a run, and so, for a directory role or a group policy, is `requireApproval` true over a
+live approval stage that names nobody. `-Prune` never removes a group's last remaining owner, nor its
+last remaining user owner, which Microsoft Graph refuses to remove even while a service principal is
+an owner (measured); the row is `Skipped`. An owner the same run adds counts as one standing, and as
+a user owner when the document names it by user principal name, so replacing a user owner with one
+named that way completes in one run. A section set to `null` is not declared and gives no row. In a
+runspace with no host of its own, such as a thread job, a run without `-WhatIf` or `-Confirm:$false`
+(or a `$ConfirmPreference` of `None`) is refused with `ConfirmationUnavailable` before it signs in,
+also one that would change nothing; run it with `-Confirm:$false` or `-WhatIf`. In another host that
+cannot show the prompt, an entry stopped by it is `Failed`, with a row that says the host cannot show
+the confirmation prompt and that nothing was written. A run within about 30 seconds of a write can
+send the same update again, since Microsoft Graph can still answer a read with the value from before
+the write; the update changes nothing more, but its row reads `Updated` again.
 
 `Test-OERStructure -NamingStandard` checks the names in a document, or in an exported
 `inventory.json`, against a naming standard file. A name gets one `Warning` for each rule it breaks,
@@ -1053,7 +1061,8 @@ no update. It refuses, with `UnknownAllowedTargetScope` and also under its own `
 without `-RequestorScope` of a policy whose `allowedTargetScope` reads as `unknownFutureValue`:
 Microsoft Graph names a scope this module cannot read that way, and an update that sent the
 placeholder back was measured to store it as the policy's scope. Pass `-RequestorScope` to set the
-scope; `Invoke-OERStructure` reports such a policy `Failed`. Given `-DisplayName` and no other
+scope; `Invoke-OERStructure` reports such a policy `Failed` whatever its entry declares, a
+`requestorScope` included, since the engine has no such escape. Given `-DisplayName` and no other
 property to update, it renames the policy when the name differs from the live one, carrying
 everything else forward, and reports `NothingToUpdate` after one read when it is the live name,
 compared ignoring case. A `-WhatIf` plan reports an access package declared in a catalog the same

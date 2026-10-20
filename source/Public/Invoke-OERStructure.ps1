@@ -150,7 +150,14 @@ function Invoke-OERStructure {
     way for each access type (PimPolicyNotFound for an empty answer), and the other access type is
     applied as usual. A -WhatIf plan reports the same Failed row. Before this, such a read could make
     every declared field look changed, and the write could replace live values the document never
-    declared. A group's pimPolicy change that sends only one half of the multi-factor authentication /
+    declared. A group's pimPolicy read that answers can still give no value for the half of an
+    expiration pair the document leaves out -- allowPermanentEligibility or eligibleDurationDays
+    declared alone, or allowPermanentActive or activeDurationDays alone, over a policy whose rule
+    for the other half is absent or carries no value, or whose duration is not a whole number of
+    days. That access type is then reported Failed with PimRuleValueUnknown, also under -WhatIf,
+    and nothing is written for it, unless the declared half already matches its live value (then
+    nothing is sent): no default is sent in place of the unknown half. Declare both halves to set
+    them. A group's pimPolicy change that sends only one half of the multi-factor authentication /
     authentication context pair -- an authentication context to enable, or an activationEnablement
     that holds MultiFactorAuthentication -- makes Set-OERGroupPimPolicy read the other half itself;
     when that read fails or returns no rule, the access type is reported Failed with the read's error
@@ -182,13 +189,15 @@ function Invoke-OERStructure {
     -WhatIf plans the run or -Confirm:$false, or a $ConfirmPreference of None, turns the prompt off. A
     host with no user interface cannot ask. In the Default Host -- a runspace made with
     [powershell]::Create() without a host of its own, or a thread job (Start-ThreadJob) -- a document
-    whose run would prompt is refused with ConfirmationUnavailable once it has been read and validated,
-    before the sign-in: nothing is signed in to, read or changed for it, and the next piped document is
-    handled the same way. Another host may fail only when it asks -- pwsh -NonInteractive, or a process
-    whose standard input is at its end -- which cannot be told beforehand: there an entry whose handler
-    stops at that prompt is reported Failed with a Detail saying that the host cannot show the
-    confirmation prompt and that nothing was written for the entry. Run the command with -Confirm:$false
-    to apply without prompts, or with -WhatIf to plan.
+    run without -WhatIf or -Confirm:$false (or a $ConfirmPreference of None) is refused with
+    ConfirmationUnavailable once it has been read and validated, before the sign-in, also one that
+    would change nothing, since the refusal is decided before anything is read: nothing is signed in
+    to, read or changed for it, and the next piped document is handled the same way. Another host may
+    fail only when it asks -- pwsh -NonInteractive, or a process whose standard input is at its end --
+    which cannot be told beforehand: there an entry whose handler stops at that prompt is reported
+    Failed with a Detail saying that the host cannot show the confirmation prompt and that nothing was
+    written for the entry. Run the command with -Confirm:$false to apply without prompts, or with
+    -WhatIf to plan.
 
     Prune mode (-Prune): passed through to every handler. Each handler gates its prune pass
     with $Caller.ShouldProcess, honouring -WhatIf. Prune is child-scope only -- no handler ever
@@ -465,7 +474,12 @@ function Invoke-OERStructure {
     prompt and no request. A -WhatIf plan counts each removal it reports as done, so it holds back the
     same owner a run does; a removal declined at the confirmation prompt, or one that fails, leaves
     its owner standing. A service principal owner, and an owner withheld for PIM for Groups, count as
-    owners still standing, and a withheld user owner as a user owner.
+    owners still standing, and a withheld user owner as a user owner. An owner the same run adds
+    counts as one standing too, and as a user owner when the document names it by user principal name
+    (an owner named by object id names no type, so it counts for the last-owner rule only), so a
+    document that replaces a user owner with one named that way completes in one run. A -WhatIf plan
+    counts an owner it reports it would add; an add that fails, or one declined at the confirmation
+    prompt, counts nowhere.
 
     A group the document creates into an administrative unit (a groups[] entry's
     administrativeUnit) is not removed from that unit by the run that creates it. administrativeUnit
@@ -632,12 +646,13 @@ function Invoke-OERStructure {
         # or a $ConfirmPreference of None, turns the prompt off -- the same two preferences ShouldProcess
         # reads. A host with no user interface cannot ask: its ShouldProcess throws at the first change. The
         # Default Host (a [powershell]::Create() runspace, a thread job) is the one such host that can be told
-        # beforehand, and Test-OERHostCanConfirm owns that decision, so a run that would prompt there is
-        # refused here, after the document is read and validated and before the ARM decision, the tenant
-        # comparisons and every sign-in step: nothing is signed in to, read or written. The next piped
-        # document is handled the same way. A host that fails only when it asks (pwsh -NonInteractive,
-        # standard input at its end) cannot be told beforehand; the two handler-error rows below name the
-        # cause instead (Test-OERConfirmPromptFailure).
+        # beforehand, and Test-OERHostCanConfirm owns that decision, so there a run without -WhatIf or
+        # -Confirm:$false (or a $ConfirmPreference of None) is refused here -- also one that would change
+        # nothing, since nothing has been read yet -- after the document is read and validated and before
+        # the ARM decision, the tenant comparisons and every sign-in step: nothing is signed in to, read
+        # or written. The next piped document is handled the same way. A host that fails only when it
+        # asks (pwsh -NonInteractive, standard input at its end) cannot be told beforehand; the two
+        # handler-error rows below name the cause instead (Test-OERConfirmPromptFailure).
         if (-not $WhatIfPreference -and $ConfirmPreference -ne 'None' -and -not (Test-OERHostCanConfirm)) {
             Write-CmdletError -Message ([System.Exception]::new('Invoke-OERStructure asks for confirmation before each change (ConfirmImpact High), and this host cannot show a confirmation prompt, so nothing was read or changed; run it with -Confirm:$false to apply without prompts, or with -WhatIf to plan.')) `
                 -ErrorId 'ConfirmationUnavailable' -Category InvalidOperation -TargetObject $DocumentTarget -Cmdlet $PSCmdlet

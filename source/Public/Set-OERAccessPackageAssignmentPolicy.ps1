@@ -50,7 +50,8 @@ function Set-OERAccessPackageAssignmentPolicy {
     call is refused with a non-terminating UnknownAllowedTargetScope error (category InvalidData) after the
     live policy is read once and before anything is sent, also under -WhatIf, and that holds for a rename
     too. Pass -RequestorScope to set the scope, and the update is sent as usual; apply the same policy
-    through Invoke-OERStructure and its row is Failed for the same reason, with nothing written.
+    through Invoke-OERStructure and its row is Failed for the same reason whatever its entry declares,
+    a requestorScope included, since the engine has no such escape, with nothing written.
 
     .PARAMETER Id
     The assignment policy id (GUID) to update.

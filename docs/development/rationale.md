@@ -3027,18 +3027,41 @@ read that answers without the value the call needs -- no rule at all, or a durat
 refusal), category `InvalidData`, target the policy id, with a message that names the rule and the
 parameter that supplies the value (`-EligibleDuration`, `-ActiveDuration`, or both
 `-AuthenticationContextId` and `-ActivationEnabledRules`), or, for the approval rule, that no parameter
-supplies the stage settings, so no call that changes approval can be made without that rule (the
-approval rule's empty answer was refused in the step's texts round, found by its review). An
-enablement rule whose `enabledRules` is an empty list is an answer (no MFA), not an empty read. The
-four warnings and the dead default branches of the duration build are gone. Unchanged: the
-authentication context validation read, which only validates, and the put-back read of the first half
+supplies the stage settings, so no call that changes approval can be made without that rule. For the
+approval rule only a read that returns no rule is refused: a rule with no stage still takes
+`New-OERPimRuleSet`'s defaults, the documented "no stage yet" case. An enablement rule whose
+`enabledRules` is an empty list is an answer (no MFA), not an empty read. The four warnings and the
+dead default branches of the duration build are gone. Unchanged: the authentication context
+validation read, which only validates and warns when it fails, and the put-back read of the first half
 ([#pim-rule-pair-put-back](#pim-rule-pair-put-back)), which by design only loses the put-back when it
 fails: it warns before any PATCH and writes no default. The A24 Describe in
-`tests/Unit/Public/Set-OERGroupPimPolicy.Tests.ps1` holds every read, thrown and empty, in a run, under
-`-WhatIf` and in a script with no `try`.
+`tests/Unit/Public/Set-OERGroupPimPolicy.Tests.ps1` holds the two duration reads and the two
+reconcile reads, thrown and empty, in a run, under `-WhatIf` and in a script with no `try`, and the
+approval rule read that returns no rule the same way; the approval rule read that throws
+(`ApprovalRuleReadFailed`) is held by the older Context `approval` of the same file, in a real run.
 
 **What the apply engine reaches.** `Resolve-OERGroupPimPolicyChange` always binds both halves of a
-duration pair, so the engine never reaches the two duration reads. It does reach the reconcile reads:
+duration pair or neither, so the engine never reaches the two duration reads. It takes the half the
+document leaves out from the live policy it read, and the final review of the step found that a read
+that succeeds can still give no value for it -- the rules list answered empty, the expiration rule
+absent, its `isExpirationRequired` missing, or a `maximumDuration` that is not a positive whole number
+of days (`ConvertFrom-OERDuration` gives `$null` for `PT36H`). The diff then filled that half with a
+default (not permanent, 365 or 180 days) and bound both, so `Set-OERGroupPimPolicy` sent the guess and
+its own refusal never ran (probes: `eligibleDurationDays` alone sent `AllowPermanentEligibility`
+`$false`, `allowPermanentEligibility` alone sent `EligibleDuration` 365). Now, when that half's live
+value is unknown and the declared half does not already match its known live value, the diff names
+the pair in `UnknownLiveValues` and binds neither half, and the handler refuses the access type before
+the approver check, the PIM-in-use question and `ShouldProcess`, in a run and under `-WhatIf` alike: a
+`Failed` row with a `PimRuleValueUnknown` record (category `InvalidData`, target the group name) that
+names the unknown value and says to declare both halves; the next access type runs as usual. A
+declared half that already matches sends nothing and is `Unchanged`, a known live value is used as
+before, and both halves declared are compared as before. Held by the Describe "the undeclared half of
+an expiration pair is never guessed" in `tests/Unit/Private/Resolve-OERGroupPimPolicyChange.Tests.ps1`,
+the Context "an undeclared half of an expiration pair whose live value is unknown refuses the access
+type" in `tests/Unit/Private/Sync-OERStructureGroup.Tests.ps1`, and the Describe "an undeclared half
+of an expiration pair whose live value is unknown is refused, in a script with no try above it" in
+`tests/Unit/Public/Invoke-OERStructure.Tests.ps1`. Cost if wrong: a document that declares one half
+over such a policy waits for the operator to declare both. It does reach the reconcile reads:
 when its own conflict check against the policy it read finds no conflict, the diff binds only the
 declared half -- an `authenticationContextId` alone, or an `activationEnablement` that holds
 `MultiFactorAuthentication` alone -- and the cmdlet then reads the other half itself. A failed or
@@ -11925,6 +11948,22 @@ counted as a user owner (the typed read carries one in a real tenant). Context "
 never removed, also while a service principal is an owner (BL-84, R-15)" in
 `Sync-OERStructureGroup.Tests.ps1` holds it. Cost if wrong: a removal Graph would have accepted waits
 for the operator.
+
+**An owner the same run adds counts as standing** (final review of the step, probe P1). The floors
+first counted only the owners the read found, so a document that swapped the user owner of a group
+with a service principal owner (live: one user and the service principal; declared: another user)
+added the new user and then refused to remove the old one as "the last remaining user owner", which
+was false: the new user stood, and Graph would have accepted the removal; before the user floor that
+swap completed in one run. A single owner replaced by another was held back the same way by the
+any-type floor, a flaw older than the user floor. Now an owner the add pass added counts in the
+any-type count, and in the user count when the declared-owner resolution knows it is a user -- a
+reference with an at sign, which `Resolve-OERStructurePrincipal` resolves as a user principal name.
+An owner named any other way, by object id
+for one, names no type, so it counts in the any-type count only: the conservative reading, which can still hold back
+the last user owner beside it. A `-WhatIf` plan counts an owner it reports "would add", as it counts a
+removal it reports; an add that failed, or one declined at the confirmation prompt, counts nowhere.
+Each owner is counted once by its id, so a reference declared twice cannot count twice. Cost if wrong:
+an owner added by object id beside the last user owner leaves that removal to a later run.
 
 ## unknown-allowed-target-scope
 

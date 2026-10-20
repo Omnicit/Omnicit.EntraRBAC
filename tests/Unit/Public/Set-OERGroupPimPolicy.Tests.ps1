@@ -2079,14 +2079,17 @@ $Results = @(
 }
 
 Describe 'Set-OERGroupPimPolicy: a failed or empty read that decides a written value refuses the call (Sprint 11 step 11, A24)' {
-    # Four reads the cmdlet makes itself decide a value it writes: the two expiration rules, read when a
-    # permanence switch is bound without its duration (their maximumDuration is sent back), and the two
+    # Five reads the cmdlet makes itself decide a value it writes: the two expiration rules, read when a
+    # permanence switch is bound without its duration (their maximumDuration is sent back), the two
     # halves of the MFA / authentication context pair, read when one half is bound without the other
-    # (the reconcile decides from them whether the other half is sent too). A failed read used to warn
-    # and send the parameter default, or the bound half alone, and an expiration rule that answered
-    # with no maximum fell back to the default without a word. Now a failed read is published as itself,
-    # and a read that answers without the value the call needs is refused with PimRuleValueUnknown --
-    # both before ShouldProcess and every PATCH, so -WhatIf shows them too, and nothing is sent, the
+    # (the reconcile decides from them whether the other half is sent too), and the approval rule, read
+    # when an approval parameter is bound (the stage settings no parameter supplies are sent back). A
+    # failed read of the first four used to warn and send the parameter default, or the bound half
+    # alone, and an expiration rule that answered with no maximum fell back to the default without a
+    # word. Now a failed read of those four is published as itself, and a read that answers without the
+    # value the call needs is refused with PimRuleValueUnknown -- for the approval rule only a read that
+    # returns no rule; its failed read keeps ApprovalRuleReadFailed, held by the older Context 'approval'
+    # -- all before ShouldProcess and every PATCH, so -WhatIf shows them too, and nothing is sent, the
     # other rules bound on the same call included (-ActivationMaxHours rides along to show that).
     # Defined here, in the discovery phase, since -ForEach is read then.
     $ReadCases = @(
