@@ -1413,6 +1413,8 @@ $RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OER
         @($Rows | Where-Object { $_ -like 'ROW:Failed:pimPolicy (member) not applied: could not read the live PIM-for-groups policy:*' }).Count | Should -Be 1
         @($Rows | Where-Object { $_ -like 'ROW:Skipped:would set pimPolicy (owner): *' }).Count | Should -Be 1
         $Rows.Count | Should -Be 2
+        # The read's own record reached the error stream, once, and no other error did, as in the run.
+        @($Run.Errors).Count | Should -Be 1
         @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @("ERRID:$ErrorId,Invoke-OERStructure")
         @($Logged | Where-Object { $_ -like 'POLICY SET*' }) | Should -BeNullOrEmpty -Because "the requests were:`n$($Logged -join "`n")"
         # The plan reached the host as 'What if:' lines for the owner change only.
@@ -6265,5 +6267,179 @@ $RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OER
         @($Run.Output | Where-Object { $_ -like 'ROW:*pimPolicy*' }) | Should -Be @('ROW:Updated:pimPolicy (member) set: authenticationContextId=c1')
         @($Run.Errors).Count | Should -Be 0
         @(Get-PrLoggedLine -Log $Log) | Should -Be @('GET Enablement_EndUser_Assignment', 'PATCH AuthenticationContext_EndUser_Assignment')
+    }
+}
+
+Describe 'Invoke-OERStructure directoryRoleManagementPolicies: approval required with no approver is refused before the gate, in a script with no try above it (BL-113)' {
+    # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere above
+    # it, as at a prompt, with the runspace's own error preference (Continue). The document declares
+    # requireApproval true and an empty users side; the live policy does not require approval and its
+    # approval stage names nobody, so Set-OERDirectoryRoleManagementPolicy would refuse the change with
+    # ApproverRequired. The handler refuses it first, before ShouldProcess, so the run and the -WhatIf plan
+    # report the same Failed row and the cmdlet is never called. The script installs its own fakes in ITS
+    # copy of the module scope -- the live policy is projected by the real converter from the rules -- and
+    # logs every policy read and write with AppendAllText, whose path is substituted into the text. In the
+    # control the live stage holds a group approver, so the scenario can tell a refusal from silence.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        function script:New-DaNoTryScenario {
+            param([string]$Log, [string]$Approvers, [string]$Mode)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERPrincipal -Value { [System.IO.File]::AppendAllText('#LOG#', "APPROVER LOOKUP`n"); throw 'no approver value should need resolving' }
+    Set-Item -Path function:script:Get-OERDirectoryRoleManagementPolicy -Value {
+        [CmdletBinding()]
+        param([string]$Role)
+        [System.IO.File]::AppendAllText('#LOG#', "POLICY GET $Role`n")
+        $Primary = @(#APPROVERS#)
+        $Rules = @(@{ id = 'Approval_EndUser_Assignment'; setting = @{ isApprovalRequired = $false; approvalMode = 'SingleStage'
+                    approvalStages = @(@{ approvalStageTimeOutInDays = 1; isApproverJustificationRequired = $true; primaryApprovers = $Primary; escalationApprovers = @() }) } })
+        ConvertTo-OERRoleManagementPolicy -Rules $Rules -PolicyId 'DirectoryRole_11111111-1111-1111-1111-111111111111_aaaaaaaa-0000-0000-0000-000000000010' `
+            -Scope '/' -RoleName $Role -ApproverShape Graph
+    }
+    Set-Item -Path function:script:Set-OERDirectoryRoleManagementPolicy -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "POLICY SET $($args -join ' ')`n")
+        [pscustomobject]@{ PolicyId = 'p-1' }
+    }
+}
+$Json = '{ "version": "1.0", "directoryRoleManagementPolicies": [ { "role": "Reports Reader", "requireApproval": true, "approvers": { "users": [] } } ] }'
+Invoke-OERStructure -Json $Json #MODE# -ErrorVariable RunErrors | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+$RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' } | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#APPROVERS#', $Approvers).Replace('#MODE#', $Mode))
+        }
+        $script:DaRow = 'ROW:Failed:approval would be required with no approver (ApproverRequired): the live approval rule names no approver and the document declares none; the policy was not changed'
+        $script:DaMessage = ("Approval cannot be required with no approver: directory role management policy 'DirectoryRole_11111111-1111-1111-1111-111111111111_aaaaaaaa-0000-0000-0000-000000000010' " +
+            'has none on its live approval rule and none was supplied. Pass -ApproverUser or -ApproverGroup.')
+    }
+
+    It 'reaches the end of a script with no try above it, with one Failed row and the ApproverRequired record, and writes nothing (<Mode>)' -ForEach @(
+        @{ Mode = 'a real run'; Switch = '-Confirm:$false' }
+        @{ Mode = 'a -WhatIf plan'; Switch = '-WhatIf' }
+    ) {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-DaNoTryScenario -Log $Log -Approvers '' -Mode $Switch)
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        # Reached: the live policy was read.
+        $Logged | Should -Contain 'POLICY GET Reports Reader'
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @($script:DaRow)
+        # The handler's record reached the error stream, once, and no other error did.
+        @($Run.Errors).Count | Should -Be 1
+        $Run.Errors[0] | Should -BeExactly $script:DaMessage
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @('ERRID:ApproverRequired,Invoke-OERStructure')
+        # Nothing was written, no approver was looked up, and no 'What if:' line or prompt was shown.
+        @($Logged | Where-Object { $_ -like 'POLICY SET*' }) | Should -BeNullOrEmpty -Because "the requests were:`n$($Logged -join "`n")"
+        $Logged | Should -Not -Contain 'APPROVER LOOKUP'
+        @($Run.Events | Where-Object { $_ -like 'Line: What if:*' }).Count | Should -Be 0
+        @($Run.Prompts).Count | Should -Be 0
+    }
+
+    It 'writes the change in the same script when the live stage holds an approver, so the scenario can tell a refusal from silence' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Approver = "@{ '@odata.type' = '#microsoft.graph.groupMembers'; groupId = 'bbbbbbbb-0000-0000-0000-000000000002'; description = 'Approvers' }"
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-DaNoTryScenario -Log $Log -Approvers $Approver -Mode '-Confirm:$false')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        @($Logged | Where-Object { $_ -like 'POLICY SET*-RequireApproval*' }).Count | Should -Be 1 -Because "the requests were:`n$($Logged -join "`n")"
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @("ROW:Updated:updated directory role management policy for 'Reports Reader' (requireApproval=True)")
+        @($Run.Errors).Count | Should -Be 0
+    }
+}
+
+Describe 'Invoke-OERStructure groups: approval required with no approver is refused before the gate, in a script with no try above it (BL-113)' {
+    # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere above
+    # it, as at a prompt, with the runspace's own error preference (Continue). The document declares the
+    # member policy's requireApproval true with an empty users side, and the owner policy's
+    # activationMaxHours; the live member policy does not require approval and its approval stage names
+    # nobody, so Set-OERGroupPimPolicy would refuse the member change with ApproverRequired. Step 4 refuses
+    # it first, before ShouldProcess, so the run and the -WhatIf plan report the same Failed member row, the
+    # cmdlet is never called for member, and the owner policy is still processed. The script installs its
+    # own fakes in ITS copy of the module scope -- the live policy is projected by the real converter from
+    # the rules -- and logs every policy read and write with AppendAllText, whose path is substituted into
+    # the text. In the control the live member stage holds a group approver.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        function script:New-GaNoTryScenario {
+            param([string]$Log, [string]$Approvers, [string]$Mode)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERStructureDefault -Value { $null }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { 'g-1' }
+    Set-Item -Path function:script:Get-OERGroup -Value {
+        [pscustomobject]@{ Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null; GroupType = 'Assigned'
+            IsAssignableToRole = $false; Members = @(); PimEligibility = @() }
+    }
+    Set-Item -Path function:script:Read-OERGroupPimHold -Value { [pscustomobject]@{ Read = $true; Held = @{}; Cause = $null } }
+    Set-Item -Path function:script:Test-OERGroupPimInUse -Value { [pscustomobject]@{ InUse = $true; Reason = 'x'; Manageable = $true } }
+    Set-Item -Path function:script:Resolve-OERPrincipal -Value { [System.IO.File]::AppendAllText('#LOG#', "APPROVER LOOKUP`n"); throw 'no approver value should need resolving' }
+    Set-Item -Path function:script:Get-OERGroupPimPolicy -Value {
+        [CmdletBinding()]
+        param([Alias('GroupId', 'Id')][string]$Group, [string]$AccessType = 'member', [string]$TenantId)
+        [System.IO.File]::AppendAllText('#LOG#', "POLICY GET $AccessType`n")
+        $Primary = @(#APPROVERS#)
+        $Rules = @(@{ id = 'Approval_EndUser_Assignment'; setting = @{ isApprovalRequired = $false; approvalMode = 'SingleStage'
+                    approvalStages = @(@{ approvalStageTimeOutInDays = 1; isApproverJustificationRequired = $true; primaryApprovers = $Primary; escalationApprovers = @() }) } })
+        ConvertTo-OERGroupPimPolicy -Rules $Rules -GroupId $Group -PolicyId 'pol-live' -AccessType $AccessType
+    }
+    Set-Item -Path function:script:Set-OERGroupPimPolicy -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "POLICY SET $($args -join ' ')`n")
+        [pscustomobject]@{ Applied = $true; FailedRules = @() }
+    }
+}
+$Json = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_x", "members": null, "pimPolicy": { "member": { "requireApproval": true, "approvers": { "users": [] } }, "owner": { "activationMaxHours": 4 } } } ] }'
+Invoke-OERStructure -Json $Json #MODE# -ErrorVariable RunErrors | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+$RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' } | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#APPROVERS#', $Approvers).Replace('#MODE#', $Mode))
+        }
+        $script:GaRow = 'ROW:Failed:pimPolicy (member) not applied: approval would be required with no approver (ApproverRequired): the live approval rule names no approver and the document declares none; the policy was not changed'
+        $script:GaMessage = "Approval cannot be required with no approver: PIM policy 'pol-live' has none on its live approval rule and none was supplied. Pass -ApproverUser or -ApproverGroup."
+    }
+
+    It 'reaches the end of a script with no try above it, with one Failed member row and the ApproverRequired record, writes nothing for member and still processes owner (<Mode>)' -ForEach @(
+        @{ Mode = 'a real run'; Switch = '-Confirm:$false'; Owner = 'ROW:Updated:pimPolicy (owner) set: activationMaxHours=4' }
+        @{ Mode = 'a -WhatIf plan'; Switch = '-WhatIf'; Owner = 'ROW:Skipped:would set pimPolicy (owner): activationMaxHours=4' }
+    ) {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-GaNoTryScenario -Log $Log -Approvers '' -Mode $Switch)
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        # Reached: both access types were read.
+        $Logged | Should -Contain 'POLICY GET member'
+        $Logged | Should -Contain 'POLICY GET owner'
+        @($Run.Output | Where-Object { $_ -like 'ROW:*pimPolicy*' }) | Should -Be @($script:GaRow, $Owner)
+        # The handler's record reached the error stream, once, and no other error did.
+        @($Run.Errors).Count | Should -Be 1
+        $Run.Errors[0] | Should -BeExactly $script:GaMessage
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @('ERRID:ApproverRequired,Invoke-OERStructure')
+        # Nothing was written for member, and no approver was looked up.
+        @($Logged | Where-Object { $_ -like 'POLICY SET*member*' }) | Should -BeNullOrEmpty -Because "the requests were:`n$($Logged -join "`n")"
+        $Logged | Should -Not -Contain 'APPROVER LOOKUP'
+        if ($Switch -eq '-WhatIf') {
+            @($Logged | Where-Object { $_ -like 'POLICY SET*' }) | Should -BeNullOrEmpty
+            # The plan reached the host as a 'What if:' line for the owner change only.
+            @($Run.Events | Where-Object { $_ -like 'Line: What if:*Set PIM policy (owner)*' }).Count | Should -Be 1
+            @($Run.Events | Where-Object { $_ -like '*Set PIM policy (member)*' }).Count | Should -Be 0
+        } else {
+            @($Logged | Where-Object { $_ -like 'POLICY SET*-AccessType owner*' }).Count | Should -Be 1
+        }
+        @($Run.Prompts).Count | Should -Be 0
+    }
+
+    It 'writes both access types in the same script when the live member stage holds an approver, so the scenario can tell a refusal from silence' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Approver = "@{ '@odata.type' = '#microsoft.graph.groupMembers'; id = 'grp-1'; description = 'Approvers' }"
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-GaNoTryScenario -Log $Log -Approvers $Approver -Mode '-Confirm:$false')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        @($Logged | Where-Object { $_ -like 'POLICY SET*-AccessType member*' }).Count | Should -Be 1 -Because "the requests were:`n$($Logged -join "`n")"
+        @($Logged | Where-Object { $_ -like 'POLICY SET*-AccessType owner*' }).Count | Should -Be 1
+        @($Run.Output | Where-Object { $_ -like 'ROW:*pimPolicy*' }) | Should -Be @('ROW:Updated:pimPolicy (member) set: requireApproval=True', 'ROW:Updated:pimPolicy (owner) set: activationMaxHours=4')
+        @($Run.Errors).Count | Should -Be 0
     }
 }

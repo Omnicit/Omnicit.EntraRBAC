@@ -122,6 +122,15 @@ function Sync-OERStructureGroup {
        (member/owner) and every later step still run. The row carries ApproverNotFound for an
        approver that matches nothing, AmbiguousApproverName (naming the candidate ids) for a group
        display name several groups share, and the lookup's own error for a lookup that failed.
+       A changed policy that would require approval with no approver -- a declared approver side
+       emptied while the live approval stage holds no other approver, or requireApproval true against
+       a live stage that names nobody -- reports Failed for THAT access type, with the ApproverRequired
+       error Set-OERGroupPimPolicy publishes for the same refusal, before the PIM-in-use question, the
+       MFA / authentication context warning and the ShouldProcess gate (BL-113): the decision is
+       Resolve-OERGraphApproverSet's, the owner the cmdlet uses, taken from the live approval rule the
+       policy read returned and the approver parameters the diff binds, so a real run and a -WhatIf
+       plan report the same row, nothing is written for that access type, and the other access type is
+       processed as usual.
        When the diff reconciles the MFA / authentication context pair (Resolve-OERGroupPimPolicyChange
        clears MultiFactorAuthentication, or disables the authentication context, and reports why in
        ConflictReason), Set-OERGroupPimPolicy -- called with the reconciled parameters -- has nothing
@@ -1398,8 +1407,8 @@ function Sync-OERStructureGroup {
             # 3 and 5 -- not one budget each.
 
             # Whether this item has already asked Test-OERGroupPimInUse. Asked at most ONCE per item,
-            # at the first access type whose diff is Changed: one question and one warning cover both
-            # access types of the same group.
+            # at the first access type whose diff is Changed and not refused for approval with no
+            # approver (BL-113): one question and one warning cover both access types of the same group.
             $PimUsageAsked = $false
 
             foreach ($AccessType in $DesiredByAccess.Keys) {
@@ -1415,31 +1424,38 @@ function Sync-OERStructureGroup {
                 # Declared approver names are resolved to object ids BEFORE the diff, so the diff
                 # compares ids with ids (a UPN or a group name never equals a live approver id).
                 # Three outcomes, three records, one Failed row each and no read or write of this
-                # access type's policy: an ambiguous name is AmbiguousApproverName (the resolver's text
-                # names the candidate ids), only an approver that matches nothing (ApproverUnresolved)
-                # is ApproverNotFound, and anything else -- a 403, an exhausted 429, a 5xx -- is not
-                # evidence that the approver is missing, so it is published as itself.
+                # access type's policy, the class decided by Get-OERApproverErrorClass: an ambiguous
+                # name is AmbiguousApproverName (the resolver's text names the candidate ids), only an
+                # approver that matches nothing (ApproverUnresolved) is ApproverNotFound, and anything
+                # else -- a 403, an exhausted 429, a 5xx -- is not evidence that the approver is
+                # missing, so it is published as itself. The caught record is kept in $LookupError:
+                # inside the switch, $PSItem is the class, and the switch holds no continue (one there
+                # would act on the switch, not on this loop).
                 try {
                     $Declared = Resolve-OERDeclaredApprover -Declared $Declared
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
-                    $ErrRec = $PSItem
-                    if (Test-OERAmbiguousNameError -Record $PSItem) {
-                        $ErrRec = [System.Management.Automation.ErrorRecord]::new(
-                            [System.Exception]::new("Could not resolve an approver declared in pimPolicy ($AccessType) of group '$Name': $($PSItem.Exception.Message)", $PSItem.Exception),
-                            'AmbiguousApproverName',
-                            [System.Management.Automation.ErrorCategory]::InvalidArgument,
-                            $PSItem.TargetObject)
-                    } elseif (([string]$PSItem.FullyQualifiedErrorId).StartsWith('ApproverUnresolved', [System.StringComparison]::Ordinal)) {
-                        $ErrRec = [System.Management.Automation.ErrorRecord]::new(
-                            [System.Exception]::new("Could not resolve an approver declared in pimPolicy ($AccessType) of group '$Name': $($PSItem.Exception.Message)", $PSItem.Exception),
-                            'ApproverNotFound',
-                            [System.Management.Automation.ErrorCategory]::ObjectNotFound,
-                            $Name)
+                    $LookupError = $PSItem
+                    $ErrRec = $LookupError
+                    switch (Get-OERApproverErrorClass -Record $LookupError) {
+                        'Ambiguous' {
+                            $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                                [System.Exception]::new("Could not resolve an approver declared in pimPolicy ($AccessType) of group '$Name': $($LookupError.Exception.Message)", $LookupError.Exception),
+                                'AmbiguousApproverName',
+                                [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                                $LookupError.TargetObject)
+                        }
+                        'NotFound' {
+                            $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                                [System.Exception]::new("Could not resolve an approver declared in pimPolicy ($AccessType) of group '$Name': $($LookupError.Exception.Message)", $LookupError.Exception),
+                                'ApproverNotFound',
+                                [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                                $Name)
+                        }
                     }
                     $Caller.WriteError($ErrRec)
                     ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
-                        -Detail "pimPolicy ($AccessType) not applied: could not resolve an approver: $($PSItem.Exception.Message)" `
+                        -Detail "pimPolicy ($AccessType) not applied: could not resolve an approver: $($LookupError.Exception.Message)" `
                         -ErrorRecord $ErrRec
                     continue
                 }
@@ -1563,6 +1579,51 @@ function Sync-OERStructureGroup {
                 if (-not $Change.Changed) {
                     ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Unchanged' -Detail "pimPolicy ($AccessType) already matches"
                     continue
+                }
+
+                # BL-113: Set-OERGroupPimPolicy refuses, with ApproverRequired and before anything is
+                # sent, a change that would require approval with no approver on the live approval
+                # stage, so the run reported Failed while the -WhatIf plan, which never calls it, said
+                # "would set pimPolicy". The decision is taken here exactly as the cmdlet takes it:
+                # through Resolve-OERGraphApproverSet, the owner of the Graph approver semantics, from
+                # the live approval rule the read above returned (Rules, the raw rules the converter
+                # keeps; the cmdlet reads the same rule again by its id) and the approver parameters the
+                # diff binds. Refused before the onboarding question, the MFA / authentication context
+                # warning and ShouldProcess, in a real run and under -WhatIf alike, with the cmdlet's own
+                # ErrorId and message (the cmdlet's target is the group id it is given; this record's is
+                # the group's name): one
+                # Failed row for THIS access type, nothing written for it, and the loop moves on. The
+                # cmdlet keeps its own refusal as the backstop.
+                $SetSplat = $Change.SetParams
+                $ApproverUserBound = $SetSplat.ContainsKey('ApproverUser')
+                $ApproverGroupBound = $SetSplat.ContainsKey('ApproverGroup')
+                $RequireApprovalBound = $SetSplat.ContainsKey('RequireApproval')
+                if ($ApproverUserBound -or $ApproverGroupBound -or $RequireApprovalBound) {
+                    $LiveApprovalRule = @(@($CurrentPolicy.Rules) | Where-Object { $null -ne $_ }) |
+                        Where-Object { [string]$_.id -eq 'Approval_EndUser_Assignment' } | Select-Object -First 1
+                    $ApproverSet = Resolve-OERGraphApproverSet -LiveApprovalRule $LiveApprovalRule `
+                        -UserBound $ApproverUserBound -GroupBound $ApproverGroupBound `
+                        -ResolvedUser $SetSplat.ApproverUser -ResolvedGroup $SetSplat.ApproverGroup `
+                        -RequireApprovalBound $RequireApprovalBound -RequireApproval ($RequireApprovalBound -and [bool]$SetSplat.RequireApproval)
+                    if ($ApproverSet.NoApprover) {
+                        if ($ApproverSet.NoApproverReason -eq 'Bound') {
+                            $NoApproverMessage = "Approval cannot be required with no approver: after -ApproverUser/-ApproverGroup are applied, PIM policy '$($CurrentPolicy.PolicyId)' would have none. Pass at least one approver."
+                            $NoApproverDetail = 'the declared approvers, with what the document does not declare kept from the live approval rule, name nobody'
+                        } else {
+                            $NoApproverMessage = "Approval cannot be required with no approver: PIM policy '$($CurrentPolicy.PolicyId)' has none on its live approval rule and none was supplied. Pass -ApproverUser or -ApproverGroup."
+                            $NoApproverDetail = 'the live approval rule names no approver and the document declares none'
+                        }
+                        $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new($NoApproverMessage),
+                            'ApproverRequired',
+                            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                            $Name)
+                        $Caller.WriteError($ErrRec)
+                        ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
+                            -Detail "pimPolicy ($AccessType) not applied: approval would be required with no approver (ApproverRequired): $NoApproverDetail; the policy was not changed" `
+                            -ErrorRecord $ErrRec
+                        continue
+                    }
                 }
 
                 # Microsoft Graph lists a group's PIM-for-Groups policies whether or not the group was

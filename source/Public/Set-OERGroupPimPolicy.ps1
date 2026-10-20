@@ -355,25 +355,29 @@ function Set-OERGroupPimPolicy {
         # sent. Resolve-OERApproverInput owns the rules (a blank value is skipped, the same principal
         # named twice is kept once in first-seen order) and is shared with
         # Set-OERDirectoryRoleManagementPolicy; the refusal is reported here, under this cmdlet's id.
-        # Three outcomes, three reports: an ambiguous name is AmbiguousApproverName (the resolver's
-        # text names the candidate ids), only an approver that matches nothing (ApproverUnresolved) is
-        # ApproverNotFound, and anything else -- a 403, an exhausted 429, a 5xx -- is not evidence that
-        # the approver is missing, so it is published as itself.
+        # Three outcomes, three reports, the class decided by Get-OERApproverErrorClass: an ambiguous
+        # name is AmbiguousApproverName (the resolver's text names the candidate ids), only an approver
+        # that matches nothing (ApproverUnresolved) is ApproverNotFound, and anything else -- a 403, an
+        # exhausted 429, a 5xx -- is not evidence that the approver is missing, so it is published as
+        # itself. The caught record is kept in $LookupError: inside the switch, $PSItem is the class.
         $ApproverUserBound = $PSBoundParameters.ContainsKey('ApproverUser')
         $ApproverGroupBound = $PSBoundParameters.ContainsKey('ApproverGroup')
         try {
             $ApproverInput = Resolve-OERApproverInput -User $ApproverUser -Group $ApproverGroup
         } catch {
             Remove-OERErrorRecord -Record $PSItem
-            if (Test-OERAmbiguousNameError -Record $PSItem) {
-                Write-CmdletError -Message ([System.Exception]::new("Could not resolve approver '$($PSItem.TargetObject)': $($PSItem.Exception.Message)")) -ErrorId 'AmbiguousApproverName' -Category InvalidArgument -TargetObject $PSItem.TargetObject -Cmdlet $PSCmdlet
-                return
+            $LookupError = $PSItem
+            switch (Get-OERApproverErrorClass -Record $LookupError) {
+                'Ambiguous' {
+                    Write-CmdletError -Message ([System.Exception]::new("Could not resolve approver '$($LookupError.TargetObject)': $($LookupError.Exception.Message)")) -ErrorId 'AmbiguousApproverName' -Category InvalidArgument -TargetObject $LookupError.TargetObject -Cmdlet $PSCmdlet
+                }
+                'NotFound' {
+                    Write-CmdletError -Message ([System.Exception]::new($LookupError.Exception.Message)) -ErrorId 'ApproverNotFound' -Category ObjectNotFound -TargetObject $LookupError.TargetObject -Cmdlet $PSCmdlet
+                }
+                default {
+                    $PSCmdlet.WriteError($LookupError)
+                }
             }
-            if (([string]$PSItem.FullyQualifiedErrorId).StartsWith('ApproverUnresolved', [System.StringComparison]::Ordinal)) {
-                Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'ApproverNotFound' -Category ObjectNotFound -TargetObject $PSItem.TargetObject -Cmdlet $PSCmdlet
-                return
-            }
-            $PSCmdlet.WriteError($PSItem)
             return
         }
         $ResolvedUser = $ApproverInput.User

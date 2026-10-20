@@ -52,6 +52,15 @@ function Sync-OERStructureDirectoryRoleManagementPolicy {
     Set-OERDirectoryRoleManagementPolicy. Reads always execute even under -WhatIf so the plan is
     available. Every call goes through Microsoft Graph; no Azure Resource Manager token is needed.
 
+    A change that would require approval with no approver -- a declared approver side emptied while
+    the live approval stage holds no other approver, or requireApproval true against a live stage
+    that names nobody -- is reported Failed, with the ApproverRequired error
+    Set-OERDirectoryRoleManagementPolicy publishes for the same refusal, before the -WhatIf warning
+    below and the ShouldProcess gate (BL-113). The decision is Resolve-OERGraphApproverSet's, the
+    owner the cmdlet uses, taken from the live approval rule the read returned and the approver
+    parameters the diff binds, so the -WhatIf plan and the run report the same row and nothing is
+    sent. Name at least one approver, or declare requireApproval false.
+
     A change that reconciles the MFA / authentication context pair -- a declared non-empty
     authenticationContextId that clears MFA on activation, or a declared requireMfaOnActivation true
     that disables a live authentication context -- makes Set-OERDirectoryRoleManagementPolicy warn
@@ -127,33 +136,38 @@ function Sync-OERStructureDirectoryRoleManagementPolicy {
         # -- Resolve declared approver names to object ids BEFORE the diff ------------------
         # The live approvers carry object ids, so a declared UPN or group name must become an id
         # first; otherwise the diff would compare a name with an id and report a change every run.
-        # Three outcomes, three records, one Failed row each and no write: an ambiguous name is
-        # AmbiguousApproverName (the resolver's text names the candidate ids), only an approver that
-        # matches nothing (ApproverUnresolved) is ApproverNotFound, and anything else -- a 403, an
-        # exhausted 429, a 5xx -- is not evidence that the approver is missing, so it is published as
-        # itself.
+        # Three outcomes, three records, one Failed row each and no write, the class decided by
+        # Get-OERApproverErrorClass: an ambiguous name is AmbiguousApproverName (the resolver's text
+        # names the candidate ids), only an approver that matches nothing (ApproverUnresolved) is
+        # ApproverNotFound, and anything else -- a 403, an exhausted 429, a 5xx -- is not evidence that
+        # the approver is missing, so it is published as itself. The caught record is kept in
+        # $LookupError: inside the switch, $PSItem is the class.
         $Declared = $Item
         try {
             $Declared = Resolve-OERDeclaredApprover -Declared $Item
         } catch {
             Remove-OERErrorRecord -Record $PSItem
-            $ErrRec = $PSItem
-            if (Test-OERAmbiguousNameError -Record $PSItem) {
-                $ErrRec = [System.Management.Automation.ErrorRecord]::new(
-                    [System.Exception]::new("Could not resolve an approver declared for '$($Item.role)': $($PSItem.Exception.Message)", $PSItem.Exception),
-                    'AmbiguousApproverName',
-                    [System.Management.Automation.ErrorCategory]::InvalidArgument,
-                    $PSItem.TargetObject)
-            } elseif (([string]$PSItem.FullyQualifiedErrorId).StartsWith('ApproverUnresolved', [System.StringComparison]::Ordinal)) {
-                $ErrRec = [System.Management.Automation.ErrorRecord]::new(
-                    [System.Exception]::new("Could not resolve an approver declared for '$($Item.role)': $($PSItem.Exception.Message)", $PSItem.Exception),
-                    'ApproverNotFound',
-                    [System.Management.Automation.ErrorCategory]::ObjectNotFound,
-                    $Label)
+            $LookupError = $PSItem
+            $ErrRec = $LookupError
+            switch (Get-OERApproverErrorClass -Record $LookupError) {
+                'Ambiguous' {
+                    $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Could not resolve an approver declared for '$($Item.role)': $($LookupError.Exception.Message)", $LookupError.Exception),
+                        'AmbiguousApproverName',
+                        [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                        $LookupError.TargetObject)
+                }
+                'NotFound' {
+                    $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Could not resolve an approver declared for '$($Item.role)': $($LookupError.Exception.Message)", $LookupError.Exception),
+                        'ApproverNotFound',
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                        $Label)
+                }
             }
             $Caller.WriteError($ErrRec)
             ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Failed' `
-                -Detail "could not resolve an approver: $($PSItem.Exception.Message); the policy was not changed" `
+                -Detail "could not resolve an approver: $($LookupError.Exception.Message); the policy was not changed" `
                 -ErrorRecord $ErrRec
             return
         }
@@ -169,6 +183,48 @@ function Sync-OERStructureDirectoryRoleManagementPolicy {
             ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Unchanged' `
                 -Detail "policy already matches for '$($Item.role)'"
             return
+        }
+
+        # -- Approval required with no approver: Failed before the gate (BL-113) ------------
+        # Set-OERDirectoryRoleManagementPolicy refuses, with ApproverRequired and before anything is
+        # sent, a change that would require approval with no approver on the live approval stage, so
+        # the run reported Failed while the -WhatIf plan, which never calls it, said "would update". The
+        # decision is taken here exactly as the cmdlet takes it: through Resolve-OERGraphApproverSet, the
+        # owner of the Graph approver semantics, from the live approval rule the read above returned
+        # (EffectiveRules, the policy's own rules, which the cmdlet reads again by this same policy id)
+        # and the approver parameters the diff binds. Refused before the -WhatIf warning and
+        # ShouldProcess, in a real run and under -WhatIf alike, with the cmdlet's own ErrorId and
+        # message (its target is the policy id; this row's is the entry's role). The cmdlet keeps its
+        # own refusal as the backstop.
+        $ApproverUserBound = $SetSplat.ContainsKey('ApproverUser')
+        $ApproverGroupBound = $SetSplat.ContainsKey('ApproverGroup')
+        $RequireApprovalBound = $SetSplat.ContainsKey('RequireApproval')
+        if ($ApproverUserBound -or $ApproverGroupBound -or $RequireApprovalBound) {
+            $LiveApprovalRule = @(@($Cur.EffectiveRules) | Where-Object { $null -ne $_ }) |
+                Where-Object { [string]$_.id -eq 'Approval_EndUser_Assignment' } | Select-Object -First 1
+            $ApproverSet = Resolve-OERGraphApproverSet -LiveApprovalRule $LiveApprovalRule `
+                -UserBound $ApproverUserBound -GroupBound $ApproverGroupBound `
+                -ResolvedUser $SetSplat.ApproverUser -ResolvedGroup $SetSplat.ApproverGroup `
+                -RequireApprovalBound $RequireApprovalBound -RequireApproval ($RequireApprovalBound -and [bool]$SetSplat.RequireApproval)
+            if ($ApproverSet.NoApprover) {
+                if ($ApproverSet.NoApproverReason -eq 'Bound') {
+                    $NoApproverMessage = "Approval cannot be required with no approver: after -ApproverUser/-ApproverGroup are applied, directory role management policy '$($Cur.PolicyId)' would have none. Pass at least one approver."
+                    $NoApproverDetail = 'the declared approvers, with what the document does not declare kept from the live approval rule, name nobody'
+                } else {
+                    $NoApproverMessage = "Approval cannot be required with no approver: directory role management policy '$($Cur.PolicyId)' has none on its live approval rule and none was supplied. Pass -ApproverUser or -ApproverGroup."
+                    $NoApproverDetail = 'the live approval rule names no approver and the document declares none'
+                }
+                $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new($NoApproverMessage),
+                    'ApproverRequired',
+                    [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                    $Label)
+                $Caller.WriteError($ErrRec)
+                ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Failed' `
+                    -Detail "approval would be required with no approver (ApproverRequired): $NoApproverDetail; the policy was not changed" `
+                    -ErrorRecord $ErrRec
+                return
+            }
         }
 
         # -- The warning the write would give, for the plan --------------------------------

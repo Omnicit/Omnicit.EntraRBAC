@@ -161,33 +161,38 @@ function Sync-OERStructureRoleManagementPolicy {
         # -- Resolve declared approver names to object ids BEFORE the diff ------------------
         # The diff compares ids with ids. A user declared by UPN never matched the live approver
         # (whose description is a display name), so the policy reported a change on every run.
-        # Three outcomes, three records, one Failed row each and no write: an ambiguous name is
-        # AmbiguousApproverName (the resolver's text names the candidate ids), only an approver that
-        # matches nothing (ApproverUnresolved) is ApproverNotFound, and anything else -- a 403, an
-        # exhausted 429, a 5xx -- is not evidence that the approver is missing, so it is published as
-        # itself.
+        # Three outcomes, three records, one Failed row each and no write, the class decided by
+        # Get-OERApproverErrorClass: an ambiguous name is AmbiguousApproverName (the resolver's text
+        # names the candidate ids), only an approver that matches nothing (ApproverUnresolved) is
+        # ApproverNotFound, and anything else -- a 403, an exhausted 429, a 5xx -- is not evidence that
+        # the approver is missing, so it is published as itself. The caught record is kept in
+        # $LookupError: inside the switch, $PSItem is the class.
         $Declared = $Item
         try {
             $Declared = Resolve-OERDeclaredApprover -Declared $Item
         } catch {
             Remove-OERErrorRecord -Record $PSItem
-            $ErrRec = $PSItem
-            if (Test-OERAmbiguousNameError -Record $PSItem) {
-                $ErrRec = [System.Management.Automation.ErrorRecord]::new(
-                    [System.Exception]::new("Could not resolve an approver declared for '$($Item.role)' at '$($Item.scope)': $($PSItem.Exception.Message)", $PSItem.Exception),
-                    'AmbiguousApproverName',
-                    [System.Management.Automation.ErrorCategory]::InvalidArgument,
-                    $PSItem.TargetObject)
-            } elseif (([string]$PSItem.FullyQualifiedErrorId).StartsWith('ApproverUnresolved', [System.StringComparison]::Ordinal)) {
-                $ErrRec = [System.Management.Automation.ErrorRecord]::new(
-                    [System.Exception]::new("Could not resolve an approver declared for '$($Item.role)' at '$($Item.scope)': $($PSItem.Exception.Message)", $PSItem.Exception),
-                    'ApproverNotFound',
-                    [System.Management.Automation.ErrorCategory]::ObjectNotFound,
-                    $Label)
+            $LookupError = $PSItem
+            $ErrRec = $LookupError
+            switch (Get-OERApproverErrorClass -Record $LookupError) {
+                'Ambiguous' {
+                    $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Could not resolve an approver declared for '$($Item.role)' at '$($Item.scope)': $($LookupError.Exception.Message)", $LookupError.Exception),
+                        'AmbiguousApproverName',
+                        [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                        $LookupError.TargetObject)
+                }
+                'NotFound' {
+                    $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Could not resolve an approver declared for '$($Item.role)' at '$($Item.scope)': $($LookupError.Exception.Message)", $LookupError.Exception),
+                        'ApproverNotFound',
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                        $Label)
+                }
             }
             $Caller.WriteError($ErrRec)
             ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Failed' `
-                -Detail "could not resolve an approver: $($PSItem.Exception.Message); the policy was not changed" `
+                -Detail "could not resolve an approver: $($LookupError.Exception.Message); the policy was not changed" `
                 -ErrorRecord $ErrRec
             return
         }

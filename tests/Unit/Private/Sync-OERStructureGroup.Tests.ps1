@@ -3553,10 +3553,12 @@ $Item = '{ "displayName": "grp-luo", "owners": [] }' | ConvertFrom-Json
                             Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
                         }
                         default {
+                            # AllowPermanentEligibility is true, not the diff's default (false), so the
+                            # control below can tell the live half carried from a defaulted one.
                             Mock Get-OERGroupPimPolicy {
                                 $script:PimReadLog.Add("READ $AccessType")
                                 [PSCustomObject]@{ PolicyId = 'pol-live'; ActivationMaxHours = 8; AuthenticationContextId = $null; ActivationEnabledRules = @()
-                                    AllowPermanentEligibility = $false; EligibleDurationDays = 365; AllowPermanentActive = $false; ActiveDurationDays = 180
+                                    AllowPermanentEligibility = $true; EligibleDurationDays = 365; AllowPermanentActive = $false; ActiveDurationDays = 180
                                     ActiveEnabledRules = @(); Notifications = [PSCustomObject]@{ EligibleAlert = @(); ActiveAlert = @(); ActivationAlert = @() } }
                             }
                         }
@@ -3694,7 +3696,11 @@ $Item = '{ "displayName": "grp-luo", "owners": [] }' | ConvertFrom-Json
             $PolicyRows[0].Detail | Should -BeLike 'pimPolicy (member) set: *'
             @($Result.Err).Count | Should -Be 0
             @($Result.Log | Where-Object { $_ -eq 'READ member' }).Count | Should -Be 1
-            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter { $AccessType -eq 'member' -and $EligibleDuration -eq 90 }
+            # The undeclared half is the live policy's (true), not the diff's default for no policy (false).
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter {
+                $AccessType -eq 'member' -and $EligibleDuration -eq 90 -and
+                $PesterBoundParameters.ContainsKey('AllowPermanentEligibility') -and $AllowPermanentEligibility -eq $true
+            }
         }
 
         It 'fails an entry declaring only activeDurationDays of the active pair, and never asks the PIM-in-use question, when the read fails' {
@@ -10719,5 +10725,254 @@ Describe 'Sync-OERStructureGroup: the pair rule the real Set-OERGroupPimPolicy r
         $Policy[0].Detail | Should -BeExactly "pimPolicy (member) set: $Change"
         @($Result.Err).Count | Should -Be 0
         @($Result.Calls) | Should -Be @("GET $ReadRuleId", "PATCH $SentRuleId")
+    }
+}
+
+Describe 'Sync-OERStructureGroup: approval required with no approver is refused before the gate (BL-113)' {
+    # Set-OERGroupPimPolicy refuses, with ApproverRequired and before anything is sent, a call that would
+    # require approval with no approver on the live approval stage. Under -WhatIf the engine never calls it,
+    # so the plan said "would set pimPolicy" while the run reported Failed. Step 4 now takes the cmdlet's
+    # decision itself, through the same owner (Resolve-OERGraphApproverSet), from the live approval rule its
+    # policy read returned (Rules) and the approver parameters the diff binds -- after the Unchanged
+    # check and before the onboarding question, the MFA / authentication context warning and
+    # ShouldProcess: the plan and the run report the same Failed row for that access type, the other
+    # access type still runs, and the cmdlet is never called for it. The live policy is the beta rule set,
+    # projected by the real converter, so the projection the diff reads and the raw rule the owner reads
+    # agree. Defined here, in the discovery phase, since -ForEach is read then.
+    $RefusalCases = @(
+        @{
+            Name     = 'a declared empty users side beside an empty live groups side'
+            Reason   = 'Bound'
+            Required = $true; Users = @('user-1'); Groups = @(); Manager = $false; Mfa = $false
+            Json     = '{ "displayName": "role_sec_appr", "members": null, "pimPolicy": { "member": { "requireApproval": true, "approvers": { "users": [] } } } }'
+        }
+        @{
+            Name     = 'requireApproval true declared alone, the live first stage without approvers'
+            Reason   = 'Live'
+            Required = $false; Users = @(); Groups = @(); Manager = $false; Mfa = $false
+            Json     = '{ "displayName": "role_sec_appr", "members": null, "pimPolicy": { "member": { "requireApproval": true } } }'
+        }
+        @{
+            Name     = 'requireApproval true and an empty users side, the live policy without approvers'
+            Reason   = 'Live'
+            Required = $false; Users = @(); Groups = @(); Manager = $false; Mfa = $false
+            Json     = '{ "displayName": "role_sec_appr", "members": null, "pimPolicy": { "member": { "requireApproval": true, "approvers": { "users": [] } } } }'
+        }
+        @{
+            # The diff reconciles the pair (the context clears a live MFA), and the handler would warn about
+            # it in every mode: the refusal comes first.
+            Name     = 'requireApproval true declared beside an authentication context that clears a live MFA'
+            Reason   = 'Live'
+            Required = $false; Users = @(); Groups = @(); Manager = $false; Mfa = $true
+            Json     = '{ "displayName": "role_sec_appr", "members": null, "pimPolicy": { "member": { "requireApproval": true, "authenticationContextId": "c1" } } }'
+        }
+    )
+    $ApproverLeftCases = @(
+        @{
+            Name     = 'a group approver'
+            Required = $true; Users = @('user-1'); Groups = @('grp-1'); Manager = $false; Mfa = $false
+            Json     = '{ "displayName": "role_sec_appr", "members": null, "pimPolicy": { "member": { "requireApproval": true, "approvers": { "users": [] } } } }'
+        }
+        @{
+            Name     = 'an approver of another kind (a requestor manager)'
+            Required = $true; Users = @('user-1'); Groups = @(); Manager = $true; Mfa = $false
+            Json     = '{ "displayName": "role_sec_appr", "members": null, "pimPolicy": { "member": { "requireApproval": true, "approvers": { "users": [] } } } }'
+        }
+    )
+
+    BeforeAll {
+        InModuleScope $script:moduleName {
+            function script:Invoke-SyncGpApprViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item)
+                Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet
+            }
+            # The live rules in the beta shape Get-OERGroupPimPolicy reads: the approval rule with one stage
+            # holding the given approvers, and the MFA / authentication context pair (context disabled).
+            function script:New-GpApprRule {
+                param([bool]$Required, [string[]]$Users, [string[]]$Groups, [bool]$Manager, [bool]$Mfa)
+                $Primary = @(
+                    foreach ($Id in @($Users)) { if ($Id) { @{ '@odata.type' = '#microsoft.graph.singleUser'; id = $Id; description = 'Person One' } } }
+                    foreach ($Id in @($Groups)) { if ($Id) { @{ '@odata.type' = '#microsoft.graph.groupMembers'; id = $Id; description = 'Approvers' } } }
+                    if ($Manager) { @{ '@odata.type' = '#microsoft.graph.requestorManager'; managerLevel = 1 } }
+                )
+                $Enabled = @(if ($Mfa) { 'MultiFactorAuthentication', 'Justification' } else { 'Justification' })
+                @(
+                    @{ '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyEnablementRule'; id = 'Enablement_EndUser_Assignment'; enabledRules = $Enabled }
+                    @{ '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyAuthenticationContextRule'; id = 'AuthenticationContext_EndUser_Assignment'
+                        isEnabled = $false; claimValue = '' }
+                    @{
+                        '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyApprovalRule'
+                        id            = 'Approval_EndUser_Assignment'
+                        setting       = @{
+                            isApprovalRequired               = $Required
+                            isApprovalRequiredForExtension   = $false
+                            isRequestorJustificationRequired = $true
+                            approvalMode                     = 'SingleStage'
+                            approvalStages                   = @(@{
+                                    approvalStageTimeOutInDays      = 1
+                                    isApproverJustificationRequired = $true
+                                    escalationTimeInMinutes         = 0
+                                    isEscalationEnabled             = $false
+                                    primaryApprovers                = $Primary
+                                    escalationApprovers             = @()
+                                })
+                        }
+                    }
+                )
+            }
+            # One run of the handler: its rows, the records its caller collected and the warnings written.
+            function script:Invoke-GpApprRun {
+                param([string]$Json, [bool]$WhatIfRun)
+                $Switches = if ($WhatIfRun) { @{ WhatIf = $true } } else { @{ Confirm = $false } }
+                $Err = $null
+                $Warn = $null
+                $Rows = @(Invoke-SyncGpApprViaCaller -Item ($Json | ConvertFrom-Json) @Switches -ErrorAction SilentlyContinue -ErrorVariable Err `
+                        -WarningAction SilentlyContinue -WarningVariable Warn)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err); Warn = @($Warn) }
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            Mock Initialize-OERAuth {}
+            Mock Read-OERGroupPimHold { [PSCustomObject]@{ Read = $true; Held = @{}; Cause = $null } }
+            Mock Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $true; Reason = 'x'; Manageable = $true } }
+            Mock Resolve-OERGroupId { '66666666-6666-6666-6666-6666666666f1' }
+            Mock Get-OERGroup {
+                [PSCustomObject]@{ Id = '66666666-6666-6666-6666-6666666666f1'; DisplayName = 'role_sec_appr'; Description = $null; MailNickname = $null
+                    GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @() }
+            }
+            Mock Get-OERGroupPimPolicy {
+                ConvertTo-OERGroupPimPolicy -Rules @($script:GpApprRules) -GroupId '66666666-6666-6666-6666-6666666666f1' -PolicyId 'pol-appr' -AccessType $AccessType
+            }
+            Mock Resolve-OERPrincipal { throw 'no approver value should need resolving: only an empty side is declared' }
+            # What the real Set-OERGroupPimPolicy reads (the parity test below): its policy id, the
+            # authentication context list and its rule reads. Anything else, a PATCH included, throws.
+            Mock Get-OERPimGroupPolicyId { 'pol-appr' }
+            Mock Get-OERAuthenticationContext { [PSCustomObject]@{ AuthenticationContextId = 'c1'; DisplayName = 'Context one'; IsAvailable = $true } }
+            Mock Invoke-OERGraphRequest {
+                param([string]$Method = 'GET', [string]$Uri, $Body)
+                if ($Method -ne 'PATCH' -and $Uri -like '*policies/roleManagementPolicies/pol-appr/rules/*') {
+                    $RuleId = ($Uri -split '/')[-1]
+                    $Live = @($script:GpApprRules | Where-Object { $_.id -eq $RuleId })
+                    if ($Live.Count -eq 1) { return $Live[0] }
+                }
+                throw "unexpected $Method $Uri"
+            }
+        }
+    }
+
+    It 'refuses <Name> with ApproverRequired, the same Failed row in a plan and in a run, before the onboarding question, and never calls the cmdlet' -ForEach $RefusalCases {
+        $Result = InModuleScope $script:moduleName -Parameters @{ Json = $Json; Required = $Required; Users = $Users; Groups = $Groups; Manager = $Manager; Mfa = $Mfa } {
+            param($Json, $Required, $Users, $Groups, $Manager, $Mfa)
+            $script:GpApprRules = New-GpApprRule -Required $Required -Users $Users -Groups $Groups -Manager $Manager -Mfa $Mfa
+            Mock Set-OERGroupPimPolicy { [PSCustomObject]@{ Applied = $true; FailedRules = @() } }
+            [PSCustomObject]@{
+                Plan = Invoke-GpApprRun -Json $Json -WhatIfRun $true
+                Run  = Invoke-GpApprRun -Json $Json -WhatIfRun $false
+            }
+        }
+        $Message = if ($Reason -eq 'Bound') {
+            "Approval cannot be required with no approver: after -ApproverUser/-ApproverGroup are applied, PIM policy 'pol-appr' would have none. Pass at least one approver."
+        } else {
+            "Approval cannot be required with no approver: PIM policy 'pol-appr' has none on its live approval rule and none was supplied. Pass -ApproverUser or -ApproverGroup."
+        }
+        $Detail = if ($Reason -eq 'Bound') {
+            'pimPolicy (member) not applied: approval would be required with no approver (ApproverRequired): the declared approvers, with what the document does not declare kept from the live approval rule, name nobody; the policy was not changed'
+        } else {
+            'pimPolicy (member) not applied: approval would be required with no approver (ApproverRequired): the live approval rule names no approver and the document declares none; the policy was not changed'
+        }
+        foreach ($Mode in @($Result.Plan, $Result.Run)) {
+            $Policy = @($Mode.Rows | Where-Object { $_.Detail -like '*pimPolicy*' })
+            $Policy.Count | Should -Be 1
+            $Policy[0].Section | Should -BeExactly 'groups'
+            $Policy[0].Item | Should -BeExactly 'role_sec_appr'
+            $Policy[0].Action | Should -BeExactly 'Failed'
+            $Policy[0].Detail | Should -BeExactly $Detail
+            [string]$Policy[0].Error.FullyQualifiedErrorId | Should -BeLike 'ApproverRequired,*'
+            # Written once through the caller, with the cmdlet's message, category and the group's name.
+            $Own = @($Mode.Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncGpApprViaCaller' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -BeExactly 'ApproverRequired,Invoke-SyncGpApprViaCaller'
+            [string]$Own[0].CategoryInfo.Category | Should -BeExactly 'InvalidArgument'
+            $Own[0].TargetObject | Should -BeExactly 'role_sec_appr'
+            $Own[0].Exception.Message | Should -BeExactly $Message
+            @($Mode.Err).Count | Should -Be 1
+            # Refused before the onboarding warning and the MFA / authentication context warning.
+            @($Mode.Warn).Count | Should -Be 0
+        }
+        # Reached: the live policy was read in both modes. Neither the onboarding question nor the cmdlet was.
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroupPimPolicy -Times 2 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 0
+    }
+
+    It 'refuses the member access type and still processes the owner access type, in a plan and in a run' {
+        $Result = InModuleScope $script:moduleName {
+            $script:GpApprRules = New-GpApprRule -Required $false -Users @() -Groups @() -Manager $false -Mfa $false
+            Mock Set-OERGroupPimPolicy { [PSCustomObject]@{ Applied = $true; FailedRules = @() } }
+            $Json = '{ "displayName": "role_sec_appr", "members": null, "pimPolicy": { "member": { "requireApproval": true }, "owner": { "activationMaxHours": 4 } } }'
+            [PSCustomObject]@{
+                Plan = Invoke-GpApprRun -Json $Json -WhatIfRun $true
+                Run  = Invoke-GpApprRun -Json $Json -WhatIfRun $false
+            }
+        }
+        foreach ($Mode in @($Result.Plan, $Result.Run)) {
+            @($Mode.Rows | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -like 'pimPolicy (member) not applied: approval would be required with no approver (ApproverRequired):*' }).Count | Should -Be 1
+            @($Mode.Rows | Where-Object { $_.Detail -like '*pimPolicy (member)*' }).Count | Should -Be 1
+        }
+        @($Result.Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq 'would set pimPolicy (owner): activationMaxHours=4' }).Count | Should -Be 1
+        @($Result.Run.Rows | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -eq 'pimPolicy (owner) set: activationMaxHours=4' }).Count | Should -Be 1
+        Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter { $AccessType -eq 'owner' -and $ActivationMaxHours -eq 4 }
+    }
+
+    It 'leaves <Name> on the live stage: no refusal, the run sends the emptied side and the plan reports it' -ForEach $ApproverLeftCases {
+        $Result = InModuleScope $script:moduleName -Parameters @{ Json = $Json; Required = $Required; Users = $Users; Groups = $Groups; Manager = $Manager; Mfa = $Mfa } {
+            param($Json, $Required, $Users, $Groups, $Manager, $Mfa)
+            $script:GpApprRules = New-GpApprRule -Required $Required -Users $Users -Groups $Groups -Manager $Manager -Mfa $Mfa
+            Mock Set-OERGroupPimPolicy { [PSCustomObject]@{ Applied = $true; FailedRules = @() } }
+            [PSCustomObject]@{
+                Plan = Invoke-GpApprRun -Json $Json -WhatIfRun $true
+                Run  = Invoke-GpApprRun -Json $Json -WhatIfRun $false
+            }
+        }
+        @($Result.Plan.Rows | Where-Object { $_.Detail -like '*pimPolicy*' }).Detail | Should -Be @('would set pimPolicy (member): approvers(users=[])')
+        @($Result.Plan.Err).Count | Should -Be 0
+        @($Result.Run.Rows | Where-Object { $_.Detail -like '*pimPolicy*' }).Detail | Should -Be @('pimPolicy (member) set: approvers(users=[])')
+        @($Result.Run.Err).Count | Should -Be 0
+        # Reached: past the check, the onboarding question was asked once per mode.
+        Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 2 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter {
+            $PesterBoundParameters.ContainsKey('ApproverUser') -and @($ApproverUser).Count -eq 0 -and -not $PesterBoundParameters.ContainsKey('ApproverGroup')
+        }
+    }
+
+    It 'refuses <Name> with the very message the real Set-OERGroupPimPolicy publishes for the same call' -ForEach $RefusalCases {
+        # The handler copies the cmdlet's text: the same splat the diff builds, sent to the REAL cmdlet
+        # against the same live rules, is refused with the same id and the same message, and sends nothing.
+        $Result = InModuleScope $script:moduleName -Parameters @{ Json = $Json; Required = $Required; Users = $Users; Groups = $Groups; Manager = $Manager; Mfa = $Mfa } {
+            param($Json, $Required, $Users, $Groups, $Manager, $Mfa)
+            $script:GpApprRules = New-GpApprRule -Required $Required -Users $Users -Groups $Groups -Manager $Manager -Mfa $Mfa
+            $Handler = Invoke-GpApprRun -Json $Json -WhatIfRun $true
+            $Declared = Resolve-OERDeclaredApprover -Declared ($Json | ConvertFrom-Json).pimPolicy.member
+            $Current = Get-OERGroupPimPolicy -Id '66666666-6666-6666-6666-6666666666f1' -AccessType 'member'
+            $Splat = (Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current).SetParams
+            $CmdErr = $null
+            $null = Set-OERGroupPimPolicy -Id 'role_sec_appr' -AccessType 'member' @Splat -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable CmdErr
+            [PSCustomObject]@{ Handler = $Handler; CmdErr = @($CmdErr) }
+        }
+        $HandlerOwn = @($Result.Handler.Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncGpApprViaCaller' })
+        $CmdOwn = @($Result.CmdErr | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Set-OERGroupPimPolicy' })
+        $HandlerOwn.Count | Should -Be 1
+        $CmdOwn.Count | Should -Be 1
+        $CmdOwn[0].FullyQualifiedErrorId | Should -BeExactly 'ApproverRequired,Set-OERGroupPimPolicy'
+        ($HandlerOwn[0].Exception.Message -ceq $CmdOwn[0].Exception.Message) | Should -BeTrue -Because "the handler must publish the cmdlet's own text: '$($HandlerOwn[0].Exception.Message)' against '$($CmdOwn[0].Exception.Message)'"
+        [string]$HandlerOwn[0].CategoryInfo.Category | Should -BeExactly ([string]$CmdOwn[0].CategoryInfo.Category)
+        # Reached: the real cmdlet read the live approval rule, once, and sent nothing.
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*rules/Approval_EndUser_Assignment' }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
     }
 }
