@@ -914,7 +914,7 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   between other characters of a segment is accepted: never widen the white space rule to every
   space. Never drop the rule in favour of the trim, which would make such a scope prune.
   `Why: docs/development/rationale.md#role-assignment-key`
-- **`Get-OERScopeSpellingProblem` is the single owner of those two spelling rules** (checks, order,
+- **`Get-OERScopeSpellingProblem` is the single owner of the two scope spelling rules in the previous bullet** (checks, order,
   message texts) for the `roleAssignments` and `roleManagementPolicies` scopes. The validator's
   `Add-ScopeSlashFinding` and `Add-ScopeSegmentFinding` add one Error per problem it returns and
   decide no spelling; `Get-OERInventory` leaves a role assignment at a scope with any problem out of
@@ -969,8 +969,8 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   read, or `maximumDuration` not a positive whole number of days) and the declared half does not
   already match, `Resolve-OERGroupPimPolicyChange` names the pair in `UnknownLiveValues`, binds
   neither half, and `Sync-OERStructureGroup` refuses that access type with `PimRuleValueUnknown`
-  before `ShouldProcess` -- never a default. Known and NOT fixed, outside this cmdlet: a successful
-  read lacking a key makes `Set-OERAccessPackageAssignmentPolicy` write the body builder's default,
+  before `ShouldProcess` -- never a default. Known and NOT fixed, outside this cmdlet (unmeasured): a
+  successful read lacking a key makes `Set-OERAccessPackageAssignmentPolicy` write the body builder's default,
   and an empty Azure Resource Manager body makes `Set-OERResourceGroup` send an empty location.
   `Why: docs/development/rationale.md#a-set-cmdlets-own-read-decides-a-written-value`
 - **`Send-OERPimRulePatch` is the single owner of sending a Microsoft Graph PIM rule set, one PATCH
