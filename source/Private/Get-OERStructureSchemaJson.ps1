@@ -197,7 +197,7 @@ function Get-OERStructureSchemaJson {
         "properties": {
           "displayName": { "type": "string" },
           "previousDisplayName": { "type": "string", "minLength": 1, "description": "The group's current display name or object id, when displayName declares a new one. When only this value matches a live group, that group is renamed; when displayName also matches a different group, the entry fails and nothing is merged. Microsoft Graph's name lookup can follow a rename with a delay: keep this value and wait until the new name resolves before re-applying, since a re-run while neither name resolves yet fails the entry and creates nothing, and a reference to the new name elsewhere in the same document can fail on the renaming run and is safe to re-run. Remove it once the new name resolves. Not exported by Get-OERInventory." },
-          "template": { "type": "string" },
+          "template": { "type": "string", "description": "A naming template whose {token} placeholders are replaced, in one pass and as text, by the values in tokens (token names compared ignoring letter case), so a dollar sign in a value, or a value that looks like a placeholder, stays as written. A template that cannot be turned into a name -- a placeholder without a value, or a name longer than 256 characters -- is refused by Test-OERStructure, and Invoke-OERStructure applies nothing from the document." },
           "tokens": { "type": "object" },
           "roleAssignable": { "type": "boolean" },
           "dynamic": { "type": "boolean" },
@@ -218,7 +218,7 @@ function Get-OERStructureSchemaJson {
           "owners": {
             "type": "array",
             "items": { "type": "string" },
-            "description": "Reconciled only when declared and non-null: an omitted OR explicit null owners key is never reconciled or pruned (unlike members, where only null skips it). [] reconciles to no declared owners. -Prune never removes a service principal owner, an owner of a group synchronized from on-premises, or an owner PIM for Groups holds or makes eligible."
+            "description": "Reconciled only when declared and non-null: an omitted OR explicit null owners key is never reconciled or pruned (unlike members, where only null skips it). [] reconciles to no declared owners. -Prune never removes a service principal owner, an owner of a group synchronized from on-premises, or an owner PIM for Groups holds or makes eligible, and it never removes the group's last remaining owner or its last remaining user owner (Microsoft Graph refuses to remove a group's last user owner, also while a service principal is an owner): those are reported Skipped."
           },
           "eligibility": {
             "type": "array",
@@ -424,7 +424,7 @@ function Get-OERStructureSchemaJson {
                 "durationInHours": { "type": "integer", "minimum": 1 },
                 "expirationDateTime": {
                   "type": "string",
-                  "description": "ISO 8601 date-time string. At most one of durationInDays/durationInHours/expirationDateTime may be set; the offline validator enforces mutual exclusion -- draft-07 cannot express it cleanly."
+                  "description": "ISO 8601 date-time string. At most one of durationInDays/durationInHours/expirationDateTime may be set; the offline validator enforces mutual exclusion -- draft-07 cannot express it cleanly. PowerShell 7.5 or later reads the value as written; PowerShell 7.2 to 7.4 reads a date-time string as a date, so Test-OERStructure refuses it there and Invoke-OERStructure does not apply the document."
                 }
               }
             }
@@ -448,7 +448,7 @@ function Get-OERStructureSchemaJson {
             "enum": [ "OneTime", "Weekly", "Monthly", "Quarterly", "SemiAnnually", "Annually", null ],
             "description": "An explicit null means a one-time review, exactly as omitting the key does -- the offline validator treats a null as undeclared and applies the OneTime default. null appears in both type and enum because draft-07 asserts them independently."
           },
-          "startDate": { "type": "string", "description": "ISO 8601 date or date-time the first review instance starts. Defaults to today when omitted." },
+          "startDate": { "type": "string", "description": "ISO 8601 date or date-time the first review instance starts. Defaults to today when omitted. Write a date alone (2026-07-01) for a document applied on PowerShell 7.2 to 7.4, which reads a date-time string as a date, so Test-OERStructure refuses it there; PowerShell 7.5 or later reads either as written." },
           "endDate": { "type": "string", "description": "ISO 8601 date the recurrence series ends. Mutually exclusive with occurrences; ignored for a OneTime review." },
           "occurrences": { "type": "integer", "minimum": 1, "description": "Number of review instances in the series. Mutually exclusive with endDate; ignored for a OneTime review." },
           "durationInDays": { "type": "integer", "minimum": 1, "maximum": 365 },

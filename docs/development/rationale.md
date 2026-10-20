@@ -2527,14 +2527,27 @@ the `$ValidRecurrenceValues` assignment. The refusal text beside it in
 of accepted cadences) is one more spelling that the cohort does not read; a test in
 `Sync-OERStructureAccessReview.Tests.ps1` pins it verbatim.
 
-The interval numbers (1, 3, 6 and 12) stand in three more places, each written out on its own and
-held by behaviour tests, not by the cohort: the cadence-to-interval `switch` of
-`New-OERAccessReviewRecurrence` (`New-OERAccessReviewRecurrence.Tests.ps1`), and the
-interval-to-cadence `switch` with the set of representable intervals, in the export in
-`Get-OERInventory` (`Get-OERInventory.Tests.ps1`) and in the live-state diff in
-`Resolve-OERAccessReviewChange` (`Resolve-OERAccessReviewChange.Tests.ps1`). A change to the
-vocabulary therefore touches the canonical list, the six lists the cohort reads, the refusal text,
-those three interval sites, and the help texts that enumerate the cadences.
+The interval numbers (1, 3, 6 and 12) stand in one place since Sprint 11 step 11 (BL-117, third
+point): `Get-OERAccessReviewCadence`, the single owner of the table that maps a cadence to its
+pattern type and interval and a live pattern back to a cadence, and of whether a live pattern is one
+the module can write back (`Representable`). They used to be written out three times, held only by
+behaviour tests: the cadence-to-interval `switch` of `New-OERAccessReviewRecurrence`, and the
+interval-to-cadence `switch` with the set of representable intervals in the export in
+`Get-OERInventory` and in the live-state diff in `Resolve-OERAccessReviewChange` -- five spellings in
+all, and a sixth that disagreed would write one interval and read back another. All three now ask
+the owner, and their earlier tests pass unedited. A scan in
+`tests/Unit/Private/Get-OERAccessReviewCadence.Tests.ps1` parses every file under `source/` but the
+owner's with the PowerShell parser and fails on the four shapes those sites wrote: an array of exactly
+1, 3, 6 and 12; a `switch` clause on one of those integers whose body names a cadence; a `switch`
+clause on a cadence name whose body holds one of them; and a `switch` clause on the pattern type
+`weekly` or `absoluteMonthly`. It reads no comment or string, and it does not see a mapping written
+as a hashtable, a chain of `if` statements, a comparison such as `-eq 6`, or a table split across
+variables; those are kept out by review. `OER_COHORT_SOURCE_ROOT` points it at a mutated copy of
+`source/`, as for the other cohort scans, and is never set in CI. The builder still names
+`absoluteMonthly` once, in a comparison, to decide whether to add `dayOfMonth`, which the scan allows
+(it flags a `switch` clause, not a comparison). A change to the vocabulary therefore touches the
+canonical list, the six lists the cohort reads, the refusal text, the owner's table, and the help
+texts that enumerate the cadences.
 
 **Why `SemiAnnually` was added** (Sprint 10 step 6, BL-108, decision A12 of 2026-10-08). A live run
 showed three reviews with `absoluteMonthly` interval 6. Graph stores and returns that pattern: check
@@ -2608,6 +2621,48 @@ recurrence `Monthly` gave, in a `-WhatIf` plan and in two real runs, exactly one
 the reason word for word, the same text as a warning before it, and no write; the live pattern
 stayed interval 6.
 
+### Sprint 11 step 11: what a review's recurrence cannot send back (BL-117; R-8, R-9, R-10)
+
+**A numbered range with fewer than one occurrence (first point, R-8).** Graph can report a numbered
+range whose `numberOfOccurrences` is 0. When a document changed only the cadence or the start date of
+such a review, the diff carried the live range forward and bound `-Occurrences 0`, which
+`Set-OERAccessReviewDefinition` refuses at binding (`[ValidateRange(1, ...)]`), so the entry ended
+`Failed`. A count that was missing did worse: the carry-forward skipped it, and the rebuild defaulted
+the range to `noEnd`, silently ending a numbered series. Now, when the document declares neither
+`endDate` nor `occurrences`, the cadence is not `OneTime` and the live range is `numbered` with a
+count below one -- or with no count that reads as a number -- `Resolve-OERAccessReviewChange` leaves
+the whole unit (recurrence, start date, end date, occurrences) untouched and reports it in
+`NotApplied`, as it does for a pattern it cannot rebuild: "the live recurrence range is numbered with
+N occurrence(s)" (or "with no readable occurrence count"), "which cannot be sent back; the
+recurrence, start date and range were left untouched. Declare 'endDate' or 'occurrences' to change
+the recurrence". A declared `endDate` or `occurrences` replaces the range and is written as usual,
+and a field outside the unit still applies. The handler writes the reason as a warning and a
+`Skipped` row before its gate, so a `-WhatIf` plan and a run report the same. The A19, missing start
+date and unrepresentable pattern reasons are checked first, since each is the more fundamental one.
+Context `a live numbered range with fewer than one occurrence (BL-117, first point)` in
+`Resolve-OERAccessReviewChange.Tests.ps1` and its namesake in `Sync-OERStructureAccessReview.Tests.ps1`
+hold it. Cost if wrong: such a review's recurrence changes only with a declared range.
+
+**A Warning preference of Stop (eighth point, R-9).** The question was whether a caller running with
+`$WarningPreference = 'Stop'` could see half of an entry written. It cannot, and nothing changed in
+code: `Sync-OERStructureAccessReview` writes each `NotApplied` reason with `Write-Warning` before
+`$Caller.ShouldProcess` and before its one write, so under Stop the entry ends at that warning with
+nothing sent, and through `Invoke-OERStructure` it is one `Failed` row (`handler error: ...`). Context
+`a Warning preference of Stop stops an entry with an unappliable note before any write (BL-117,
+eighth point)` in `Sync-OERStructureAccessReview.Tests.ps1` holds it three ways: the handler under a global Stop
+preference, the engine in a runspace with no `try`, and the same script under Continue as the
+control. Moving the warning after the write, or silencing it, turns them red.
+
+**`dayOfMonth` is never compared (sixth point, R-10, measured).** In the test tenant on 2026-10-20
+(check 1.5 of `docs/live-verification/fix-engine-and-validator-findings-checklist.md`) a review
+created with `dayOfMonth` 3 read back with `dayOfMonth` 0, as every review did in Sprint 10 step 6
+round 1, and a PUT that sent the recurrence exactly as read (`dayOfMonth` 0) was accepted (204) and
+left it 0. Graph never reports the day the module sent, so a comparison could never find the live
+value equal and every run would report drift: `dayOfMonth` is neither compared nor exported. The
+module keeps sending the start date's day on a write that builds the pattern, and a full-object
+update that carries the live recurrence forward sends the 0 Graph returned, which the measurement
+shows Graph accepts.
+
 ## declared-property
 
 `Test-OERDeclaredProperty`/`Test-OERDeclaredNull` are the single owners of the apply engine's
@@ -2660,6 +2715,25 @@ demanded `fallbackReviewers` for it; that finding went false the moment the hand
 document as a self review. On the fallback side it did the opposite, demanding nothing where the
 handler demands a non-empty list. A rule that lives in two places is only half-written until both
 places agree.
+
+### Sprint 11 step 11: a top-level section that is null (BL-38, R-3)
+
+The validator already read a top-level section set to `null` as not declared, but
+`Invoke-OERStructure` asked only whether the KEY was present, in four places: the dispatch loop, the
+decision whether to ask for an Azure Resource Manager token, the pre-pass that decides the renames
+the run cannot decide, and the administrative unit pre-pass. So a null section was dispatched as one
+null item and reported `Failed` (`roleAssignments` excepted, whose null elements the engine already
+dropped), and `"roleAssignments": null` or `"roleManagementPolicies": null` asked for an ARM token,
+so the document tenant rule compared the ARM token's tenant too. All four now ask
+`Test-OERDeclaredProperty`, so a null section gives no row and no ARM token, and no subscription is
+checked for it, exactly like an absent key; `[]` stays declared and asks for the token as before. Two of the
+four edits are behaviour-neutral by construction (the rename pre-pass skips a null entry by its own
+`displayName` check, and a null `groups` names no unit), and are there so the four places read alike;
+the administrative unit pre-pass one is not -- a group may declare `"administrativeUnit": ""`, which
+the empty name of a null unit used to match, and the pre-pass then called the unit handler with a
+null item whose catch ended the whole run. The `(BL-38)` Describe in
+`tests/Unit/Public/Invoke-OERStructure.Tests.ps1` holds each. Cost if wrong: a null section regains
+a false `Failed` row, with nothing written either way.
 
 ## property-naming
 
@@ -2913,13 +2987,107 @@ Three consequences worth keeping in mind:
   allows to exist. Accept the context-disable and decline the MFA prompt instead, and the policy
   ends with neither control while the guard stays silent, because it tests for the opposite
   asymmetry (`$Sent` containing the partner rule but not the reconciled one). The guard was derived
-  against a fixed rule order and was never re-derived once the order became direction-dependent;
-  reworking it to warn on either split of the pair, with direction-appropriate wording, is an open
-  follow-up and not done in this branch. Both shapes require explicit interactive `-Confirm` consent
-  per rule and are unreachable from `Invoke-OERStructure`, which applies with `-Confirm:$false`.
+  against a fixed rule order and was never re-derived once the order became direction-dependent.
+  Both shapes require explicit interactive `-Confirm` consent per rule and are unreachable from
+  `Invoke-OERStructure`, which applies with `-Confirm:$false`. Sprint 11 step 11 (BL-97 F2) reworked
+  it into the split warning described under
+  [#a-split-confirmation-answer-warns-in-the-direction-that-happened](#a-split-confirmation-answer-warns-in-the-direction-that-happened).
 - **Do not "tidy" the ordering back into a fixed sequence.** A fixed order cannot be right for both
   directions, and the direction that is wrong fails only against a live tenant -- every mocked test
   that does not assert on PATCH ORDER passes either way.
+
+### A Set cmdlet's own read decides a written value
+
+Sprint 11 step 11, decision A24, ruling R-14. `Set-OERGroupPimPolicy` makes four reads of its own
+whose answer decides a value it writes: the two duration reads (`Expiration_Admin_Eligibility` when
+`-AllowPermanentEligibility` is bound without `-EligibleDuration`, `Expiration_Admin_Assignment` when
+`-AllowPermanentActive` is bound without `-ActiveDuration`), whose live `maximumDuration` is sent back
+untouched, and the two reconcile reads of the pair (`Enablement_EndUser_Assignment` when a non-empty
+`-AuthenticationContextId` is bound without `-ActivationEnabledRules`,
+`AuthenticationContext_EndUser_Assignment` when `-ActivationEnabledRules` holds
+`MultiFactorAuthentication` and `-AuthenticationContextId` is not bound), which decide whether the
+other half is sent too. A duration read that failed used to warn and send the parameter's default
+(365 or 180 days) in place of the live maximum, and a rule that carried no `maximumDuration` sent the
+default without a warning; a reconcile read that failed warned and sent the bound half alone, which
+can leave exactly the combination PIM cannot honour.
+
+Now each of the four refuses the whole call before `ShouldProcess` and before any PATCH, so nothing
+is sent, the other rules bound on the call included, and `-WhatIf` shows the refusal too. A read that
+throws is published as itself (`Remove-OERErrorRecord` first, then `$PSCmdlet.WriteError($PSItem)` and
+`return`), with no default, no declared-only write and no warning in its place. A read that answers
+without the value the call needs -- no rule at all, or a duration rule whose `maximumDuration` is
+blank -- is refused with the one new ErrorId `PimRuleValueUnknown` (A9, a refusal), category
+`InvalidData`, target the policy id, with a message that names the rule and the parameter that
+supplies the value (`-EligibleDuration`, `-ActiveDuration`, or both `-AuthenticationContextId` and
+`-ActivationEnabledRules`). An enablement rule whose `enabledRules` is an empty list is an answer (no
+MFA), not an empty read. The four warnings and the dead default branches of the duration build are
+gone. Unchanged: the approval rule read, which already refused (`ApprovalRuleReadFailed`), the
+authentication context validation read, which only validates, and the put-back read of the first
+half ([#pim-rule-pair-put-back](#pim-rule-pair-put-back)), whose failure costs only the put-back and
+sends no default. The A24 Describe in `tests/Unit/Public/Set-OERGroupPimPolicy.Tests.ps1` holds every
+read, thrown and empty, in a run, under `-WhatIf` and in a script with no `try`.
+
+**What the apply engine reaches.** `Resolve-OERGroupPimPolicyChange` always binds both halves of a
+duration pair, so the engine never reaches the two duration reads. It does reach the reconcile reads:
+when its own conflict check against the policy it read finds no conflict, the diff binds only the
+declared half -- an `authenticationContextId` alone, or an `activationEnablement` that holds
+`MultiFactorAuthentication` alone -- and the cmdlet then reads the other half itself. A failed or
+empty read there is now a `Failed` row for that access type, since the handler calls the cmdlet with
+`-ErrorAction Stop`, where it used to be an `Updated` row after a warning; a `-WhatIf` plan, which
+never calls the cmdlet, still reports "would set". The read is a second one (the handler has read the
+policy already); a later step could have the handler bind both halves. The Describe "the pair rule
+the real Set-OERGroupPimPolicy reads itself, inside an apply" in
+`tests/Unit/Private/Sync-OERStructureGroup.Tests.ps1`, and the Describe "the pair rule the real
+Set-OERGroupPimPolicy reads itself refuses the update when the read fails" in
+`tests/Unit/Public/Invoke-OERStructure.Tests.ps1` (in a runspace with no `try`), hold it.
+
+**The other public Set cmdlets.** A read-only audit of every other `Set-OER*` cmdlet found no other
+read that falls back to a default when it fails: each refuses on a failed read or uses the read only
+to gate a write. It named residual shapes outside A24, recorded as findings and not changed (a read
+that succeeds but lacks a key, for example). Cost if R-14 is wrong: a direct caller whose live read
+fails is refused instead of warned, which is the safe direction.
+
+### A split confirmation answer warns in the direction that happened
+
+Sprint 11 step 11, BL-97 F2. `Set-OERGroupPimPolicy` confirms each rule on its own, so a `-Confirm`
+answer can send one rule of a reconciled pair and decline the other, and the guard that warned about
+it fitted one direction only (the section above). Now, when the call reconciled the pair (`ClearMfa`
+or `DisableAuthContext`) and exactly one of its two rules was confirmed, one warning is written after
+the last PATCH and after the send's own messages, as [#pim-rule-pair-put-back](#pim-rule-pair-put-back)
+requires, and it says what that left on the policy as far as the call knows it:
+
+- `ClearMfa`, the enablement rule (MFA removed) applied and the context rule declined: multi-factor
+  authentication was removed and this call did not enable the context, so activation may now require
+  neither.
+- `ClearMfa`, the context rule applied and the enablement rule declined: the text the guard always had,
+  that the policy still requires both.
+- `DisableAuthContext`, the context rule applied (disabled) and the enablement rule declined: the
+  context was disabled and MFA was not added, so activation may now require neither.
+- `DisableAuthContext`, the enablement rule sent and rejected (`MfaAndAcrsConflict`) and the context
+  rule declined: the policy keeps its context and MFA was not added -- "not added", since the
+  enablement rule is not read in that direction and may already carry MFA.
+- `DisableAuthContext`, the enablement rule sent and accepted and the context rule declined: it was
+  applied although the context was enabled when it was read, so activation may require both, which
+  PIM cannot honour.
+- Any of the first three with the sent rule rejected: neither rule of the pair changed.
+
+Every text but the last ends with the remedy. When both rules or neither were confirmed nothing is
+written. The warning is an outcome warning, named with its reason in the allowlist of
+`tests/Unit/Public/WarningBeforeConfirmation.Cohort.Tests.ps1`; a `-WarningAction Stop` caller is
+stopped earlier, at the reconcile warning written before the prompts. Only an interactive `-Confirm`
+reaches it: `Invoke-OERStructure` applies with `-Confirm:$false`.
+
+### The listed policy id after the first write (BL-97 F3, measured)
+
+Sprint 11 step 11, ruling R-16. On a group never used with PIM for Groups, the first rule PATCH
+onboards the group and the policy id Microsoft Graph lists for it then changes. The question was
+whether a later rule of the same call, sent to the id `Set-OERGroupPimPolicy` looked up before the
+first PATCH, lands on the policy Graph lists afterwards. Measured in the test tenant on 2026-10-20
+(checks 1.3 and 1.4 of `docs/live-verification/fix-engine-and-validator-findings-checklist.md`): sent
+raw, a second rule PATCHed to the id listed before answered 200 and is on the policy listed afterwards,
+and the old id reads the same; through the cmdlet, one call with two rules on such a group returned
+`Applied` true and both rules are on the listed policy, which `Get-OERGroupPimPolicy` reads. So the
+cmdlet's single policy id lookup is enough: no defect, and no code changed.
 
 ## pim-rule-pair-put-back
 
@@ -2941,8 +3109,8 @@ applied. One helper replaces the inline copy and gives the group cmdlet the same
 two cannot drift again: `tests/Unit/Private/Send-OERPimRulePatch.Tests.ps1` holds by AST that
 neither cmdlet sends a rule PATCH of its own and that each calls the helper once. A rejected FIRST
 half needs nothing, since the second was validated against an unchanged policy. The pair counts
-only when both rules are in the confirmed set, so a DECLINED half is never put back (the
-declined-partner guard of the section above covers that case). A put-back that is itself rejected
+only when both rules are in the confirmed set, so a DECLINED half is never put back (the split
+warning of the section above covers that case). A put-back that is itself rejected
 leaves the first half applied: the helper reports why, and the cmdlets say what activation now
 requires. The group cmdlet says it may now require neither control; the directory cmdlet reads the
 object it just returned and names what that role now requires.
@@ -2959,17 +3127,19 @@ first half's live version, which has to be read BEFORE the first PATCH changes i
 `-WhatIf` or when a prompt was declined, where nothing, or not the whole pair, is sent. With the
 confirmed set known first, the cmdlet reads the first half only when both pair rules were accepted,
 so `-WhatIf`, a declined prompt and a declined partner make no first-half read of their own. (A
-reconcile read, below, runs before the prompts and is made under `-WhatIf` as well.) The
-declined-partner guard of the section above reads the same set and is unchanged.
+reconcile read, below, runs before the prompts and is made under `-WhatIf` as well.) The split
+warning of the section above reads the same set, and what the send returned.
 
 **Where the first half's live version comes from.** The two reconcile reads the group cmdlet may
 already make are exactly the first half in each direction: `ClearMfa` reads the enablement rule and
 sends it first, `DisableAuthContext` reads the authentication-context rule and sends it first. Each
-read is kept by rule id and reused, so a reconcile adds no read. A call that supplies both
-parameters explicitly makes no reconcile read, and costs one: a single GET of the first rule, after
-the prompts and before the first PATCH. A failed read costs the put-back and nothing else, so it is
-a warning, written at once -- before any PATCH, so a `-WarningAction Stop` caller stops with nothing
-sent -- and the call goes on. Should the second half then be rejected, the helper sends no request
+read is kept by rule id and reused, so a reconcile adds no read. (A reconcile read that fails, or
+returns no rule, refuses the whole call before the prompts since Sprint 11 step 11, since it decides
+whether the other half is sent at all: [#a-set-cmdlets-own-read-decides-a-written-value](#a-set-cmdlets-own-read-decides-a-written-value).)
+A call that supplies both parameters explicitly makes no reconcile read, and costs one: a single GET
+of the first rule, after the prompts and before the first PATCH. A failed read of THAT kind costs
+the put-back and nothing else, so it is a warning, written at once -- before any PATCH, so a
+`-WarningAction Stop` caller stops with nothing sent -- and the call goes on. Should the second half then be rejected, the helper sends no request
 and reports that the value before the call was not read. The directory cmdlet already holds every
 live rule from its policy read.
 
@@ -7039,6 +7209,19 @@ guard and it is unchanged. The groups section of the apply engine is a different
 its own (Sprint 11 step 1): it never adds or removes a member or owner that PIM for Groups holds or
 makes eligible ([#pim-activation-is-not-membership](#pim-activation-is-not-membership)).
 
+**The guard rows are worded by the pair's kind (Sprint 11 step 11, BL-24 and BL-86).** The rows of
+both guards said that the signed-in identity "holds" the role through the group, for an `Eligible`
+pair too, where an eligible assignment gives the identity nothing until it activates it. The two rows
+withheld for an unknown object id and for an unreadable membership are now worded by
+`ConvertTo-OERPruneWithheldResult` (`-SignedInIdUnknown` and `-MembershipUnread`, the ninth and tenth
+kinds under [#typed-group-member-read](#typed-group-member-read)), and the handler passes the pair's
+kind: an `Active` pair's row still says the candidate "may be a group the signed-in identity holds the
+role through", word for word as before, and an `Eligible` pair's says it "may be a group the
+signed-in identity is eligible for the role through" -- one "may", since the row already says the
+candidate may be such a group. The row for a group the identity IS a member of stays in the handler
+and is split the same way ("holds" or "is eligible for"). Only the text changed: the rows, the
+rule and when they are written are as before.
+
 **Testing note: a mocked throw is not gone once the code under test catches it.** Several of the new
 suites assert against `-ErrorVariable` around a call whose OWN internal try/catch is expected to
 swallow a mocked failure and report it a different way (a `Failed` structure result, or a re-thrown
@@ -8151,8 +8334,9 @@ prompt is issued and `Remove-OERGroupMember` is not called for it. A declared se
 added and reported like any other principal, and a member or owner of any other type, or of none, is
 pruned exactly as before. `ConvertTo-OERPruneWithheldResult` owns the rule and both texts, as the
 single owner of "prune withheld" (its `-ObjectType` form); the handler calls it straight after the
-unresolved-entry rule and, for owners, before the last-owner guard, so a lone service principal
-owner is withheld for its type and still counts as an owner standing. Whether the engine should
+unresolved-entry rule and, for owners, before the last-owner guards, so a lone service principal
+owner is withheld for its type and still counts as an owner standing (it is never counted as a user
+owner, [#last-user-owner](#last-user-owner)). Whether the engine should
 ever prune service principals was decided on 2026-10-08 (BL-82): never. Every document exported
 before 1.1.3 lacks service principals, so the first `-Prune` with such a document would remove them
 all; a service principal in a group is often put there by something other than the document; and
@@ -8169,13 +8353,16 @@ could cut its own privileges part-way through the run. Under A9 that service pri
 removed, so the case does not arise. A delegated user removing themselves through a group prune was
 possible before this fix and still is; this change does not touch it.
 
-**The eight kinds of withheld prune `ConvertTo-OERPruneWithheldResult` builds.** One parameter set per
+**The ten kinds of withheld prune `ConvertTo-OERPruneWithheldResult` builds.** One parameter set per
 kind, each a `Skipped` row whose Detail starts `prune withheld:` and carries no warning of the
-helper's own and no ShouldProcess prompt (the sixth and the seventh kind are an `Extra` row without
-`-Prune`, as the `-ObjectType` kind is; under `-Prune` the group handler writes the one item warning
-for the sixth, R6 under [#synced-groups](#synced-groups), where the helper writes none, and no warning
-for the seventh; the eighth is a `Skipped` row with or without `-Prune`, and the handler writes one
-warning for the item that names the cause): a declared entry that could not be
+helper's own and no ShouldProcess prompt. Without `-Prune` the `-ObjectType`, `-SyncedGroup` and
+`-PimHeldReason` kinds return the `Extra` row the pass would have written instead, with a hint that
+`-Prune` leaves the candidate in place, and the `-CreatedGroup` kind returns nothing, so the pass
+reports the candidate `Extra` as usual; every other kind is a `Skipped` row with or without `-Prune`.
+Under `-Prune` the group handler writes the one item warning for the synchronized group kind, R6
+under [#synced-groups](#synced-groups), where the helper writes none, and no warning for the PIM-held
+kind; for the PIM-unread kind the handler writes one warning for the item that names the cause. The
+kinds: a declared entry that could not be
 resolved, which withholds every candidate of its collection (`-Unresolved`); an entry whose scope could not be resolved, which withholds every
 candidate of the section (`-UnresolvedScope`, A12 under [#role-assignment-key](#role-assignment-key));
 a live administrative unit scoped role whose name the directory role list did not give, beside a
@@ -8188,9 +8375,15 @@ A15, under [#synced-groups](#synced-groups)); and, since Sprint 11 step 1 (BL-12
 member or owner that PIM for Groups holds or makes eligible for the same access (`-PimHeldReason`),
 and every undeclared member or owner of a group that already existed when either of its PIM for
 Groups reads failed (`-PimUnread`), both under
-[#pim-activation-is-not-membership](#pim-activation-is-not-membership). The directory role prune's two
-guards for the signed-in identity, under [#directory-role-assignments](#directory-role-assignments),
-write their own `prune withheld:` rows.
+[#pim-activation-is-not-membership](#pim-activation-is-not-membership); and, since Sprint 11 step 11
+(BL-86), the directory role prune's two guards for the signed-in identity, under
+[#directory-role-assignments](#directory-role-assignments): a candidate withheld because the
+signed-in identity's object id is unknown (`-SignedInIdUnknown`), and a group or unknown-type
+candidate withheld because the identity's group memberships could not be read (`-MembershipUnread`,
+worded by `-PairKind`, BL-24). The handler used to word those two rows inline; their texts for an
+`Active` pair are byte-identical to the inline ones, and the handler still writes the membership
+read's failure once for the pass. The row for a group the identity IS a member of is not a withheld
+prune of an unread state, and stays in the handler.
 
 **BL-07: the run that creates a unit membership does not prune it.** A group's `administrativeUnit`
 is applied only when `New-OERGroup -AdministrativeUnit` creates the group, and never round-trips, so
@@ -8751,6 +8944,46 @@ approval on over an empty live approver list sends no approver parameter, so it 
 nothing refuses it before Azure Resource Manager, and the plan and the run already agree. The
 cmdlet's own refusal stays in place as the backstop.
 
+### Sprint 11 step 11: one owner classifies an approver lookup failure (BL-52, R-6)
+
+The six call sites above each told the three outcomes apart with an inline test of their own, of the
+internal ids and of `Test-OERAmbiguousNameError`: six copies of one decision, free to drift. The
+private `Get-OERApproverErrorClass` now owns the decision: `Ambiguous` when
+`Test-OERAmbiguousNameError` says so, `NotFound` when the record's FullyQualifiedErrorId starts,
+ordinally, with `ApproverUnresolved` or `PrincipalUnresolved`, and `Other` for anything else, a null
+record included. Every site asks it and keeps its own message, target, category and inner exception,
+so every published record is byte-identical: the sites' earlier tests, and the
+`AmbiguousName.Guard.Tests.ps1` cases, pass unedited. Accepting both internal ids at every site is a
+widening no input reaches today (`Set-OERRoleManagementPolicy` sees only `PrincipalUnresolved`, the
+other five only `ApproverUnresolved`). A cohort test in
+`tests/Unit/Private/Get-OERApproverErrorClass.Tests.ps1` parses every file under `source/` and fails
+on a string constant naming either internal id as an operand of a comparison operator, as an argument
+of a string comparison method or as a `switch` clause, outside the classifier and the three producers
+(`Resolve-OERPrincipal`, `Resolve-OERApproverInput`, `Resolve-OERDeclaredApprover`); it does not see an
+id held in a variable or built at run time, an id given to a command as a parameter value
+(`Where-Object` or `Select-String`), or a regular-expression method, which are kept out by review.
+
+### Sprint 11 step 11: the Graph policy handlers refuse approval by nobody before the gate (BL-113, R-5)
+
+BL-97 (F1) made the Azure handler's plan say what its run does. The two Microsoft Graph handlers,
+`Sync-OERStructureDirectoryRoleManagementPolicy` and the `pimPolicy` step of `Sync-OERStructureGroup`,
+still planned "would update" or "would set" for a change their cmdlet then refused with
+`ApproverRequired`: a declared approver side emptied while the live approval stage names no other
+approver, or `requireApproval` true against a live stage that names nobody. Their diffs cannot flag
+it as the Azure diff does, since the Graph cmdlets carry the side the document does not declare from
+the live rule. So each handler, after its `Unchanged` exit and before its warnings and its
+`ShouldProcess`, asks `Resolve-OERGraphApproverSet` -- the owner both cmdlets use -- with the live
+`Approval_EndUser_Assignment` rule from the policy it read and the approver and `requireApproval`
+parameters its diff binds, exactly as the cmdlet asks it. When no approver would remain it writes a
+record with the cmdlet's own ErrorId (`ApproverRequired`), category and message, the role or group
+name as target, and reports a `Failed` row, the same in a plan and a run; the group handler moves on
+to the other access type. The cmdlets keep their own refusal as the backstop, and tests run the real
+cmdlet beside each refusal case to hold the messages byte for byte. One edge differs in id only: a
+group policy read whose rules hold no `Approval_EndUser_Assignment` rule has no live approver to the
+handler, so a change that would need one is refused as `ApproverRequired`, where the cmdlet, which
+reads that rule by its id, refuses it as `ApprovalRuleReadFailed`; nothing is written either way.
+Cost if wrong: a plan reports `Failed` for a change Graph would have accepted, and nothing is sent.
+
 ## failed-schedule-request
 
 Sprint 9 step 5 (BL-33) made a PIM schedule request that Microsoft Graph or Azure Resource Manager
@@ -8973,8 +9206,10 @@ until the placeholder was replaced (measured in plain PowerShell), and a value p
 rewrote the activation maximum, since `-ActivationMaxHours` patches the activation rule and the
 open does not touch it. With the switch alone `Set-OERGroupPimPolicy` reads the live eligibility
 `maximumDuration` and sends it back unchanged with `isExpirationRequired` false; if that read
-fails it warns and falls back to the `-EligibleDuration` default, which is the cmdlet's own
-behaviour and not the advice's. The helper's tests parse the text, run it against the cmdlet, and
+fails, or answers with no maximum, the cmdlet refuses the whole call and sends nothing (Sprint 11
+step 11, A24: [#a-set-cmdlets-own-read-decides-a-written-value](#a-set-cmdlets-own-read-decides-a-written-value)),
+which is the cmdlet's own behaviour and not the advice's. Until that step it warned and fell back
+to the `-EligibleDuration` default. The helper's tests parse the text, run it against the cmdlet, and
 keep the old text as a record of why it changed. The id, category and target of `PolicyOpenFailed`
 are as they were.
 
@@ -9398,10 +9633,12 @@ place, without it; no warning and no `ShouldProcess` call. When the hold could n
 undeclared candidate in that collection is `Skipped` with "prune withheld:" with or without `-Prune`
 (`-PimUnread`), like an unresolved declared entry, and the item's one warning names the cause. The
 order of the withholds is the unresolved entry, the service principal, the synchronized group, the
-PIM hold and, for owners, the last-owner guard, and a withheld owner counts as an owner still
-standing. So `-Prune` can remove the last STANDING owner while an activated or time-bound owner
-remains, and when that activation ends the group has no owner: the guard follows Graph's current
-state (recorded, not changed). If the hold rule is wrong: a removal the operator wanted is withheld.
+PIM hold and, for owners, the last-owner guards, and a withheld owner counts as an owner still
+standing (a withheld user owner as a user owner too, for the user-owner floor Sprint 11 step 11
+added, [#last-user-owner](#last-user-owner)). So `-Prune` can remove the last STANDING owner while an
+activated or time-bound owner remains, and when that activation ends the group has no owner: the
+guard follows Graph's current state (recorded, not changed). If the hold rule is wrong: a removal the
+operator wanted is withheld.
 
 **Rule 8 (the bundle).** The bundle `README.md` has a section, "Members and owners left out as PIM for
 Groups access", that lists by group name, never by principal, how many members and owners were left
@@ -10548,6 +10785,31 @@ resources, so a catalog's `packages` and `catalogResourceNames` entries can no l
 other entry changes. Cost if wrong: one resource read more per catalog that holds no package, and a
 `catalogResourceNames` entry for a read that was never needed.
 
+### Sprint 11 step 11: a name or a scope id of white space (BL-157)
+
+**Fourth point: names.** BL-45 fixed the role names of the role assignment and directory role
+sections; three more projections still tested a name for truth, so a name of spaces was written as it
+was. `ConvertTo-OERInventoryRoleManagementPolicy` (the `role` of a `roleManagementPolicies` and a
+`directoryRoleManagementPolicies` entry) and `Get-OERInventoryAzureEligibility` (the `role` and
+`principal` of an `azurePimEligibility.json` row) now use `[string]::IsNullOrWhiteSpace` and fall back
+to the role definition id or the principal id, each on its own, as BL-45 does. A name that is not
+blank is written as it is, surrounding white space included.
+
+**Fifth point: scope ids.** `Resolve-OERInventoryScopeTree` added a listed management group or
+subscription to the walk's scope list when its `ResourceId` was truthy, so a `ResourceId` of white
+space was walked as a scope and counted in the export's "N of M Azure scopes could not be read". It
+now uses `[string]::IsNullOrWhiteSpace`, as it already did for an empty or missing id, so such a
+scope is neither walked nor counted.
+
+**The named limit (ruled in the step).** A listed subscription or management group with a blank
+`ResourceId` is therefore in the hierarchy (`scopeHierarchy.json`) but neither walked nor counted,
+and nothing names it unread, even when the subscription decides as the session tenant's own (the
+home tenant check falls back to `/subscriptions/<id>` for its verdict). Azure Resource Manager's
+answer always carries the id (`ConvertTo-OERSubscription` takes `ResourceId` from it), and an empty
+or missing id already behaved this way, so the edge is defensive; walking such a subscription by its
+`SubscriptionId`, or naming it unread, is a behaviour choice left to a later step. Cost if wrong: such
+a subscription is not walked and not named unread.
+
 ## measured-not-found-codes
 
 Sprint 11 step 10 (BL-21, R-13): the not-found codes of two reads are the ones measured. This anchor records
@@ -11216,7 +11478,8 @@ with `template` and `tokens` is checked on the name `Resolve-OERName` gives, at 
 The name cannot be computed when a placeholder has no token, when `Resolve-OERName` refuses the result
 (longer than 256 characters), or when the result is empty; a token with an empty value does resolve.
 There is then no name to check, so the check says exactly that, once. The validator's own findings
-about the template stand. Held by Context "a group
+about the template stand, among them, since Sprint 11 step 11, the Error at `groups[i].template` for
+a template that cannot be resolved ([#naming-template-one-pass](#naming-template-one-pass)). Held by Context "a group
 named by a template" in `Test-OERStructureSchema.Tests.ps1`.
 
 **The Item of a policy's finding is the policy's own name.** An assignment policy is listed in
@@ -11254,7 +11517,10 @@ example standard: still Valid, one Warning per name and broken rule).
 on PowerShell 7.6.6, with `-Depth 32 -NoEnumerate` as the reader calls it: `2024-01-01T10:00:00`,
 `2024-01-01T10:00:00Z` and `2024-01-01T10:00:00.5+02:00` become a `DateTime`, while `2024-01-01`,
 `2024-01-01T10:00` and `2024-01-01 10:00:00` stay a string. This is a limit of the parser, not
-something the reader fixes; `Read-OERStructureDocument` parses structure documents the same way. (b)
+something the reader fixes. `Read-OERStructureDocument` parsed structure documents the same way
+until Sprint 11 step 11, and now adds `-DateKind String` where `ConvertFrom-Json` has it (PowerShell
+7.5 or later), so a structure document keeps its text there
+([#structure-document-text](#structure-document-text)); the naming standard reader does not. (b)
 The check reads the document it is given. An object the export left out of `inventory.json` is not in
 the document and so is not checked: a name two or more objects share, a role assignment at a scope no
 document can declare (the bundle's `README.md` lists those), and a group the export does not keep. By
@@ -11526,8 +11792,9 @@ same document with every `principalType` swapped to another type; a control with
 exactly that membership under `-Prune`. Cost if wrong (R-7): a hand-written document with a wrong
 `principalType` on a scoped role is refused although apply would ignore the key.
 
-**Known limits.** (a) The validator accepts an array `principalType` such as `["User"]`, as it does for
-`roleAssignments` (a pre-existing pattern). (b) A unit later left out of the document because another
+**Known limits.** (a) The validator accepted an array `principalType` such as `["User"]`, as it did for
+`roleAssignments` (a pre-existing pattern), until Sprint 11 step 11 (BL-155) made a value that is not a
+string an Error in both sections ([#enum-values-must-be-strings](#enum-values-must-be-strings)). (b) A unit later left out of the document because another
 unit shares its name is looked up, and named unread when the lookup failed, all the same. (c) The
 `InventoryPartial` sentence about such an entry stands in every partial message of `Get-OERInventory`
 and of the export, also when no such entry is listed; the bundle README's sentence does not.
@@ -11548,3 +11815,283 @@ ran 160 of 160 green. Every mutant turned at least one test red.
 | T1, T5 | the README sentence only when such an entry is present | `if ($true)`; `if ($false)` | 4 red each: the four "adds no sentence" cases; the three "adds the sentence" cases and the order test |
 | T2 | only for an Entra ID entry | the label condition removed | 2 red: the role assignment principal entry and the Azure scope |
 | T3, T4 | the path at the end of the entry or before a comma | the anchor dropped; the end alone | 1 red (a path that only starts the same way); 2 red (the comma cases) |
+
+## failed-policy-read
+
+Sprint 11 step 11 (BL-40, rulings R-1 and R-2): a live read whose answer decides what the apply engine
+writes is never taken as "nothing there".
+
+**What was wrong.** `Sync-OERStructureRoleManagementPolicy` read the live Azure role management policy
+without `-ErrorAction Stop`. `Get-OERRoleManagementPolicy` writes its failures as non-terminating errors
+-- a role definition it cannot find, a policy assignment list Azure Resource Manager refuses -- so such
+a read returned nothing, the handler's catch never ran, and the diff, handed no current policy, took
+every declared field as changed. For an entry that declared only `approvers.users`, the side it did not
+declare was seeded from that missing policy as empty, so the write could replace the live group
+approvers with none, and a `-WhatIf` plan said "would update".
+
+**What it does now.** The read carries `-ErrorAction Stop`, so the catch -- scrub first, the record
+published as itself through `$Caller.WriteError`, a `Failed` row carrying it -- runs for every failure,
+and a read that returns no policy and no error is refused too (`PolicyNotFound`, category
+`ObjectNotFound`, the role and scope as target). Both stand before the approver lookup, the diff, the
+`ApproverRequired` check and `ShouldProcess`, so a `-WhatIf` plan reports the same row and nothing is
+written. `Resolve-OERRoleManagementPolicyChange` is unchanged: its branch for a missing current policy
+serves a direct caller only, and its help says a caller refuses a failed or empty read first.
+
+**The sweep (R-2).** Every read of live state in every `Sync-OERStructure*` handler and in the engine,
+35 reads, was audited for the same shape, and one more had it: the group `pimPolicy` read in step 4 of
+`Sync-OERStructureGroup`, whose catch swallowed the error and left the current policy unset. The diff
+then sent every declared field and defaulted the undeclared half of a duration pair: an
+`eligibleDurationDays` declared alone also sent `allowPermanentEligibility` false, whatever the policy
+had. That read now ends its access type with a `Failed` row carrying the read's own record
+(`PimPolicyNotFound` for a read that returned no policy and no error), before the diff, the PIM-in-use
+question, the conflict warning and `ShouldProcess`, in a run and under `-WhatIf`, and the other access
+type is processed as usual. Every other read already ended in a `Failed` row or a throw to the engine,
+or only stops a write or a prune. The directory role handler also reads with `-ErrorAction Stop`; it
+has no empty-answer guard of its own, since `Get-OERDirectoryRoleManagementPolicy -Role` writes an
+error on every path that returns no policy.
+
+**The tests.** Context "a failed read of the live policy never feeds a write (BL-40)" in
+`Sync-OERStructureRoleManagementPolicy.Tests.ps1` and Context "a failed or empty read of the live
+pimPolicy never feeds a write (BL-40)" in `Sync-OERStructureGroup.Tests.ps1` drive four read shapes --
+a non-terminating mock, the real cmdlet failing non-terminating, a terminating failure, and no answer
+-- in a run and under `-WhatIf`, with the global `$ErrorActionPreference` pinned to Continue, so a CI
+Stop preference cannot hide a missing `-ErrorAction Stop`. Two Describes in
+`Invoke-OERStructure.Tests.ps1` run the public engine in a runspace with no `try`. Cost if R-1 is
+wrong: a second guard belongs in the diff.
+
+### An unread directory role name map stops only the scopedRoles (BL-47, R-7)
+
+When the document declares a scoped role by its role id and the unit holds a live scoped role named
+by the directory, `Sync-OERStructureAdministrativeUnit` reads the directory role list a second time
+(`Get-OERDirectoryRoleNameMap -ThrowOnFailure`) to match the two through the role's other id. When that
+read failed, the handler returned at once and the whole unit was `Failed`, its properties and members
+included. Now the read's record (`AdministrativeUnitScopedRoleReadFailed`, `ReadError`, the unit id as
+target, its message ending "No scopedRole change was made.") is written once, at the read; the
+properties and members are applied as usual, in a run and under `-WhatIf`; and the scopedRoles step,
+the last of the handler, reports one `Failed` row carrying that record and returns, with no principal
+lookup, no add, no removal and no `Extra` row, with or without `-Prune`. The scopedRoles collection is
+the smallest part that can be stopped without a wrong write: without the map, a role declared by id
+that matches a live role through its other id would be added a second time and its live entry pruned.
+The first read of the role list, inside `Get-OERAdministrativeUnit -IncludeScopedRoles`, still fails
+the whole unit as an unread scoped-role collection. The record is written at the read and not in the
+guard (ruled): under a Stop preference a write in the guard would throw after the property and member
+writes and lose their rows. So a unit whose rename fails, which returns before the scopedRoles step,
+shows the map's record beside the rename's own `Failed` row and no scopedRoles row. Cost if wrong: a
+scoped role declared by name waits one run.
+
+## last-user-owner
+
+Sprint 11 step 11 (BL-84, ruling R-15).
+
+**Measured.** In the test tenant on 2026-10-20 (check 1.2 of
+`docs/live-verification/fix-engine-and-validator-findings-checklist.md`), Microsoft Graph refused to
+remove a group's only user owner while a service principal was its other owner: the `DELETE` of the
+owner reference answered 400 `Request_BadRequest`, "The group must have at least one owner, hence this
+owner cannot be removed.", and the owners were unchanged. A service principal owner does not stand in
+for the last user owner.
+
+**What the engine did.** The owner prune pass of `Sync-OERStructureGroup` held back only the last
+remaining owner of any type, and counted a service principal owner, which `-Prune` never removes, as an
+owner standing. So with one user owner and one service principal owner, and no owner declared,
+`-Prune` sent a removal of the user owner that Graph refuses.
+
+**What it does now.** A user-owner floor is asked first: an undeclared owner whose `ObjectType` is
+`user` (in any letter case) and who is the last user owner still standing is never removed -- `Skipped`,
+with a Detail that quotes the measurement, and no warning, no `ShouldProcess` and no request. The floor
+for the last owner of any type stays, reached now only by an owner not typed user, and its text no
+longer says "pending live verification". A withheld owner (an unresolved entry, a service principal, a
+synchronized group, an unread or a held PIM state) still counts as standing, and a withheld user owner
+as a user owner. A removal that went through lowers both counts; one that failed, or was declined at
+the confirmation prompt, leaves its owner standing. A `-WhatIf` plan counts each removal it reports as
+done, so it holds back the same owner a run does; before that fix, a plan for two undeclared user owners
+said "would remove" for both while the run refused the second. An owner with no `ObjectType` is not
+counted as a user owner (the typed read carries one in a real tenant). Context "the last user owner is
+never removed, also while a service principal is an owner (BL-84, R-15)" in
+`Sync-OERStructureGroup.Tests.ps1` holds it. Cost if wrong: a removal Graph would have accepted waits
+for the operator.
+
+## unknown-allowed-target-scope
+
+Sprint 11 step 11 (BL-49, decision A24, ruling R-13).
+
+**Measured.** Microsoft Graph answers an access package assignment policy's `allowedTargetScope` with
+`unknownFutureValue` for a value of the enumeration it names only when the request carries the header
+`Prefer: include-unknown-enum-members`, which this module never sends. In the test tenant on 2026-10-20
+(check 1.1 of the step's checklist) no policy read back as the placeholder: one created with
+`allDirectoryAgentIdentities` read back as itself with and without the header. But a PUT of a policy
+with its own read body and `allowedTargetScope` set to `unknownFutureValue` answered 200 and STORED the
+placeholder as the policy's scope, read back so with and without the header. A write that carries a
+read placeholder back therefore replaces the policy's real scope.
+
+**What the cmdlet does now.** `Set-OERAccessPackageAssignmentPolicy` carries the live scope forward
+through `ConvertTo-OERPolicyBody` when `-RequestorScope` is not given. It now refuses, after its one read
+and its `NothingToUpdate` and `AccessPackageNotFound` checks and before the body is built,
+`ShouldProcess` and the PUT, when `-RequestorScope` is not bound and the policy it read carries
+`allowedTargetScope` `unknownFutureValue` in any letter case: the new ErrorId
+`UnknownAllowedTargetScope` (A9, a refusal), category `InvalidData`, the policy id as target. It does so
+under `-WhatIf` too, and for a rename that changes nothing else. A bound `-RequestorScope` writes as
+before, and any other read scope is carried forward as before. The apply engine already refused such a
+policy, whatever the entry declares, as a `Failed` row with nothing written
+(`Sync-OERStructureAccessPackage`); that is unchanged. Cost if wrong: an operator with such a policy
+passes `-RequestorScope` to update it.
+
+## confirmation-unavailable
+
+Sprint 11 step 11 (BL-53, ruling R-4). `Test-OERHostCanConfirm` and `Test-OERConfirmPromptFailure` are
+the single owners of the two decisions below.
+
+**Measured** on 2026-10-20 in plain PowerShell, with no module code loaded, on a function with
+`ConfirmImpact` High called without `-Confirm:$false` and without `-WhatIf`: `ShouldProcess` does not
+answer no in a host that cannot ask, it throws a `MethodInvocationException`, whose inner exception is
+a `HostException` in the Default Host (a runspace made with `[powershell]::Create()` without a host of
+its own, or a thread job, `Start-ThreadJob`), a `PSInvalidOperationException` under
+`pwsh -NonInteractive` (and `-noni`), and a `NullReferenceException` with standard input at its end (the
+live case of Sprint 8 step 3); with standard input redirected from a pipe that still held input it read
+the default answer, yes. `$Host.UI` is never null. `Invoke-OERStructure` runs with `ConfirmImpact` High,
+so each handler's `$Caller.ShouldProcess` threw there, and the engine's catch reported the entry
+`Failed` with the host's raw message, which did not say what was missing. Only the Default Host can be
+told beforehand, by `$Host.Name -eq 'Default Host'`; the other two would need the process command line
+or the console's state.
+
+**The Default Host is refused before the sign-in.** When the run would prompt -- not `-WhatIf`, and
+`$ConfirmPreference` not `None`, which `-Confirm:$false` sets inside the command -- and
+`Test-OERHostCanConfirm` says the host is the Default Host, the document is refused with the new ErrorId
+`ConfirmationUnavailable` (A9), category `InvalidOperation`, once it has been read and validated and
+before the tenant alias, the Azure Resource Manager decision, both tenant comparisons, the session
+snapshot check and `Initialize-OERAuth`: nothing is signed in to, read or written, and the next piped
+document is handled the same way. Measured too: inside the command the refusal reads the same
+`$ConfirmPreference` and `$WhatIfPreference` that `ShouldProcess` reads -- `-Confirm:$false` makes the
+first `None`, `-WhatIf` sets the second, and a global `$ConfirmPreference = 'None'` is seen by both --
+so a refused run is one that would have prompted.
+
+**Every other host gets a row that says what is missing.** The engine's two handler-error catches
+(`pre-pass handler error` and `handler error`) word the Detail through `Test-OERConfirmPromptFailure`
+when the caught record is that failure: a `MethodInvocationException`, its inner exception one of the
+three measured types or one derived from them, and its message naming `ShouldProcess` (compared
+ordinally). The Detail then says that the host cannot show the confirmation prompt, that nothing was
+written for the entry, and to run with `-Confirm:$false` to apply without prompts or with `-WhatIf` to
+plan; the record is still published as itself, and every other error keeps its own message. No handler
+calls `$Caller.ShouldProcess` inside a `try` of its own, so the failure reaches those catches.
+
+Cost (accepted): a Default Host run that would have changed nothing now needs `-Confirm:$false` or
+`-WhatIf`. A host the refusal misses still gets the clear row. The `(BL-53)` Describe of
+`Invoke-OERStructure.Tests.ps1` holds it, in a real Default Host runspace with no `try` among others,
+beside the two helpers' own test files.
+
+## structure-document-text
+
+Sprint 11 step 11 (BL-154, ruling R-11). `Test-OERJsonDateKindSupport` is the single owner of whether
+the running `ConvertFrom-Json` has `-DateKind`.
+
+**First point: a file that cannot be read says why.** `Read-OERStructureDocument` read the file with
+`Get-Content -Raw` and no `-ErrorAction Stop`. For a file it cannot open -- a lock, no read permission --
+`Get-Content` writes a non-terminating error and returns nothing, so the operator got that raw error
+and then "The structure document is empty." beside it. The read now runs with `-ErrorAction Stop`, and
+its catch scrubs the record and throws one error that names the path and the reason, which
+`Test-OERStructure` and `Invoke-OERStructure` publish as `InvalidStructureDocument`, as
+`Read-OERNamingStandard` already reports an unreadable standard.
+
+**Second point: the text stays as written.** `ConvertFrom-Json` turns a string in ISO 8601 date-and-time
+form into a `DateTime` while it parses (the forms are measured under [#naming-standard](#naming-standard)),
+so a `startDate` or an `expirationDateTime` written with a time, or a `displayName` that looks like a
+time stamp, reached the validator and the apply engine as a date, not as the text written. PowerShell
+7.5 added `-DateKind`, and `-DateKind String` leaves every string as written. The reader adds it whenever
+`ConvertFrom-Json` has the parameter, which `Test-OERJsonDateKindSupport` decides with one `Get-Command`
+of the module-qualified `Microsoft.PowerShell.Utility\ConvertFrom-Json`, so a function the caller defines
+under that name is never the one asked. PowerShell 7.2 to 7.4 has no such parameter, and the module does
+not try to undo the conversion: the validator refuses instead (Rule 2b). Every `DateTime` or
+`DateTimeOffset` value in the document, at any depth, is an `Error` at its own path that says the value
+was read as a date, not as the text written, and to run on PowerShell 7.5 or later. So on those versions
+a document with such a string anywhere -- an assignment policy's `expirationDateTime`, which carries a
+time, for example -- is refused by `Test-OERStructure` and `Invoke-OERStructure`; no field is exempted
+(ruled), since an exemption would let a converted value through. A date alone stays a string on every
+version. An `-InputObject` whose values the caller already turned into dates is read as `ConvertTo-Json`
+writes them, a documented limit.
+
+**`displayName` must be a string.** In `groups`, `administrativeUnits`, `catalogs`, `accessPackages`,
+`assignmentPolicies` and `accessReviews`, a `displayName` that is a number, a boolean, an object or an
+array is an `Error` at its path naming the type found; a date gets only the date `Error`. With a naming
+standard, Rule 17 adds a `Warning` that such a name was not checked, a date included.
+
+Cost if wrong: a user on PowerShell 7.2 to 7.4 has to run 7.5 or later to apply a document that holds a
+date-and-time string; nothing is ever changed on the way. Held by `Read-OERStructureDocument.Tests.ps1`,
+`Test-OERJsonDateKindSupport.Tests.ps1`, the date and displayName Contexts of
+`Test-OERStructureSchema.Tests.ps1`, and a runspace with no `try` in `Invoke-OERStructure.Tests.ps1`
+with `Test-OERJsonDateKindSupport` stubbed false.
+
+## naming-template-one-pass
+
+Sprint 11 step 11 (BL-139, ruling R-12).
+
+`Resolve-OERName` substituted with one `-replace` per token, so each value was a replacement string: a
+`$` sequence in it was read as a substitution (`$&`, `$$`, `$_`, `${name}` and the like), and a value that looked like
+another token could be replaced again by a later pass, depending on the order the keys came in. It now
+reads the template once, with `[regex]::Replace` and an evaluator over `{token}`, and inserts each
+value as text: a `$` in a value is never interpreted, and a value is never read again as a token.
+Token names are still matched ignoring letter case (an `OrdinalIgnoreCase` dictionary, also for a
+case-sensitive hashtable). The unresolved tokens are the template's own, in template order, with the
+same message for the same input; `-MaxLength` and `-Strict` are unchanged. Two edges follow from the
+expression and are pinned by tests: `{{a}` with a key `a` is unresolved as `{a`, and `{}` stays `{}`.
+
+The validator reports a group template that cannot be resolved -- a token with no value, a name over
+256 characters -- as an `Error` at `groups[i].template` carrying `Resolve-OERName`'s reason, when the
+entry declares no `displayName`. Before, `Test-OERStructure` raised nothing for it and
+`Invoke-OERStructure` reported that group `Failed` at apply; now the whole document is refused before
+anything is read or written, since the apply would fail for it anyway. The Error is computed from the
+tokens the engine would pass, so a missing `tokens` gives it beside the `tokens` Error. Cost if wrong:
+a token value that holds `{x}` is kept as text instead of being reported unresolved.
+
+## enum-values-must-be-strings
+
+Sprint 11 step 11 (BL-155 third point, BL-117 fifth point). The `principalType` of a `roleAssignments`
+entry and of an `administrativeUnits[].scopedRoles` entry, and the `recurrence` of an `accessReviews`
+entry, were checked with `-inotcontains` against the canonical list, which lets a one-element array
+such as `["User"]` through, since the comparison reads the array as the string it holds. Each is now an
+`Error` unless it is a string in the list, and the message names the type of a value that is not a
+string ("a value that is not a string (Object[])"), worded by one local helper in the validator that the
+`principalStatus` and `principal` texts share, with their output unchanged. The same hole remains in a
+few other enums (a `directoryRoleAssignments` `principalType`, an access review's `defaultDecision`,
+`approverInfoVisibility`, a catalog resource `type`, and the enums cast to `[string]`), recorded as a
+finding for a later step.
+
+## validator-warnings-for-graph-refusals
+
+Sprint 11 step 11 (BL-54, BL-24).
+
+**An Any User policy without approval (BL-54).** Microsoft Graph refuses an assignment policy whose
+`requestorScope.scope` is `AllExternalUsers` -- the option its message calls Any User -- and that has
+no approval configured: `AnyUserPolicyValidationError`, "An access package policy with Any User option
+must have an approval configured". The validator warns at
+`accessPackages[i].assignmentPolicies[k].requestorScope.scope` (the scope read ignoring letter case)
+unless the entry declares at least one `approvalStages` entry and does not declare `requireApproval`
+false. With `requireApproval` left out the apply derives it from the stage count, so a stage alone is
+approval (ruled: a Warning there would be false). One text names a `requireApproval` false; the other
+names the missing stage and says what the engine does with what the entry leaves out, in one of three
+clauses. With `requireApproval` left out, an existing policy keeps its live approval settings, so the
+update is accepted only when the live policy already requires approval with a stage. With
+`requireApproval` true declared, only the live stages matter. With `approvalStages` declared empty, the
+empty list is sent, so the write carries no stage whatever the live policy has, and a refusal is
+expected: Microsoft Graph's answer to that combination is not measured, and the text says so. A
+Warning, never an Error, since the validator cannot see the live policy.
+
+**A GUID as an access package name (BL-24).** An `accessPackages` `displayName` that is a canonical
+GUID (`Test-OERGuid`) is a Warning at its path: the engine creates the package with that name, and an
+access review or another reference that names it reads the GUID as an object id. The other BL-24 point,
+the directory role guard's "eligible for" wording, is under
+[#directory-role-assignments](#directory-role-assignments).
+
+## run-right-after-a-write
+
+Sprint 11 step 11 (BL-121, second point): documented, no code.
+
+Measured in Sprint 10 step 7b (check 3.2 of
+`docs/live-verification/feat-show-and-export-synced-groups-checklist.md`): after a group description
+PATCH, Microsoft Graph answered the apply engine's read with the description from before the PATCH
+for a while -- with no wait, after the read by name had converged, and after three matching reads by id
+within 7 seconds -- while ten paired reads 25 seconds later all matched. An apply started within about
+30 seconds of a write can therefore find the change the previous run made still missing and send the
+same update again. The update is idempotent -- it writes the value already written and changes nothing
+more -- but its row reads `Updated` again instead of `Unchanged`, so two runs in quick succession do not
+prove convergence. A run after the reads settle reports `Unchanged`, and the live checklists wait for
+that before a convergence check. The help of `Invoke-OERStructure` says so. Cost: none in the tenant; a
+row that overstates the second run.

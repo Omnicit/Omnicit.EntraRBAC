@@ -467,12 +467,14 @@ A `groups` entry carries its name in one of two ways: a literal `displayName`, o
 This entry is the group `role_sec_identity_administrator`.
 
 - **Placeholders.** Each `{token}` in the template is replaced by the value of the token of that
-  name. Token names are matched ignoring letter case.
-- **Every placeholder must resolve.** A placeholder without a token leaves the name unbuilt: the
-  entry is reported `Failed` with the message "Naming template ... has unresolved token(s)" and
-  nothing is created or changed for it. `Test-OERStructure` raises no `Error` for it (with
-  `-NamingStandard` it adds only a `Warning` saying the name was not checked), so in the LLM loop
-  `Invoke-OERStructure -WhatIf` is the first step that shows the entry as `Failed`.
+  name, in one pass and as text: a `$` in a value stays as written, and a value that looks like a
+  placeholder is not read again. Token names are matched ignoring letter case.
+- **Every placeholder must resolve.** A template that cannot be turned into a name -- a placeholder
+  without a token, or a name longer than 256 characters -- is an `Error` from `Test-OERStructure` at
+  `groups[i].template`, with the reason ("Naming template ... has unresolved token(s)"), so in the
+  LLM loop the validation step already shows it, and `Invoke-OERStructure` refuses the whole
+  document before anything is read or written (with `-NamingStandard` the `Warning` saying the name
+  was not checked stands beside the `Error`).
 - **`template` and `displayName` are mutually exclusive.** `Test-OERStructure` refuses, as an
   `Error`, an entry that declares both, one that declares neither, and a `template` without a `tokens`
   object.
@@ -962,6 +964,12 @@ The existing `approvalStages[]{durationDays, manager}` shape keeps working. The 
 Supply at most one expiration form. `durationInDays` sets an ISO-8601 `P{n}D` duration;
 `durationInHours` sets `PT{n}H`; `expirationDateTime` sets a fixed end date. Omitting all three
 leaves the live expiration unchanged on apply.
+
+`expirationDateTime` holds a date and a time, which PowerShell 7.5 or later reads as the string
+written. On PowerShell 7.2 to 7.4 the JSON reader turns a string in ISO 8601 date-and-time form into
+a date, so `Test-OERStructure` reports an `Error` at the value's path and `Invoke-OERStructure`
+refuses the document: validate and apply a document that carries one on PowerShell 7.5 or later. A
+date alone, such as `2026-07-01`, stays a string on every version.
 
 ### Disable assignment emails
 

@@ -11,6 +11,19 @@ function Invoke-OERStructure {
     DirectoryRoleManagementPolicies, DirectoryRoleAssignments, RoleAssignments, RoleManagementPolicies
     -- and calls the matching Sync-OERStructure* handler for each item.
 
+    Reading and validation: the document reaches the validation as written on PowerShell 7.5 or later.
+    On PowerShell 7.2 to 7.4 the JSON reader turns a string in ISO 8601 date-and-time form -- an
+    assignment policy's expirationDateTime such as "2027-01-01T00:00:00Z", for example -- into a date,
+    so the text written is lost; the validation then gives an Error at each such value and the document
+    is refused (StructureValidationFailed). A date alone ("2026-07-01") stays a string. A displayName
+    that is not a string is an Error, and so is a groups entry whose template cannot be turned into a
+    name with its tokens (a token with no value, a name over 256 characters), which earlier versions
+    reported as that group's Failed row: the whole document is now refused, before anything is signed
+    in to, read or written. A token value is inserted as text, so a '$' in it, or a value that looks
+    like a token, stays as written. A file that cannot be read is refused with InvalidStructureDocument
+    and the reason the file system gave. A section set to null is not declared (see Include filter
+    below).
+
     Dependency order: Groups must exist before AUs can reference them as members; Catalogs before
     AccessPackages; the PIM settings of Microsoft Entra directory roles before the directory role
     assignments, so a policy that must allow a permanent assignment is applied first; all Entra sections,
@@ -128,6 +141,39 @@ function Invoke-OERStructure {
     Per-item continuation: a handler error (thrown exception) is caught, written as a non-
     terminating error, recorded as a Failed StructureResult, and the engine continues to the next
     item. A single bad item never aborts the run.
+
+    Failed live reads: a live read that decides what is written is never taken as "nothing there". A
+    roleManagementPolicies entry whose live policy read fails, or returns no policy, is reported Failed
+    with the read's own error (PolicyNotFound for an empty answer) before any approver lookup,
+    comparison or ShouldProcess, and nothing is written for it; a group's pimPolicy is handled the same
+    way for each access type (PimPolicyNotFound for an empty answer), and the other access type is
+    applied as usual. A -WhatIf plan reports the same Failed row. Before this, such a read could make
+    every declared field look changed, and the write could replace live values the document never
+    declared. A group's pimPolicy change that sends only one half of the multi-factor authentication /
+    authentication context pair -- an authentication context to enable, or an activationEnablement
+    that holds MultiFactorAuthentication -- makes Set-OERGroupPimPolicy read the other half itself;
+    when that read fails or returns no rule, the access type is reported Failed with the read's error
+    (PimRuleValueUnknown for no rule) and nothing is written for it, while a -WhatIf plan, which does
+    not call Set-OERGroupPimPolicy, reports that it would set the policy. When the directory roles
+    needed to match an administrative unit's scoped role declared by role id cannot be read, only that
+    unit's scopedRoles are left alone -- one Failed row with AdministrativeUnitScopedRoleReadFailed, no
+    scoped role added or removed, with or without -Prune -- while its properties and members are
+    applied as usual; a failed read of the unit itself, its scoped roles included, still fails the
+    whole unit.
+
+    Approval with no approver: a change that would leave approval required with no approver -- an
+    approver side the document empties while no other approver remains -- is reported Failed with
+    ApproverRequired before ShouldProcess, for a roleManagementPolicies entry, a
+    directoryRoleManagementPolicies entry and a group's pimPolicy alike; the last two are refused the
+    same way when requireApproval true meets a live approval stage that names nobody. Nothing is
+    written for that policy (for a group, for that access type), and a -WhatIf plan reports the same
+    Failed row as a run, where for a directory role or a group it used to say "would update" or
+    "would set".
+
+    A run right after a write: Microsoft Graph can answer a read, for about 30 seconds after a write,
+    with the value from before it (measured), so a run started within that time can find a change the
+    previous run made still missing and send the same update again. The update is idempotent and
+    changes nothing more, but its row reads Updated again; a later run reports it Unchanged.
 
     Confirmation: the command asks for confirmation before each change (ConfirmImpact High), unless
     -WhatIf plans the run or -Confirm:$false, or a $ConfirmPreference of None, turns the prompt off. A
@@ -399,14 +445,24 @@ function Invoke-OERStructure {
     reported Extra without -Prune, with a hint that -Prune leaves it in place, and Skipped, with a
     Detail starting "prune withheld:", with -Prune, with no warning and no ShouldProcess prompt. A
     principal that is a standing member and also eligible for member access is covered too. An owner
-    withheld this way still counts as an owner in the group for the rule that the last owner is not
-    removed, so -Prune can remove the last standing owner while an activated or time-bound owner
-    remains, and when that activation ends the group has no owner. While the PIM for Groups
-    assignments or the eligibility of a group that already existed cannot be read, no member or owner
-    is removed from that group: each undeclared one is reported Skipped, with a Detail starting
-    "prune withheld:", with or without -Prune, and one warning for the group names the cause. Manage
-    the access in PIM for Groups, or remove a standing member with Remove-OERGroupMember, when it is
-    meant to go.
+    withheld this way still counts as an owner in the group for the rules that the last owner and the
+    last user owner are not removed (below), so -Prune can remove the last standing owner while an
+    activated or time-bound owner remains, and when that activation ends the group has no owner.
+    While the PIM for Groups assignments or the eligibility of a group that already existed cannot be
+    read, no member or owner is removed from that group: each undeclared one is reported Skipped, with
+    a Detail starting "prune withheld:", with or without -Prune, and one warning for the group names
+    the cause. Manage the access in PIM for Groups, or remove a standing member with
+    Remove-OERGroupMember, when it is meant to go.
+
+    -Prune never removes a group's last remaining owner, nor its last remaining user owner. Microsoft
+    Graph refuses to remove a group's last user owner, also while a service principal is an owner of
+    it (measured), so an undeclared owner that is the
+    last remaining user owner is reported Skipped with -Prune, with a Detail that says so, and so is
+    the last remaining owner of any other type (the module's own rule): no warning, no ShouldProcess
+    prompt and no request. A -WhatIf plan counts each removal it reports as done, so it holds back the
+    same owner a run does; a removal declined at the confirmation prompt, or one that fails, leaves
+    its owner standing. A service principal owner, and an owner withheld for PIM for Groups, count as
+    owners still standing, and a withheld user owner as a user owner.
 
     A group the document creates into an administrative unit (a groups[] entry's
     administrativeUnit) is not removed from that unit by the run that creates it. administrativeUnit
