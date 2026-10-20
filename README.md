@@ -961,7 +961,7 @@ read's error (`PolicyNotFound` or `PimPolicyNotFound` for an empty answer), also
 group's `pimPolicy` access type that declares one half of an expiration pair alone
 (`allowPermanentEligibility` or `eligibleDurationDays`, `allowPermanentActive` or
 `activeDurationDays`) is `Failed` the same way, with `PimRuleValueUnknown`, when the live policy
-gives no value for the other half, or a duration that is not a whole number of days, and the
+gives no value for the other half, or a duration that is not a positive whole number of days, and the
 declared half does not already match; declare both halves. A PIM policy change that empties an
 approver side while no other approver remains is `Failed` with `ApproverRequired` in a `-WhatIf`
 plan, as in a run, and so, for a directory role or a group policy, is `requireApproval` true over a

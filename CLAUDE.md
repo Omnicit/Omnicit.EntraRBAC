@@ -1138,7 +1138,8 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   validation read, whose failure skips the validation. The apply engine reaches the pair reads when its
   diff binds one half, and its row is then `Failed`. It never reaches the duration reads: its diff
   binds both halves of an expiration pair, and when the half the document leaves out has no live value
-  (and the declared half does not already match), `Resolve-OERGroupPimPolicyChange` names the pair in
+  (the read gave none, or its `maximumDuration` is not a positive whole number of days) and the
+  declared half does not already match, `Resolve-OERGroupPimPolicyChange` names the pair in
   `UnknownLiveValues`, binds neither half, and `Sync-OERStructureGroup` refuses that access type with
   `PimRuleValueUnknown` before `ShouldProcess` -- never a default in its place.
   Known and NOT fixed, outside this cmdlet (unmeasured findings of the step's audit): a successful read
