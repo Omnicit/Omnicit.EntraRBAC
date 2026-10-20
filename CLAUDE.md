@@ -982,7 +982,8 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   from one it did not return and from one whose lookup failed.** In the `roleAssignments` section a
   failed lookup or deleted items read is never a fact: it is named unread. The deleted items read
   never throws and never writes an error record. `Sync-OERStructureRoleAssignment` looks no
-  principal up for an entry that declares `principalStatus` and never creates its assignment. Never
+  principal up for an entry that declares `principalStatus` and never creates its assignment
+  (`Skipped`, no `ShouldProcess`). Never
   read `directory/deletedItems` elsewhere. `Why: docs/development/rationale.md#unresolved-principals`
 - **`Get-OERServicePrincipalAccess` is the single reader of what `servicePrincipalAccess.json`
   holds.** A part is read whole or not at all: any failure inside it leaves it `$null`, never `[]`.
@@ -991,7 +992,7 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   the apply engine. **`ConvertTo-OERPrincipalType` is the single owner of mapping a Microsoft Graph
   object type to the document's principal type.** `ConvertTo-OERDirectoryRoleAssignment` keeps its
   own earlier mapping (a named exception, not a precedent); never map a Graph type inline elsewhere.
-  `Sync-OERStructureAdministrativeUnit` never uses it to match or write.
+  `Sync-OERStructureAdministrativeUnit` never uses the scoped role `principalType` to match or write.
   `Why: docs/development/rationale.md#service-principal-access`,
   `docs/development/rationale.md#scoped-role-principal-type`
 - **A group that uses PIM for Groups in a restricted management administrative unit is a Warning,
