@@ -6,7 +6,7 @@ impossible to run, write "cannot be verified, and therefore we do not know" on i
 not leave it blank and do not tick it. A check that could not run for a stated reason is marked `[~]`, never
 `[x]`. **Section B lists what is proved offline only (class B).** No manual check (class C) is foreseen.
 
-**Status, 2026-10-20.** The step stopped after measurement 1.1 for a decision: a PUT with `allowedTargetScope` `unknownFutureValue` changed a policy's scope (see 1.1). Sections 0 and 1 ran, and T.1 removed every object. The architect decided (A24): `Set-OERAccessPackageAssignmentPolicy` refuses to carry a read `unknownFutureValue` forward when `-RequestorScope` is not given. The follow-up round runs S, 0 again (0.2 creates the objects again), 2 to 6, the new section 7 and T against the branch's final build; section 1 is not run again.
+**Status, 2026-10-20.** The step stopped after measurement 1.1 for a decision: a PUT with `allowedTargetScope` `unknownFutureValue` changed a policy's scope (see 1.1). Sections 0 and 1 ran, and T.1 removed every object. The architect decided (A24): `Set-OERAccessPackageAssignmentPolicy` refuses to carry a read `unknownFutureValue` forward when `-RequestorScope` is not given. The follow-up round ran S, 0 again (0.2 created the objects again), 2 to 6, the new section 7 and T on 2026-10-20 between 08:03 and 08:15 UTC against the build of the branch's commit that adds the build marks (the gate's build); section 1 was not run again. Every check passed; two checks' own blocks or expectations were corrected on the way (2.1, 3.1), as their results say.
 
 **What this file writes to the tenant.** The prerequisite script writes only objects whose names start with
 `oer-s1111-`: a disabled user, four security groups (one owned by that user and by the service principal of
@@ -230,7 +230,7 @@ function Invoke-S1111Apply {
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched. #type/subtask
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched. #type/subtask
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -259,7 +259,11 @@ worktree on this branch with 0 tracked changes; `True` on every mark.
 **Failure looks like:** `False` on the first line -- `OER_LIVE_REPO` is unset or names the main clone; a `False`
 mark -- build the worktree first (`./build.ps1 -Tasks build`), never while the gate runs.
 
-Result:
+Result: 2026-10-20 08:03 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 08:03 UTC, follow-up round, the build of 9a394b5 (gate run 2). PASS. The module loads from a worktree that is not the main clone: True; the main clone on main; the worktree on fix/engine-and-validator-findings at 9a394b5 with 0 tracked changes; all seven build marks True (the Azure role policy read with -ErrorAction Stop, UnknownAllowedTargetScope, PimRuleValueUnknown, ConfirmationUnavailable, the last user owner, Get-OERApproverErrorClass, Test-OERJsonDateKindSupport).
+```
 
 ## 0. Preparation
 
@@ -278,10 +282,10 @@ Disconnect-OerLive
 **Expect:** every identity line `True`, `identity check passed`, `The module is the worktree's build: True`.
 **Failure looks like:** "application is disabled" (STOP: the identity is disabled), or `False`.
 
-Result: 2026-10-20 00:28 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+Result: 2026-10-20 08:03 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 
 ```text
-Run 2026-10-20 between 00:05 and 00:30 UTC as oer-live-cc against the test tenant, the module built from the branch at 02:08 local time (commits up to the validator task; no section 0 or 1 block uses a changed command). PASS. Every identity line True, identity check passed; the module is the worktree's build, version 1.3.1.
+First run 2026-10-20 00:28 UTC (the build of 02:08, before the stop): PASS, every identity line True, the worktree build 1.3.1. Follow-up round 2026-10-20 08:03 UTC, the build of 9a394b5: PASS. Every identity line True, identity check passed; the module is the worktree's build: True, version 1.3.1.
 ```
 
 ### 0.2. The prerequisite objects
@@ -300,10 +304,10 @@ baselines written (or found), the objects created or found, the Reader policy re
 code 0.
 **Failure looks like:** a refusal (a missing permission, an unknown prefixed object), or exit code 1 or 3.
 
-Result: 2026-10-20 00:28 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+Result: 2026-10-20 08:06 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 
 ```text
-Run 2026-10-20 between 00:05 and 00:30 UTC as oer-live-cc against the test tenant, the module built from the branch at 02:08 local time (commits up to the validator task; no section 0 or 1 block uses a changed command). PASS on the third run. Plan: the six permissions True, every write a What if line, exit code 0. Run 1 created every object, wrote the three baselines (users 22, groups 99, catalogs 5, access packages 6, access review definitions 6) and set the Reader policy at the resource group, then stopped in the script's own wait, which indexed the list of approval stages by a key name and so read no approver (fixed in the script). Run 2 stopped on adding the service principal owner again: the untyped owners read does not list a service principal (the gap BL-83 measured for members), so the script now reads owners typed. Run 3: every object found, the Reader policy already requiring approval by both, nothing written, exit code 0. A later run created oer-s1111-pimraw2 for 1.3 (exit code 0).
+First run 2026-10-20 00:05-00:30 UTC (before the stop): PASS on the third run (two script fixes, see the step 11 report). Follow-up round 2026-10-20 08:04 UTC, the build of 9a394b5: PASS. The one residue row of this prefix left by the first round (a PIM for Groups owner assignment in the deleted oer-s1111-owned) was checked first as oer-live-cc -- the group by id 404, no assignment schedule or instance listed for it -- and removed from raw\residue.json (6 rows to 5; the other prefixes untouched). Plan: the six permissions True, every write a What if line, exit code 0. Run: no prefixed object found, the baselines written (users 22, groups 99, catalogs 5, access packages 6, access review definitions 6; oer-s1111-rg absent), user oer-s1111-u1 and the five groups created (201), u1 and the service principal of oer-live-cc-noperm added as owners of oer-s1111-owned (204), the catalog, the package, oer-s1111-policy and oer-s1111-review (dayOfMonth sent 3) created, oer-s1111-rg created, its Reader policy baseline written and the policy set to require approval by oer-s1111-u1 and oer-s1111-apgroup; exit code 0.
 ```
 
 ### 0.3. Read back what the prerequisite script created
@@ -334,10 +338,10 @@ Disconnect-OerLive
 interval 1; approval required `True`, approvers users 1, groups 1.
 **Failure looks like:** a missing id, a read that is not 200, or approvers on one side only.
 
-Result: 2026-10-20 00:28 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+Result: 2026-10-20 08:06 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 
 ```text
-Run 2026-10-20 between 00:05 and 00:30 UTC as oer-live-cc against the test tenant, the module built from the branch at 02:08 local time (commits up to the validator task; no section 0 or 1 block uses a changed command). PASS. 7 recorded ids (apgroup, owned, pimcmd, pimraw, pimraw2, review, u1; pimraw2 added for 1.3, the expectation says so); owned: user owners 1, service principal owners 1; review read 200, absoluteMonthly interval 1; Reader at the resource group: approval required True, approvers users 1, groups 1. Rerun after the Reader role id became a lookup (Get-S1111ReaderGuid): the same.
+First run 2026-10-20 00:28 UTC: PASS. Follow-up round 2026-10-20 08:06 UTC, the build of 9a394b5: PASS. 7 recorded ids (apgroup, owned, pimcmd, pimraw, pimraw2, review, u1); owned: user owners 1, service principal owners 1; review read 200, absoluteMonthly interval 1; Reader at the resource group: approval required True, approvers users 1, groups 1.
 ```
 
 ## 1. Measurements, made before the fixes that depend on them
@@ -547,7 +551,7 @@ Run 2026-10-20 between 00:05 and 00:30 UTC as oer-live-cc against the test tenan
 
 ### 2.1. The plan keeps the side the document does not declare
 
-- [ ] **2.1** A document that declares only `approvers.users` as empty for Reader at `oer-s1111-rg`, whose live policy requires approval by one user and one group, plans an update that sends the live group side unchanged, and sends no write request. #type/subtask
+- [x] **2.1** A document that declares only `approvers.users` as empty for Reader at `oer-s1111-rg`, whose live policy requires approval by one user and one group, plans an update that sends the live group side unchanged, and sends no write request. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -563,16 +567,20 @@ Stop-S1111Count
 Disconnect-OerLive
 ```
 
-**Expect:** one row `Skipped` "would update role management policy" whose change list names `users=[]` and the
-live group's id under `groups`; no error; Azure Resource Manager writes 0.
-**Failure looks like:** a row whose `groups` list is empty (the undeclared side would be removed), a `Failed` row
-(a read that failed: rerun once and record it), or a write.
+**Expect:** one row `Skipped` "would update role management policy"; no error; Azure Resource Manager writes 0.
+The Azure handler's plan row carries no change list (it never has), so the block's "sends the live group" line
+reads `False` here; the body that is sent, with the live group kept, is shown by 2.2's run row.
+**Failure looks like:** a `Failed` row (a read that failed: rerun once and record it), or a write.
 
-Result:
+Result: 2026-10-20 08:08 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 08:06 UTC, the build of 9a394b5: PASS on what a plan row can show. One row, Skipped "would update role management policy for Reader at the resource group", no error, Azure Resource Manager requests 3, writes 0, token requests 0. The block's line "the plan sends the live group: False" is the check's own method, not the engine: the Azure handler's -WhatIf row has never carried a change list (the same text at the base 6bb40c5), so the plan cannot show the group side; the expectation was corrected in the repo checklist, and 2.2's run row shows the body that is sent.
+```
 
 ### 2.2. The run updates the policy and keeps the group approver
 
-- [ ] **2.2** The same document applied: one `Updated` row, and the policy then requires approval by the group alone -- the user side cleared as declared, the group side kept. #type/subtask
+- [x] **2.2** The same document applied: one `Updated` row, and the policy then requires approval by the group alone -- the user side cleared as declared, the group side kept. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -597,11 +605,15 @@ Disconnect-OerLive
 approvers users 0, groups 1.
 **Failure looks like:** groups 0 (the undeclared side was removed: the defect), or a `Failed` row.
 
-Result:
+Result: 2026-10-20 08:08 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 08:07 UTC, the build of 9a394b5: PASS. One Updated row whose Detail names approvers(users=[],groups=[the live group]) -- the undeclared group side is sent unchanged; no error; Azure Resource Manager requests 7, writes 1 (the policy PATCH), Microsoft Graph writes 0, token requests 0; after the run the Reader policy requires approval by the group alone (users 0, groups 1).
+```
 
 ### 2.3. The same document again changes nothing (G8)
 
-- [ ] **2.3** The same document applied a second time: one `Unchanged` row and no write request. #type/subtask
+- [x] **2.3** The same document applied a second time: one `Unchanged` row and no write request. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -618,18 +630,24 @@ Disconnect-OerLive
 **Expect:** one `Unchanged` row; no error; writes 0.
 **Failure looks like:** an `Updated` row (the run does not converge) or a refused write.
 
-Result:
+Result: 2026-10-20 08:08 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 08:07 UTC, the build of 9a394b5: PASS (G8). The same document again: one Unchanged row "policy already matches", no error, Azure Resource Manager requests 3, writes 0.
+```
 
 ## 3. BL-38: a top-level section that is null
 
 ### 3.1. No row and no Azure Resource Manager token
 
-- [ ] **3.1** In a session that holds no Azure Resource Manager token, a document whose `roleManagementPolicies` and `roleAssignments` are `null` beside one group entry gives the group's row only, requests no token and sends no Azure Resource Manager request. #type/subtask
+- [x] **3.1** In a session that holds no Azure Resource Manager token, a document whose `roleManagementPolicies` and `roleAssignments` are `null` beside one group entry gives the group's row only, requests no token and sends no Azure Resource Manager request. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
 Start-S1111NoPrompt
-# The module session again, Microsoft Graph only: -Force rebuilds it without an Azure Resource Manager token.
+# The module session again, Microsoft Graph only. Disconnect-OER first: a -Force rebuild for the same identity
+# carries the cached Azure Resource Manager token into the new state (CLAUDE.md, A13), so it alone keeps the token.
+Disconnect-OER -Confirm:$false -WarningAction SilentlyContinue
 $Cert = Get-Item -LiteralPath ('Cert:\CurrentUser\My\{0}' -f $Cfg.CertificateThumbprint)
 try { $null = Connect-OER -TenantId $Cfg.TenantId -ClientId $Cfg.AppId -Certificate $Cert -Force -ErrorAction Stop } finally { $Cert = $null }
 $Module = Get-Module -Name Omnicit.EntraRBAC
@@ -649,13 +667,17 @@ Disconnect-OerLive
 requests 0; writes 0; `After: ... False`.
 **Failure looks like:** a `roleManagementPolicies` row (scope '' refused), a token request, or `After: ... True`.
 
-Result:
+Result: 2026-10-20 08:09 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 08:08 UTC, the build of 9a394b5: PASS on the second run. Run 1 began with "the session holds an Azure Resource Manager token: True": the block's own premise was wrong -- a Connect-OER -Force rebuild for the same identity carries the cached ARM token (A13) -- so the block now runs Disconnect-OER first. Run 1 still showed one row (groups Unchanged), no error, ARM requests 0. Run 2: Before False; one row, groups Unchanged; no error; token requests 0; Microsoft Graph requests 4, writes 0; Azure Resource Manager requests 0, writes 0; After False.
+```
 
 ## 4. BL-113: the plan says what the run does for a policy that would require approval by nobody
 
 ### 4.1. A directory role policy
 
-- [ ] **4.1** For Reports Reader, a document declaring `requireApproval: true` and `approvers.users: []`, against a live policy without approvers, gives the same `Failed` row with `ApproverRequired` in the plan and in the run, and sends no write request. #type/subtask
+- [x] **4.1** For Reports Reader, a document declaring `requireApproval: true` and `approvers.users: []`, against a live policy without approvers, gives the same `Failed` row with `ApproverRequired` in the plan and in the run, and sends no write request. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -677,11 +699,15 @@ Disconnect-OerLive
 `ApproverRequired`; the same Detail `True`; Microsoft Graph writes 0.
 **Failure looks like:** a plan row `Skipped` "would update" (the defect), or a write.
 
-Result:
+Result: 2026-10-20 08:09 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 08:09 UTC, the build of 9a394b5: PASS. Reports Reader live: approval required False, 0 approvers in the first stage. Plan (-WhatIf) and run alike: one Failed row "approval would be required with no approver (ApproverRequired): the live approval rule names no approver and the document declares none; the policy was not changed", errors ApproverRequired; the same Detail True; Microsoft Graph requests 4, writes 0; token requests 0.
+```
 
 ### 4.2. A group's PIM policy
 
-- [ ] **4.2** For `oer-s1111-pimcmd` (onboarded in 1.4), a document declaring `pimPolicy.member.requireApproval: true` and `approvers.users: []`, against a live member policy without approvers, gives the same `Failed` row with `ApproverRequired` in the plan and in the run, and sends no write request. #type/subtask
+- [x] **4.2** For `oer-s1111-pimcmd` (onboarded in 1.4), a document declaring `pimPolicy.member.requireApproval: true` and `approvers.users: []`, against a live member policy without approvers, gives the same `Failed` row with `ApproverRequired` in the plan and in the run, and sends no write request. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -702,13 +728,17 @@ Disconnect-OerLive
 Graph writes 0.
 **Failure looks like:** a plan row "would set pimPolicy" (the defect), or a write.
 
-Result:
+Result: 2026-10-20 08:09 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 08:09 UTC, the build of 9a394b5: PASS. oer-s1111-pimcmd (re-created by 0.2, so not onboarded by 1.4 in this round; Microsoft Graph lists a member policy for every group). Plan (-WhatIf) and run alike: the group row Unchanged and one pimPolicy row Failed "pimPolicy (member) not applied: approval would be required with no approver (ApproverRequired) ... the policy was not changed", errors ApproverRequired in both; Microsoft Graph requests 12, writes 0; token requests 0.
+```
 
 ## 5. The validator and the structure document reader
 
 ### 5.1. BL-139: a token value with `$` is inserted as text
 
-- [ ] **5.1** A group declared by `template` `oer-s1111-{a}` with `tokens.a` = `x$$y$&z$_` is valid, and the plan names the group `oer-s1111-x$$y$&z$_` exactly. #type/subtask
+- [x] **5.1** A group declared by `template` `oer-s1111-{a}` with `tokens.a` = `x$$y$&z$_` is valid, and the plan names the group `oer-s1111-x$$y$&z$_` exactly. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -727,11 +757,15 @@ Disconnect-OerLive
 **Expect:** Valid `True`, errors 0; the plan names the group exactly as written `True`; writes 0.
 **Failure looks like:** `False` (a `$` read as a substitution: `$$` becomes `$`, `$&` the token text).
 
-Result:
+Result: 2026-10-20 08:10 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 08:09 UTC, the build of 9a394b5: PASS. Test-OERStructure: Valid True, errors 0; the plan names the group oer-s1111-x$$y$&z$_ exactly as written: True; Microsoft Graph requests 1, writes 0; token requests 0.
+```
 
 ### 5.2. BL-139: a template that cannot be resolved is an Error
 
-- [ ] **5.2** A group whose template names a token the entry does not give is refused by `Test-OERStructure` with an Error at its `template`, and `Invoke-OERStructure` refuses the document before any request. #type/subtask
+- [x] **5.2** A group whose template names a token the entry does not give is refused by `Test-OERStructure` with an Error at its `template`, and `Invoke-OERStructure` refuses the document before any request. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -751,11 +785,15 @@ Disconnect-OerLive
 **Expect:** Valid `False`, one Error at the template; rows 0, errors `StructureValidationFailed`; no request.
 **Failure looks like:** Valid `True` (the template is silently left out), or a `Failed` row from the engine.
 
-Result:
+Result: 2026-10-20 08:10 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 08:09 UTC, the build of 9a394b5: PASS. Test-OERStructure: Valid False, one Error at the template. Invoke-OERStructure: rows 0, the command's own record StructureValidationFailed; no request (Microsoft Graph 0, Azure Resource Manager 0, token requests 0). The -ErrorVariable also holds five inner records whose id is the resolver's message ("Naming template ... has unresolved token(s): b") -- the validator's caught resolver throws, the older form BL-154's third point records (-ErrorVariable holds inner records, the error stream one); not a defect of this step.
+```
 
 ### 5.3. BL-154: a display name in date-and-time form reaches the validator and the engine as written
 
-- [ ] **5.3** A document whose group `displayName` is `2026-01-01T10:00:00` is read with that exact string, and `Test-OERStructure` finds no error. #type/subtask
+- [x] **5.3** A document whose group `displayName` is `2026-01-01T10:00:00` is read with that exact string, and `Test-OERStructure` finds no error. #type/subtask
 
 ```powershell
 & (Get-Module -Name OerLive) { Import-OerLiveModule }
@@ -771,11 +809,15 @@ Write-OerLiveStep "Test-OERStructure: Valid $($V.Valid); errors $(@($V.Errors | 
 validator refuses it instead; B.4 proves that offline.)
 **Failure looks like:** `DateTime`, or a string in another form.
 
-Result:
+Result: 2026-10-20 08:10 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 08:09 UTC, the build of 9a394b5: PASS. PowerShell 7.6.6; the displayName 2026-01-01T10:00:00 is read as String, exactly as written: True; Test-OERStructure: Valid True, errors 0. (Before PowerShell 7.5 the validator refuses it instead; B.4.)
+```
 
 ### 5.4. BL-154: a structure document that cannot be read says why
 
-- [ ] **5.4** A document file locked by another handle gives one `InvalidStructureDocument` whose message says it could not be read, and never "is empty". #type/subtask
+- [x] **5.4** A document file locked by another handle gives one `InvalidStructureDocument` whose message says it could not be read, and never "is empty". #type/subtask
 
 ```powershell
 & (Get-Module -Name OerLive) { Import-OerLiveModule }
@@ -791,13 +833,17 @@ Write-OerLiveStep "Records InvalidStructureDocument: $($Own.Count); says it coul
 **Expect:** 1 record; could not be read `True`; empty `False`.
 **Failure looks like:** "The structure document is empty." (the old false reason).
 
-Result:
+Result: 2026-10-20 08:10 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 08:10 UTC, the build of 9a394b5: PASS. A document file held with FileShare None: 1 record InvalidStructureDocument; it says it could not be read: True; it says empty: False.
+```
 
 ## 6. BL-53: a host that cannot show the confirmation prompt
 
 ### 6.1. A thread job: refused before anything is read
 
-- [ ] **6.1** `Invoke-OERStructure` without `-Confirm:$false` and without `-WhatIf`, in a thread job (a host with no user interface), is refused with `ConfirmationUnavailable` before any sign-in. #type/subtask
+- [x] **6.1** `Invoke-OERStructure` without `-Confirm:$false` and without `-WhatIf`, in a thread job (a host with no user interface), is refused with `ConfirmationUnavailable` before any sign-in. #type/subtask
 
 ```powershell
 & (Get-Module -Name OerLive) { Import-OerLiveModule }
@@ -817,11 +863,15 @@ Write-OerLiveStep "Thread job host '$($R.Host)': rows $($R.Rows); records: $(@($
 **Expect:** host `Default Host`; rows 0; records `ConfirmationUnavailable` and nothing else.
 **Failure looks like:** a sign-in attempt, a `Failed` row "handler error", or no record.
 
-Result:
+Result: 2026-10-20 08:11 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 08:10 UTC, the build of 9a394b5: PASS. In a thread job, host Default Host: rows 0; records ConfirmationUnavailable and nothing else; no sign-in attempt (the job imports the module and has no session; the refusal comes before every sign-in step).
+```
 
 ### 6.2. A non-interactive console: the row says what is missing, and nothing is written
 
-- [ ] **6.2** Run with `-NonInteractive`: `Invoke-OERStructure` without `-Confirm:$false` on a document that changes the description of `oer-s1111-apgroup` gives a `Failed` row that says the host cannot show the confirmation prompt, sends no write, and the description is unchanged. #type/subtask
+- [x] **6.2** Run with `-NonInteractive`: `Invoke-OERStructure` without `-Confirm:$false` on a document that changes the description of `oer-s1111-apgroup` gives a `Failed` row that says the host cannot show the confirmation prompt, sends no write, and the description is unchanged. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -844,13 +894,17 @@ Disconnect-OerLive
 **Failure looks like:** "handler error: Exception calling ShouldProcess ... NonInteractive mode" alone (the old
 text), or a write.
 
-Result:
+Result: 2026-10-20 08:11 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 08:10 UTC, the build of 9a394b5, the block run with pwsh -NonInteractive: PASS. One Failed row "handler error: the host cannot show the confirmation prompt Invoke-OERStructure asks before each change (PowerShell is in NonInteractive mode. Read and Prompt functionality is not available.); nothing was written for this entry. Run Invoke-OERStructure with -Confirm:$false to apply without prompts, or with -WhatIf to plan."; Microsoft Graph requests 4, writes 0; token requests 0; the description of oer-s1111-apgroup is unchanged: True.
+```
 
 ## 7. The measured refusals, live (A24, BL-49 and BL-84)
 
 ### 7.1. BL-49: an assignment policy whose read scope is `unknownFutureValue` is not written back
 
-- [ ] **7.1** `oer-s1111-policy`, whose stored scope a raw PUT has set to `unknownFutureValue` (the write 1.1 measured), reads back the placeholder without the Prefer header; `Set-OERAccessPackageAssignmentPolicy` with a new description and no `-RequestorScope` is refused with `UnknownAllowedTargetScope` and sends no write request, and the policy is unchanged. #type/subtask
+- [x] **7.1** `oer-s1111-policy`, whose stored scope a raw PUT has set to `unknownFutureValue` (the write 1.1 measured), reads back the placeholder without the Prefer header; `Set-OERAccessPackageAssignmentPolicy` with a new description and no `-RequestorScope` is refused with `UnknownAllowedTargetScope` and sends no write request, and the policy is unchanged. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -888,11 +942,15 @@ unchanged `True`.
 or a changed description. A placeholder that Microsoft Graph returns for a real, hidden scope cannot be produced
 on demand: that case is class B (B.6).
 
-Result:
+Result: 2026-10-20 08:11 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 08:11 UTC, the build of 9a394b5: PASS. Setup: a raw PUT of oer-s1111-policy with allowedTargetScope unknownFutureValue answered 200, and the policy read back the placeholder without the Prefer header after 1 read (as 1.1 measured). Set-OERAccessPackageAssignmentPolicy with a new description and no -RequestorScope: output objects 0, record UnknownAllowedTargetScope; Microsoft Graph requests 1 (the read), writes 0; token requests 0; after: allowedTargetScope unknownFutureValue, description unchanged True.
+```
 
 ### 7.2. BL-49: with `-RequestorScope` the update is written, and the scope is set back
 
-- [ ] **7.2** The same policy updated with `-RequestorScope` (all member users): one write request, no record, and the policy then reads `allMemberUsers`. #type/subtask
+- [x] **7.2** The same policy updated with `-RequestorScope` (all member users): one write request, no record, and the policy then reads `allMemberUsers`. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -914,11 +972,15 @@ Disconnect-OerLive
 **Expect:** output objects 1; no record; Microsoft Graph writes 1 (the PUT); after: `allMemberUsers`.
 **Failure looks like:** `UnknownAllowedTargetScope` (the refusal caught a bound scope), no write, or another scope.
 
-Result:
+Result: 2026-10-20 08:11 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 08:11 UTC, the build of 9a394b5: PASS. Set-OERAccessPackageAssignmentPolicy with -RequestorScope (all member users): output objects 1, no record; Microsoft Graph requests 2, writes 1 (the PUT); token requests 0; the policy then reads allMemberUsers (converged after 1 read).
+```
 
 ### 7.3. BL-84: the apply engine keeps the last user owner beside a service principal owner
 
-- [ ] **7.3** A document that declares no owner for `oer-s1111-owned` (owners: the user `oer-s1111-u1` and the service principal of `oer-live-cc-noperm`), applied with `-Prune` as a plan and as a run: the user owner is kept as the last remaining user owner, the service principal owner is withheld, and no write request is sent. #type/subtask
+- [x] **7.3** A document that declares no owner for `oer-s1111-owned` (owners: the user `oer-s1111-u1` and the service principal of `oer-live-cc-noperm`), applied with `-Prune` as a plan and as a run: the user owner is kept as the last remaining user owner, the service principal owner is withheld, and no write request is sent. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -941,11 +1003,15 @@ withheld row for the service principal owner (`Skipped`), no `Removed` row, no e
 **Failure looks like:** a removal attempt (the fence refuses it: a `Failed` row), "would remove" in the plan for
 the user owner, or a plan that differs from the run.
 
-Result:
+Result: 2026-10-20 08:11 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 08:11 UTC, the build of 9a394b5: PASS. owners [] for oer-s1111-owned with -Prune, as a plan and as a run under the write fence, alike: rows Unchanged (properties), Skipped "did not remove owner ...: it is the last remaining user owner of group oer-s1111-owned, and Microsoft Graph refuses to remove a group's last user owner, also while a service principal is an owner (measured ...), so no request was sent", and Skipped "prune withheld: undeclared owner ... is a service principal"; removed 0; no error; Microsoft Graph requests 16, writes 0; token requests 0.
+```
 
 ### 7.4. BL-154: what the Microsoft Graph transport returns for a date-and-time property
 
-- [ ] **7.4** A measurement: a date-and-time property read through the Microsoft Graph PowerShell SDK, raw and through the module's transport, arrives as a `DateTime` or as a string, and its `[string]` form is or is not an ISO 8601 date and time with seconds. An export writes an assignment policy's `expirationDateTime` as that `[string]` form, and on PowerShell 7.2 to 7.4 the validator refuses a date and time with seconds. #type/subtask
+- [x] **7.4** A measurement: a date-and-time property read through the Microsoft Graph PowerShell SDK, raw and through the module's transport, arrives as a `DateTime` or as a string, and its `[string]` form is or is not an ISO 8601 date and time with seconds. An export writes an assignment policy's `expirationDateTime` as that `[string]` form, and on PowerShell 7.2 to 7.4 the validator refuses a date and time with seconds. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -965,7 +1031,11 @@ Disconnect-OerLive
 such an export is refused there, and the texts must say so.
 **Failure looks like:** a 401 or 403 (STOP), or a null value.
 
-Result:
+Result: 2026-10-20 08:12 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 08:11 UTC, the build of 9a394b5: MEASURED. createdDateTime of oer-s1111-u1 arrives as DateTime both from the raw Microsoft Graph PowerShell SDK call and through the module's transport, and its [string] form is not an ISO 8601 date and time with seconds (False). So the expirationDateTime an export writes ([string] of that DateTime) is never converted by ConvertFrom-Json, and such an export is not refused on PowerShell 7.2 to 7.4; no text about exports is needed.
+```
 
 ## B. Proved offline (class B)
 
@@ -1006,8 +1076,8 @@ Write-OerLiveStep "The read-back ended with exit code $LASTEXITCODE."
 no prefixed object left; the counts equal to the baseline; exit codes 0.
 **Failure looks like:** a policy not restored (STOP, G11.5), residue, or a count that differs.
 
-Result: 2026-10-20 00:30 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+Result: 2026-10-20 08:15 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 
 ```text
-Run 2026-10-20 00:28-00:30 UTC as oer-live-cc against the test tenant, after the step stopped on 1.1. PASS with one residue row, which names an object that no longer exists. Teardown A deleted oer-s1111-review. Teardown B restored the Reader policy at oer-s1111-rg from its baseline (1 rule differed, Approval_EndUser_Assignment; restored True) and found Reports Reader at its baseline (0 rules differed). Then Remove-OerLiveTestObjects ran. Step 2 removed one of the two owner assignments PIM for Groups lists for oer-s1111-owned's owners (201); the other was refused with 400 CannotDeleteLastAdminAssignment, which became the residue row -- the known OerLive teardown gap of BL-122. Step 3 deleted oer-s1111-agentpol, oer-s1111-policy (both 204), oer-s1111-ap and oer-s1111-catalog. Step 5 deleted the five groups, oer-s1111-owned included (204), and step 6 deleted oer-s1111-u1 (204). Removed 11, residue 1. Teardown D deleted oer-s1111-rg. The sweep found no prefixed object, 0 prefixed access reviews, and no resource group; users 22, groups 99, catalogs 5, access packages 6 and access review definitions 6 are all equal to the baseline. The teardown ended with exit code 3 (residue) and the read-back with 0.
+First round 2026-10-20 00:28-00:30 UTC: PASS with one residue row (see the step 11 report); that row was resolved before 0.2 of the follow-up round. Follow-up round 2026-10-20 08:12-08:15 UTC, the build of 9a394b5: PASS. Teardown A deleted oer-s1111-review. Teardown B restored the Reader policy at oer-s1111-rg from its baseline (1 rule differed, Approval_EndUser_Assignment; restored True) and found Reports Reader at its baseline (0 rules differed). Remove-OerLiveTestObjects: step 2 removed one of the two owner assignments PIM for Groups lists for oer-s1111-owned (201) and the other was refused with 400 CannotDeleteLastAdminAssignment (the known OerLive gap, BL-122), which became a residue row; step 3 deleted oer-s1111-policy, oer-s1111-ap and oer-s1111-catalog; step 5 the five groups, oer-s1111-owned included (204); step 6 oer-s1111-u1 (204). Removed 10, residue 1, unreadable 0; teardown D deleted oer-s1111-rg. The sweep found no prefixed object, 0 prefixed access reviews and no resource group; users 22, groups 99, catalogs 5, access packages 6 and access review definitions 6 are equal to the baseline. The teardown ended with exit code 3 (residue) and the read-back with 0. The residue row was then checked as oer-live-cc -- the group by id 404, no assignment schedule or instance listed for it -- and removed from raw\residue.json (6 rows to 5; the opim- rows untouched).
 ```
