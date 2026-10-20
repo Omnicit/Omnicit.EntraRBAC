@@ -7769,9 +7769,9 @@ Describe 'Test-OERStructureSchema date values (BL-154, R-11)' {
     # ConvertFrom-Json before PowerShell 7.5 turns a string that holds an ISO 8601 date and time with
     # seconds into a [datetime], and Read-OERStructureDocument asks for -DateKind String wherever the
     # PowerShell has it. Where it does not, the validator cannot tell what the author wrote, so it
-    # refuses every date value the document
-    # holds, at any depth, with an Error at the value's own path. A document built here with a plain
-    # ConvertFrom-Json is such a document on every PowerShell: the default parse gives dates.
+    # refuses every date value the document holds, at any depth, with an Error at the value's own path.
+    # A document built here with a plain ConvertFrom-Json is such a document on every PowerShell: the
+    # default parse gives dates.
     BeforeAll {
         function Invoke-DateValidation {
             param([string]$Json)

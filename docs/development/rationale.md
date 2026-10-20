@@ -11958,10 +11958,10 @@ swap completed in one run. A single owner replaced by another was held back the 
 any-type floor, a flaw older than the user floor. Now an owner the add pass added counts in the
 any-type count, and in the user count when the declared-owner resolution knows it is a user -- a
 reference with an at sign, which `Resolve-OERStructurePrincipal` resolves as a user principal name.
-An owner named any other way, by object id
-for one, names no type, so it counts in the any-type count only: the conservative reading, which can still hold back
-the last user owner beside it. A `-WhatIf` plan counts an owner it reports "would add", as it counts a
-removal it reports; an add that failed, or one declined at the confirmation prompt, counts nowhere.
+An owner named any other way, by object id for one, names no type, so it counts in the any-type
+count only: the conservative reading, which can still hold back the last user owner beside it. A
+`-WhatIf` plan counts an owner it reports "would add", as it counts a removal it reports; an add
+that failed, or one declined at the confirmation prompt, counts nowhere.
 Each owner is counted once by its id, so a reference declared twice cannot count twice. Cost if wrong:
 an owner added by object id beside the last user owner leaves that removal to a later run.
 

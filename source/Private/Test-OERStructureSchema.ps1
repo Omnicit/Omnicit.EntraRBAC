@@ -667,9 +667,8 @@ function Test-OERStructureSchema {
     # later, so no string becomes a date there; on 7.2 to 7.4 a string that holds an ISO 8601 date and
     # time with seconds does, and the text the author wrote is lost before any rule or apply handler sees
     # it. Refused rather than guessed at, since the value can no longer be told from a date the author
-    # meant. A top-level key of
-    # a section carries the section as Section and, for each entry of its array, the entry's displayName (or
-    # its path) as Item; any other key is '(root)'.
+    # meant. A top-level key of a section carries the section as Section and, for each entry of its
+    # array, the entry's displayName (or its path) as Item; any other key is '(root)'.
     $DateSectionNames = @('groups', 'administrativeUnits', 'catalogs', 'accessPackages', 'accessReviews',
         'directoryRoleManagementPolicies', 'directoryRoleAssignments', 'roleAssignments', 'roleManagementPolicies')
     foreach ($DateTopProperty in $Document.PSObject.Properties) {
