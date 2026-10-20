@@ -321,9 +321,15 @@ Describe 'Set-OERGroupPimPolicy' {
     }
 
     It 'reports the eligible expiration unit when only the permanence switch is bound' {
-        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}
+        # The live rule answers with a maximum (Sprint 11 step 11, A24): a read that answers with none
+        # refuses the call with PimRuleValueUnknown, so the parameter default is never reported or sent.
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            if ($Method -ne 'PATCH' -and $Uri -like '*rules/Expiration_Admin_Eligibility') {
+                @{ id = 'Expiration_Admin_Eligibility'; isExpirationRequired = $true; maximumDuration = 'P120D' }
+            }
+        }
         $Result = Set-OERGroupPimPolicy -Id 'gid-1' -AllowPermanentEligibility -Confirm:$false
-        $Result.EligibleDurationDays | Should -Be 365
+        $Result.EligibleDurationDays | Should -Be 120
         $Result.AllowPermanentEligibility | Should -BeTrue
         $Result.PSObject.Properties.Name | Should -Not -Contain 'ActivationMaxHours'
     }
@@ -437,24 +443,10 @@ Describe 'Set-OERGroupPimPolicy' {
             }
         }
 
-        It 'falls back to the parameter default and warns when the live rule read fails' {
-            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest -ParameterFilter { $Uri -match 'Expiration_Admin_Eligibility' -and $Method -ne 'PATCH' } { throw [System.Exception]::new('transport failure') }
-            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest -ParameterFilter { $Method -eq 'PATCH' } {}
-            $Result = Set-OERGroupPimPolicy -Id 'gid-1' -AllowPermanentEligibility -Confirm:$false -WarningVariable Warn -WarningAction SilentlyContinue
-            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -ParameterFilter {
-                $Method -eq 'PATCH' -and $Uri -match 'Expiration_Admin_Eligibility' -and $Body.maximumDuration -eq 'P365D'
-            }
-            $Result.EligibleDurationDays | Should -Be 365
-            @($Warn) | Should -Not -BeNullOrEmpty
-        }
-
-        It 'leaves no record in $Error when the live rule read fails (bearer-token hygiene)' {
-            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest -ParameterFilter { $Uri -match 'Expiration_Admin_Eligibility' -and $Method -ne 'PATCH' } { throw [System.Exception]::new('transport failure') }
-            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest -ParameterFilter { $Method -eq 'PATCH' } {}
-            $Error.Clear()
-            Set-OERGroupPimPolicy -Id 'gid-1' -AllowPermanentEligibility -Confirm:$false -WarningAction SilentlyContinue | Out-Null
-            @($Error).Exception.Message -join ';' | Should -Not -Match 'transport failure'
-        }
+        # A live read that fails, or that answers with no maximum, used to fall back to the parameter
+        # default (365 / 180 days) and warn, or fall back silently. It now refuses the call before any
+        # write (Sprint 11 step 11, A24): see the Describe 'a failed or empty read that decides a
+        # written value refuses the call', which holds all four such reads.
     }
 
     Context 'every $Reported.Contains rule-id literal that gates the summary is pinned (audit prom-pimpolicy-rule-literals-partially-unpinned)' {
@@ -493,7 +485,15 @@ Describe 'Set-OERGroupPimPolicy' {
             @{ Parameter = 'ActivationAlertRecipient'; Literal = 'Notification_Admin_EndUser_Assignment';    Property = 'ActivationAlertRecipient'; Value = @('person33@example.com') }
             @{ Parameter = 'RequireApproval';          Literal = 'Approval_EndUser_Assignment';              Property = 'RequireApproval';          Value = $false }
         ) {
-            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}
+            # The two rows that bind one half of the MFA / authentication context pair read the other
+            # half first; it answers with a rule that carries neither MFA nor an enabled context, so
+            # there is nothing to reconcile. A read answering no rule would refuse the call with
+            # PimRuleValueUnknown (Sprint 11 step 11, A24).
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                if ($Method -ne 'PATCH' -and ($Uri -like '*rules/Enablement_EndUser_Assignment' -or $Uri -like '*rules/AuthenticationContext_EndUser_Assignment')) {
+                    @{ id = ($Uri -split '/')[-1] }
+                }
+            }
             $Splat = @{ Group = 'gid-1'; Confirm = $false }
             $Splat[$Parameter] = $Value
             $Result = Set-OERGroupPimPolicy @Splat
@@ -1177,102 +1177,222 @@ Describe 'Set-OERGroupPimPolicy authentication context reconcile' {
         @($script:Patched) | Where-Object { $_.id -eq 'AuthenticationContext_EndUser_Assignment' } | Should -Not -BeNullOrEmpty
     }
 
-    It 'warns and proceeds when the live enablement rule cannot be read' {
+    It 'refuses the call with the read''s own record, and sends and warns nothing, when the live enablement rule cannot be read' {
+        # It used to warn and send the context alone (Sprint 11 step 11, A24): what the read would have
+        # decided -- whether MFA has to be cleared beside the context -- is unknown, so nothing is sent.
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
             if ($Method -eq 'PATCH') { return @{} }
             throw 'forbidden'
         }
         $Warn = $null
-        $null = Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId 'c1' -Confirm:$false -WarningVariable Warn -WarningAction SilentlyContinue
-        $Warn | Should -Not -BeNullOrEmpty
+        $Err = $null
+        $Result = Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId 'c1' -Confirm:$false `
+            -WarningVariable Warn -WarningAction SilentlyContinue -ErrorVariable Err -ErrorAction SilentlyContinue
+        $Result | Should -BeNullOrEmpty
+        $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Set-OERGroupPimPolicy' })
+        $Own.Count | Should -Be 1
+        $Own[0].FullyQualifiedErrorId | Should -Be 'forbidden,Set-OERGroupPimPolicy'
+        @($Warn).Count | Should -Be 0
+        # Reached: the enablement rule was read, and nothing was sent after it.
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -ne 'PATCH' -and $Uri -like '*rules/Enablement_EndUser_Assignment'
+        }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
     }
 }
 
-Describe 'Set-OERGroupPimPolicy declined-partner guard' {
-    # The guard warns when a -Confirm decline accepts one half of a reconciled pair and refuses the
-    # other, leaving the tenant in exactly the mutually exclusive state this cmdlet exists to
-    # prevent. Reaching that $Sent shape needs a GENUINE per-rule ShouldProcess decline:
-    # -Confirm:$false confirms and -WhatIf sets $WhatIfPreference, so neither produces it.
+Describe 'Set-OERGroupPimPolicy: a split answer to the two prompts of the pair warns in the direction that happened (BL-97 F2)' {
+    # A reconcile sends both rules of the MFA / authentication context pair, and every rule is confirmed
+    # on its own, so a -Confirm answer can send one of them and decline the other. What that leaves
+    # depends on the direction of the reconcile, on which rule was sent and on whether Microsoft Graph
+    # accepted it (rationale.md#mfa-authcontext-exclusion), and the warning says it in that direction,
+    # once, after the last PATCH and after every message the send returned. No warning when both rules
+    # or neither were confirmed.
     #
-    # Rule order decides WHICH half can be declined, and it is no longer fixed. The patch loop now
-    # sends the rule that REMOVES the conflict first (rationale.md#mfa-authcontext-exclusion), so in
-    # this DisableAuthContext scenario the reconciled AuthenticationContext rule prompts FIRST and
-    # the MFA-adding Enablement rule prompts second. The mutually exclusive end state therefore
-    # needs prompt 1 DECLINED and prompt 2 ACCEPTED -- which no single answer, and no flip driven
-    # from the Invoke-OERGraphRequest fake (it runs only after an ACCEPTED prompt), can produce.
-    # -AnswerSequence on the answering host exists for exactly this shape.
+    # The patch order sends the conflict-removing rule first: under ClearMfa (-AuthenticationContextId
+    # alone, the live enablement rule carrying MFA) the enablement rule is prompted first and the
+    # enabling context rule second; under DisableAuthContext (MFA in -ActivationEnabledRules alone, the
+    # live context enabled) the disabling context rule first and the MFA-adding enablement rule
+    # second. A different answer per prompt needs a genuine host (OERConfirmHost's -AnswerSequence):
+    # -Confirm:$false confirms every rule and -WhatIf none.
     #
-    # That the shape got harder to reach is the ordering fix working: with the protective rule sent
-    # first, an operator who accepts in order can no longer be walked into leaving both controls on.
+    # The scenario runs in that host's runspace with its own fakes. The transport stub writes a host
+    # line 'SENT <rule id>' for every PATCH, so the host's ordered Events show where the warning stands
+    # against the PATCHes, and it rejects a PATCH of the rule id substituted for #REJECT# exactly as the
+    # real wrapper does (a throw). Defined here, in the discovery phase, since -ForEach is read then.
+    $Remedy = ' Re-run and accept both, or fix it with Get-OERGroupPimPolicy and a follow-up Set-OERGroupPimPolicy.'
+    $SplitCases = @(
+        @{
+            Name    = 'ClearMfa, the enablement rule applied and the context rule declined'
+            ArgText = "-AuthenticationContextId 'c1'"
+            Answers = @('&Yes', '&No')
+            Reject  = ''
+            First   = 'Enablement_EndUser_Assignment'
+            Sent    = @('Enablement_EndUser_Assignment')
+            Warning = "Rule 'AuthenticationContext_EndUser_Assignment' was declined while 'Enablement_EndUser_Assignment' was applied, so " +
+                "multi-factor authentication was removed from activation on PIM policy 'p1' and authentication context 'c1' was not " +
+                'enabled: activation may now require neither multi-factor authentication nor an authentication context.' + $Remedy
+        }
+        @{
+            Name    = 'ClearMfa, the context rule applied and the enablement rule declined (the text it always had)'
+            ArgText = "-AuthenticationContextId 'c1'"
+            Answers = @('&No', '&Yes')
+            Reject  = ''
+            First   = 'Enablement_EndUser_Assignment'
+            Sent    = @('AuthenticationContext_EndUser_Assignment')
+            Warning = "Rule 'Enablement_EndUser_Assignment' was declined while 'AuthenticationContext_EndUser_Assignment' was applied, so " +
+                "PIM policy 'p1' still requires both multi-factor authentication and an authentication context on activation." + $Remedy
+        }
+        @{
+            Name    = 'DisableAuthContext, the context rule applied and the enablement rule declined'
+            ArgText = '-ActivationEnabledRules MultiFactorAuthentication'
+            Answers = @('&Yes', '&No')
+            Reject  = ''
+            First   = 'AuthenticationContext_EndUser_Assignment'
+            Sent    = @('AuthenticationContext_EndUser_Assignment')
+            Warning = "Rule 'Enablement_EndUser_Assignment' was declined while 'AuthenticationContext_EndUser_Assignment' was applied, so " +
+                "the authentication context of PIM policy 'p1' was disabled and multi-factor authentication was not added to " +
+                'activation: activation may now require neither multi-factor authentication nor an authentication context.' + $Remedy
+        }
+        @{
+            Name    = 'DisableAuthContext, the enablement rule sent and rejected and the context rule declined'
+            ArgText = '-ActivationEnabledRules MultiFactorAuthentication'
+            Answers = @('&No', '&Yes')
+            Reject  = 'Enablement_EndUser_Assignment'
+            First   = 'AuthenticationContext_EndUser_Assignment'
+            Sent    = @('Enablement_EndUser_Assignment')
+            Warning = "Rule 'AuthenticationContext_EndUser_Assignment' was declined while 'Enablement_EndUser_Assignment' was sent, and " +
+                "Microsoft Graph rejected 'Enablement_EndUser_Assignment' (see the rejection reported for it): Microsoft Graph refuses " +
+                'multi-factor authentication while an authentication context is enabled (MfaAndAcrsConflict), and the authentication ' +
+                "context of PIM policy 'p1' was enabled when it was read. The policy therefore keeps its authentication context, and " +
+                'multi-factor authentication was not added to activation.' + $Remedy
+        }
+        @{
+            Name    = 'DisableAuthContext, the enablement rule applied although the context rule was declined'
+            ArgText = '-ActivationEnabledRules MultiFactorAuthentication'
+            Answers = @('&No', '&Yes')
+            Reject  = ''
+            First   = 'AuthenticationContext_EndUser_Assignment'
+            Sent    = @('Enablement_EndUser_Assignment')
+            Warning = "Rule 'AuthenticationContext_EndUser_Assignment' was declined while 'Enablement_EndUser_Assignment' was applied, " +
+                "although the authentication context of PIM policy 'p1' was enabled when it was read and Microsoft Graph refuses " +
+                'multi-factor authentication while one is enabled (MfaAndAcrsConflict): activation may now require both ' +
+                'multi-factor authentication and an authentication context, which PIM cannot honour.' + $Remedy
+        }
+        @{
+            Name    = 'ClearMfa, the enablement rule sent and rejected and the context rule declined'
+            ArgText = "-AuthenticationContextId 'c1'"
+            Answers = @('&Yes', '&No')
+            Reject  = 'Enablement_EndUser_Assignment'
+            First   = 'Enablement_EndUser_Assignment'
+            Sent    = @('Enablement_EndUser_Assignment')
+            Warning = "Rule 'AuthenticationContext_EndUser_Assignment' was declined while 'Enablement_EndUser_Assignment' was sent, and " +
+                "Microsoft Graph rejected 'Enablement_EndUser_Assignment' (see the rejection reported for it), so neither rule of the " +
+                "pair changed: PIM policy 'p1' keeps the multi-factor authentication and authentication context requirements it had " +
+                'on activation before the call.'
+        }
+        @{
+            Name    = 'ClearMfa, the context rule sent and rejected and the enablement rule declined'
+            ArgText = "-AuthenticationContextId 'c1'"
+            Answers = @('&No', '&Yes')
+            Reject  = 'AuthenticationContext_EndUser_Assignment'
+            First   = 'Enablement_EndUser_Assignment'
+            Sent    = @('AuthenticationContext_EndUser_Assignment')
+            Warning = "Rule 'Enablement_EndUser_Assignment' was declined while 'AuthenticationContext_EndUser_Assignment' was sent, and " +
+                "Microsoft Graph rejected 'AuthenticationContext_EndUser_Assignment' (see the rejection reported for it), so neither " +
+                "rule of the pair changed: PIM policy 'p1' keeps the multi-factor authentication and authentication context " +
+                'requirements it had on activation before the call.'
+        }
+        @{
+            Name    = 'DisableAuthContext, the context rule sent and rejected and the enablement rule declined'
+            ArgText = '-ActivationEnabledRules MultiFactorAuthentication'
+            Answers = @('&Yes', '&No')
+            Reject  = 'AuthenticationContext_EndUser_Assignment'
+            First   = 'AuthenticationContext_EndUser_Assignment'
+            Sent    = @('AuthenticationContext_EndUser_Assignment')
+            Warning = "Rule 'Enablement_EndUser_Assignment' was declined while 'AuthenticationContext_EndUser_Assignment' was sent, and " +
+                "Microsoft Graph rejected 'AuthenticationContext_EndUser_Assignment' (see the rejection reported for it), so neither " +
+                "rule of the pair changed: PIM policy 'p1' keeps the multi-factor authentication and authentication context " +
+                'requirements it had on activation before the call.'
+        }
+    )
+    $NoSplitCases = @(
+        @{ Name = 'ClearMfa, both rules confirmed'; ArgText = "-AuthenticationContextId 'c1'"; Answers = @('&Yes', '&Yes'); Sent = @('Enablement_EndUser_Assignment', 'AuthenticationContext_EndUser_Assignment') }
+        @{ Name = 'ClearMfa, neither rule confirmed'; ArgText = "-AuthenticationContextId 'c1'"; Answers = @('&No', '&No'); Sent = @() }
+        @{ Name = 'DisableAuthContext, both rules confirmed'; ArgText = '-ActivationEnabledRules MultiFactorAuthentication'; Answers = @('&Yes', '&Yes'); Sent = @('AuthenticationContext_EndUser_Assignment', 'Enablement_EndUser_Assignment') }
+        @{ Name = 'DisableAuthContext, neither rule confirmed'; ArgText = '-ActivationEnabledRules MultiFactorAuthentication'; Answers = @('&No', '&No'); Sent = @() }
+    )
+
     BeforeAll {
-        $script:DeclineScenario = {
-            Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
-            $Module = Get-Module Omnicit.EntraRBAC
-            & $Module {
-                Set-Item -Path function:script:Initialize-OERAuth -Value { }
-                Set-Item -Path function:script:Resolve-OERGroupId -Value { 'g1' }
-                Set-Item -Path function:script:Get-OERPimGroupPolicyId -Value { 'p1' }
-                Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
-                    param([string]$Method = 'GET', [string]$Uri, $Body)
-                    if ($Method -eq 'PATCH') { return @{} }
-                    if ($Uri -like '*rules/AuthenticationContext_EndUser_Assignment') {
-                        return @{ id = 'AuthenticationContext_EndUser_Assignment'; isEnabled = $true; claimValue = 'c1' }
-                    }
-                    return @{}
-                }
-            }
-            Set-OERGroupPimPolicy -Group 'g' -ActivationEnabledRules MultiFactorAuthentication -Confirm | Out-Null
+        $script:NewSplitScenario = {
+            param([string]$ArgText, [string]$Reject)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { 'g1' }
+    Set-Item -Path function:script:Get-OERPimGroupPolicyId -Value { 'p1' }
+    Set-Item -Path function:script:Get-OERAuthenticationContext -Value {
+        [CmdletBinding()] param()
+        [pscustomobject]@{ AuthenticationContextId = 'c1'; DisplayName = 'Require MFA'; IsAvailable = $true }
+    }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        $RuleId = ($Uri -split '/')[-1]
+        if ($Method -eq 'PATCH') {
+            $Host.UI.WriteLine("SENT $RuleId")
+            if ($RuleId -eq '#REJECT#') { throw "Graph rejected rule '$RuleId'." }
+            return @{}
         }
-
-        $script:AcceptScenario = {
-            Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
-            $Module = Get-Module Omnicit.EntraRBAC
-            & $Module {
-                Set-Item -Path function:script:Initialize-OERAuth -Value { }
-                Set-Item -Path function:script:Resolve-OERGroupId -Value { 'g1' }
-                Set-Item -Path function:script:Get-OERPimGroupPolicyId -Value { 'p1' }
-                Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
-                    param([string]$Method = 'GET', [string]$Uri, $Body)
-                    if ($Method -eq 'PATCH') { return @{} }
-                    if ($Uri -like '*rules/AuthenticationContext_EndUser_Assignment') {
-                        return @{ id = 'AuthenticationContext_EndUser_Assignment'; isEnabled = $true; claimValue = 'c1' }
-                    }
-                    return @{}
-                }
-            }
-            Set-OERGroupPimPolicy -Group 'g' -ActivationEnabledRules MultiFactorAuthentication -Confirm | Out-Null
+        if ($RuleId -eq 'Enablement_EndUser_Assignment') {
+            return @{ id = $RuleId; enabledRules = @('MultiFactorAuthentication', 'Justification') }
+        }
+        if ($RuleId -eq 'AuthenticationContext_EndUser_Assignment') {
+            return @{ id = $RuleId; isEnabled = $true; claimValue = 'c2' }
+        }
+        @{}
+    }
+}
+Set-OERGroupPimPolicy -Group 'g' #ARGS# -Confirm -ErrorAction SilentlyContinue | Out-Null
+'END'
+'@).Replace('#ARGS#', $ArgText).Replace('#REJECT#', $Reject))
         }
     }
 
-    It 'warns when the reconciled rule is declined while its partner was applied' {
-        # Decline the reconciled rule (prompted FIRST now), accept the MFA rule that follows.
-        $Result = Invoke-OERWithConfirmAnswer -AnswerSequence '&No', '&Yes' -Script $script:DeclineScenario
-        # Both rules must really have reached a prompt, or the asymmetry below is an artefact of the
-        # harness never getting there rather than of a decline.
-        $Result.Prompts.Count | Should -BeGreaterOrEqual 2
-        # Pin WHICH rule was prompted first: the guard's whole premise is that the declined half is
-        # the reconciled one, and a silent return to the old fixed order would otherwise still pass.
-        $Result.Prompts[0] | Should -Match 'AuthenticationContext_EndUser_Assignment'
-        $Text = $Result.Warnings -join ' '
-        $Text | Should -Match "Rule 'AuthenticationContext_EndUser_Assignment' was declined"
-        $Text | Should -Match "'Enablement_EndUser_Assignment' was applied"
-        $Text | Should -Match 'still requires both multi-factor authentication and an authentication context'
+    It 'warns once, as the last thing it writes, in the direction that happened: <Name>' -ForEach $SplitCases {
+        $Run = Invoke-OERWithConfirmAnswer -AnswerSequence $Answers -Script (& $script:NewSplitScenario -ArgText $ArgText -Reject $Reject)
+        @($Run.Output) | Should -Be @('END')
+        # Both rules reached a prompt, the conflict-removing one first, so the answers fell on the rules
+        # this case names.
+        $Run.Prompts.Count | Should -Be 2
+        $Run.Prompts[0] | Should -Match $First
+        # Exactly the confirmed rule was sent.
+        (@($Run.Events | Where-Object { $_ -like 'Line: SENT *' }) -join '|') | Should -Be (@($Sent | ForEach-Object { "Line: SENT $_" }) -join '|')
+        $Split = @($Run.Warnings | Where-Object { $_ -like '*was declined*' })
+        $Split.Count | Should -Be 1
+        $Split[0] | Should -BeExactly $Warning
+        # After the last PATCH and after every message the send returned (a rejection among them): the
+        # split warning is the last thing that reached the host.
+        $Events = @($Run.Events)
+        $Events[-1] | Should -BeExactly ('Warning: ' + $Warning)
+        $LastSent = [array]::LastIndexOf($Events, (@($Events | Where-Object { $_ -like 'Line: SENT *' }))[-1])
+        $LastSent | Should -BeLessThan ($Events.Count - 1)
+        if ($Reject) {
+            # Reached: the rejection the warning refers to was reported before it.
+            $Rejection = "Warning: Rule '$Reject' of PIM policy 'p1' was not applied: Graph rejected rule '$Reject'."
+            [array]::IndexOf($Events, $Rejection) | Should -BeGreaterThan $LastSent
+        }
     }
 
-    It 'stays silent when the operator accepts both halves of the reconcile' {
-        # The discriminating control: same reconcile, same two rules, nothing declined. Without it
-        # the assertion above would also pass against a guard that warned unconditionally.
-        $Result = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $script:AcceptScenario
-        $Result.Prompts.Count | Should -BeGreaterOrEqual 2
-        ($Result.Warnings -join ' ') | Should -Not -Match 'was declined while'
-    }
-
-    It 'stays silent when the operator declines everything' {
-        # Nothing was applied, so there is no half-applied state to warn about -- the cmdlet returns
-        # before the guard. Pins that the guard keys on the ASYMMETRY, not on any decline at all.
-        $Result = Invoke-OERWithConfirmAnswer -Answer '&No' -Script $script:AcceptScenario
-        $Result.Prompts.Count | Should -BeGreaterOrEqual 1
-        ($Result.Warnings -join ' ') | Should -Not -Match 'was declined while'
+    It 'writes no split warning when both rules or neither were confirmed: <Name>' -ForEach $NoSplitCases {
+        $Run = Invoke-OERWithConfirmAnswer -AnswerSequence $Answers -Script (& $script:NewSplitScenario -ArgText $ArgText -Reject '')
+        @($Run.Output) | Should -Be @('END')
+        $Run.Prompts.Count | Should -Be 2
+        (@($Run.Events | Where-Object { $_ -like 'Line: SENT *' }) -join '|') | Should -Be (@($Sent | ForEach-Object { "Line: SENT $_" }) -join '|')
+        # Reached: the reconcile ran and said so before the prompts.
+        @($Run.Warnings | Where-Object { $_ -like "Policy 'p1': *" }).Count | Should -Be 1
+        @($Run.Warnings | Where-Object { $_ -like '*was declined*' }).Count | Should -Be 0
     }
 }
 
@@ -1951,5 +2071,268 @@ $Results = @(
             'Invoke-OERGraphRequest GET Approval_EndUser_Assignment'
             'Invoke-OERGraphRequest PATCH Approval_EndUser_Assignment'
         )
+    }
+}
+
+Describe 'Set-OERGroupPimPolicy: a failed or empty read that decides a written value refuses the call (Sprint 11 step 11, A24)' {
+    # Four reads the cmdlet makes itself decide a value it writes: the two expiration rules, read when a
+    # permanence switch is bound without its duration (their maximumDuration is sent back), and the two
+    # halves of the MFA / authentication context pair, read when one half is bound without the other
+    # (the reconcile decides from them whether the other half is sent too). A failed read used to warn
+    # and send the parameter default, or the bound half alone, and an expiration rule that answered
+    # with no maximum fell back to the default without a word. Now a failed read is published as itself,
+    # and a read that answers without the value the call needs is refused with PimRuleValueUnknown --
+    # both before ShouldProcess and every PATCH, so -WhatIf shows them too, and nothing is sent, the
+    # other rules bound on the same call included (-ActivationMaxHours rides along to show that).
+    # Defined here, in the discovery phase, since -ForEach is read then.
+    $ReadCases = @(
+        @{ Read = 'the activation enablement rule (-AuthenticationContextId alone)'; RuleId = 'Enablement_EndUser_Assignment'; Splat = @{ AuthenticationContextId = 'c1' } }
+        @{ Read = 'the authentication context rule (MFA in -ActivationEnabledRules alone)'; RuleId = 'AuthenticationContext_EndUser_Assignment'; Splat = @{ ActivationEnabledRules = 'MultiFactorAuthentication' } }
+        @{ Read = 'the eligible-assignment expiration rule (-AllowPermanentEligibility alone)'; RuleId = 'Expiration_Admin_Eligibility'; Splat = @{ AllowPermanentEligibility = $true } }
+        @{ Read = 'the active-assignment expiration rule (-AllowPermanentActive alone)'; RuleId = 'Expiration_Admin_Assignment'; Splat = @{ AllowPermanentActive = $true } }
+    )
+    $Modes = @(
+        @{ Mode = 'a real run'; ModeSplat = @{ Confirm = $false } }
+        @{ Mode = '-WhatIf'; ModeSplat = @{ WhatIf = $true } }
+    )
+    $ReadModeCases = foreach ($Case in $ReadCases) { foreach ($M in $Modes) { $Case + $M } }
+
+    $EnablementUnknown = "Reading the live rule 'Enablement_EndUser_Assignment' of PIM policy 'pol-1' returned no rule, so whether " +
+        "activation requires multi-factor authentication, which PIM cannot hold beside authentication context 'c1', is unknown; " +
+        'nothing was changed. Pass both -AuthenticationContextId and -ActivationEnabledRules, so that neither rule depends on this read.'
+    $ContextUnknown = "Reading the live rule 'AuthenticationContext_EndUser_Assignment' of PIM policy 'pol-1' returned no rule, so " +
+        'whether an authentication context is enabled, which PIM cannot hold beside multi-factor authentication, is unknown; ' +
+        'nothing was changed. Pass both -AuthenticationContextId and -ActivationEnabledRules, so that neither rule depends on this read.'
+    $EligibleUnknown = "The live eligible-assignment expiration rule of PIM policy 'pol-1' carries no maximum duration, so the duration " +
+        'to keep is unknown; nothing was changed. Pass -EligibleDuration with -AllowPermanentEligibility.'
+    $ActiveUnknown = "The live active-assignment expiration rule of PIM policy 'pol-1' carries no maximum duration, so the duration " +
+        'to keep is unknown; nothing was changed. Pass -ActiveDuration with -AllowPermanentActive.'
+    # Answer: NoRule (the read returns nothing), Blank/Whitespace/Null (an expiration rule whose
+    # maximumDuration is that).
+    $UnknownCases = @(
+        @{ Read = 'the activation enablement rule'; Answer = 'no rule'; RuleId = 'Enablement_EndUser_Assignment'; Splat = @{ AuthenticationContextId = 'c1' }; NoRule = $true; Maximum = 'P30D'; Message = $EnablementUnknown }
+        @{ Read = 'the authentication context rule'; Answer = 'no rule'; RuleId = 'AuthenticationContext_EndUser_Assignment'; Splat = @{ ActivationEnabledRules = 'MultiFactorAuthentication' }; NoRule = $true; Maximum = 'P30D'; Message = $ContextUnknown }
+        @{ Read = 'the eligible-assignment expiration rule'; Answer = 'an empty maximumDuration'; RuleId = 'Expiration_Admin_Eligibility'; Splat = @{ AllowPermanentEligibility = $true }; NoRule = $false; Maximum = ''; Message = $EligibleUnknown }
+        @{ Read = 'the eligible-assignment expiration rule'; Answer = 'no rule'; RuleId = 'Expiration_Admin_Eligibility'; Splat = @{ AllowPermanentEligibility = $true }; NoRule = $true; Maximum = 'P30D'; Message = $EligibleUnknown }
+        @{ Read = 'the active-assignment expiration rule'; Answer = 'a white-space maximumDuration'; RuleId = 'Expiration_Admin_Assignment'; Splat = @{ AllowPermanentActive = $true }; NoRule = $false; Maximum = '  '; Message = $ActiveUnknown }
+        @{ Read = 'the active-assignment expiration rule'; Answer = 'a null maximumDuration'; RuleId = 'Expiration_Admin_Assignment'; Splat = @{ AllowPermanentActive = $true }; NoRule = $false; Maximum = $null; Message = $ActiveUnknown }
+    )
+    $UnknownModeCases = foreach ($Case in $UnknownCases) { foreach ($M in $Modes) { $Case + $M } }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Resolve-OERGroupId { 'gid-1' }
+        Mock -ModuleName $script:moduleName Get-OERPimGroupPolicyId { 'pol-1' }
+        Mock -ModuleName $script:moduleName Get-OERAuthenticationContext {
+            [pscustomobject]@{ AuthenticationContextId = 'c1'; DisplayName = 'Require MFA'; IsAvailable = $true }
+        }
+        # Every request, "<METHOD> <rule id>", in the order sent. A read of the rule named by
+        # FailReadRuleId throws the record a refused read throws; one named by NoRuleReadRuleId returns
+        # nothing; the expiration rules answer with LiveMaximum; the two pair rules answer as the live
+        # rules a reconcile acts on (MFA on activation, an enabled context).
+        $script:Calls = [System.Collections.Generic.List[string]]::new()
+        $script:FailReadRuleId = ''
+        $script:NoRuleReadRuleId = ''
+        $script:LiveMaximum = 'P30D'
+        $script:LiveEnabledRules = @('MultiFactorAuthentication', 'Justification')
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            param([string]$Method = 'GET', [string]$Uri, $Body)
+            $RuleId = ($Uri -split '/')[-1]
+            $script:Calls.Add(('{0} {1}' -f $Method, $RuleId))
+            if ($Method -eq 'PATCH') { return @{} }
+            if ($RuleId -eq $script:FailReadRuleId) {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("Insufficient privileges to read rule '$RuleId'."),
+                    'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, $RuleId)
+            }
+            if ($RuleId -eq $script:NoRuleReadRuleId) { return $null }
+            if ($RuleId -eq 'Enablement_EndUser_Assignment') { return @{ id = $RuleId; enabledRules = $script:LiveEnabledRules } }
+            if ($RuleId -eq 'AuthenticationContext_EndUser_Assignment') { return @{ id = $RuleId; isEnabled = $true; claimValue = 'c2' } }
+            @{ id = $RuleId; isExpirationRequired = $true; maximumDuration = $script:LiveMaximum }
+        }
+    }
+
+    It 'publishes a failed read of <Read> as itself, once, and sends and warns nothing (<Mode>)' -ForEach $ReadModeCases {
+        $script:FailReadRuleId = $RuleId
+        $Err = $null
+        $Warn = $null
+        $Call = @{ Group = 'gid-1'; ActivationMaxHours = 8; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Err'; WarningAction = 'SilentlyContinue'; WarningVariable = 'Warn' } + $Splat + $ModeSplat
+        $Result = Set-OERGroupPimPolicy @Call
+        $Result | Should -BeNullOrEmpty
+        $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Set-OERGroupPimPolicy' })
+        $Own.Count | Should -Be 1
+        $Own[0].FullyQualifiedErrorId | Should -BeExactly 'Authorization_RequestDenied,Set-OERGroupPimPolicy'
+        $Own[0].CategoryInfo.Category | Should -Be 'PermissionDenied'
+        $Own[0].TargetObject | Should -BeExactly $RuleId
+        $Own[0].Exception.Message | Should -BeExactly "Insufficient privileges to read rule '$RuleId'."
+        # No warning in its place, and nothing about the read was guessed.
+        @($Warn).Count | Should -Be 0
+        # Reached: the rule was read, once, and nothing was sent after it.
+        @($script:Calls) | Should -Be @("GET $RuleId")
+    }
+
+    It 'scrubs a failed read of <Read> before it publishes it as itself' -ForEach $ReadCases {
+        # The catch publishes the caught record itself, so the same record reaches the caller with or
+        # without the scrub: the call is the proof (rationale.md#bearer-scrub-tests).
+        Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+        $script:FailReadRuleId = $RuleId
+        $script:ExpectedMessage = "Insufficient privileges to read rule '$RuleId'."
+        $Err = $null
+        $Call = @{ Group = 'gid-1'; Confirm = $false; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Err'; WarningAction = 'SilentlyContinue' } + $Splat
+        $null = Set-OERGroupPimPolicy @Call
+        # Reached: the catch published the record as itself.
+        @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,Set-OERGroupPimPolicy' }).Count | Should -Be 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+            $Record.Exception.Message -eq $script:ExpectedMessage
+        }
+    }
+
+    It 'refuses with PimRuleValueUnknown when <Read> answers <Answer>, and sends and warns nothing (<Mode>)' -ForEach $UnknownModeCases {
+        if ($NoRule) { $script:NoRuleReadRuleId = $RuleId }
+        $script:LiveMaximum = $Maximum
+        $Err = $null
+        $Warn = $null
+        $Call = @{ Group = 'gid-1'; ActivationMaxHours = 8; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Err'; WarningAction = 'SilentlyContinue'; WarningVariable = 'Warn' } + $Splat + $ModeSplat
+        $Result = Set-OERGroupPimPolicy @Call
+        $Result | Should -BeNullOrEmpty
+        $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Set-OERGroupPimPolicy' })
+        $Own.Count | Should -Be 1
+        $Own[0].FullyQualifiedErrorId | Should -BeExactly 'PimRuleValueUnknown,Set-OERGroupPimPolicy'
+        $Own[0].CategoryInfo.Category | Should -Be 'InvalidData'
+        $Own[0].TargetObject | Should -BeExactly 'pol-1'
+        $Own[0].Exception.Message | Should -BeExactly $Message
+        @($Warn).Count | Should -Be 0
+        @($script:Calls) | Should -Be @("GET $RuleId")
+    }
+
+    It 'the control: <Read> answering the value the call needs sends the rules, with no error' -ForEach $ReadCases {
+        # The same mock, answering: without this, the refusals above could be an artefact of a mock
+        # that never lets a call through.
+        $Err = $null
+        $Call = @{ Group = 'gid-1'; ActivationMaxHours = 8; Confirm = $false; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Err'; WarningAction = 'SilentlyContinue' } + $Splat
+        $Result = Set-OERGroupPimPolicy @Call
+        @($Err).Count | Should -Be 0
+        $Result.Applied | Should -BeTrue
+        $script:Calls[0] | Should -BeExactly "GET $RuleId"
+        @($script:Calls | Where-Object { $_ -like 'PATCH *' }).Count | Should -BeGreaterOrEqual 2
+    }
+
+    It 'takes an enablement rule whose enabledRules is an empty list as an answer, not as an unknown value' {
+        $script:LiveEnabledRules = @()
+        $Err = $null
+        $Result = Set-OERGroupPimPolicy -Group 'gid-1' -AuthenticationContextId 'c1' -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
+        @($Err).Count | Should -Be 0
+        $Result.Applied | Should -BeTrue
+        # No MFA to clear: the context rule is sent alone.
+        @($script:Calls) | Should -Be @('GET Enablement_EndUser_Assignment', 'PATCH AuthenticationContext_EndUser_Assignment')
+    }
+
+    Context 'in a script with no try' {
+        # A refused call writes a NON-terminating error and the script goes on, so what it must not do is
+        # send anything on the way. The script runs in a runspace through Invoke-OERWithConfirmAnswer, so
+        # it is transported as text and installs its own fakes in ITS copy of the module scope; the
+        # transport stub appends "<METHOD> <rule id>" to a log file whose path is substituted into the
+        # text. The four calls stand in no try. #MODE# is Throw (every read is refused), Empty (every
+        # read answers without the value) or Answer (the control: every read answers with it).
+        BeforeAll {
+            $script:NewNoTryScenario = {
+                param([string]$Log, [string]$Mode)
+                [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Remove-OERErrorRecord -Value { }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { 'g1' }
+    Set-Item -Path function:script:Get-OERPimGroupPolicyId -Value { 'p1' }
+    Set-Item -Path function:script:Get-OERAuthenticationContext -Value {
+        [CmdletBinding()] param()
+        [pscustomobject]@{ AuthenticationContextId = 'c1'; DisplayName = 'Require MFA'; IsAvailable = $true }
+    }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        $RuleId = ($Uri -split '/')[-1]
+        Add-Content -LiteralPath '#LOG#' -Value "$Method $RuleId"
+        if ($Method -eq 'PATCH') { return @{} }
+        if ('#MODE#' -eq 'Throw') {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new("Insufficient privileges to read rule '$RuleId'."),
+                'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, $RuleId)
+        }
+        if ($RuleId -like 'Expiration_*') {
+            $Maximum = if ('#MODE#' -eq 'Empty') { '' } else { 'P30D' }
+            return @{ id = $RuleId; isExpirationRequired = $true; maximumDuration = $Maximum }
+        }
+        if ('#MODE#' -eq 'Empty') { return $null }
+        if ($RuleId -eq 'Enablement_EndUser_Assignment') { return @{ id = $RuleId; enabledRules = @('Justification') } }
+        @{ id = $RuleId; isEnabled = $false; claimValue = '' }
+    }
+}
+$Results = @(
+    Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId 'c1' -ActivationMaxHours 8 -Confirm:$false
+    Set-OERGroupPimPolicy -Group 'g' -ActivationEnabledRules MultiFactorAuthentication -ActivationMaxHours 8 -Confirm:$false
+    Set-OERGroupPimPolicy -Group 'g' -AllowPermanentEligibility -ActivationMaxHours 8 -Confirm:$false
+    Set-OERGroupPimPolicy -Group 'g' -AllowPermanentActive -ActivationMaxHours 8 -Confirm:$false
+)
+"REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
+& $Module {
+    Remove-Item function:Initialize-OERAuth
+    Remove-Item function:Remove-OERErrorRecord
+    Remove-Item function:Resolve-OERGroupId
+    Remove-Item function:Get-OERPimGroupPolicyId
+    Remove-Item function:Invoke-OERGraphRequest
+    "STUBS:$(@('Initialize-OERAuth', 'Remove-OERErrorRecord', 'Resolve-OERGroupId', 'Get-OERPimGroupPolicyId', 'Invoke-OERGraphRequest' | Where-Object { Get-Command -Name $PSItem -CommandType Function -ErrorAction Ignore }).Count)"
+}
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#MODE#', $Mode))
+            }
+            function Get-TestLoggedLine ([string]$Log) {
+                if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
+            }
+            $script:NoTryReads = @(
+                'GET Enablement_EndUser_Assignment'
+                'GET AuthenticationContext_EndUser_Assignment'
+                'GET Expiration_Admin_Eligibility'
+                'GET Expiration_Admin_Assignment'
+            )
+        }
+
+        It 'a failed read: each call publishes the read''s record, sends nothing, and the script reaches its end' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (& $script:NewNoTryScenario -Log $Log -Mode 'Throw')
+            ($Run.Output -join '|') | Should -Be 'REACHED:0|STUBS:0|END'
+            @(Get-TestLoggedLine -Log $Log) | Should -Be $script:NoTryReads
+            @($Run.Errors) | Should -Be @(
+                "Insufficient privileges to read rule 'Enablement_EndUser_Assignment'."
+                "Insufficient privileges to read rule 'AuthenticationContext_EndUser_Assignment'."
+                "Insufficient privileges to read rule 'Expiration_Admin_Eligibility'."
+                "Insufficient privileges to read rule 'Expiration_Admin_Assignment'."
+            )
+            @($Run.Warnings).Count | Should -Be 0
+        }
+
+        It 'a read without the value: each call is refused with PimRuleValueUnknown, sends nothing, and the script reaches its end' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (& $script:NewNoTryScenario -Log $Log -Mode 'Empty')
+            ($Run.Output -join '|') | Should -Be 'REACHED:0|STUBS:0|END'
+            @(Get-TestLoggedLine -Log $Log) | Should -Be $script:NoTryReads
+            @($Run.Errors).Count | Should -Be 4
+            $Run.Errors[0] | Should -BeLike "Reading the live rule 'Enablement_EndUser_Assignment' of PIM policy 'p1' returned no rule, *"
+            $Run.Errors[1] | Should -BeLike "Reading the live rule 'AuthenticationContext_EndUser_Assignment' of PIM policy 'p1' returned no rule, *"
+            $Run.Errors[2] | Should -BeLike "The live eligible-assignment expiration rule of PIM policy 'p1' carries no maximum duration, *"
+            $Run.Errors[3] | Should -BeLike "The live active-assignment expiration rule of PIM policy 'p1' carries no maximum duration, *"
+            @($Run.Warnings).Count | Should -Be 0
+        }
+
+        It 'the control: the same four calls whose reads answer reach the end with four results, each read followed by its PATCHes' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (& $script:NewNoTryScenario -Log $Log -Mode 'Answer')
+            ($Run.Output -join '|') | Should -Be 'REACHED:4|STUBS:0|END'
+            @($Run.Errors).Count | Should -Be 0
+            $Logged = @(Get-TestLoggedLine -Log $Log)
+            @($Logged | Where-Object { $_ -like 'GET *' }) | Should -Be $script:NoTryReads
+            @($Logged | Where-Object { $_ -like 'PATCH *' }).Count | Should -BeGreaterOrEqual 8
+        }
     }
 }
