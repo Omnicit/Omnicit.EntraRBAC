@@ -1181,11 +1181,55 @@ function Invoke-OERGraphRequest {
     # converts it back to a path).
     # The loop lives outside Invoke-GraphSingle so every page gets its own bounded throttle backoff
     # and its own single-shot claims/401 retry, rather than sharing a budget across all pages.
+    #
+    # A -ALL WALK THAT CANNOT BE COMPLETED FAILS; IT NEVER HANDS BACK WHAT IT HAS (BL-72, P0 family).
+    # Four causes, one record: a later page that is $null, a later page with no value member, a next
+    # link already requested in this walk, and a walk past the page limit. Get-GraphPagingIncompleteRecord
+    # builds the record; the throw and the return after it stay in the loop (see the rule at the paging
+    # catch below). Its facts ride on the EXCEPTION, the way the paging catch attaches them.
+    function Get-GraphPagingIncompleteRecord ([string]$Cause, [int]$AtPage, [string]$AtUri, [object[]]$Aggregated) {
+        $Count = @($Aggregated).Count
+        $IncompleteException = [System.Exception]::new(
+            ("Microsoft Graph page $AtPage of this enumeration cannot be read as part of a complete walk: $Cause. " +
+            "$Count item(s) had already been aggregated from earlier pages; the partial collection is " +
+            "refused rather than returned as though it were complete."))
+        $IncompleteException | Add-Member -NotePropertyName PartialValue -NotePropertyValue @($Aggregated) -Force
+        $IncompleteException | Add-Member -NotePropertyName NextLink -NotePropertyValue $AtUri -Force
+        $IncompleteException | Add-Member -NotePropertyName PageNumber -NotePropertyValue $AtPage -Force
+        # SECURITY: page number and item COUNT only; the next link can carry a $skiptoken.
+        Write-Verbose ("[Invoke-OERGraphRequest] Page $AtPage cannot complete the walk ($Cause) with $Count " +
+            "item(s) already aggregated from earlier pages. PartialValue, NextLink and PageNumber are " +
+            "attached to the thrown error's Exception for a caller that opts in; the call still fails.")
+        return [System.Management.Automation.ErrorRecord]::new(
+            $IncompleteException,
+            'GraphPagingIncomplete',
+            [System.Management.Automation.ErrorCategory]::InvalidResult,
+            $AtUri)
+    }
+
     $AllValues = [System.Collections.Generic.List[object]]::new()
     $NextUri = $Uri
     [int]$PageNumber = 0
+    # Read ONCE per call, before the loop: Get-OERPageWalkLimit owns the number.
+    [int]$PageLimit = Get-OERPageWalkLimit
+    # Every URI this walk has requested, page 1's -Uri included. Ordinal: a skiptoken is case-sensitive.
+    $RequestedUris = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     while ($NextUri) {
         $PageNumber++
+        # The bound fails the walk; it never truncates it. A legitimate enumeration is far below it.
+        if ($PageNumber -gt $PageLimit) {
+            throw (Get-GraphPagingIncompleteRecord -Cause "the walk reached its limit of $PageLimit page(s) and the page after it was not requested" `
+                -AtPage $PageNumber -AtUri $NextUri -Aggregated $AllValues.ToArray())
+            # Outside any catch, a throw can be suppressed (-ErrorAction SilentlyContinue/Ignore with no
+            # try up the stack) and the loop would carry on: return, never break.
+            return
+        }
+        # Never request the same page twice: a next link that names a URI already requested would loop.
+        if (-not $RequestedUris.Add($NextUri)) {
+            throw (Get-GraphPagingIncompleteRecord -Cause 'its next link repeats a page already requested in this walk, so it was not requested again' `
+                -AtPage $PageNumber -AtUri $NextUri -Aggregated $AllValues.ToArray())
+            return
+        }
         Write-Verbose "[Invoke-OERGraphRequest] Fetching page $PageNumber..."
         $PageFailed = $false
         try {
@@ -1242,8 +1286,19 @@ function Invoke-OERGraphRequest {
         if ($PageFailed) { return }
         # A -All GET can return an empty body (e.g. no results at all); indexing into a $null page
         # would otherwise throw a non-terminating InvalidOperation that becomes TERMINATING under a
-        # caller's -ErrorAction Stop. Treat it as the end of the collection instead.
-        if ($null -eq $Page) { break }
+        # caller's -ErrorAction Stop. On the FIRST page that is the end of the collection (nothing to
+        # read), so it stays one: break.
+        #
+        # A LATER page is different: page one carried a next link, so the answer to the request that
+        # link names is "there is more". An empty body in reply is a read that did not complete, and
+        # ending the walk there handed back the pages before it as though they were the whole
+        # collection (BL-72, P0 family, latent). It is refused, with what was read attached.
+        if ($null -eq $Page) {
+            if ($PageNumber -eq 1) { break }
+            throw (Get-GraphPagingIncompleteRecord -Cause 'it answered with an empty body although the page before it carried a next link' `
+                -AtPage $PageNumber -AtUri $NextUri -Aggregated $AllValues.ToArray())
+            return
+        }
         # An expected-code marker is an ANSWER about the whole read, not a page of it, so it is
         # returned verbatim rather than aggregated. It has no value property, so falling through
         # would append @($null) and report one phantom item.
@@ -1291,11 +1346,34 @@ function Invoke-OERGraphRequest {
             # collection. The same reason as the paging catch's check above: return, never break.
             return
         }
+        # A page after the first that has no value member is not a page of the collection (a page whose
+        # value is an empty array IS one, and falls through). Falling through would aggregate nothing
+        # and, with no next link, end the walk as complete. The marker check above runs first: a
+        # marker has no value and is handled as before. Invoke-MgGraphRequest returns a hashtable; a
+        # non-hashtable page is read defensively through its properties.
+        if ($PageNumber -gt 1) {
+            if ($Page -is [System.Collections.IDictionary]) {
+                [bool]$PageHasValue = $Page.Contains('value')
+            } else {
+                [bool]$PageHasValue = $null -ne $Page.PSObject.Properties['value']
+            }
+            if (-not $PageHasValue) {
+                throw (Get-GraphPagingIncompleteRecord -Cause 'it has no value member' `
+                    -AtPage $PageNumber -AtUri $NextUri -Aggregated $AllValues.ToArray())
+                return
+            }
+        }
         foreach ($Item in @($Page.value)) { if ($null -ne $Item) { $AllValues.Add($Item) } }
-        $NextUri = [string]$Page['@odata.nextLink']
+        if ($Page -is [System.Collections.IDictionary]) {
+            $NextUri = [string]$Page['@odata.nextLink']
+        } else {
+            $NextLinkProperty = $Page.PSObject.Properties['@odata.nextLink']
+            $NextUri = if ($null -ne $NextLinkProperty) { [string]$NextLinkProperty.Value } else { '' }
+        }
     }
-    # NOTE: deliberately no page-count cap or loop detection here. A hard cap risks silently
-    # truncating a legitimate large enumeration, which is the exact defect class this switch exists
-    # to fix. Do not add one without a design discussion.
+    # The walk is bounded, and the bound FAILS it rather than truncating it: the page limit above
+    # (Get-OERPageWalkLimit) refuses the page after it with GraphPagingIncomplete, and a next link
+    # that repeats a page already requested is refused the same way. A silent cap would hand back a
+    # prefix as the whole collection, the defect class -All exists to prevent.
     return @{ value = $AllValues.ToArray() }
 }
