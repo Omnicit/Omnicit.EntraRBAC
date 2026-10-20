@@ -2026,6 +2026,8 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
                 $script:A16DirectoryRoleReads = 0
                 # The directoryRoles read with this sequence number throws (0: none does).
                 $script:A16FailDirectoryRoleRead = 0
+                # The unit's live members, as the members list answers them (none by default).
+                $script:A16LiveMembers = @()
                 $script:A16Declared = $null
                 $script:A16NewMembership = {
                     param([string]$Id, [string]$RoleId, [string]$PrincipalId)
@@ -2075,7 +2077,7 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
                         return $null
                     }
                     if ($Verb -eq 'GET' -and $Uri -eq "v1.0/directory/administrativeUnits/$($script:AuId)/members") {
-                        return [PSCustomObject]@{ value = @() }
+                        return [PSCustomObject]@{ value = @($script:A16LiveMembers) }
                     }
                     if ($Verb -eq 'GET' -and $Uri -eq "v1.0/directory/administrativeUnits/$($script:AuId)") {
                         return [PSCustomObject]@{ id = $script:AuId; displayName = 'AU-IT' }
@@ -2277,68 +2279,158 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
             }
         }
 
-        It '6: reports one Failed row, and makes no property, member or scoped role change, when the handler''s map read fails' {
-            InModuleScope $script:moduleName {
-                function Invoke-SyncAuViaCaller {
-                    [CmdletBinding(SupportsShouldProcess)]
-                    param([PSCustomObject]$Item, [switch]$Prune)
-                    Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune
+        # BL-47 (R-7): the handler's own read of the name map fails (the reader's read, the first, succeeds
+        # and names the live role). Only the scopedRoles collection stops: the unit's property PATCH, its
+        # member add and its member prune are made as usual. The seeded live role is the one a null map
+        # would get wrong: declared by its template id while the live membership carries the object id, it
+        # would be added a second time and the live entry pruned.
+        Context 'the handler''s map read fails (BL-47)' {
+            BeforeEach {
+                InModuleScope $script:moduleName {
+                    Mock Remove-OERErrorRecord { }
+                    Mock Set-OERAdministrativeUnit { }
+                    Mock Add-OERAdministrativeUnitMember { }
+                    Mock Remove-OERAdministrativeUnitMember { }
+                    # The reader's read (the first) succeeds and names the live role; the handler's (the
+                    # second) fails.
+                    $script:A16FailDirectoryRoleRead = 2
+                    $script:A16LiveMembers = @([PSCustomObject]@{
+                            id = 'cccccccc-0000-0000-0000-000000000099'; displayName = 'Live member'; '@odata.type' = '#microsoft.graph.user'
+                        })
+                    $script:A16Memberships.Add((& $script:A16NewMembership 'srm-seed-1' 'aaaaaaaa-0000-0000-0000-000000000001' 'cccccccc-0000-0000-0000-000000000003'))
+                    $script:A16Item = [PSCustomObject]@{
+                        displayName = 'AU-IT'
+                        # Differs from the live unit, which has none: a property PATCH follows the read.
+                        description = 'A16 drifted description'
+                        # Not a live member of the unit: a member add follows the read.
+                        members     = @('person2@example.com')
+                        scopedRoles = @([PSCustomObject]@{ role = 'bbbbbbbb-0000-0000-0000-000000000002'; principal = 'person1@example.com' })
+                    }
                 }
-                # Records the handler's scrub of the caught record, which it then replaces with a record
-                # of its own, so a check on $Error could not see whether the scrub ran.
-                Mock Remove-OERErrorRecord { }
-                # The reader's read (the first) succeeds and names the live role; the handler's (the
-                # second) fails.
-                $script:A16FailDirectoryRoleRead = 2
-                $script:A16Memberships.Add((& $script:A16NewMembership 'srm-seed-1' 'aaaaaaaa-0000-0000-0000-000000000001' 'cccccccc-0000-0000-0000-000000000003'))
-                $Item = [PSCustomObject]@{
-                    displayName = 'AU-IT'
-                    # Differs from the live unit, which has none: a property PATCH would follow the read.
-                    description = 'A16 drifted description'
-                    # Not a live member (the unit has none): a member POST would follow the read.
-                    members     = @('person2@example.com')
-                    scopedRoles = @([PSCustomObject]@{ role = 'bbbbbbbb-0000-0000-0000-000000000002'; principal = 'person1@example.com' })
-                }
+            }
 
-                $r = @(Invoke-SyncAuViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+            It '6: stops only the scopedRoles under -Prune: the property update, the member add and the member prune are made, one Failed row carries the record, and no scoped role is added or removed' {
+                InModuleScope $script:moduleName {
+                    function Invoke-SyncAuViaCaller {
+                        [CmdletBinding(SupportsShouldProcess)]
+                        param([PSCustomObject]$Item, [switch]$Prune)
+                        Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune
+                    }
+                    $r = @(Invoke-SyncAuViaCaller -Item $script:A16Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
 
-                # The failed read comes before every change: no member POST, no property PATCH, no scoped
-                # role POST or DELETE. The transport throws on any call it does not simulate, so a call
-                # made anyway is counted here, not swallowed.
-                Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter {
-                    $Method -eq 'POST' -and $Uri -eq "v1.0/directory/administrativeUnits/$($script:AuId)/members/`$ref"
+                    # Both reads were reached, so the absence assertions below are not vacuous.
+                    Should -Invoke Invoke-OERGraphRequest -Times 2 -Exactly -ParameterFilter { $Uri -eq 'v1.0/directoryRoles' }
+                    # Properties and members run as usual.
+                    Should -Invoke Set-OERAdministrativeUnit -Times 1 -Exactly -ParameterFilter { $Id -eq $script:AuId -and $Description -eq 'A16 drifted description' }
+                    Should -Invoke Add-OERAdministrativeUnitMember -Times 1 -Exactly -ParameterFilter { $MemberId -eq 'cccccccc-0000-0000-0000-000000000013' }
+                    Should -Invoke Remove-OERAdministrativeUnitMember -Times 1 -Exactly -ParameterFilter { $MemberId -eq 'cccccccc-0000-0000-0000-000000000099' }
+                    @($r | ForEach-Object { $_.Action }) | Should -BeExactly @('Updated', 'Updated', 'Removed', 'Failed')
+                    # No scoped role is added or removed: the transport saw no POST and no DELETE, and the
+                    # seeded membership stands.
+                    Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'POST' }
+                    Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'DELETE' }
+                    Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+                    $script:A16Memberships.Count | Should -Be 1
+                    [string]$script:A16Memberships[0].id | Should -BeExactly 'srm-seed-1'
+                    # Exactly one row speaks of a scopedRole: the Failed row, last.
+                    $Rows = @($r | Where-Object { $_.Detail -like '*scopedRole*' })
+                    $Rows.Count | Should -Be 1
+                    $Rows[0] | Should -Be $r[-1]
+                    $r[-1].Action | Should -BeExactly 'Failed'
+                    $r[-1].Detail | Should -BeLike 'failed to read the directory roles that match a scopedRole declared by role id: *injected map failure*; no scopedRole change was made'
+                    $r[-1].Detail | Should -Not -BeLike '*property, member*'
+                    $null -ne $r[-1].Error | Should -BeTrue -Because 'the published ErrorRecord travels with the Failed row'
+                    $r[-1].Error.FullyQualifiedErrorId | Should -BeLike 'AdministrativeUnitScopedRoleReadFailed*'
+                    $r[-1].Error.Exception.Message | Should -BeLike "*'v1.0/directoryRoles'*injected map failure*"
+                    # One record is published, under the error id an unread scoped role collection already
+                    # has. -ErrorVariable also collects every exception thrown and caught on the way
+                    # (measured); a record the caller PUBLISHED carries the caller's name in its
+                    # FullyQualifiedErrorId.
+                    $Published = @($Err | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like '*,Invoke-SyncAuViaCaller' })
+                    $Published.Count | Should -Be 1
+                    $Published[0].FullyQualifiedErrorId | Should -BeLike 'AdministrativeUnitScopedRoleReadFailed*'
+                    $Published[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ReadError)
+                    [string]$Published[0].TargetObject | Should -BeExactly $script:AuId
+                    $Published[0].Exception.Message | Should -BeLike "Could not read scoped roles for administrative unit $($script:AuId): *injected map failure*. No scopedRole change was made."
+                    $Published[0].Exception.InnerException.Message | Should -BeLike "Could not read the directory roles ('v1.0/directoryRoles')*injected map failure*"
+                    # The caught record was scrubbed before the handler published its own.
+                    Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                        $Record.Exception.Message -like "Could not read the directory roles ('v1.0/directoryRoles')*injected map failure*"
+                    }
                 }
-                Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
-                Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'POST' }
-                Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'DELETE' }
-                # Both reads were reached, so the absence assertions above are not vacuous.
-                Should -Invoke Invoke-OERGraphRequest -Times 2 -Exactly -ParameterFilter { $Uri -eq 'v1.0/directoryRoles' }
-                # The item fails before its property row: the Failed row is the only row.
-                @($r).Count | Should -Be 1
-                $r[0].Action | Should -Be 'Failed'
-                $r[0].Detail | Should -BeLike 'failed to read the directory roles that match a scopedRole declared by role id: *'
-                $r[0].Detail | Should -BeLike '*injected map failure*'
-                $r[0].Detail | Should -BeLike '*; no property, member or scopedRole change was made'
-                $null -ne $r[0].Error | Should -BeTrue -Because 'the published ErrorRecord travels with the Failed row'
-                $r[0].Error.FullyQualifiedErrorId | Should -BeLike 'AdministrativeUnitScopedRoleReadFailed*'
-                $r[0].Error.Exception.Message | Should -BeLike "*'v1.0/directoryRoles'*injected map failure*"
-                # One record is published, under the error id an unread scoped role collection already has.
-                # -ErrorVariable also collects every exception thrown and caught on the way (measured: the
-                # transport's throw and the map's re-throw, several times over through the mock layers); a
-                # record the caller PUBLISHED carries the caller's name in its FullyQualifiedErrorId.
-                $Published = @($Err | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like '*,Invoke-SyncAuViaCaller' })
-                $Published.Count | Should -Be 1
-                $Published[0].FullyQualifiedErrorId | Should -BeLike 'AdministrativeUnitScopedRoleReadFailed*'
-                $Published[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ReadError)
-                [string]$Published[0].TargetObject | Should -BeExactly $script:AuId
-                $Published[0].Exception.Message | Should -BeLike "Could not read scoped roles for administrative unit $($script:AuId): *injected map failure*. No property, member or scopedRole change was made."
-                $Published[0].Exception.InnerException.Message | Should -BeLike "Could not read the directory roles ('v1.0/directoryRoles')*injected map failure*"
-                # The caught record was scrubbed before the handler published its own.
-                Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
-                    $Record.Exception.Message -like "Could not read the directory roles ('v1.0/directoryRoles')*injected map failure*"
+            }
+
+            It '7: plans the property update, the member add and the member removal under -WhatIf, with the same one Failed row and nothing sent' {
+                InModuleScope $script:moduleName {
+                    function Invoke-SyncAuViaCaller {
+                        [CmdletBinding(SupportsShouldProcess)]
+                        param([PSCustomObject]$Item, [switch]$Prune)
+                        Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune
+                    }
+                    $r = @(Invoke-SyncAuViaCaller -Item $script:A16Item -Prune -WhatIf -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                    Should -Invoke Invoke-OERGraphRequest -Times 2 -Exactly -ParameterFilter { $Uri -eq 'v1.0/directoryRoles' }
+                    @($r | ForEach-Object { $_.Action }) | Should -BeExactly @('Skipped', 'Skipped', 'Skipped', 'Failed')
+                    $r[0].Detail | Should -BeLike 'would update administrative unit properties (Description)'
+                    $r[1].Detail | Should -BeLike "would add member 'person2@example.com'"
+                    $r[2].Detail | Should -BeLike "would remove undeclared member 'cccccccc-0000-0000-0000-000000000099'"
+                    $r[3].Detail | Should -BeLike 'failed to read the directory roles that match a scopedRole declared by role id: *injected map failure*; no scopedRole change was made'
+                    $r[3].Error.FullyQualifiedErrorId | Should -BeLike 'AdministrativeUnitScopedRoleReadFailed*'
+                    @($r | Where-Object { $_.Detail -like '*scopedRole*' }).Count | Should -Be 1
+                    Should -Invoke Set-OERAdministrativeUnit -Times 0
+                    Should -Invoke Add-OERAdministrativeUnitMember -Times 0
+                    Should -Invoke Remove-OERAdministrativeUnitMember -Times 0
+                    Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -in 'POST', 'DELETE', 'PATCH' }
+                    $Published = @($Err | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like '*,Invoke-SyncAuViaCaller' })
+                    $Published.Count | Should -Be 1
+                    $Published[0].FullyQualifiedErrorId | Should -BeLike 'AdministrativeUnitScopedRoleReadFailed*'
+                    $script:A16Memberships.Count | Should -Be 1
                 }
-                $script:A16Memberships.Count | Should -Be 1
-                [string]$script:A16Memberships[0].id | Should -BeExactly 'srm-seed-1'
+            }
+
+            It '8: without -Prune, applies the property update and the member add, reports the live member Extra, and reports no scoped role at all but the one Failed row' {
+                InModuleScope $script:moduleName {
+                    function Invoke-SyncAuViaCaller {
+                        [CmdletBinding(SupportsShouldProcess)]
+                        param([PSCustomObject]$Item, [switch]$Prune)
+                        Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune
+                    }
+                    $r = @(Invoke-SyncAuViaCaller -Item $script:A16Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                    Should -Invoke Invoke-OERGraphRequest -Times 2 -Exactly -ParameterFilter { $Uri -eq 'v1.0/directoryRoles' }
+                    Should -Invoke Set-OERAdministrativeUnit -Times 1 -Exactly
+                    Should -Invoke Add-OERAdministrativeUnitMember -Times 1 -Exactly -ParameterFilter { $MemberId -eq 'cccccccc-0000-0000-0000-000000000013' }
+                    Should -Invoke Remove-OERAdministrativeUnitMember -Times 0
+                    @($r | ForEach-Object { $_.Action }) | Should -BeExactly @('Updated', 'Updated', 'Extra', 'Failed')
+                    @($r | Where-Object { $_.Detail -like '*scopedRole*' }).Count | Should -Be 1
+                    @($r | Where-Object { $_.Action -eq 'Extra' -and $_.Detail -like '*scopedRole*' }).Count | Should -Be 0
+                    Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -in 'POST', 'DELETE', 'PATCH' }
+                    @($Err | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like 'AdministrativeUnitScopedRoleReadFailed*,Invoke-SyncAuViaCaller' }).Count | Should -Be 1
+                }
+            }
+
+            It '9: control: with the map readable, the same document adds the declared template id and prunes the live object id it does not match (so the writes the stop prevents are real)' {
+                InModuleScope $script:moduleName {
+                    function Invoke-SyncAuViaCaller {
+                        [CmdletBinding(SupportsShouldProcess)]
+                        param([PSCustomObject]$Item, [switch]$Prune)
+                        Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune
+                    }
+                    # Same document, with the map readable: its two ids name the same role, so the declared
+                    # template id MATCHES the live object id and the scopedRoles step runs to Unchanged.
+                    # A map taken as null matches neither, which is the add and the prune a failed read
+                    # must not make.
+                    $script:A16FailDirectoryRoleRead = 0
+                    $r = @(Invoke-SyncAuViaCaller -Item $script:A16Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                    @($r | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "scopedRole 'bbbbbbbb-0000-0000-0000-000000000002' for 'person1@example.com' already present" }).Count | Should -Be 1
+                    @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                    Should -Invoke Set-OERAdministrativeUnit -Times 1 -Exactly
+                    Should -Invoke Add-OERAdministrativeUnitMember -Times 1 -Exactly
+                    Should -Invoke Remove-OERAdministrativeUnitMember -Times 1 -Exactly
+                    Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -in 'POST', 'DELETE' }
+                    @($Err | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like '*,Invoke-SyncAuViaCaller' }).Count | Should -Be 0
+                }
             }
         }
     }

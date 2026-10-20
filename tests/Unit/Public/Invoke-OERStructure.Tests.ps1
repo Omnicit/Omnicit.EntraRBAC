@@ -5584,3 +5584,102 @@ Describe 'Invoke-OERStructure applies the scoped roles an export writes with pri
         Should -Invoke -ModuleName $script:moduleName Add-OERAdministrativeUnitScopedRole -Times 0
     }
 }
+
+Describe 'Invoke-OERStructure administrativeUnits: an unread directory role name map stops only the scopedRoles (BL-47)' {
+    # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere above
+    # it, as at a prompt, with the runspace's own error preference (Continue). One unit declares a property
+    # change, a member and a scoped role by GUID (the role's template id, while the live membership carries
+    # its object id); the directory role name map the handler reads to match that GUID cannot be read. The
+    # property update and the member add are sent, no scoped role is added or removed, the scopedRoles step
+    # reports one Failed row, and the read's record reaches the error stream once. The script installs its
+    # own fakes in ITS copy of the module scope and logs every read and write with AppendAllText, whose path
+    # is substituted into the text. The map stub throws as the real Get-OERDirectoryRoleNameMap does with
+    # -ThrowOnFailure. No id below is version-4 shaped.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        function script:New-AuMapNoTryScenario {
+            param([string]$Log, [string]$Switches)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERAdministrativeUnitId -Value { param([string]$DisplayName) 'abab8888-0000-0000-0000-000000000001' }
+    Set-Item -Path function:script:Get-OERAdministrativeUnit -Value {
+        [CmdletBinding()]
+        param([string]$Id, [switch]$IncludeMembers, [switch]$IncludeScopedRoles)
+        [System.IO.File]::AppendAllText('#LOG#', "READ unit scopedRoles=$IncludeScopedRoles`n")
+        [pscustomobject]@{
+            Id = $Id; DisplayName = 'AU-Map'; Description = 'old description'; IsMemberManagementRestricted = $false
+            MembershipType = 'Assigned'; Visibility = $null; Members = @()
+            ScopedRoles = @([pscustomobject]@{
+                    ScopedRoleMembershipId = 'srm-seed-1'; RoleName = 'User Administrator'; RoleId = 'aaaaaaaa-0000-0000-0000-000000000001'
+                    PrincipalId = 'cccccccc-0000-0000-0000-000000000003'; PrincipalDisplayName = 'Person One' })
+        }
+    }
+    Set-Item -Path function:script:Get-OERDirectoryRoleNameMap -Value {
+        param([switch]$ThrowOnFailure)
+        [System.IO.File]::AppendAllText('#LOG#', "READ role-name-map`n")
+        throw 'TooManyRequests (injected map failure)'
+    }
+    Set-Item -Path function:script:Resolve-OERStructurePrincipal -Value {
+        param([string]$Reference)
+        if ($Reference -eq 'person1@example.com') { 'cccccccc-0000-0000-0000-000000000003' }
+        elseif ($Reference -eq 'person2@example.com') { 'cccccccc-0000-0000-0000-000000000013' }
+    }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value { [System.IO.File]::AppendAllText('#LOG#', "CALL Invoke-OERGraphRequest`n") }
+    foreach ($Write in @('New-OERAdministrativeUnit', 'Set-OERAdministrativeUnit', 'Add-OERAdministrativeUnitMember', 'Remove-OERAdministrativeUnitMember',
+            'Add-OERAdministrativeUnitScopedRole', 'Remove-OERAdministrativeUnitScopedRole')) {
+        Set-Item -Path "function:script:$Write" -Value ([scriptblock]::Create("[System.IO.File]::AppendAllText('#LOG#', 'WRITE $Write' + [char]10)"))
+    }
+}
+$Json = '{ "version": "1.0", "administrativeUnits": [ { "displayName": "AU-Map", "description": "new description", "members": [ "person2@example.com" ], "scopedRoles": [ { "role": "bbbbbbbb-0000-0000-0000-000000000002", "principal": "person1@example.com" } ] } ] }'
+Invoke-OERStructure -Json $Json -Prune #SWITCHES# -ErrorVariable RunErrors | ForEach-Object { "ROW:$($_.Section):$($_.Item):$($_.Action):$($_.Detail)" }
+$RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' } | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#SWITCHES#', $Switches))
+        }
+    }
+
+    It 'reaches the end of a script with no try above it, sends the property update and the member add, adds and removes no scoped role, and reports one Failed scopedRoles row with the read''s record' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-AuMapNoTryScenario -Log $Log -Switches '-Confirm:$false')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log | Where-Object { $_ })
+        # Reached: the unit was read with its scoped roles and the map read was made, once.
+        $Logged | Should -Contain 'READ unit scopedRoles=True'
+        @($Logged | Where-Object { $_ -eq 'READ role-name-map' }).Count | Should -Be 1 -Because "the calls were:`n$($Logged -join "`n")"
+        # Properties and members ran as usual; the scoped role was neither added nor removed, though a
+        # null map would have added the declared template id and pruned the live object id.
+        @($Logged | Where-Object { $_ -like 'WRITE *' }) | Should -Be @('WRITE Set-OERAdministrativeUnit', 'WRITE Add-OERAdministrativeUnitMember') -Because "the calls were:`n$($Logged -join "`n")"
+        $Logged | Should -Not -Contain 'CALL Invoke-OERGraphRequest'
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
+            'ROW:administrativeUnits:AU-Map:Updated:updated administrative unit properties (Description)'
+            "ROW:administrativeUnits:AU-Map:Updated:added member 'person2@example.com'"
+            'ROW:administrativeUnits:AU-Map:Failed:failed to read the directory roles that match a scopedRole declared by role id: TooManyRequests (injected map failure); no scopedRole change was made'
+        )
+        # The read's own record reached the error stream, once, and no other error did.
+        @($Run.Errors).Count | Should -Be 1
+        $Run.Errors[0] | Should -BeExactly 'Could not read scoped roles for administrative unit abab8888-0000-0000-0000-000000000001: TooManyRequests (injected map failure). No scopedRole change was made.'
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @('ERRID:AdministrativeUnitScopedRoleReadFailed,Invoke-OERStructure')
+        @($Run.Prompts).Count | Should -Be 0
+    }
+
+    It 'plans the property update and the member add and the same one Failed row under -WhatIf in a script with no try above it, and sends nothing' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-AuMapNoTryScenario -Log $Log -Switches '-WhatIf')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log | Where-Object { $_ })
+        @($Logged | Where-Object { $_ -eq 'READ role-name-map' }).Count | Should -Be 1 -Because "the calls were:`n$($Logged -join "`n")"
+        @($Logged | Where-Object { $_ -like 'WRITE *' }) | Should -BeNullOrEmpty -Because "the calls were:`n$($Logged -join "`n")"
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
+            'ROW:administrativeUnits:AU-Map:Skipped:would update administrative unit properties (Description)'
+            "ROW:administrativeUnits:AU-Map:Skipped:would add member 'person2@example.com'"
+            'ROW:administrativeUnits:AU-Map:Failed:failed to read the directory roles that match a scopedRole declared by role id: TooManyRequests (injected map failure); no scopedRole change was made'
+        )
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @('ERRID:AdministrativeUnitScopedRoleReadFailed,Invoke-OERStructure')
+        @($Run.Errors).Count | Should -Be 1
+        # The plan reached the host as 'What if:' lines for the property update and the member add only.
+        @($Run.Events | Where-Object { $_ -like 'Line: What if:*' }).Count | Should -Be 2
+        @($Run.Events | Where-Object { $_ -like 'Line: What if:*scopedRole*' }).Count | Should -Be 0
+    }
+}
