@@ -126,8 +126,9 @@ function Sync-OERStructureGroup {
        left to resolve and writes no warning. The handler therefore writes it, before the ShouldProcess
        gate and in every mode, so -WhatIf shows it and a real run writes it once: "Policy '<id>':
        <reason>", the text the cmdlet writes for a direct call, with the id of the policy it read, or
-       "pimPolicy (<accessType>) of group '<name>': <reason>" when no policy was read. The warning
-       states the diff's decision, not the outcome: Set-OERGroupPimPolicy can still refuse the call
+       "pimPolicy (<accessType>) of group '<name>': <reason>" for a policy object that carries no id
+       (a policy is always read by then: a read that failed ended that access type, as described
+       further on). The warning states the diff's decision, not the outcome: Set-OERGroupPimPolicy can still refuse the call
        after it (an authentication context the tenant does not define or has not published, a failed
        policy lookup, an unreadable approval rule), and the Failed row then shows that nothing was
        changed.
@@ -150,6 +151,14 @@ function Sync-OERStructureGroup {
        single read decides it as for any other group. That one budget is also spent by the eligibility
        waits of steps 3 and 5, so a 404 on a new group's eligibility leaves that much less for its
        policy, and a second entry never gets a fresh 30 seconds of its own.
+       The single read of the live policy is no best-effort lookup (BL-40). A read that fails (a 403, an
+       exhausted 429, a 5xx, a policy Graph does not list), or that answers with no policy and no error
+       (PimPolicyNotFound), reports Failed for THAT access type, with the read's own error record and
+       a row that says nothing was changed for it, before the diff, the PIM-in-use question and the
+       ShouldProcess gate: a real run and a -WhatIf plan report the same row, and the other access type
+       is processed as usual. A policy taken as "none" would have the diff treat every declared field as
+       changed and default the undeclared half of a duration pair, and the write would overwrite live
+       values the document never declared.
     5. Reconcile permanent eligibility entries (those without durationDays) -- must come after
        pimPolicy has been set to allow permanent eligibility. Matched and diffed the same way, so a
        time-bound eligibility that the document declares permanent is re-issued as permanent, again
@@ -1475,15 +1484,46 @@ function Sync-OERStructureGroup {
                     }
                 }
 
-                # Read the current policy for this access type, unless the wait above already did
-                # (best-effort -- Graph may not list it, or the read may be refused). A failure leaves
-                # $CurrentPolicy null, the diff treats every declared field as changed, and the Set call
-                # reports its own error. Never retried here: the wait above is the only one.
+                # Read the current policy for this access type, unless the wait above already did: the
+                # one read for an existing group, and for a new group whose wait fell through to it.
+                # Never retried here: the wait above is the only one.
+                #
+                # BL-40: a read that FAILS, or that answers with no policy and no error, is no evidence
+                # of the live policy, and is never taken as "no policy". It used to be swallowed here:
+                # $CurrentPolicy stayed $null, the diff treated every declared field as changed AND
+                # defaulted the undeclared half of a duration pair (365 days / not permanent for
+                # eligibleDurationDays and allowPermanentEligibility, 180 days / not permanent for
+                # activeDurationDays and allowPermanentActive), and Set-OERGroupPimPolicy, given both
+                # halves, skipped its own carry-forward from the live policy -- so it overwrote values
+                # the document never declared, and -WhatIf planned it with no error. So it is refused
+                # here, before the diff, the PIM-in-use question and ShouldProcess, in a real run and
+                # under -WhatIf alike: one Failed row for THIS access type, with the read's own record,
+                # nothing written for it, and the loop moves on to the next access type.
                 if (-not $CurrentPolicy) {
                     try {
                         $CurrentPolicy = Get-OERGroupPimPolicy -Id $Gid -AccessType $AccessType -ErrorAction Stop
                     } catch {
                         Remove-OERErrorRecord -Record $PSItem
+                        $Caller.WriteError($PSItem)
+                        ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
+                            -Detail "pimPolicy ($AccessType) not applied: could not read the live PIM-for-groups policy: $($PSItem.Exception.Message); nothing was changed for '$AccessType'" `
+                            -ErrorRecord $PSItem
+                        continue
+                    }
+                    if ($null -eq $CurrentPolicy) {
+                        # No error and no object either: the live policy is just as unknown. PimPolicyNotFound
+                        # is the id the wait above and Get-OERGroupPimPolicy publish for a policy that is not
+                        # there.
+                        $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new("Get-OERGroupPimPolicy returned no PIM-for-groups policy for '$AccessType' access on group '$Name' and no error, so the live policy is unknown. Nothing was changed for '$AccessType'."),
+                            'PimPolicyNotFound',
+                            [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                            $Name)
+                        $Caller.WriteError($ErrRec)
+                        ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
+                            -Detail "pimPolicy ($AccessType) not applied: could not read the live PIM-for-groups policy: Get-OERGroupPimPolicy returned no policy and no error; nothing was changed for '$AccessType'" `
+                            -ErrorRecord $ErrRec
+                        continue
                     }
                 }
 
@@ -1534,7 +1574,9 @@ function Sync-OERStructureGroup {
                 # left to resolve and never writes its own warning about the pair. The warning is
                 # written here instead, before the gate and in EVERY mode (Ruling R5), with the text the
                 # cmdlet writes for a direct call: the plan shows it, and a real run writes it once.
-                # The policy id is the one the read above gave; without a read policy the item names it.
+                # The policy id is the one the read above gave. A policy is always read by now (a failed
+                # or empty read ended this access type above), and a read policy carries its id; the item
+                # names it only as the fallback for a policy object without one.
                 # The warning states the diff's decision: Set-OERGroupPimPolicy can still refuse the
                 # call after it (an authentication context the tenant does not define or has not
                 # published, a failed policy lookup, an unreadable approval rule), and the Failed row

@@ -942,7 +942,9 @@ Describe 'Sync-OERStructureGroup' {
             }
             Mock Resolve-OERGroupId { 'g-1' }
             Mock Get-OERGroup { [PSCustomObject]@{ Id = 'g-1'; Description = $null; Members = @(); PimEligibility = @() } }
-            Mock Get-OERGroupPimPolicy { $null }
+            # BL-40: a live policy that differs from the document. This read used to answer nothing, which
+            # the handler took as "no policy" and carried on; an empty answer now ends the access type.
+            Mock Get-OERGroupPimPolicy { [PSCustomObject]@{ PolicyId = 'pol-live'; ActivationMaxHours = 1; AllowPermanentEligibility = $false; EligibleDurationDays = 365 } }
             # Set succeeds at the cmdlet level but reports a partial rule application.
             Mock Set-OERGroupPimPolicy { [PSCustomObject]@{ Applied = $false; FailedRules = @('Expiration_EndUser_Assignment', 'Enablement_EndUser_Assignment') } }
             Mock Initialize-OERAuth { }
@@ -3203,6 +3205,283 @@ Describe 'Sync-OERStructureGroup' {
         }
     }
 
+    # BL-40 sweep (Sprint 11 step 11, ruling R-2): step 4 reads the live policy of an access type with
+    # Get-OERGroupPimPolicy -ErrorAction Stop (for an existing group, and for a new group whose wait
+    # fell through to the direct read), and the catch swallowed the failure. The read stayed $null, the
+    # diff took every declared field as changed and DEFAULTED the undeclared half of a duration pair
+    # (eligibleDurationDays without allowPermanentEligibility -> not permanent; allowPermanentEligibility
+    # without eligibleDurationDays -> 365 days; activeDurationDays / allowPermanentActive -> not permanent
+    # / 180 days), and Set-OERGroupPimPolicy, given both halves, skipped its own carry-forward from the
+    # live policy -- so it overwrote live values the document never declared. Under -WhatIf the plan said
+    # "would set pimPolicy" with no error. A read that fails, or that answers with no policy and no error,
+    # is now one Failed row for THAT access type, with the read's own record, before the diff, the
+    # PIM-in-use question and ShouldProcess; the other access type is processed as usual.
+    #
+    # The calls below carry NO -ErrorAction: any -ErrorAction on the wrapper sets the preference in the
+    # wrapper's scope and shadows the global one the module reads. The global preference is pinned to
+    # Continue instead, so the proof does not depend on the preference the runner carries.
+    Context 'a failed or empty read of the live pimPolicy never feeds a write (BL-40)' {
+        BeforeAll {
+            InModuleScope $script:moduleName {
+                function script:Invoke-SyncPimReadViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet
+                }
+            }
+            # Installs, for the current It, the answers of the live policy read: the OWNER read always
+            # answers with a live policy (so the other access type can be seen processed), and the MEMBER
+            # read answers as the case names.
+            function script:Set-PimReadFailure {
+                param([string]$Failure)
+                InModuleScope $script:moduleName -Parameters @{ Failure = $Failure } {
+                    param($Failure)
+                    switch ($Failure) {
+                        'NonTerminatingReal' {
+                            # The REAL Get-OERGroupPimPolicy runs: the policy assignment lookup of the
+                            # member side is refused, so the cmdlet's own Write-CmdletError publishes
+                            # PimPolicyReadFailed, non-terminating; the owner side reads an empty rule set.
+                            Mock Get-OERPimGroupPolicyId {
+                                $script:PimReadLog.Add("READ $AccessType")
+                                'pol-owner'
+                            }
+                            Mock Get-OERPimGroupPolicyId -ParameterFilter { $AccessType -eq 'member' } {
+                                $script:PimReadLog.Add('READ member')
+                                throw 'Graph 403 Forbidden'
+                            }
+                            Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                        }
+                        default {
+                            Mock Get-OERGroupPimPolicy {
+                                $script:PimReadLog.Add("READ $AccessType")
+                                [PSCustomObject]@{ PolicyId = 'pol-live'; ActivationMaxHours = 8; AuthenticationContextId = $null; ActivationEnabledRules = @()
+                                    AllowPermanentEligibility = $false; EligibleDurationDays = 365; AllowPermanentActive = $false; ActiveDurationDays = 180
+                                    ActiveEnabledRules = @(); Notifications = [PSCustomObject]@{ EligibleAlert = @(); ActiveAlert = @(); ActivationAlert = @() } }
+                            }
+                        }
+                    }
+                    switch ($Failure) {
+                        'NonTerminatingMock' {
+                            # The shape the real cmdlet fails in: a [CmdletBinding()] body that writes its
+                            # record through $PSCmdlet.WriteError and returns nothing.
+                            Mock Get-OERGroupPimPolicy -ParameterFilter { $AccessType -eq 'member' } {
+                                [CmdletBinding()] param($Group, $AccessType, $TenantId)
+                                $script:PimReadLog.Add('READ member')
+                                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                                        [System.Exception]::new('Graph 403 Forbidden: policy read denied'), 'PimPolicyReadFailed',
+                                        [System.Management.Automation.ErrorCategory]::ReadError, $Group))
+                            }
+                        }
+                        'Terminating' {
+                            Mock Get-OERGroupPimPolicy -ParameterFilter { $AccessType -eq 'member' } {
+                                $script:PimReadLog.Add('READ member')
+                                throw [System.Management.Automation.ErrorRecord]::new(
+                                    [System.Exception]::new('Graph 503 ServiceUnavailable'), 'GraphServiceUnavailable',
+                                    [System.Management.Automation.ErrorCategory]::ReadError, 'g-1')
+                            }
+                        }
+                        'NoObject' {
+                            # No error and no object: the live policy is just as unknown.
+                            Mock Get-OERGroupPimPolicy -ParameterFilter { $AccessType -eq 'member' } {
+                                $script:PimReadLog.Add('READ member')
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        # One case per read failure and per mode. Built here, in the Context body, since -ForEach reads
+        # its data at discovery, before any BeforeAll has run.
+        $PimReadShapes = @(
+            @{ Name = 'the read fails non-terminating'; Failure = 'NonTerminatingMock'; ErrorId = 'PimPolicyReadFailed'; Category = 'ReadError'
+                Message = 'Graph 403 Forbidden: policy read denied'; Reason = 'Graph 403 Forbidden: policy read denied' }
+            @{ Name = 'the real cmdlet fails its read non-terminating'; Failure = 'NonTerminatingReal'; ErrorId = 'PimPolicyReadFailed'; Category = 'ReadError'
+                Message = ("Could not read the PIM-for-groups policy assignment for group 'g-1' ('member' access): Graph 403 Forbidden. " +
+                    'Whether this group has a policy is UNKNOWN, which is not the same as the group having none, so no policy is reported for it.')
+                Reason = ("Could not read the PIM-for-groups policy assignment for group 'g-1' ('member' access): Graph 403 Forbidden. " +
+                    'Whether this group has a policy is UNKNOWN, which is not the same as the group having none, so no policy is reported for it.') }
+            @{ Name = 'the read fails terminating'; Failure = 'Terminating'; ErrorId = 'GraphServiceUnavailable'; Category = 'ReadError'
+                Message = 'Graph 503 ServiceUnavailable'; Reason = 'Graph 503 ServiceUnavailable' }
+            @{ Name = 'the read returns no policy and no error'; Failure = 'NoObject'; ErrorId = 'PimPolicyNotFound'; Category = 'ObjectNotFound'
+                Message = ("Get-OERGroupPimPolicy returned no PIM-for-groups policy for 'member' access on group 'role_sec_x' and no error, " +
+                    "so the live policy is unknown. Nothing was changed for 'member'.")
+                Reason = 'Get-OERGroupPimPolicy returned no policy and no error' }
+        )
+        $PimReadCases = foreach ($ModeCase in @(@{ Mode = 'a real run'; WhatIf = $false }, @{ Mode = 'a -WhatIf plan'; WhatIf = $true })) {
+            foreach ($Shape in $PimReadShapes) { $Shape + $ModeCase }
+        }
+        BeforeEach {
+            $script:PimReadSavedPreference = $global:ErrorActionPreference
+            $global:ErrorActionPreference = 'Continue'
+            InModuleScope $script:moduleName {
+                $script:PimReadLog = [System.Collections.Generic.List[string]]::new()
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERGroupId { 'g-1' }
+                Mock Get-OERGroup { [PSCustomObject]@{ Id = 'g-1'; Description = $null; MailNickname = $null; Members = @(); PimEligibility = @() } }
+                Mock Set-OERGroupPimPolicy {
+                    $script:PimReadLog.Add("SET $AccessType")
+                    [PSCustomObject]@{ Applied = $true; FailedRules = @() }
+                }
+            }
+        }
+        AfterEach {
+            $global:ErrorActionPreference = $script:PimReadSavedPreference
+        }
+
+        It 'fails only the access type whose live policy could not be read, writes nothing for it and processes the other one, when <Name> (<Mode>)' -ForEach $PimReadCases {
+            Set-PimReadFailure -Failure $Failure
+            $Result = InModuleScope $script:moduleName -Parameters @{ WhatIf = $WhatIf } {
+                param($WhatIf)
+                # Only eligibleDurationDays of the expiration pair is declared: a read taken as $null
+                # defaulted allowPermanentEligibility to false and sent both halves.
+                $Item = '{ "displayName": "role_sec_x", "pimPolicy": { "member": { "eligibleDurationDays": 90 }, "owner": { "activationMaxHours": 4 } } }' | ConvertFrom-Json
+                $Switches = if ($WhatIf) { @{ WhatIf = $true } } else { @{ Confirm = $false } }
+                $Rows = @(Invoke-SyncPimReadViaCaller -Item $Item @Switches -ErrorVariable Err 2>$null)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err); Log = @($script:PimReadLog) }
+            }
+
+            # The member access type: one Failed row carrying the read's record, and nothing else about it.
+            $Member = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy (member)*' })
+            $Member.Count | Should -Be 1
+            $Member[0].Section | Should -BeExactly 'groups'
+            $Member[0].Item | Should -BeExactly 'role_sec_x'
+            $Member[0].Action | Should -BeExactly 'Failed'
+            $Member[0].Detail | Should -BeExactly "pimPolicy (member) not applied: could not read the live PIM-for-groups policy: $Reason; nothing was changed for 'member'"
+            [string]$Member[0].Error.FullyQualifiedErrorId | Should -BeLike "$ErrorId,*"
+            $Member[0].Error.Exception.Message | Should -BeExactly $Message
+            # Written once through the caller. -ErrorVariable also holds the inner layers' records, so
+            # the handler's own is counted by the suffix the caller's WriteError gives its id.
+            $Own = @($Result.Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncPimReadViaCaller' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -BeExactly "$ErrorId,Invoke-SyncPimReadViaCaller"
+            [string]$Own[0].CategoryInfo.Category | Should -BeExactly $Category
+            $Own[0].Exception.Message | Should -BeExactly $Message
+            if ($Failure -eq 'NoObject') { $Own[0].TargetObject | Should -BeExactly 'role_sec_x' }
+            # Reached: the member policy was read once. Nothing was written for it, whatever the mode.
+            @($Result.Log | Where-Object { $_ -eq 'READ member' }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 0 -Exactly -ParameterFilter { $AccessType -eq 'member' }
+
+            # The owner access type is still processed: written in a real run, planned under -WhatIf.
+            $Owner = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy (owner)*' })
+            $Owner.Count | Should -Be 1
+            @($Result.Log | Where-Object { $_ -eq 'READ owner' }).Count | Should -Be 1
+            # The two pimPolicy rows are the only ones about the policy; the group row is not one of them.
+            @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy*' }).Count | Should -Be 2
+            if ($WhatIf) {
+                $Owner[0].Action | Should -BeExactly 'Skipped'
+                $Owner[0].Detail | Should -BeLike 'would set pimPolicy (owner): *'
+                Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 0 -Exactly
+            } else {
+                $Owner[0].Action | Should -BeExactly 'Updated'
+                $Owner[0].Detail | Should -BeLike 'pimPolicy (owner) set: *'
+                Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly
+                Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter { $AccessType -eq 'owner' -and $ActivationMaxHours -eq 4 }
+            }
+        }
+
+        It 'sends the declared half and lets the live policy carry the other when the read answers, so the case can tell a refusal from silence' {
+            Set-PimReadFailure -Failure 'None'
+            $Result = InModuleScope $script:moduleName {
+                $Item = '{ "displayName": "role_sec_x", "pimPolicy": { "member": { "eligibleDurationDays": 90 } } }' | ConvertFrom-Json
+                $Rows = @(Invoke-SyncPimReadViaCaller -Item $Item -Confirm:$false -ErrorVariable Err 2>$null)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err); Log = @($script:PimReadLog) }
+            }
+            $PolicyRows = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy*' })
+            @($PolicyRows.Action) | Should -Be @('Updated')
+            $PolicyRows[0].Detail | Should -BeLike 'pimPolicy (member) set: *'
+            @($Result.Err).Count | Should -Be 0
+            @($Result.Log | Where-Object { $_ -eq 'READ member' }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter { $AccessType -eq 'member' -and $EligibleDuration -eq 90 }
+        }
+
+        It 'fails an entry declaring only activeDurationDays of the active pair, and never asks the PIM-in-use question, when the read fails' {
+            Set-PimReadFailure -Failure 'NonTerminatingMock'
+            $Result = InModuleScope $script:moduleName {
+                $Item = '{ "displayName": "role_sec_x", "pimPolicy": { "member": { "activeDurationDays": 30 } } }' | ConvertFrom-Json
+                $Rows = @(Invoke-SyncPimReadViaCaller -Item $Item -Confirm:$false -ErrorVariable Err -WarningVariable Warn -WarningAction SilentlyContinue 2>$null)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err); Warn = @($Warn); Log = @($script:PimReadLog) }
+            }
+            $PolicyRows = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy*' })
+            @($PolicyRows.Action) | Should -Be @('Failed')
+            $PolicyRows[0].Detail | Should -Be "pimPolicy (member) not applied: could not read the live PIM-for-groups policy: Graph 403 Forbidden: policy read denied; nothing was changed for 'member'"
+            @($Result.Log | Where-Object { $_ -eq 'READ member' }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 0 -Exactly
+            # Before the PIM-in-use question, which would warn about onboarding the group.
+            Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 0 -Exactly
+            @($Result.Warn).Count | Should -Be 0
+        }
+
+        It 'writes no MFA / authentication context warning for an access type whose live policy could not be read, in a real run and under -WhatIf' -ForEach @(
+            @{ Mode = 'a real run'; WhatIf = $false }
+            @{ Mode = 'a -WhatIf plan'; WhatIf = $true }
+        ) {
+            Set-PimReadFailure -Failure 'NonTerminatingMock'
+            $Result = InModuleScope $script:moduleName -Parameters @{ WhatIf = $WhatIf } {
+                param($WhatIf)
+                # Both sides of the pair declared: with the read taken as "no policy" the diff reconciled
+                # them and the handler warned "pimPolicy (member) of group ...: mfa cleared ...".
+                $Item = ('{ "displayName": "role_sec_x", "pimPolicy": { "member": { "authenticationContextId": "c1", ' +
+                    '"activationEnablement": [ "MultiFactorAuthentication", "Justification" ] } } }') | ConvertFrom-Json
+                $Switches = if ($WhatIf) { @{ WhatIf = $true } } else { @{ Confirm = $false } }
+                $Rows = @(Invoke-SyncPimReadViaCaller -Item $Item @Switches -ErrorVariable Err -WarningVariable Warn -WarningAction SilentlyContinue 2>$null)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err); Warn = @($Warn); Log = @($script:PimReadLog) }
+            }
+            $PolicyRows = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy*' })
+            @($PolicyRows.Action) | Should -Be @('Failed')
+            @($Result.Log | Where-Object { $_ -eq 'READ member' }).Count | Should -Be 1
+            @($Result.Warn).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 0 -Exactly
+        }
+
+        It 'fails the access type of a group created in this run whose wait fell through to the direct read, when <Name>' -ForEach @(
+            @{ Name = 'the read fails non-terminating'; Failure = 'NonTerminatingMock'; ErrorId = 'PimPolicyReadFailed'; Reason = 'Graph 403 Forbidden: policy read denied' }
+            @{ Name = 'the read returns no policy and no error'; Failure = 'NoObject'; ErrorId = 'PimPolicyNotFound'; Reason = 'Get-OERGroupPimPolicy returned no policy and no error' }
+        ) {
+            Set-PimReadFailure -Failure $Failure
+            $Result = InModuleScope $script:moduleName {
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x' } }
+                Mock Start-Sleep { }
+                Mock Get-OERListedGroupPimPolicy { throw 'the wait must not read a policy it was refused a listing for' }
+                # A refused listing stops the wait at once (no sleep) and falls through to the direct read.
+                Mock Get-OERPimGroupPolicyId { throw 'Graph 403 Forbidden: listing refused' }
+                $Item = '{ "displayName": "role_sec_x", "pimPolicy": { "member": { "eligibleDurationDays": 90 } } }' | ConvertFrom-Json
+                $Rows = @(Invoke-SyncPimReadViaCaller -Item $Item -Confirm:$false -ErrorVariable Err 2>$null)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err); Log = @($script:PimReadLog) }
+            }
+            # Reached: the group was created, the listing was asked once, and the direct read was made.
+            @($Result.Rows | Where-Object { $_.Action -eq 'Created' }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Get-OERPimGroupPolicyId -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Start-Sleep -Times 0 -Exactly
+            @($Result.Log | Where-Object { $_ -eq 'READ member' }).Count | Should -Be 1
+            $Failed = @($Result.Rows | Where-Object { $_.Action -eq 'Failed' })
+            $Failed.Count | Should -Be 1
+            $Failed[0].Detail | Should -BeExactly "pimPolicy (member) not applied: could not read the live PIM-for-groups policy: $Reason; nothing was changed for 'member'"
+            [string]$Failed[0].Error.FullyQualifiedErrorId | Should -BeLike "$ErrorId,*"
+            @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy (member) set*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 0 -Exactly
+        }
+
+        It 'scrubs a failed policy read before it publishes it as itself' {
+            Set-PimReadFailure -Failure 'NonTerminatingMock'
+            InModuleScope $script:moduleName {
+                Mock Remove-OERErrorRecord { }
+                $Item = '{ "displayName": "role_sec_x", "pimPolicy": { "member": { "eligibleDurationDays": 90 } } }' | ConvertFrom-Json
+                $null = @(Invoke-SyncPimReadViaCaller -Item $Item -Confirm:$false -ErrorVariable Err 2>$null)
+                # Reached: the handler published the record as itself.
+                @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'PimPolicyReadFailed,Invoke-SyncPimReadViaCaller' }).Count | Should -Be 1
+                # A prefix match: $Caller.WriteError appends ',<command>' to this same record, in place,
+                # before the filter is evaluated.
+                Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                    $Record -and [string]$Record.FullyQualifiedErrorId -like 'PimPolicyReadFailed*' -and
+                    $Record.Exception.Message -eq 'Graph 403 Forbidden: policy read denied'
+                }
+            }
+        }
+    }
+
     Context 'pimPolicy step-4 wait for the policy of a group created in the same run' {
         # For a group THIS run created, step 4 ASKS Get-OERPimGroupPolicyId whether the access type's
         # policy is listed yet (a silent $null while it is not), then reads the listed policy through
@@ -3426,11 +3705,11 @@ Describe 'Sync-OERStructureGroup' {
                         [System.Management.Automation.ErrorCategory]::PermissionDenied, 'g-1')
                 }
                 Mock Get-OERListedGroupPimPolicy { [PSCustomObject]@{ ActivationMaxHours = 1 } }
-                Mock Get-OERGroupPimPolicy {
-                    throw [System.Management.Automation.ErrorRecord]::new(
-                        [System.Exception]::new('Insufficient privileges'), 'PimPolicyReadFailed',
-                        [System.Management.Automation.ErrorCategory]::ReadError, 'g-1')
-                }
+                # BL-40: the direct read the refused wait falls through to ANSWERS. It used to throw as
+                # well, and the handler carried on with no policy to the same single Set call; a failed
+                # direct read now ends the access type (see the Context 'a failed or empty read of the live
+                # pimPolicy ...'), so this test is about the wait, which is what its title says.
+                Mock Get-OERGroupPimPolicy { [PSCustomObject]@{ PolicyId = 'pol-live'; ActivationMaxHours = 1 } }
                 Mock Set-OERGroupPimPolicy { [PSCustomObject]@{ Applied = $true; FailedRules = @() } }
                 Mock Initialize-OERAuth { }
                 Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
@@ -3476,12 +3755,18 @@ Describe 'Sync-OERStructureGroup' {
                     displayName = 'role_sec_x'
                     pimPolicy   = [PSCustomObject]@{ activationMaxHours = 4 }
                 }
-                Invoke-SyncGroupViaCaller -Item $Item | Out-Null
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue)
                 Should -Invoke Get-OERPimGroupPolicyId -Times 0
                 Should -Invoke Get-OERListedGroupPimPolicy -Times 0
                 Should -Invoke Start-Sleep -Times 0
                 Should -Invoke Get-OERGroupPimPolicy -Times 1 -Exactly
-                Should -Invoke Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter { $ActivationMaxHours -eq 4 }
+                # BL-40: the missing policy is a fact, and the single read reports it. It used to be
+                # swallowed and the handler wrote to a policy it had not read (Set once); it is now one
+                # Failed row, and nothing is written.
+                Should -Invoke Set-OERGroupPimPolicy -Times 0 -Exactly
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -like 'pimPolicy (member) not applied: could not read the live PIM-for-groups policy: no policy;*' })
+                $Failed.Count | Should -Be 1
+                [string]$Failed[0].Error.FullyQualifiedErrorId | Should -BeLike 'PimPolicyNotFound,*'
             }
         }
     }
@@ -3673,14 +3958,21 @@ Describe 'Sync-OERStructureGroup' {
                     displayName = 'role_sec_x'
                     pimPolicy   = [PSCustomObject]@{ activationMaxHours = 4 }
                 }
-                $null = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue)
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue)
                 Should -Invoke Start-Sleep -Times 0
                 # One listing and one read, both Get-OERGroupPimPolicy's own, and neither declared the
                 # 404 as an answer.
                 @($script:Calls) | Should -Be @('list', 'read')
                 @($script:DeclaredNotFound) | Should -Be @($false)
                 @($script:ReadDeclaredNotFound) | Should -Be @($false)
-                Should -Invoke Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter { $ActivationMaxHours -eq 4 }
+                # BL-40: the 404 stays a failed read, and a failed read ends the access type. It used to
+                # be swallowed and the handler wrote to a policy it had not read (Set once); it is now one
+                # Failed row carrying the read's record, and nothing is written.
+                Should -Invoke Set-OERGroupPimPolicy -Times 0 -Exactly
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -like 'pimPolicy (member) not applied: could not read the live PIM-for-groups policy:*' })
+                $Failed.Count | Should -Be 1
+                # The listing answered and the read of its rules got the 404: the cmdlet's own record.
+                [string]$Failed[0].Error.FullyQualifiedErrorId | Should -BeLike 'ResourceNotFound,*'
             }
         }
 
@@ -9818,11 +10110,14 @@ Describe 'Sync-OERStructureGroup: the plan shows the warning a real run gives (B
             }
         }
 
-        It 'names the access type and the group when no policy was read' {
+        It 'names the access type and the group when the policy read carries no policy id' {
             InModuleScope $script:moduleName {
-                Mock Get-OERGroupPimPolicy { throw 'Forbidden: policy read denied' }
+                # BL-40: this test used to make the read throw, and the handler carried on with no policy.
+                # A failed read now ends that access type before the diff (see the Context in the first
+                # Describe), so the fallback text is reached only by a policy object without an id.
+                Mock Get-OERGroupPimPolicy { [PSCustomObject]@{ ActivationMaxHours = 8 } }
                 Mock Set-OERGroupPimPolicy {}
-                # Both sides declared and no live policy: the diff keeps the context and clears MFA.
+                # Both sides declared and a live policy that says nothing about either: the diff keeps the context and clears MFA.
                 $Json = '{ "displayName": "role_sec_pim", "members": null, "pimPolicy": { "member": { "authenticationContextId": "c1", "activationEnablement": [ "MultiFactorAuthentication", "Justification" ] } } }'
                 $Out = Invoke-GroupWarnCapture -Item ($Json | ConvertFrom-Json) -WhatIfRun $true
                 @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like 'would set pimPolicy (member):*' }).Count | Should -Be 1

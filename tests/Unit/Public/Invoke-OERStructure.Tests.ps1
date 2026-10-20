@@ -1315,6 +1315,123 @@ $RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OER
     }
 }
 
+Describe 'Invoke-OERStructure groups: a failed live pimPolicy read writes nothing (BL-40)' {
+    # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere above
+    # it, as at a prompt, with the runspace's own error preference (Continue). The document declares the
+    # member policy's eligibleDurationDays alone and the owner policy's activationMaxHours: a member read
+    # taken as "no policy" defaulted allowPermanentEligibility and sent both halves of the pair. The script
+    # installs its own fakes in ITS copy of the module scope and logs every policy read and write with
+    # AppendAllText, whose path is substituted into the text. The member read fails (a non-terminating
+    # error written through $PSCmdlet.WriteError, as the real cmdlet does) or returns no policy and no
+    # error; the owner read answers. In the control both reads answer, so the scenario can tell a refusal
+    # from silence.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        function script:New-GpNoTryScenario {
+            param([string]$Log, [string]$MemberRead, [string]$Mode)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERStructureDefault -Value { $null }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { 'g-1' }
+    Set-Item -Path function:script:Get-OERGroup -Value {
+        [pscustomobject]@{ Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null; GroupType = 'Assigned'
+            IsAssignableToRole = $false; Members = @(); PimEligibility = @() }
+    }
+    Set-Item -Path function:script:Test-OERGroupPimInUse -Value { [pscustomobject]@{ InUse = $true; Reason = 'x'; Manageable = $true } }
+    Set-Item -Path function:script:Get-OERGroupPimPolicy -Value {
+        [CmdletBinding()]
+        param([Alias('GroupId', 'Id')][string]$Group, [string]$AccessType = 'member', [string]$TenantId)
+        [System.IO.File]::AppendAllText('#LOG#', "POLICY GET $AccessType`n")
+        if ($AccessType -eq 'member' -and '#MEMBERREAD#' -eq 'fails') {
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Graph 403 Forbidden: policy read denied'), 'PimPolicyReadFailed',
+                    [System.Management.Automation.ErrorCategory]::ReadError, $Group))
+            return
+        }
+        if ($AccessType -eq 'member' -and '#MEMBERREAD#' -eq 'noobject') { return }
+        [pscustomobject]@{ PolicyId = 'pol-live'; ActivationMaxHours = 8; AuthenticationContextId = $null; ActivationEnabledRules = @()
+            AllowPermanentEligibility = $false; EligibleDurationDays = 365; AllowPermanentActive = $false; ActiveDurationDays = 180
+            ActiveEnabledRules = @(); Notifications = [pscustomobject]@{ EligibleAlert = @(); ActiveAlert = @(); ActivationAlert = @() } }
+    }
+    Set-Item -Path function:script:Set-OERGroupPimPolicy -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "POLICY SET $($args -join ' ')`n")
+        [pscustomobject]@{ Applied = $true; FailedRules = @() }
+    }
+}
+$Json = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_x", "members": null, "pimPolicy": { "member": { "eligibleDurationDays": 90 }, "owner": { "activationMaxHours": 4 } } } ] }'
+Invoke-OERStructure -Json $Json #MODE# -ErrorVariable RunErrors | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+$RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' } | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#MEMBERREAD#', $MemberRead).Replace('#MODE#', $Mode))
+        }
+    }
+
+    It 'reaches the end of a script with no try above it, with one Failed member row and the read''s record, and writes nothing for member, when <Name>' -ForEach @(
+        @{ Name = 'the read fails non-terminating'; MemberRead = 'fails'; ErrorId = 'PimPolicyReadFailed'; Message = 'Graph 403 Forbidden: policy read denied'
+            Detail = "pimPolicy (member) not applied: could not read the live PIM-for-groups policy: Graph 403 Forbidden: policy read denied; nothing was changed for 'member'" }
+        @{ Name = 'the read returns no policy and no error'; MemberRead = 'noobject'; ErrorId = 'PimPolicyNotFound'
+            Message = ("Get-OERGroupPimPolicy returned no PIM-for-groups policy for 'member' access on group 'role_sec_x' and no error, " +
+                "so the live policy is unknown. Nothing was changed for 'member'.")
+            Detail = "pimPolicy (member) not applied: could not read the live PIM-for-groups policy: Get-OERGroupPimPolicy returned no policy and no error; nothing was changed for 'member'" }
+    ) {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-GpNoTryScenario -Log $Log -MemberRead $MemberRead -Mode '-Confirm:$false')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        # Reached: both access types were read, and the owner policy was written.
+        $Logged | Should -Contain 'POLICY GET member'
+        $Logged | Should -Contain 'POLICY GET owner'
+        @($Logged | Where-Object { $_ -like 'POLICY SET*-AccessType owner*' }).Count | Should -Be 1 -Because "the requests were:`n$($Logged -join "`n")"
+        $Rows = @($Run.Output | Where-Object { $_ -like 'ROW:*pimPolicy*' })
+        $Rows | Should -Contain "ROW:Failed:$Detail"
+        @($Rows | Where-Object { $_ -like 'ROW:Failed:*' }).Count | Should -Be 1
+        @($Rows | Where-Object { $_ -like 'ROW:Updated:pimPolicy (owner) set:*' }).Count | Should -Be 1
+        $Rows.Count | Should -Be 2
+        # The read's own record reached the error stream, once, and no other error did.
+        @($Run.Errors).Count | Should -Be 1
+        $Run.Errors[0] | Should -BeExactly $Message
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @("ERRID:$ErrorId,Invoke-OERStructure")
+        # Nothing was written for member: not one policy write names it.
+        @($Logged | Where-Object { $_ -like 'POLICY SET*member*' }) | Should -BeNullOrEmpty -Because "the requests were:`n$($Logged -join "`n")"
+        @($Run.Prompts).Count | Should -Be 0
+    }
+
+    It 'plans the same Failed member row and the owner change, and writes nothing, under -WhatIf in a script with no try above it, when <Name>' -ForEach @(
+        @{ Name = 'the read fails non-terminating'; MemberRead = 'fails'; ErrorId = 'PimPolicyReadFailed' }
+        @{ Name = 'the read returns no policy and no error'; MemberRead = 'noobject'; ErrorId = 'PimPolicyNotFound' }
+    ) {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-GpNoTryScenario -Log $Log -MemberRead $MemberRead -Mode '-WhatIf')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        $Logged | Should -Contain 'POLICY GET member'
+        $Logged | Should -Contain 'POLICY GET owner'
+        $Rows = @($Run.Output | Where-Object { $_ -like 'ROW:*pimPolicy*' })
+        @($Rows | Where-Object { $_ -like 'ROW:Failed:pimPolicy (member) not applied: could not read the live PIM-for-groups policy:*' }).Count | Should -Be 1
+        @($Rows | Where-Object { $_ -like 'ROW:Skipped:would set pimPolicy (owner): *' }).Count | Should -Be 1
+        $Rows.Count | Should -Be 2
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @("ERRID:$ErrorId,Invoke-OERStructure")
+        @($Logged | Where-Object { $_ -like 'POLICY SET*' }) | Should -BeNullOrEmpty -Because "the requests were:`n$($Logged -join "`n")"
+        # The plan reached the host as 'What if:' lines for the owner change only.
+        @($Run.Events | Where-Object { $_ -like 'Line: What if:*Set PIM policy (owner)*' }).Count | Should -Be 1
+        @($Run.Events | Where-Object { $_ -like '*Set PIM policy (member)*' }).Count | Should -Be 0
+    }
+
+    It 'writes both access types in the same script when both reads answer, so the scenario can tell a refusal from silence' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-GpNoTryScenario -Log $Log -MemberRead 'answers' -Mode '-Confirm:$false')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        @($Logged | Where-Object { $_ -like 'POLICY SET*-AccessType member*' }).Count | Should -Be 1
+        @($Logged | Where-Object { $_ -like 'POLICY SET*-AccessType owner*' }).Count | Should -Be 1
+        @($Run.Output | Where-Object { $_ -like 'ROW:Updated:pimPolicy (member) set:*' }).Count | Should -Be 1
+        @($Run.Output | Where-Object { $_ -like 'ROW:Updated:pimPolicy (owner) set:*' }).Count | Should -Be 1
+        @($Run.Errors).Count | Should -Be 0
+    }
+}
+
 Describe 'Invoke-OERStructure roleAssignments grouped on the resolved scope' {
     # Two entries that spell one Azure scope differently must form ONE group with ONE prune pass.
     # Grouped on the text instead, each group's pass removed the other group's declared assignment
