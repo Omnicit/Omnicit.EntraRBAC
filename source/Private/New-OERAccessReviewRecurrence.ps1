@@ -8,9 +8,10 @@ function New-OERAccessReviewRecurrence {
     OneTime returns nothing (the caller omits the recurrence key, producing a single review instance).
     Weekly emits a weekly pattern; Monthly, Quarterly, SemiAnnually and Annually emit an
     absoluteMonthly pattern with interval 1, 3, 6 and 12 respectively and a dayOfMonth taken from the
-    start date. The range is noEnd by default, endDate when -EndDate is supplied, or numbered when
-    -Occurrences is supplied. Dates are emitted as invariant yyyy-MM-dd strings. This is a pure
-    builder and makes no Graph call.
+    start date. The pattern type and interval of each cadence are read from Get-OERAccessReviewCadence,
+    the single owner of that table. The range is noEnd by default, endDate when -EndDate is supplied,
+    or numbered when -Occurrences is supplied. Dates are emitted as invariant yyyy-MM-dd strings. This
+    is a pure builder and makes no Graph call.
 
     .PARAMETER Recurrence
     The cadence: OneTime, Weekly, Monthly, Quarterly, SemiAnnually, or Annually.
@@ -46,13 +47,11 @@ function New-OERAccessReviewRecurrence {
     if ($Recurrence -eq 'OneTime') { return }
 
     $Invariant = [System.Globalization.CultureInfo]::InvariantCulture
-    $Pattern = if ($Recurrence -eq 'Weekly') {
-        [ordered]@{ type = 'weekly'; interval = 1 }
-    }
-    else {
-        $Interval = switch ($Recurrence) { 'Monthly' { 1 } 'Quarterly' { 3 } 'SemiAnnually' { 6 } 'Annually' { 12 } }
-        [ordered]@{ type = 'absoluteMonthly'; interval = $Interval; dayOfMonth = $StartDate.Day }
-    }
+    # The cadence's pattern type and interval come from the single owner of the cadence table; the
+    # day of the month belongs to the monthly pattern only.
+    $Shape = Get-OERAccessReviewCadence -Cadence $Recurrence
+    $Pattern = [ordered]@{ type = $Shape.PatternType; interval = $Shape.Interval }
+    if ($Shape.PatternType -ieq 'absoluteMonthly') { $Pattern.dayOfMonth = $StartDate.Day }
 
     $Range = [ordered]@{ startDate = $StartDate.ToString('yyyy-MM-dd', $Invariant) }
     if ($PSBoundParameters.ContainsKey('EndDate')) {

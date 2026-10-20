@@ -2039,6 +2039,359 @@ Describe 'Sync-OERStructureAccessReview' {
         }
     }
 
+    Context 'a live numbered range with fewer than one occurrence (BL-117, first point)' {
+        # Graph can report a numbered range with 0 occurrences. The diff used to seed that 0 into the
+        # write as -Occurrences, whose [ValidateRange(1, [int]::MaxValue)] refuses it, so the entry was
+        # reported Failed at binding. The diff now leaves the recurrence unit untouched and names the
+        # reason; the handler turns it into one warning and one Skipped record, and the fields outside
+        # the unit are still written.
+        BeforeAll {
+            $script:NumberedZeroSyncReason = 'the live recurrence range is numbered with 0 occurrence(s), which cannot be sent back; ' +
+            'the recurrence, start date and range were left untouched. Declare ''endDate'' or ''occurrences'' to change the recurrence'
+        }
+
+        It 'writes only the field outside the unit through the real Set cmdlet, and the PUT leaves the live numbered range as it was' {
+            InModuleScope $script:moduleName -Parameters @{ Reason = $script:NumberedZeroSyncReason } {
+                param($Reason)
+                function Invoke-SyncArViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                # The REAL Set-OERAccessReviewDefinition stays in place, so a -Occurrences 0 would meet its
+                # [ValidateRange(1, ...)] and fail the entry; only the transport under it is mocked.
+                $script:NumberedZeroRaw = @{
+                    id                      = 'ar-1'
+                    displayName             = 'Q3 AP review'
+                    status                  = 'InProgress'
+                    descriptionForAdmins    = 'old'
+                    descriptionForReviewers = 'reviewer text'
+                    scope                   = @{ query = "/identityGovernance/entitlementManagement/assignments?`$filter=(accessPackage/id eq 'ap-1' and assignmentPolicy/id eq 'pol-1')" }
+                    reviewers               = @(@{ query = '/users/usr-1'; queryType = 'MicrosoftGraph' })
+                    settings                = @{
+                        instanceDurationInDays = 14
+                        recurrence             = @{
+                            pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }
+                            range   = @{ type = 'numbered'; startDate = '2026-07-01'; numberOfOccurrences = 0 }
+                        }
+                    }
+                }
+                try {
+                    Mock Get-OERAccessReviewDefinition {
+                        [PSCustomObject]@{
+                            Id                   = 'ar-1'
+                            DisplayName          = 'Q3 AP review'
+                            DescriptionForAdmins = 'old'
+                            AccessPackageId      = 'ap-1'
+                            AssignmentPolicyId   = 'pol-1'
+                            Reviewers            = @(@{ query = '/users/usr-1' })
+                            FallbackReviewers    = @()
+                            DurationInDays       = 14
+                            Recurrence           = @{
+                                pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }
+                                range   = @{ type = 'numbered'; startDate = '2026-07-01'; numberOfOccurrences = 0 }
+                            }
+                            Settings             = @{ instanceDurationInDays = 14 }
+                        }
+                    }
+                    Mock Resolve-OERAccessReviewDefinitionId { 'ar-1' }
+                    Mock Invoke-OERGraphRequest {
+                        if ($Method -eq 'PUT') {
+                            foreach ($Key in @($Body.Keys)) { $script:NumberedZeroRaw[$Key] = $Body[$Key] }
+                            return $null
+                        }
+                        return $script:NumberedZeroRaw
+                    }
+                    Mock Initialize-OERAuth {}
+                    $Doc = [PSCustomObject]@{
+                        displayName = 'Q3 AP review'; accessPackage = 'AP-Sales'; assignmentPolicy = 'Standard'
+                        recurrence = 'Monthly'; descriptionForAdmins = 'new'
+                    }
+                    $Warned = $null
+                    $Rows = @(Invoke-SyncArViaCaller -Confirm:$false -WarningVariable Warned -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -Item $Doc)
+
+                    @($Rows | Where-Object Action -eq 'Failed').Count | Should -Be 0 -Because ($Rows | ForEach-Object { "$($_.Action): $($_.Detail)" } | Out-String)
+                    $Rows.Count | Should -Be 2
+                    $Rows[0].Action | Should -BeExactly 'Skipped'
+                    $Rows[0].Detail | Should -BeExactly $Reason
+                    $Rows[1].Action | Should -BeExactly 'Updated'
+                    @($Warned).Count | Should -Be 1
+                    @($Warned)[0].Message | Should -BeExactly "Sync-OERStructureAccessReview: access review 'Q3 AP review' -- $Reason."
+                    # Exactly one write, carrying the description and the recurrence the live review already had.
+                    Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -and $Method -ne 'GET' }
+                    Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                        $Method -eq 'PUT' -and
+                        $Body.descriptionForAdmins -eq 'new' -and
+                        $Body.settings.recurrence.pattern.interval -eq 3 -and
+                        $Body.settings.recurrence.range.type -eq 'numbered' -and
+                        $Body.settings.recurrence.range.numberOfOccurrences -eq 0
+                    }
+                }
+                finally {
+                    Remove-Variable -Name NumberedZeroRaw -Scope Script -ErrorAction SilentlyContinue
+                }
+            }
+        }
+
+        It 'never binds -Occurrences, -Recurrence, -StartDate or -EndDate on Set-OERAccessReviewDefinition' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncArViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                $script:NumberedZeroBound = [System.Collections.Generic.List[string]]::new()
+                try {
+                    Mock Get-OERAccessReviewDefinition {
+                        [PSCustomObject]@{
+                            Id                   = 'ar-1'
+                            DisplayName          = 'Q3 AP review'
+                            DescriptionForAdmins = 'old'
+                            AccessPackageId      = 'ap-1'
+                            AssignmentPolicyId   = 'pol-1'
+                            Reviewers            = @(@{ query = '/users/usr-1' })
+                            FallbackReviewers    = @()
+                            DurationInDays       = 14
+                            Recurrence           = @{
+                                pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }
+                                range   = @{ type = 'numbered'; startDate = '2026-07-01'; numberOfOccurrences = 0 }
+                            }
+                            Settings             = @{ instanceDurationInDays = 14 }
+                        }
+                    }
+                    Mock Set-OERAccessReviewDefinition {
+                        # $PesterBoundParameters, not $PSBoundParameters: the latter belongs to the mock's own
+                        # script block, which declares no parameters.
+                        foreach ($Key in $PesterBoundParameters.Keys) { $script:NumberedZeroBound.Add([string]$Key) }
+                        [PSCustomObject]@{
+                            Id = 'ar-1'; DisplayName = 'Q3 AP review'; DescriptionForAdmins = 'new'
+                            AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
+                            Reviewers = @(@{ query = '/users/usr-1' }); FallbackReviewers = @(); DurationInDays = 14
+                            Recurrence = @{
+                                pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }
+                                range   = @{ type = 'numbered'; startDate = '2026-07-01'; numberOfOccurrences = 0 }
+                            }
+                            Settings = @{ instanceDurationInDays = 14 }
+                        }
+                    }
+                    Mock Initialize-OERAuth {}
+                    $Rows = @(Invoke-SyncArViaCaller -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -Item ([PSCustomObject]@{
+                        displayName = 'Q3 AP review'; accessPackage = 'AP-Sales'; assignmentPolicy = 'Standard'
+                        recurrence = 'Monthly'; startDate = '2026-08-01'; descriptionForAdmins = 'new'
+                    }))
+                    # The write was reached and carried the field outside the unit ...
+                    Should -Invoke Set-OERAccessReviewDefinition -Times 1 -Exactly
+                    $script:NumberedZeroBound | Should -Contain 'DescriptionForAdmins'
+                    # ... and none of the four parameters of the held-back unit.
+                    foreach ($Name in 'Occurrences', 'Recurrence', 'StartDate', 'EndDate') {
+                        $script:NumberedZeroBound | Should -Not -Contain $Name
+                    }
+                    @($Rows | Where-Object Action -eq 'Updated').Count | Should -Be 1
+                }
+                finally {
+                    Remove-Variable -Name NumberedZeroBound -Scope Script -ErrorAction SilentlyContinue
+                }
+            }
+        }
+
+        It 'plans the held-back unit the same way under -WhatIf, with no write' {
+            InModuleScope $script:moduleName -Parameters @{ Reason = $script:NumberedZeroSyncReason } {
+                param($Reason)
+                function Invoke-SyncArViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Get-OERAccessReviewDefinition {
+                    [PSCustomObject]@{
+                        Id                   = 'ar-1'
+                        DisplayName          = 'Q3 AP review'
+                        DescriptionForAdmins = 'old'
+                        AccessPackageId      = 'ap-1'
+                        AssignmentPolicyId   = 'pol-1'
+                        Reviewers            = @(@{ query = '/users/usr-1' })
+                        FallbackReviewers    = @()
+                        DurationInDays       = 14
+                        Recurrence           = @{
+                            pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }
+                            range   = @{ type = 'numbered'; startDate = '2026-07-01'; numberOfOccurrences = 0 }
+                        }
+                        Settings             = @{ instanceDurationInDays = 14 }
+                    }
+                }
+                Mock Set-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-1' } }
+                Mock Initialize-OERAuth {}
+                $Rows = @(Invoke-SyncArViaCaller -WhatIf -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -Item ([PSCustomObject]@{
+                    displayName = 'Q3 AP review'; accessPackage = 'AP-Sales'; assignmentPolicy = 'Standard'
+                    recurrence = 'Monthly'; descriptionForAdmins = 'new'
+                }))
+                $Rows.Count | Should -Be 2
+                $Rows[0].Action | Should -BeExactly 'Skipped'
+                $Rows[0].Detail | Should -BeExactly $Reason
+                $Rows[1].Action | Should -BeExactly 'Skipped'
+                $Rows[1].Detail | Should -BeExactly "would update access review 'Q3 AP review' (descriptionForAdmins=new)"
+                Should -Invoke Get-OERAccessReviewDefinition -Times 1 -Exactly
+                Should -Invoke Set-OERAccessReviewDefinition -Times 0
+            }
+        }
+    }
+
+    Context 'a Warning preference of Stop stops an entry with an unappliable note before any write (BL-117, eighth point)' {
+        # The handler writes its NotApplied warning, and then the Skipped record, BEFORE its own
+        # ShouldProcess and before the one write (Set-OERAccessReviewDefinition). Under
+        # $WarningPreference = 'Stop' that warning therefore ends the entry first: nothing is written
+        # for it. The engine catches the handler's stop and reports the entry Failed. Module code reads
+        # the GLOBAL preference, so the test sets that and restores it in a finally. The live review is
+        # a semi-annual one (absoluteMonthly interval 6) against a document declaring Monthly, which
+        # is the A19 note, and the document also changes the description, so without the stop the
+        # handler would write.
+        BeforeAll {
+            $script:StopDoc = [PSCustomObject]@{
+                displayName = 'Q3 AP review'; accessPackage = 'AP-Sales'; assignmentPolicy = 'Standard'
+                recurrence = 'Monthly'; descriptionForAdmins = 'new'
+            }
+            $script:StopSemiAnnualReview = {
+                [PSCustomObject]@{
+                    Id                   = 'ar-1'
+                    DisplayName          = 'Q3 AP review'
+                    DescriptionForAdmins = 'old'
+                    AccessPackageId      = 'ap-1'
+                    AssignmentPolicyId   = 'pol-1'
+                    Reviewers            = @(@{ query = '/users/usr-1' })
+                    FallbackReviewers    = @()
+                    DurationInDays       = 14
+                    Recurrence           = @{
+                        pattern = @{ type = 'absoluteMonthly'; interval = 6; dayOfMonth = 1 }
+                        range   = @{ type = 'noEnd'; startDate = '2026-07-01' }
+                    }
+                    Settings             = @{ instanceDurationInDays = 14 }
+                }
+            }
+            # The engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere above
+            # it, as at a prompt. The script installs its own fakes in ITS copy of the module scope and
+            # logs every write with AppendAllText, whose path is substituted into the text. #PREF# is the
+            # global WarningPreference the engine runs under.
+            function New-StopScenario {
+                param([string]$Log, [string]$Preference)
+                [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Get-OERAccessReviewDefinition -Value {
+        [CmdletBinding()]
+        param([string]$Filter)
+        [pscustomobject]@{
+            Id = 'cccc3333-0000-0000-0000-000000000001'; DisplayName = 'Q3 AP review'; Status = 'InProgress'
+            Scope = 'the declared package and policy'
+            AccessPackageId = 'aaaa1111-0000-0000-0000-000000000001'; AssignmentPolicyId = 'bbbb2222-0000-0000-0000-000000000001'
+            Reviewers = @(@{ query = '/users/usr-1' }); FallbackReviewers = @(); DurationInDays = 14
+            DescriptionForAdmins = 'old'
+            Recurrence = @{
+                pattern = @{ type = 'absoluteMonthly'; interval = 6; dayOfMonth = 1 }
+                range   = @{ type = 'noEnd'; startDate = '2026-07-01' }
+            }
+            Settings = @{ instanceDurationInDays = 14 }
+        }
+    }
+    Set-Item -Path function:script:Resolve-OERAccessPackageId -Value { 'aaaa1111-0000-0000-0000-000000000001' }
+    Set-Item -Path function:script:Resolve-OERAssignmentPolicyId -Value { 'bbbb2222-0000-0000-0000-000000000001' }
+    Set-Item -Path function:script:New-OERAccessReviewDefinition -Value { [System.IO.File]::AppendAllText('#LOG#', "NEW`n") }
+    Set-Item -Path function:script:Set-OERAccessReviewDefinition -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "SET`n")
+        [pscustomobject]@{
+            Id = 'cccc3333-0000-0000-0000-000000000001'; DisplayName = 'Q3 AP review'; Status = 'InProgress'
+            Scope = 'the declared package and policy'
+            AccessPackageId = 'aaaa1111-0000-0000-0000-000000000001'; AssignmentPolicyId = 'bbbb2222-0000-0000-0000-000000000001'
+            Reviewers = @(@{ query = '/users/usr-1' }); FallbackReviewers = @(); DurationInDays = 14
+            DescriptionForAdmins = 'new'
+            Recurrence = @{
+                pattern = @{ type = 'absoluteMonthly'; interval = 6; dayOfMonth = 1 }
+                range   = @{ type = 'noEnd'; startDate = '2026-07-01' }
+            }
+            Settings = @{ instanceDurationInDays = 14 }
+        }
+    }
+}
+$Json = '{ "version": "1.0", "accessReviews": [ { "displayName": "Q3 AP review", "accessPackage": "AP-Sales", "assignmentPolicy": "Standard", "recurrence": "Monthly", "descriptionForAdmins": "new" } ] }'
+$global:WarningPreference = '#PREF#'
+Invoke-OERStructure -Json $Json -Confirm:$false | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+$global:WarningPreference = 'Continue'
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#PREF#', $Preference))
+            }
+            function Get-StopLoggedLine {
+                param([string]$Log)
+                if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log | Where-Object { $_ }) } else { @() }
+            }
+        }
+
+        It 'ends the handler at the warning under a global Stop preference, with no write, and writes the Skipped row never' {
+            InModuleScope $script:moduleName -Parameters @{ Doc = $script:StopDoc; Review = $script:StopSemiAnnualReview } {
+                param($Doc, $Review)
+                function Invoke-SyncArViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Get-OERAccessReviewDefinition $Review
+                Mock Set-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-1' } }
+                Mock Initialize-OERAuth {}
+
+                # The control first: with the default preference the same entry writes once, so the
+                # zero-write assertion below is not vacuous.
+                $Control = @(Invoke-SyncArViaCaller -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -Item $Doc)
+                @($Control | Where-Object Action -eq 'Skipped').Count | Should -Be 1
+                Should -Invoke Set-OERAccessReviewDefinition -Times 1 -Exactly
+
+                $Saved = $global:WarningPreference
+                $Thrown = $null
+                $Rows = $null
+                try {
+                    $global:WarningPreference = 'Stop'
+                    try { $Rows = @(Invoke-SyncArViaCaller -Confirm:$false -ErrorAction SilentlyContinue -Item $Doc) }
+                    catch { $Thrown = $PSItem }
+                }
+                finally {
+                    $global:WarningPreference = $Saved
+                }
+                $Thrown | Should -Not -BeNullOrEmpty
+                $Thrown.Exception | Should -BeOfType ([System.Management.Automation.ActionPreferenceStopException])
+                $Thrown.Exception.Message | Should -BeLike "*Sync-OERStructureAccessReview: access review 'Q3 AP review' -- the live review is semi-annual*"
+                # The statement that called the handler never completed, so no row reached the assignment.
+                $null -eq $Rows | Should -BeTrue
+                # Still the one write of the control run: the stopped run added none.
+                Should -Invoke Set-OERAccessReviewDefinition -Times 1 -Exactly
+                $global:WarningPreference | Should -Be $Saved
+            }
+        }
+
+        It 'reports the entry Failed through the engine in a script with no try above it, and writes nothing' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-StopScenario -Log $Log -Preference 'Stop')
+            $Run.Output[-1] | Should -BeExactly 'END'
+            $Rows = @($Run.Output | Where-Object { $_ -like 'ROW:*' })
+            $Rows.Count | Should -Be 1
+            $Rows[0] | Should -BeLike 'ROW:Failed:handler error:*'
+            $Rows[0] | Should -BeLike "*Sync-OERStructureAccessReview: access review 'Q3 AP review' -- the live review is semi-annual*"
+            @(Get-StopLoggedLine -Log $Log) | Should -BeNullOrEmpty
+            @($Run.Prompts).Count | Should -Be 0
+        }
+
+        It 'writes once and reports the Skipped note and the Updated row when the preference is Continue' {
+            # The control of the test above: same entry, same script, same fakes, only the preference
+            # differs. The write is reached, so the empty log above is the stop and not a setup fault.
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-StopScenario -Log $Log -Preference 'Continue')
+            $Run.Output[-1] | Should -BeExactly 'END'
+            $Rows = @($Run.Output | Where-Object { $_ -like 'ROW:*' })
+            $Rows.Count | Should -Be 2
+            $Rows[0] | Should -BeLike 'ROW:Skipped:the live review is semi-annual*'
+            $Rows[1] | Should -Be "ROW:Updated:updated access review 'Q3 AP review' (descriptionForAdmins=new)"
+            @(Get-StopLoggedLine -Log $Log) | Should -Be @('SET')
+            @($Run.Warnings).Count | Should -Be 1
+        }
+    }
+
     Context 'self-review mixing guard -- apply-path compatibility (Task 4c)' {
         # Task 4c adds a write-side MutuallyExclusiveReviewer guard to New-/Set-OERAccessReviewDefinition
         # that refuses -SelfReview combined with -Reviewer/-ReviewerGroup/-Manager. A document declaring
