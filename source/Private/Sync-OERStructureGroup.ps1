@@ -75,7 +75,10 @@ function Sync-OERStructureGroup {
         principal is an owner; a -Prune run that would remove the last remaining user owner, or the
         last remaining owner of any type, reports a Skipped record instead of firing a call Microsoft
         Graph rejects. A service principal owner, and an owner PIM for Groups holds or makes eligible,
-        is withheld before that guard and counts as an owner still standing.
+        is withheld before that guard and counts as an owner still standing. An owner this step added
+        in the same run counts as standing too (a -WhatIf plan counts one it reports it would add),
+        and as a user owner when the document names it by user principal name; an add that failed or
+        was declined at the confirmation prompt counts nowhere.
     3. Reconcile time-bound eligibility entries (those with durationDays) -- the first eligibility
        request onboards the group to PIM for Groups if it was not onboarded yet. Each entry is matched
        on the (principal, accessType) pair and its declared window is diffed against the live schedule
@@ -173,7 +176,16 @@ function Sync-OERStructureGroup {
        ShouldProcess gate: a real run and a -WhatIf plan report the same row, and the other access type
        is processed as usual. A policy taken as "none" would have the diff treat every declared field as
        changed and default the undeclared half of a duration pair, and the write would overwrite live
-       values the document never declared.
+       values the document never declared. A read that answers can still give no value for the half
+       of an expiration pair the document leaves out (allowPermanentEligibility or
+       eligibleDurationDays declared alone, allowPermanentActive or activeDurationDays alone): an empty
+       rules list, the expiration rule absent, its isExpirationRequired missing, or a maximumDuration
+       that is not a positive whole number of days. Unless the declared half already matches its live
+       value, the diff names that pair (UnknownLiveValues) instead of filling it with a default, and
+       THAT access type reports Failed with a PimRuleValueUnknown record (target the group name)
+       before the approver check, the PIM-in-use question and the ShouldProcess gate, in a real run
+       and under -WhatIf alike; nothing is written for it, and the other access type is processed as
+       usual.
     5. Reconcile permanent eligibility entries (those without durationDays) -- must come after
        pimPolicy has been set to allow permanent eligibility. Matched and diffed the same way, so a
        time-bound eligibility that the document declares permanent is re-issued as permanent, again
@@ -1048,6 +1060,21 @@ function Sync-OERStructureGroup {
             # Same rule as $MemberUnresolved: an unresolved declared owner withholds every owner
             # candidate in the Extra/prune loop below.
             $OwnerUnresolved = [System.Collections.Generic.List[string]]::new()
+            # The owners this pass adds stand as much as the owners the read found, so the floors of the
+            # prune pass below count them (final review of Sprint 11 step 11, Important 2): always as an
+            # owner, and as a user owner when the declared-owner resolution knows the owner is a user --
+            # a reference with an at sign, which Resolve-OERStructurePrincipal resolves as a user
+            # principal name. Any other reference (an object id, a name) tells no type, so that owner
+            # counts as an owner only, the conservative reading. An add that went through counts, and
+            # under -WhatIf an add the plan reports; a failed add, or one declined at the confirmation
+            # prompt, counts nowhere. Keyed on the id, so a reference declared twice counts once.
+            $AddedOwnerIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $AddedUserOwnerIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            function Add-StandingOwner {
+                param([string]$Id, [string]$Reference)
+                [void]$AddedOwnerIds.Add($Id)
+                if ($Reference -like '*@*') { [void]$AddedUserOwnerIds.Add($Id) }
+            }
             foreach ($ORef in @($Item.owners)) {
                 $Oid = Resolve-OERStructurePrincipal -Reference $ORef
                 if (-not $Oid) {
@@ -1091,8 +1118,12 @@ function Sync-OERStructureGroup {
                             ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "failed to add owner '$ORef': $($PSItem.Exception.Message)" -ErrorRecord $PSItem
                             continue
                         }
+                        Add-StandingOwner -Id $Oid -Reference $ORef
                         ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Updated' -Detail "added owner '$ORef'"
                     } else {
+                        # A plan (-WhatIf) counts the add it reports, as it counts the removals it reports
+                        # below; a declined confirmation prompt adds nothing, so nothing is counted.
+                        if ($WhatIfPreference) { Add-StandingOwner -Id $Oid -Reference $ORef }
                         ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' -Detail "would add owner '$ORef'"
                     }
                 }
@@ -1113,18 +1144,23 @@ function Sync-OERStructureGroup {
             #      too. It is kept for an owner not typed 'user', since what Graph does with the last
             #      owner of another type has not been measured (a service principal never reaches it,
             #      see below).
-            # The owners still standing, of any type and of type user, are tracked as removals go
-            # through (a removal that failed, or a declined confirmation, leaves its owner standing;
-            # a -WhatIf plan counts the removal it reports as done, so it refuses the same owner the
-            # run does), and the removal that would leave no owner, or no user owner, is refused with a
-            # Skipped record instead of firing a call Graph rejects.
+            # The owners still standing, of any type and of type user, are the owners the read found
+            # plus the owners the add pass above added in this run (an add that failed, or a declined
+            # confirmation, adds no one; a -WhatIf plan counts an add it reports; an added owner counts
+            # as a user owner only when its reference is a user principal name, see the add pass). They
+            # are tracked as removals go through (a removal that failed, or a declined confirmation,
+            # leaves its owner standing; a -WhatIf plan counts the removal it reports as done, so it
+            # refuses the same owner the run does), and the removal that would leave no owner, or no
+            # user owner, is refused with a Skipped record instead of firing a call Graph rejects. So a
+            # document that replaces an owner adds the new one first and then removes the old one in
+            # the same run (final review of Sprint 11 step 11, Important 2).
             # Since A9 an owner the read types servicePrincipal is withheld before this guard and never
             # removed, and since BL-125 so is an owner PIM for Groups holds or makes eligible (and every
             # owner while that cannot be read), so the guard decides only for the other owners, and a
             # withheld owner counts as one still standing -- a withheld user owner counts as a user
             # owner still standing too.
-            $RemainingOwnerCount = $CurrentOwners.Count
-            $RemainingUserOwnerCount = @($CurrentOwners | Where-Object { $_.ObjectType -eq 'user' }).Count
+            $RemainingOwnerCount = $CurrentOwners.Count + $AddedOwnerIds.Count
+            $RemainingUserOwnerCount = @($CurrentOwners | Where-Object { $_.ObjectType -eq 'user' }).Count + $AddedUserOwnerIds.Count
             foreach ($CurOwner in $CurrentOwners) {
                 $CurId = $CurOwner.id
                 if ($DeclaredOwnerIds -notcontains $CurId) {
@@ -1580,6 +1616,30 @@ function Sync-OERStructureGroup {
                 }
 
                 $Change = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $CurrentPolicy
+
+                # A read that succeeded can still give no value for the half of an expiration pair the
+                # document leaves out (an empty rules list, the rule absent, no isExpirationRequired, or a
+                # maximumDuration that is not a positive whole number of days). The diff used to fill
+                # that half with a default and bind both, so Set-OERGroupPimPolicy sent the guess and never
+                # made its own read. The diff now names such a pair in UnknownLiveValues and binds
+                # neither half, and it is refused here, before the approver check, the PIM-in-use question
+                # and ShouldProcess, in a real run and under -WhatIf alike: one Failed row for THIS access
+                # type with a PimRuleValueUnknown record, nothing written for it, and the loop moves on to
+                # the next access type. Final review of Sprint 11 step 11, Important 1.
+                if (@($Change.UnknownLiveValues).Count -gt 0) {
+                    $UnknownText = @($Change.UnknownLiveValues) -join '; '
+                    $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("pimPolicy ($AccessType) of group '$Name' was not applied: $UnknownText. A value the document leaves out is taken from the live policy, never from a default, so nothing was changed for '$AccessType'. Declare both values of the pair in the document."),
+                        'PimRuleValueUnknown',
+                        [System.Management.Automation.ErrorCategory]::InvalidData,
+                        $Name)
+                    $Caller.WriteError($ErrRec)
+                    ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
+                        -Detail "pimPolicy ($AccessType) not applied: a value the document leaves to the live policy is unknown (PimRuleValueUnknown): $UnknownText; nothing was changed for '$AccessType'. Declare both values of the pair in the document." `
+                        -ErrorRecord $ErrRec
+                    continue
+                }
+
                 if (-not $Change.Changed) {
                     ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Unchanged' -Detail "pimPolicy ($AccessType) already matches"
                     continue

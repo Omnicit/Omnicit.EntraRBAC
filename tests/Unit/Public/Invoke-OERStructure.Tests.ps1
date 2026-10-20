@@ -6443,3 +6443,111 @@ $RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OER
         @($Run.Errors).Count | Should -Be 0
     }
 }
+
+Describe 'Invoke-OERStructure groups: an undeclared half of an expiration pair whose live value is unknown is refused, in a script with no try above it (final review of Sprint 11 step 11, Important 1)' {
+    # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere above
+    # it, as at a prompt, with the runspace's own error preference (Continue). The document declares ONE
+    # half of the member policy's eligible expiration pair -- eligibleDurationDays alone (probe P2) or
+    # allowPermanentEligibility alone (probe P3) -- and the owner policy's activationMaxHours. The live
+    # member policy is projected by the real converter from a rule list that holds no
+    # Expiration_Admin_Eligibility rule, so the half the document leaves out has no live value: the diff
+    # used to fill it with a default and Set-OERGroupPimPolicy sent it. Now the member access type is
+    # Failed with PimRuleValueUnknown before ShouldProcess, in the run and the -WhatIf plan alike, and the
+    # owner policy is still processed. The script installs its own fakes in ITS copy of the module scope
+    # and logs every policy read and write with AppendAllText, whose path is substituted into the text. In
+    # the control the live member rules hold the expiration rule, so the scenario can tell a refusal from
+    # silence.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        function script:New-PuNoTryScenario {
+            param([string]$Log, [string]$MemberJson, [string]$Rules, [string]$Mode)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERStructureDefault -Value { $null }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { 'g-1' }
+    Set-Item -Path function:script:Get-OERGroup -Value {
+        [pscustomobject]@{ Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null; GroupType = 'Assigned'
+            IsAssignableToRole = $false; Members = @(); PimEligibility = @() }
+    }
+    Set-Item -Path function:script:Read-OERGroupPimHold -Value { [pscustomobject]@{ Read = $true; Held = @{}; Cause = $null } }
+    Set-Item -Path function:script:Test-OERGroupPimInUse -Value { [pscustomobject]@{ InUse = $true; Reason = 'x'; Manageable = $true } }
+    Set-Item -Path function:script:Get-OERGroupPimPolicy -Value {
+        [CmdletBinding()]
+        param([Alias('GroupId', 'Id')][string]$Group, [string]$AccessType = 'member', [string]$TenantId)
+        [System.IO.File]::AppendAllText('#LOG#', "POLICY GET $AccessType`n")
+        $Rules = if ($AccessType -eq 'member') { @(#RULES#) } else {
+            @(@{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT8H' },
+                @{ id = 'Expiration_Admin_Eligibility'; isExpirationRequired = $true; maximumDuration = 'P365D' })
+        }
+        ConvertTo-OERGroupPimPolicy -Rules $Rules -GroupId $Group -PolicyId "pol-$AccessType" -AccessType $AccessType
+    }
+    Set-Item -Path function:script:Set-OERGroupPimPolicy -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "POLICY SET $($args -join ' ')`n")
+        [pscustomobject]@{ Applied = $true; FailedRules = @() }
+    }
+}
+$Json = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_x", "members": null, "pimPolicy": { "member": { #MEMBER# }, "owner": { "activationMaxHours": 4 } } } ] }'
+Invoke-OERStructure -Json $Json #MODE# -ErrorVariable RunErrors | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+$RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' } | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#MEMBER#', $MemberJson).Replace('#RULES#', $Rules).Replace('#MODE#', $Mode))
+        }
+    }
+
+    It 'reaches the end of a script with no try above it, with one Failed member row and the PimRuleValueUnknown record, writes nothing for member and still processes owner (<Probe>, <Mode>)' -ForEach @(
+        foreach ($Probe in @(
+                @{ Probe = 'eligibleDurationDays alone'; MemberJson = '"eligibleDurationDays": 90'
+                    Entry = 'eligibleDurationDays is declared without allowPermanentEligibility, and whether the live policy allows permanent eligible assignment (Expiration_Admin_Eligibility isExpirationRequired) is unknown: the read returned no value for it' }
+                @{ Probe = 'allowPermanentEligibility alone'; MemberJson = '"allowPermanentEligibility": true'
+                    Entry = 'allowPermanentEligibility is declared without eligibleDurationDays, and the live eligible assignment expiration (Expiration_Admin_Eligibility maximumDuration) is unknown: the read returned no value for it' }
+            )) {
+            foreach ($ModeCase in @(
+                    @{ Mode = 'a real run'; Switch = '-Confirm:$false'; Owner = 'ROW:Updated:pimPolicy (owner) set: activationMaxHours=4' }
+                    @{ Mode = 'a -WhatIf plan'; Switch = '-WhatIf'; Owner = 'ROW:Skipped:would set pimPolicy (owner): activationMaxHours=4' }
+                )) { $Probe + $ModeCase }
+        }
+    ) {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Rules = "@{ id = 'Enablement_EndUser_Assignment'; enabledRules = @('Justification') }"
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-PuNoTryScenario -Log $Log -MemberJson $MemberJson -Rules $Rules -Mode $Switch)
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        # Reached: both access types were read.
+        $Logged | Should -Contain 'POLICY GET member'
+        $Logged | Should -Contain 'POLICY GET owner'
+        $MemberRow = "ROW:Failed:pimPolicy (member) not applied: a value the document leaves to the live policy is unknown (PimRuleValueUnknown): $Entry; nothing was changed for 'member'. Declare both values of the pair in the document."
+        @($Run.Output | Where-Object { $_ -like 'ROW:*pimPolicy*' }) | Should -Be @($MemberRow, $Owner)
+        # The handler's record reached the error stream, once, and no other error did.
+        @($Run.Errors).Count | Should -Be 1
+        $Run.Errors[0] | Should -BeExactly "pimPolicy (member) of group 'role_sec_x' was not applied: $Entry. A value the document leaves out is taken from the live policy, never from a default, so nothing was changed for 'member'. Declare both values of the pair in the document."
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @('ERRID:PimRuleValueUnknown,Invoke-OERStructure')
+        # Nothing was written for member.
+        @($Logged | Where-Object { $_ -like 'POLICY SET*member*' }) | Should -BeNullOrEmpty -Because "the requests were:`n$($Logged -join "`n")"
+        if ($Switch -eq '-WhatIf') {
+            @($Logged | Where-Object { $_ -like 'POLICY SET*' }) | Should -BeNullOrEmpty
+            @($Run.Events | Where-Object { $_ -like 'Line: What if:*Set PIM policy (owner)*' }).Count | Should -Be 1
+            @($Run.Events | Where-Object { $_ -like '*Set PIM policy (member)*' }).Count | Should -Be 0
+        } else {
+            @($Logged | Where-Object { $_ -like 'POLICY SET*-AccessType owner*' }).Count | Should -Be 1
+        }
+        @($Run.Prompts).Count | Should -Be 0
+    }
+
+    It 'writes both access types in the same script when the live member rules hold the expiration rule, so the scenario can tell a refusal from silence' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Rules = "@{ id = 'Expiration_Admin_Eligibility'; isExpirationRequired = `$false; maximumDuration = 'P365D' }"
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-PuNoTryScenario -Log $Log -MemberJson '"eligibleDurationDays": 90' -Rules $Rules -Mode '-Confirm:$false')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        # The live permanence (allowed: isExpirationRequired false) is sent beside the declared duration.
+        @($Logged | Where-Object { $_ -like 'POLICY SET*-AccessType member*' }).Count | Should -Be 1 -Because "the requests were:`n$($Logged -join "`n")"
+        # A splatted hashtable reaches a plain function's $args as '-Name:' and its value, in no fixed order.
+        @($Logged | Where-Object { $_ -like 'POLICY SET*-AccessType member*' -and $_ -like '*-EligibleDuration: 90*' -and
+                $_ -like '*-AllowPermanentEligibility: True*' }).Count | Should -Be 1
+        @($Logged | Where-Object { $_ -like 'POLICY SET*-AccessType owner*' }).Count | Should -Be 1
+        @($Run.Output | Where-Object { $_ -like 'ROW:*pimPolicy*' }) | Should -Be @('ROW:Updated:pimPolicy (member) set: eligible(perm=True,days=90)', 'ROW:Updated:pimPolicy (owner) set: activationMaxHours=4')
+        @($Run.Errors).Count | Should -Be 0
+    }
+}

@@ -51,6 +51,18 @@ function Resolve-OERGroupPimPolicyChange {
     side it is bound for and carries the other side from the live rule, so an undeclared side must
     never be sent here either. No Graph, ARM, or authentication occurs.
 
+    The half of an expiration pair the document does not declare (allowPermanentEligibility or
+    eligibleDurationDays, allowPermanentActive or activeDurationDays) is taken from the live policy,
+    since the pair is sent as a unit. A read can succeed and still give no value for it -- the rules
+    list answered empty, the expiration rule is absent, its isExpirationRequired is missing, or its
+    maximumDuration is not a positive whole number of days. When that half is unknown and the declared
+    half is not known to match its own live value already, no default is put in its place: neither
+    half of that pair is in SetParams and UnknownLiveValues names the pair (one text per pair, the
+    eligible pair first); the handler then refuses the access type with PimRuleValueUnknown and sends
+    nothing for it. UnknownLiveValues is an empty array otherwise. A declared half that already
+    matches its known live value sends nothing and names nothing; both halves declared, and a null
+    Current, are compared exactly as before.
+
     .PARAMETER Declared
     The declared pimPolicy block for one access type: either a member/owner sub-object or the flat
     member-only form. Recognized fields: activationMaxHours, authenticationContextId,
@@ -135,10 +147,50 @@ function Resolve-OERGroupPimPolicyChange {
         }
     }
 
+    # -- the half of an expiration pair the document leaves out --------------------------------
+    # Each pair below is sent as a unit, so a half the document does not declare is taken from the live
+    # policy. A read can succeed and still give no value for that half: the rules list answered empty,
+    # the expiration rule is absent, its isExpirationRequired is missing, or its maximumDuration is not
+    # a positive whole number of days (ConvertFrom-OERDuration gives $null, PT36H for example). The
+    # defaults below (not permanent; 365 or 180 days) then used to be bound as the live value, and
+    # Set-OERGroupPimPolicy, given both halves, sent the guess without a read of its own. So when that
+    # half's live value is unknown, and the declared half is not known to match its own live value
+    # already (then nothing is sent and nothing guessed), the pair is named in UnknownLiveValues and
+    # neither half is bound; the handler refuses the access type (PimRuleValueUnknown). A live
+    # isExpirationRequired that is a real boolean is known: the converter gives $null for a rule that
+    # is absent or carries none, never $false. Both halves declared, and a null Current (the handler
+    # never passes one, BL-40), keep the comparison below exactly as it was.
+    # Final review of Sprint 11 step 11, Important 1.
+    $UnknownLiveValues = [System.Collections.Generic.List[string]]::new()
+    function Get-UnknownUndeclaredHalf {
+        param(
+            [bool]$Read, [bool]$HasPerm, [bool]$HasDur, [object]$DeclaredPerm, [object]$DeclaredDays,
+            [object]$LivePerm, [object]$LiveDays, [object]$LiveDuration,
+            [string]$PermName, [string]$DurName, [string]$RuleId, [string]$Expiration, [string]$Permanent
+        )
+        if (-not $Read -or $HasPerm -eq $HasDur) { return $null }
+        if ($HasPerm) {
+            if ($LiveDays) { return $null }
+            if ($null -ne $LivePerm -and [bool]$DeclaredPerm -eq [bool]$LivePerm) { return $null }
+            $Why = if ([string]::IsNullOrWhiteSpace([string]$LiveDuration)) { 'the read returned no value for it' } else { "it reads '$LiveDuration', which is not a positive whole number of days" }
+            return "$PermName is declared without $DurName, and the live $Expiration ($RuleId maximumDuration) is unknown: $Why"
+        }
+        if ($null -ne $LivePerm) { return $null }
+        if ($LiveDays -and [int]$DeclaredDays -eq [int]$LiveDays) { return $null }
+        return "$DurName is declared without $PermName, and whether the live policy allows $Permanent ($RuleId isExpirationRequired) is unknown: the read returned no value for it"
+    }
+
     # -- unit: eligible permanence + duration ----------------------------------------------
     $HasEligPerm = Test-DeclHas $Declared 'allowPermanentEligibility'
     $HasEligDur  = Test-DeclHas $Declared 'eligibleDurationDays'
-    if ($HasEligPerm -or $HasEligDur) {
+    $EligUnknown = Get-UnknownUndeclaredHalf -Read ($null -ne $Current) -HasPerm $HasEligPerm -HasDur $HasEligDur `
+        -DeclaredPerm $Declared.allowPermanentEligibility -DeclaredDays $Declared.eligibleDurationDays `
+        -LivePerm $Current.AllowPermanentEligibility -LiveDays $Current.EligibleDurationDays -LiveDuration $Current.EligibleDuration `
+        -PermName 'allowPermanentEligibility' -DurName 'eligibleDurationDays' -RuleId 'Expiration_Admin_Eligibility' `
+        -Expiration 'eligible assignment expiration' -Permanent 'permanent eligible assignment'
+    if ($EligUnknown) {
+        $UnknownLiveValues.Add($EligUnknown)
+    } elseif ($HasEligPerm -or $HasEligDur) {
         $DPerm = if ($HasEligPerm) { [bool]$Declared.allowPermanentEligibility } elseif ($null -ne $Current) { [bool]$Current.AllowPermanentEligibility } else { $false }
         $DDur  = if ($HasEligDur)  { [int]$Declared.eligibleDurationDays } elseif ($null -ne $Current -and $Current.EligibleDurationDays) { [int]$Current.EligibleDurationDays } else { 365 }
         $CPerm = if ($null -ne $Current) { [bool]$Current.AllowPermanentEligibility } else { $null }
@@ -153,7 +205,14 @@ function Resolve-OERGroupPimPolicyChange {
     # -- unit: active permanence + duration ------------------------------------------------
     $HasActPerm = Test-DeclHas $Declared 'allowPermanentActive'
     $HasActDur  = Test-DeclHas $Declared 'activeDurationDays'
-    if ($HasActPerm -or $HasActDur) {
+    $ActUnknown = Get-UnknownUndeclaredHalf -Read ($null -ne $Current) -HasPerm $HasActPerm -HasDur $HasActDur `
+        -DeclaredPerm $Declared.allowPermanentActive -DeclaredDays $Declared.activeDurationDays `
+        -LivePerm $Current.AllowPermanentActive -LiveDays $Current.ActiveDurationDays -LiveDuration $Current.ActiveDuration `
+        -PermName 'allowPermanentActive' -DurName 'activeDurationDays' -RuleId 'Expiration_Admin_Assignment' `
+        -Expiration 'active assignment expiration' -Permanent 'permanent active assignment'
+    if ($ActUnknown) {
+        $UnknownLiveValues.Add($ActUnknown)
+    } elseif ($HasActPerm -or $HasActDur) {
         $DPerm = if ($HasActPerm) { [bool]$Declared.allowPermanentActive } elseif ($null -ne $Current) { [bool]$Current.AllowPermanentActive } else { $false }
         $DDur  = if ($HasActDur)  { [int]$Declared.activeDurationDays } elseif ($null -ne $Current -and $Current.ActiveDurationDays) { [int]$Current.ActiveDurationDays } else { 180 }
         $CPerm = if ($null -ne $Current) { [bool]$Current.AllowPermanentActive } else { $null }
@@ -301,10 +360,11 @@ function Resolve-OERGroupPimPolicyChange {
     }
 
     $Out = [PSCustomObject]@{
-        Changed        = ($SetParams.Keys.Count -gt 0)
-        SetParams      = $SetParams
-        Changes        = $Changes.ToArray()
-        ConflictReason = $ConflictReason
+        Changed           = ($SetParams.Keys.Count -gt 0)
+        SetParams         = $SetParams
+        Changes           = $Changes.ToArray()
+        ConflictReason    = $ConflictReason
+        UnknownLiveValues = $UnknownLiveValues.ToArray()
     }
     $Out.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GroupPimPolicyChange')
     $Out
