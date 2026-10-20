@@ -116,7 +116,7 @@ function Test-OERStructureSchema {
     is a Warning at its displayName path (BL-24): the engine creates the package with that name, and
     a GUID is read as an object id wherever an access review or another reference names the package.
     A group that declares template and no displayName, and whose template Resolve-OERName cannot
-    resolve with the tokens given (a token with no value, a name over 256 characters), is an Error at
+    resolve with the tokens given (a placeholder no token supplies, a name over 256 characters), is an Error at
     groups[i].template carrying Resolve-OERName's reason (BL-139); a value in tokens is inserted as
     text, so a '$' in it or a value that looks like a token resolves. A principalType of a
     roleAssignments or administrativeUnits scopedRoles entry, and the recurrence of an accessReviews

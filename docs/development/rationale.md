@@ -2998,8 +2998,14 @@ Three consequences worth keeping in mind:
 
 ### A Set cmdlet's own read decides a written value
 
-Sprint 11 step 11, decision A24, ruling R-14. `Set-OERGroupPimPolicy` makes four reads of its own
-whose answer decides a value it writes: the two duration reads (`Expiration_Admin_Eligibility` when
+Sprint 11 step 11, decision A24, ruling R-14. `Set-OERGroupPimPolicy` makes five reads of its own
+whose answer decides a value it writes. The approval rule read (`Approval_EndUser_Assignment`, when
+`-RequireApproval`, `-ApproverUser` or `-ApproverGroup` is bound) supplies the stage settings no
+parameter sets (the approval timeout, approver justification, escalation) and the approver side left
+unbound; it already refused a read that throws (`ApprovalRuleReadFailed`), but a read that answered
+no rule built the rule from no live stage, so `New-OERPimRuleSet` sent its defaults (a 1-day timeout,
+approver justification required, escalation off) in place of the live settings. The other four are the
+two duration reads (`Expiration_Admin_Eligibility` when
 `-AllowPermanentEligibility` is bound without `-EligibleDuration`, `Expiration_Admin_Assignment` when
 `-AllowPermanentActive` is bound without `-ActiveDuration`), whose live `maximumDuration` is sent back
 untouched, and the two reconcile reads of the pair (`Enablement_EndUser_Assignment` when a non-empty
@@ -3011,21 +3017,25 @@ other half is sent too. A duration read that failed used to warn and send the pa
 default without a warning; a reconcile read that failed warned and sent the bound half alone, which
 can leave exactly the combination PIM cannot honour.
 
-Now each of the four refuses the whole call before `ShouldProcess` and before any PATCH, so nothing
-is sent, the other rules bound on the call included, and `-WhatIf` shows the refusal too. A read that
-throws is published as itself (`Remove-OERErrorRecord` first, then `$PSCmdlet.WriteError($PSItem)` and
-`return`), with no default, no declared-only write and no warning in its place. A read that answers
-without the value the call needs -- no rule at all, or a duration rule whose `maximumDuration` is
-blank -- is refused with the one new ErrorId `PimRuleValueUnknown` (A9, a refusal), category
-`InvalidData`, target the policy id, with a message that names the rule and the parameter that
-supplies the value (`-EligibleDuration`, `-ActiveDuration`, or both `-AuthenticationContextId` and
-`-ActivationEnabledRules`). An enablement rule whose `enabledRules` is an empty list is an answer (no
-MFA), not an empty read. The four warnings and the dead default branches of the duration build are
-gone. Unchanged: the approval rule read, which already refused (`ApprovalRuleReadFailed`), the
-authentication context validation read, which only validates, and the put-back read of the first
-half ([#pim-rule-pair-put-back](#pim-rule-pair-put-back)), whose failure costs only the put-back and
-sends no default. The A24 Describe in `tests/Unit/Public/Set-OERGroupPimPolicy.Tests.ps1` holds every
-read, thrown and empty, in a run, under `-WhatIf` and in a script with no `try`.
+Now each of the five refuses the whole call before `ShouldProcess` and before any PATCH, so nothing
+is sent, the other rules bound on the call included, and `-WhatIf` shows the refusal too. A duration
+or reconcile read that throws is published as itself (`Remove-OERErrorRecord` first, then
+`$PSCmdlet.WriteError($PSItem)` and `return`), with no default, no declared-only write and no warning
+in its place; the approval rule read keeps its own `ApprovalRuleReadFailed` for a read that throws. A
+read that answers without the value the call needs -- no rule at all, or a duration rule whose
+`maximumDuration` is blank -- is refused with the one new ErrorId `PimRuleValueUnknown` (A9, a
+refusal), category `InvalidData`, target the policy id, with a message that names the rule and the
+parameter that supplies the value (`-EligibleDuration`, `-ActiveDuration`, or both
+`-AuthenticationContextId` and `-ActivationEnabledRules`), or, for the approval rule, that no parameter
+supplies the stage settings, so no call that changes approval can be made without that rule (the
+approval rule's empty answer was refused in the step's texts round, found by its review). An
+enablement rule whose `enabledRules` is an empty list is an answer (no MFA), not an empty read. The
+four warnings and the dead default branches of the duration build are gone. Unchanged: the
+authentication context validation read, which only validates, and the put-back read of the first half
+([#pim-rule-pair-put-back](#pim-rule-pair-put-back)), which by design only loses the put-back when it
+fails: it warns before any PATCH and writes no default. The A24 Describe in
+`tests/Unit/Public/Set-OERGroupPimPolicy.Tests.ps1` holds every read, thrown and empty, in a run, under
+`-WhatIf` and in a script with no `try`.
 
 **What the apply engine reaches.** `Resolve-OERGroupPimPolicyChange` always binds both halves of a
 duration pair, so the engine never reaches the two duration reads. It does reach the reconcile reads:
@@ -3042,10 +3052,13 @@ Set-OERGroupPimPolicy reads itself refuses the update when the read fails" in
 `tests/Unit/Public/Invoke-OERStructure.Tests.ps1` (in a runspace with no `try`), hold it.
 
 **The other public Set cmdlets.** A read-only audit of every other `Set-OER*` cmdlet found no other
-read that falls back to a default when it fails: each refuses on a failed read or uses the read only
-to gate a write. It named residual shapes outside A24, recorded as findings and not changed (a read
-that succeeds but lacks a key, for example). Cost if R-14 is wrong: a direct caller whose live read
-fails is refused instead of warned, which is the safe direction.
+read that falls back to a default when it FAILS: each refuses on a failed read or uses the read only
+to gate a write. It named two residual shapes where a read that SUCCEEDS can still lead to a default,
+both outside this cmdlet, unmeasured, recorded as findings and not changed:
+`Set-OERAccessPackageAssignmentPolicy` writes the body builder's default for a key a successful read
+lacks, and `Set-OERResourceGroup` sends an empty location when Azure Resource Manager answers with an
+empty body. Cost if R-14 is wrong: a direct caller whose live read fails is refused instead of warned,
+which is the safe direction.
 
 ### A split confirmation answer warns in the direction that happened
 
@@ -8353,9 +8366,10 @@ could cut its own privileges part-way through the run. Under A9 that service pri
 removed, so the case does not arise. A delegated user removing themselves through a group prune was
 possible before this fix and still is; this change does not touch it.
 
-**The ten kinds of withheld prune `ConvertTo-OERPruneWithheldResult` builds.** One parameter set per
-kind, each a `Skipped` row whose Detail starts `prune withheld:` and carries no warning of the
-helper's own and no ShouldProcess prompt. Without `-Prune` the `-ObjectType`, `-SyncedGroup` and
+**The ten kinds of withheld prune `ConvertTo-OERPruneWithheldResult` builds.** Nine parameter sets,
+one per kind except that `-UnresolvedScope` is a parameter of the `-Unresolved` set; each kind is a
+`Skipped` row whose Detail starts `prune withheld:` and carries no warning of the helper's own and no
+ShouldProcess prompt. Without `-Prune` the `-ObjectType`, `-SyncedGroup` and
 `-PimHeldReason` kinds return the `Extra` row the pass would have written instead, with a hint that
 `-Prune` leaves the candidate in place, and the `-CreatedGroup` kind returns nothing, so the pass
 reports the candidate `Extra` as usual; every other kind is a `Skipped` row with or without `-Prune`.
@@ -8981,8 +8995,9 @@ to the other access type. The cmdlets keep their own refusal as the backstop, an
 cmdlet beside each refusal case to hold the messages byte for byte. One edge differs in id only: a
 group policy read whose rules hold no `Approval_EndUser_Assignment` rule has no live approver to the
 handler, so a change that would need one is refused as `ApproverRequired`, where the cmdlet, which
-reads that rule by its id, refuses it as `ApprovalRuleReadFailed`; nothing is written either way.
-Cost if wrong: a plan reports `Failed` for a change Graph would have accepted, and nothing is sent.
+reads that rule by its id, refuses it as `ApprovalRuleReadFailed` when the read fails and as
+`PimRuleValueUnknown` when it answers no rule; nothing is written either way. Cost if wrong: a plan
+reports `Failed` for a change Graph would have accepted, and nothing is sent.
 
 ## failed-schedule-request
 
@@ -11901,8 +11916,9 @@ with a Detail that quotes the measurement, and no warning, no `ShouldProcess` an
 for the last owner of any type stays, reached now only by an owner not typed user, and its text no
 longer says "pending live verification". A withheld owner (an unresolved entry, a service principal, a
 synchronized group, an unread or a held PIM state) still counts as standing, and a withheld user owner
-as a user owner. A removal that went through lowers both counts; one that failed, or was declined at
-the confirmation prompt, leaves its owner standing. A `-WhatIf` plan counts each removal it reports as
+as a user owner. A removal that went through lowers the count of owners standing, and a user owner's
+removal the count of user owners too; one that failed, or was declined at the confirmation prompt,
+leaves its owner standing. A `-WhatIf` plan counts each removal it reports as
 done, so it holds back the same owner a run does; before that fix, a plan for two undeclared user owners
 said "would remove" for both while the run refused the second. An owner with no `ObjectType` is not
 counted as a user owner (the typed read carries one in a real tenant). Context "the last user owner is
@@ -11991,10 +12007,11 @@ its catch scrubs the record and throws one error that names the path and the rea
 `Test-OERStructure` and `Invoke-OERStructure` publish as `InvalidStructureDocument`, as
 `Read-OERNamingStandard` already reports an unreadable standard.
 
-**Second point: the text stays as written.** `ConvertFrom-Json` turns a string in ISO 8601 date-and-time
-form into a `DateTime` while it parses (the forms are measured under [#naming-standard](#naming-standard)),
-so a `startDate` or an `expirationDateTime` written with a time, or a `displayName` that looks like a
-time stamp, reached the validator and the apply engine as a date, not as the text written. PowerShell
+**Second point: the text stays as written.** `ConvertFrom-Json` turns a string that holds an ISO 8601
+date and time with seconds into a `DateTime` while it parses, and leaves a date alone or a time without
+seconds a string (the forms are measured under [#naming-standard](#naming-standard)), so a `startDate`
+or an `expirationDateTime` written with such a time, or a `displayName` that looks like a time stamp,
+reached the validator and the apply engine as a date, not as the text written. PowerShell
 7.5 added `-DateKind`, and `-DateKind String` leaves every string as written. The reader adds it whenever
 `ConvertFrom-Json` has the parameter, which `Test-OERJsonDateKindSupport` decides with one `Get-Command`
 of the module-qualified `Microsoft.PowerShell.Utility\ConvertFrom-Json`, so a function the caller defines
@@ -12005,8 +12022,9 @@ was read as a date, not as the text written, and to run on PowerShell 7.5 or lat
 a document with such a string anywhere -- an assignment policy's `expirationDateTime`, which carries a
 time, for example -- is refused by `Test-OERStructure` and `Invoke-OERStructure`; no field is exempted
 (ruled), since an exemption would let a converted value through. A date alone stays a string on every
-version. An `-InputObject` whose values the caller already turned into dates is read as `ConvertTo-Json`
-writes them, a documented limit.
+version. On PowerShell 7.5 or later an `-InputObject` whose values the caller already turned into dates
+is read as `ConvertTo-Json` writes them, a documented limit; on 7.2 to 7.4 those values come back as
+dates from the re-parse and are refused like any other.
 
 **`displayName` must be a string.** In `groups`, `administrativeUnits`, `catalogs`, `accessPackages`,
 `assignmentPolicies` and `accessReviews`, a `displayName` that is a number, a boolean, an object or an
@@ -12014,7 +12032,7 @@ array is an `Error` at its path naming the type found; a date gets only the date
 standard, Rule 17 adds a `Warning` that such a name was not checked, a date included.
 
 Cost if wrong: a user on PowerShell 7.2 to 7.4 has to run 7.5 or later to apply a document that holds a
-date-and-time string; nothing is ever changed on the way. Held by `Read-OERStructureDocument.Tests.ps1`,
+date and time with seconds; nothing is ever changed on the way. Held by `Read-OERStructureDocument.Tests.ps1`,
 `Test-OERJsonDateKindSupport.Tests.ps1`, the date and displayName Contexts of
 `Test-OERStructureSchema.Tests.ps1`, and a runspace with no `try` in `Invoke-OERStructure.Tests.ps1`
 with `Test-OERJsonDateKindSupport` stubbed false.
@@ -12033,7 +12051,8 @@ case-sensitive hashtable). The unresolved tokens are the template's own, in temp
 same message for the same input; `-MaxLength` and `-Strict` are unchanged. Two edges follow from the
 expression and are pinned by tests: `{{a}` with a key `a` is unresolved as `{a`, and `{}` stays `{}`.
 
-The validator reports a group template that cannot be resolved -- a token with no value, a name over
+The validator reports a group template that cannot be resolved -- a placeholder no token supplies (an
+empty or null token value resolves, to an empty text), a name over
 256 characters -- as an `Error` at `groups[i].template` carrying `Resolve-OERName`'s reason, when the
 entry declares no `displayName`. Before, `Test-OERStructure` raised nothing for it and
 `Invoke-OERStructure` reported that group `Failed` at apply; now the whole document is refused before

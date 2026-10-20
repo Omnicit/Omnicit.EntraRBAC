@@ -945,11 +945,11 @@ by its name alone, so it cannot tell which package the review means. Name the pa
 id.
 
 `Test-OERStructure` and `Invoke-OERStructure` read a document as written on PowerShell 7.5 or later.
-On PowerShell 7.2 to 7.4 the JSON reader turns a string in ISO 8601 date-and-time form, such as an
-assignment policy's `expirationDateTime` of `2027-01-01T00:00:00Z`, into a date, so the text written
-is lost: each such value is an `Error` at its path, and `Invoke-OERStructure` refuses the document.
-Run both on PowerShell 7.5 or later for such a document; a date alone, such as `2026-07-01`, stays a
-string. A `displayName` that is not a string is an `Error` too, and so is a group `template` that
+On PowerShell 7.2 to 7.4 the JSON reader turns a string that holds an ISO 8601 date and time with
+seconds, such as an assignment policy's `expirationDateTime` of `2027-01-01T00:00:00Z`, into a date,
+so the text written is lost: each such value is an `Error` at its path, and `Invoke-OERStructure`
+refuses the document. Run both on PowerShell 7.5 or later for such a document; a date alone, such as
+`2026-07-01`, or a time without seconds, such as `2026-07-01T10:00`, stays a string. A `displayName` that is not a string is an `Error` too, and so is a group `template` that
 cannot be turned into a name with its `tokens`, which used to be that group's `Failed` row and now
 refuses the whole document before anything is read or written. A token's value is inserted as text,
 so a `$` in it stays as written.
@@ -957,8 +957,9 @@ so a `$` in it stays as written.
 `Invoke-OERStructure` writes nothing for a policy whose live read fails or returns nothing: a
 `roleManagementPolicies` entry, or a group's `pimPolicy` for that access type, is `Failed` with the
 read's error (`PolicyNotFound` or `PimPolicyNotFound` for an empty answer), also under `-WhatIf`. A
-PIM policy change that would leave approval required with no approver is `Failed` with
-`ApproverRequired` in a `-WhatIf` plan, as in a run. `-Prune` never removes
+PIM policy change that empties an approver side while no other approver remains is `Failed` with
+`ApproverRequired` in a `-WhatIf` plan, as in a run, and so, for a directory role or a group policy,
+is `requireApproval` true over a live approval stage that names nobody. `-Prune` never removes
 a group's last remaining owner, nor its last remaining user owner, which Microsoft Graph refuses to
 remove even while a service principal is an owner (measured); the row is `Skipped`. A section set to
 `null` is not declared and gives no row. In a runspace with no host of its own, such as a thread job,

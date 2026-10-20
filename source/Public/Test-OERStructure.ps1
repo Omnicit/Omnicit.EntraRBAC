@@ -19,16 +19,18 @@ function Test-OERStructure {
 
     Text is validated as written on PowerShell 7.5 or later, where the document is parsed with
     ConvertFrom-Json -DateKind String. PowerShell 7.2 to 7.4 has no such parameter, and its
-    ConvertFrom-Json turns a string in ISO 8601 date-and-time form -- an assignment policy's
-    expirationDateTime such as "2027-01-01T00:00:00Z", for example -- into a date, so the text written
-    is lost: each such value is an Error at its own path that says to run on PowerShell 7.5 or later,
-    and Invoke-OERStructure refuses the document. A date alone ("2026-07-01") stays a string. An
-    -InputObject whose values the caller already turned into dates is read as ConvertTo-Json writes
-    them. A displayName that is not a string (a number, a boolean, an object or an array) is an Error
-    naming the type found, in groups, administrativeUnits, catalogs, accessPackages, assignmentPolicies
-    and accessReviews alike. A groups entry that declares template and no displayName, and whose
-    template cannot be turned into a name with its tokens (a token with no value, a name over 256
-    characters), is an Error at groups[i].template carrying the reason, so Invoke-OERStructure refuses
+    ConvertFrom-Json turns a string that holds an ISO 8601 date and time with seconds -- an assignment
+    policy's expirationDateTime such as "2027-01-01T00:00:00Z", for example -- into a date, so the text
+    written is lost: each such value is an Error at its own path that says to run on PowerShell 7.5 or
+    later, and Invoke-OERStructure refuses the document. A date alone ("2026-07-01"), or a time without
+    seconds ("2026-07-01T10:00"), stays a string. On PowerShell 7.5 or later an -InputObject whose
+    values the caller already turned into dates is read as ConvertTo-Json writes them; on 7.2 to 7.4
+    they come back as dates and are refused like any other. A displayName that is not a string (a
+    number, a boolean, an object or an array) is an Error naming the type found, in groups,
+    administrativeUnits, catalogs, accessPackages, assignmentPolicies and accessReviews alike. A groups
+    entry that declares template and no displayName, and whose template cannot be turned into a name
+    with its tokens (a placeholder no token supplies, a name over 256 characters), is an Error at
+    groups[i].template carrying the reason, so Invoke-OERStructure refuses
     the whole document; a token value is inserted as text, so a '$' in it, or a value that looks like
     a token, stays as written. A file that cannot be read is refused with InvalidStructureDocument and
     the reason the file system gave, never as an empty document. The principalType of a roleAssignments

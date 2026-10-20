@@ -1128,10 +1128,15 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 - **A public `Set-OER*` cmdlet's own read that decides a written value refuses the call when it fails
   or answers without the value** (Sprint 11 step 11, A24): never fall back to a parameter default, a
   declared-only write or a warning in its place. In `Set-OERGroupPimPolicy` the two duration reads and
-  the two reconcile reads of the MFA / authentication context pair publish a thrown read as itself and
-  refuse an empty one with `PimRuleValueUnknown`, before `ShouldProcess` and every PATCH; the put-back
-  read of the first half only warns, since its failure sends no default. The apply engine reaches the
-  pair reads when its diff binds one half, and its row is then `Failed`.
+  the two reconcile reads of the MFA / authentication context pair publish a thrown read as itself,
+  the approval rule read refuses a thrown read as `ApprovalRuleReadFailed`, and all five refuse a read
+  that answers without the value with `PimRuleValueUnknown`, before `ShouldProcess` and every PATCH.
+  The put-back read of the pair's first half is the one exception by design: it decides no written
+  value, so its failure only loses the put-back (it warns before any PATCH and writes no default). The
+  apply engine reaches the pair reads when its diff binds one half, and its row is then `Failed`.
+  Known and NOT fixed, outside this cmdlet (unmeasured findings of the step's audit): a successful read
+  that lacks a key makes `Set-OERAccessPackageAssignmentPolicy` write the body builder's default, and
+  an empty Azure Resource Manager body makes `Set-OERResourceGroup` send an empty location.
   `Why: docs/development/rationale.md#a-set-cmdlets-own-read-decides-a-written-value`
 - **`Send-OERPimRulePatch` is the single owner of sending a Microsoft Graph PIM rule set, one PATCH
   per rule.** That covers the pair put-back -- when Graph accepts the first rule of the MFA /

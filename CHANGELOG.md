@@ -19,11 +19,12 @@ when the session names none. Both commands write members, owners, eligibility an
 one fixed order, and a dynamic group's members as null, so a `-Prune` plan shows no member row for
 it.
 
-`Invoke-OERStructure` and `Set-OERGroupPimPolicy` write nothing after a policy read that fails or
-is empty, and a `-WhatIf` plan fails a PIM policy that would need approval by nobody, as a run
-does. `Set-OERAccessPackageAssignmentPolicy` refuses to write back a read `unknownFutureValue`
-unless `-RequestorScope` is given. A document with an unresolvable group template, or before
-PowerShell 7.5 an ISO 8601 date-and-time string, fails validation.
+`Invoke-OERStructure` and `Set-OERGroupPimPolicy` write no guessed value after a failed or empty
+read, and `-WhatIf` fails a directory role or group PIM policy needing approval by nobody. In a
+thread job `Invoke-OERStructure` needs `-Confirm:$false` or `-WhatIf` (`ConfirmationUnavailable`).
+`Set-OERAccessPackageAssignmentPolicy` refuses to write back a read `unknownFutureValue` without
+`-RequestorScope`. Validation refuses an unresolvable group template and, before PowerShell 7.5, a
+timestamp with seconds.
 
 ## [1.3.0] - 2026-10-19
 

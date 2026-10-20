@@ -12,12 +12,13 @@ function Invoke-OERStructure {
     -- and calls the matching Sync-OERStructure* handler for each item.
 
     Reading and validation: the document reaches the validation as written on PowerShell 7.5 or later.
-    On PowerShell 7.2 to 7.4 the JSON reader turns a string in ISO 8601 date-and-time form -- an
-    assignment policy's expirationDateTime such as "2027-01-01T00:00:00Z", for example -- into a date,
-    so the text written is lost; the validation then gives an Error at each such value and the document
-    is refused (StructureValidationFailed). A date alone ("2026-07-01") stays a string. A displayName
+    On PowerShell 7.2 to 7.4 the JSON reader turns a string that holds an ISO 8601 date and time with
+    seconds -- an assignment policy's expirationDateTime such as "2027-01-01T00:00:00Z", for example --
+    into a date, so the text written is lost; the validation then gives an Error at each such value and
+    the document is refused (StructureValidationFailed). A date alone ("2026-07-01"), or a time without
+    seconds ("2026-07-01T10:00"), stays a string. A displayName
     that is not a string is an Error, and so is a groups entry whose template cannot be turned into a
-    name with its tokens (a token with no value, a name over 256 characters), which earlier versions
+    name with its tokens (a placeholder no token supplies, a name over 256 characters), which earlier versions
     reported as that group's Failed row: the whole document is now refused, before anything is signed
     in to, read or written. A token value is inserted as text, so a '$' in it, or a value that looks
     like a token, stays as written. A file that cannot be read is refused with InvalidStructureDocument
@@ -170,8 +171,10 @@ function Invoke-OERStructure {
     Failed row as a run, where for a directory role or a group it used to say "would update" or
     "would set".
 
-    A run right after a write: Microsoft Graph can answer a read, for about 30 seconds after a write,
-    with the value from before it (measured), so a run started within that time can find a change the
+    A run right after a write: Microsoft Graph can answer a read with the value from before a write for
+    a while after it -- measured once, on a group description: reads within seconds of the write still
+    returned the old value, and reads 25 seconds later all matched -- so a run started soon after
+    another (within about 30 seconds, the wait the module's own live checks use) can find a change the
     previous run made still missing and send the same update again. The update is idempotent and
     changes nothing more, but its row reads Updated again; a later run reports it Unchanged.
 

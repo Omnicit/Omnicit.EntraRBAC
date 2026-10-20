@@ -966,10 +966,10 @@ Supply at most one expiration form. `durationInDays` sets an ISO-8601 `P{n}D` du
 leaves the live expiration unchanged on apply.
 
 `expirationDateTime` holds a date and a time, which PowerShell 7.5 or later reads as the string
-written. On PowerShell 7.2 to 7.4 the JSON reader turns a string in ISO 8601 date-and-time form into
-a date, so `Test-OERStructure` reports an `Error` at the value's path and `Invoke-OERStructure`
-refuses the document: validate and apply a document that carries one on PowerShell 7.5 or later. A
-date alone, such as `2026-07-01`, stays a string on every version.
+written. On PowerShell 7.2 to 7.4 the JSON reader turns a string that holds an ISO 8601 date and
+time with seconds into a date, so `Test-OERStructure` reports an `Error` at the value's path and
+`Invoke-OERStructure` refuses the document: validate and apply a document that carries one on
+PowerShell 7.5 or later. A date alone, such as `2026-07-01`, stays a string on every version.
 
 ### Disable assignment emails
 
