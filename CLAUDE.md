@@ -12,37 +12,32 @@ Do not restate project status, roster or release history here: `README.md` owns 
 
 ## Branch Policy -- ALWAYS CHECK FIRST
 
-**`main` is protected on GitHub and a direct push to it is REJECTED BY THE SERVER.** That is
-deliberate. It is not a lock to be worked around, and "continue on the current branch" is no longer
-an option a user can consent to on `main` -- consent does not move a server-side rule. Every change
-reaches `main` through a pull request.
+**`main` is protected on GitHub and a direct push to it is REJECTED BY THE SERVER.** It is not a
+lock to be worked around, and "continue on the current branch" is not an option a user can consent
+to on `main` -- consent does not move a server-side rule. Every change reaches `main` through a pull
+request. `Why: docs/development/rationale.md#branch-policy`
 
 **Before making any code change, Claude must:**
 
 1. Determine the current branch (`git branch --show-current`).
 2. If the current branch is `main`, create a feature branch before touching any files:
    `git checkout -b <branch-name>`, named from the table below. Propose the name and say what it is
-   for; do not stop and wait for permission to leave `main`, since staying there cannot produce a
-   push.
-3. If the current branch is some OTHER shared branch, stop and ask the user which branch to use --
-   there the old rule still holds, because the push would succeed.
+   for; do not stop and wait for permission to leave `main`.
+3. If the current branch is some OTHER shared branch, stop and ask the user which branch to use.
 4. Open a pull request against `main` when the work is ready. Never merge it without being asked to.
 
-**Merge requirements, enforced by GitHub on `main` (as measured on 2026-10-08):**
+**Merge requirements, enforced by GitHub on `main`:**
 
 - **Four status checks are required: `ubuntu-latest`, `windows-latest`, `macos-latest` and
   `package`.** The first three come from the build-and-test matrix's `name: ${{ matrix.os }}`, so
   the job name IS the required check name -- renaming the job, or changing the matrix, orphans the
   protection rule and blocks every open PR until the rule is renamed to match. `package` is the
-  `package` job's own `name: package` in the same workflow: the job that runs after all three legs
-  (`needs: build-and-test`) and proves on the pull request that the artefact is publishable,
-  without publishing it. Renaming its `name:` (or, with `name:` removed, its job id, which the check
-  name then falls back to) orphans the fourth rule the same way. Change both together.
+  `package` job's own `name: package` (`needs: build-and-test`); renaming its `name:` (or, with
+  `name:` removed, its job id, which the check name then falls back to) orphans the fourth rule the
+  same way. Change both together.
 - **`package` never holds the gate alone.** It has no `if:` of its own, so when a leg fails or is
-  skipped GitHub skips `package` too, and a skipped check counts as passed ("Troubleshooting
-  required status checks": successful statuses are `success`, `skipped` and `neutral`). The three
-  leg checks are what stop a red pull request, so never drop them from the rule in favour of
-  `package`.
+  skipped GitHub skips `package` too, and a skipped check counts as passed. The three leg checks are
+  what stop a red pull request, so never drop them from the rule in favour of `package`.
 - **The branch must be up to date with `main` before it can merge** (the rule is strict). A branch
   that has fallen behind is rebased onto `main` and force-pushed; the checks then re-run against the
   rebased tip.
@@ -67,19 +62,18 @@ reaches `main` through a pull request.
 ## Project Overview
 
 `Omnicit.EntraRBAC` is a PowerShell 7.2+ (Core-only) module built and maintained by Omnicit AB. MIT
-licensed and **published on the public PowerShell Gallery for anyone to use**: 1.0.0 went out by
-hand on 2026-09-18, and everything since publishes itself -- see **Publishing** below.
+licensed and **published on the public PowerShell Gallery for anyone to use**; it publishes itself
+-- see **Publishing** below.
 
 It manages RBAC building blocks across many Entra ID and Azure tenants: Entra ID groups, PIM,
 Administrative Units, Entitlement Management, Access Reviews, Azure resources and RBAC, plus a JSON
 inventory and a declarative apply engine. Command prefix is `OER`.
 
 **The canonical working tree is the clone whose `origin` is
-`github.com/Omnicit/Omnicit.EntraRBAC`**, wherever it sits on disk. The local path differs from
-machine to machine, so identify it with `git remote get-url origin`, never by its directory. The
-older clone, whose `origin` is the private repository, is to be archived; do not commit to it, and
-do not treat a change made there as made. Two live clones of one module is how a fix lands in the
-wrong repository -- that has already happened here.
+`github.com/Omnicit/Omnicit.EntraRBAC`**, wherever it sits on disk; identify it with
+`git remote get-url origin`, never by its directory. The older clone, whose `origin` is the private
+repository, is to be archived: do not commit to it, and do not treat a change made there as made.
+`Why: docs/development/rationale.md#project-overview`
 
 The phase roadmap (phases 0-5) is **complete** -- the module is feature-complete. See `CHANGELOG.md`
 for what each release delivered.
@@ -127,34 +121,26 @@ azure-pipelines.yml           # Build + Test only, no Deploy stage -- it never p
 There is **no `source/Classes` directory**. The loader iterates one, but argument completion is
 scriptblock-based instead. `Why: docs/development/rationale.md#completers`
 
-**The build-and-test job's `if:` condition is now wired to the merge gate -- do not read it as a
-billing guard alone, and do not reason about it from GitHub's general rule for skipped jobs.** The
-job is declared
-`if: ${{ !github.event.repository.private || github.event_name == 'workflow_dispatch' }}`, because
-standard runners are free and unmetered only on a PUBLIC repository. `ubuntu-latest`,
-`windows-latest`, `macos-latest` and `package` are the four REQUIRED checks on `main`, and that
-condition decides whether the first three ever come into existence; `package` follows them through
-`needs: build-and-test`.
+**The build-and-test job's `if:` condition is wired to the merge gate -- do not read it as a billing
+guard alone, and do not reason about it from GitHub's general rule for skipped jobs.** The job is
+declared `if: ${{ !github.event.repository.private || github.event_name == 'workflow_dispatch' }}`.
+`ubuntu-latest`, `windows-latest`, `macos-latest` and `package` are the four REQUIRED checks on
+`main`, and that condition decides whether the first three ever come into existence; `package`
+follows them through `needs: build-and-test`.
+`Why: docs/development/rationale.md#required-checks-and-the-matrix`
 
-**The mechanism is the MATRIX, not the skip.** GitHub documents the opposite of what happens here:
-a job skipped by a condition reports Success and does NOT block a pull request ("Troubleshooting
-required status checks"). That rule does not rescue this workflow, because `build-and-test` is a
-matrix job and a job-level `if:` is evaluated BEFORE the matrix expands. The three legs are
-therefore never created, so nothing ever reports the three check names -- and a required check that
-never reports stays pending forever instead of passing (community discussion #9141). The fourth
-check does not change that: `package` is skipped with the job it needs, and a skipped check counts
-as passed, but the three matrix names still never report. Make this repository private again and
-every pull request blocks permanently, including the pull request that would fix it. Turning the
-repository private is therefore a change to this condition, or to the protection rule, made in the
-SAME change and never afterwards.
+**The mechanism is the MATRIX, not the skip.** A job-level `if:` is evaluated BEFORE the matrix
+expands, so the three legs are never created, nothing ever reports the three check names, and a
+required check that never reports stays pending forever instead of passing; `package` being skipped
+(a skipped check counts as passed) does not change that. Make this repository private again and
+every pull request blocks permanently, including the one that would fix it, so turning it private
+is a change to this condition, or to the protection rule, made in the SAME change and never
+afterwards.
 
 **Rewriting this workflow as three separate jobs without a matrix INVERTS the failure, into the
-worse one.** Without a matrix there is nothing to expand: the job-level `if:` would then skip three
-jobs that do exist, each would report Success under the documented rule, and the merge gate would
-go GREEN having run not one test -- `package` included, since it would be skipped with them. The
-matrix is what makes a skip fail loudly here, so keep it -- or, if the jobs are ever split, make the
-required checks something a skipped job cannot satisfy.
-
+worse one:** the job-level `if:` would skip three jobs that do exist, each would report Success, and
+the merge gate would go GREEN having run not one test. Keep the matrix -- or, if the jobs are ever
+split, make the required checks something a skipped job cannot satisfy.
 **Do not maintain a function roster in this file.** Read it from the tree instead:
 
 ```powershell
@@ -184,64 +170,51 @@ statically, importing nothing).
 
 **`dochygiene.tests.ps1` applies TWO object-id rules, split by what the file is.** Under `docs/` and
 `specs/` a GUID is prose, so it must be a `00000000-0000-0000-0000-0000000000NN` placeholder. Under
-`source/` and `tests/` a GUID is a fixture, so the rule is that it must not have **version-4 shape**:
-every Entra ID and ARM object id is v4 and no invented fixture needs to be, which leaves the roughly
-seventy existing `1111...`/`aaaa...` fixtures untouched and still readable. Exactly three v4 values
-are pinned by name -- the module's own manifest GUID, the Microsoft Graph Command Line Tools app id,
-and the Reader built-in role definition id. **Do not add a fourth: allocate a placeholder instead**,
-from the register in `docs/live-verification/README.md`, which also records the next free
-`...NNN` and `personN`. **The gate reads that register**, so it is red on a placeholder used in
+`source/` and `tests/` a GUID is a fixture and must not have **version-4 shape**. Exactly three v4
+values are pinned by name -- the module's own manifest GUID, the Microsoft Graph Command Line Tools
+app id, and the Reader built-in role definition id. **Do not add a fourth: allocate a placeholder
+instead**, from the register in `docs/live-verification/README.md`, which also records the next free
+`...NNN` and `personN`. **The gate reads that register**: it is red on a placeholder used in
 `source/`, `tests/`, `docs/examples/` or `docs/development/` without a row marked taken, and on a
-register that disagrees with itself -- overlapping rows, a repeated slot description, a table without
-exactly one FREE row, an "Allocate from" sentence that disagrees with the FREE rows, a slot taken
-at or above a FREE start that is not a named outlier, or a placeholder cell it cannot read. Add the
-row in the same commit that uses the slot. **It also holds tenant domains** (`.onmicrosoft.com`, `.onmicrosoft.us`, `.onmschina.cn`) to a
-fixed allowlist of four labels, `contoso`, `fabrikam`, `other` and
-`oer-sovereign-verify-doesnotexist`, reading `%40` as `@` and `\.` as `.`, so a URL-encoded UPN and a
-regex-form domain are caught too. Replace a real label with `contoso`; never widen the allowlist to
-make the gate green. A credential-shaped literal that a test needs (the bearer-scrub fixtures)
-must carry `NOT-A-REAL-TOKEN` inside the VALUE; `REDACTED` works the same way.
-`Why: docs/development/rationale.md#bearer-scrub-tests`
-
+register that disagrees with itself -- overlapping rows, a repeated slot description, a table
+without exactly one FREE row, an "Allocate from" sentence that disagrees with the FREE rows, a slot
+taken at or above a FREE start that is not a named outlier, or a placeholder cell it cannot read.
+Add the row in the same commit that uses the slot. **It also holds tenant domains**
+(`.onmicrosoft.com`, `.onmicrosoft.us`, `.onmschina.cn`) to a fixed allowlist of four labels,
+`contoso`, `fabrikam`, `other` and `oer-sovereign-verify-doesnotexist`, reading `%40` as `@` and
+`\.` as `.` (so a URL-encoded UPN and a regex-form domain are caught). Replace a real label with
+`contoso`; never widen the allowlist to make the gate green. A credential-shaped literal that a test
+needs (the bearer-scrub fixtures) must carry `NOT-A-REAL-TOKEN` inside the VALUE; `REDACTED` works
+the same way. `Why: docs/development/rationale.md#bearer-scrub-tests`
 **`dochygiene.tests.ps1` also reads Markdown the way GitHub renders it.** In every tracked `.md`
 under `docs/` and `specs/`, and in `README.md` and `CHANGELOG.md` at the root, no angle bracket
-that looks like a tag (`<word>`, `</word>`, `<!...>`, `<?...>`) may stand outside code: GitHub
-renders it as nothing, so a redacted `<id>` stand-in vanishes from the record. `CHANGELOG.md`'s
-`[Unreleased]` also becomes the GitHub release body (the publish job's `gh release create
---notes-file`), which GitHub renders the same way and hides the bracket too -- but the PowerShell
-Gallery shows those same notes as HTML-encoded plain text, where a bracket is SHOWN, not hidden,
-and a backslash escape would show there too, permanently. So in `CHANGELOG.md` use backticks only,
-never a backslash. Elsewhere, write the token inside backticks, or as `\<id>` where a backtick
-would close a code span the line already has; quotes alone do not escape it. An autolink
-(`<https://...>`) or deliberate inline HTML (`<br>`) is refused the same way, since the check is
-exactly the reference algorithm -- write a bare URL instead, or put the markup in backticks. Fenced
-blocks and code spans are skipped with the algorithm documented in
-`ConvertTo-DocHygieneMarkdownProse`'s own `.DESCRIPTION`, in `tests/QA/dochygiene.tests.ps1`. That
-algorithm is the maintainer's `Test-MdAngleBrackets.py`, a script kept outside this repository that
-the gate follows where the two differ (the gate's own comment says so), and deliberately not
-CommonMark's: never "correct" it towards CommonMark, and carry a change made on either side to the
-other, so the two keep agreeing hit for hit.
-
-**`docsync.tests.ps1` holds `README.md` and the about topic against each other.** Each already had
-its own "names every exported cmdlet" check, but both matched the whole FILE, so a cmdlet mentioned
-only in a Quick Start snippet passed while missing from the roster. This gate scopes the roster to
-`## Available Cmdlets` and `COMMAND COHORTS`, checks each `### Cohort (N)` count against the cmdlets
-that cohort is the FIRST to name, and requires the two documents to agree word for word on the
-tenant-switch verdict per sign-in type and on the device-code known limitation. It also holds every
-sentence in either whole document that says "all N cmdlets" or "all N exported cmdlets" -- README's
-introduction and `## Available Cmdlets`, the about topic's LONG DESCRIPTION -- to the count of
-`FunctionsToExport`, with a floor on the matches so a reworded sentence cannot make it vacuous; a
+that looks like a tag (`<word>`, `</word>`, `<!...>`, `<?...>`) may stand outside code. In
+`CHANGELOG.md` use backticks only, never a backslash; elsewhere, write the token inside backticks,
+or as `\<id>` where a backtick would close a code span the line already has (quotes alone do not
+escape it). An autolink (`<https://...>`) or deliberate inline HTML (`<br>`) is refused the same way
+-- write a bare URL instead, or put the markup in backticks. Fenced blocks and code spans are
+skipped with the algorithm documented in `ConvertTo-DocHygieneMarkdownProse`'s own `.DESCRIPTION`,
+in `tests/QA/dochygiene.tests.ps1`: the maintainer's `Test-MdAngleBrackets.py` (kept outside this
+repository; the gate follows it where the two differ), deliberately not CommonMark's. Never
+"correct" it towards CommonMark, and carry a change made on either side to the other, so the two
+keep agreeing hit for hit. `Why: docs/development/rationale.md#qa-gates`
+**`docsync.tests.ps1` holds `README.md` and the about topic against each other.** It scopes the
+roster to `## Available Cmdlets` and `COMMAND COHORTS`, checks each `### Cohort (N)` count against
+the cmdlets that cohort is the FIRST to name, and requires the two documents to agree word for word
+on the tenant-switch verdict per sign-in type and on the device-code known limitation. It also holds
+every sentence in either whole document that says "all N cmdlets" or "all N exported cmdlets" --
+README's introduction and `## Available Cmdlets`, the about topic's LONG DESCRIPTION -- to the count
+of `FunctionsToExport`, with a floor on the matches so a reworded sentence cannot make it vacuous; a
 count written another way ("98 cmdlets" with no "all", a spelled-out number) is not seen. It
 deliberately does NOT bind the surrounding prose -- the sovereign-cloud, tenant-profile and
 permissions sections are rewritten per medium on purpose.
 
 **Test files named after no single function.** Ten cross-cutting suites exist. Do **NOT** delete
 any of them as an orphan when auditing the one-test-file-per-function invariant:
+`Why: docs/development/rationale.md#qa-gates`
 
 - `Unit/Private/BasePathDefault.Cohort.Tests.ps1` -- asserts all seven `-BasePath`/`-ProfileBasePath`
-  default carriers resolve cross-platform (issue #40). It sits under `Private/` because five of the
-  seven carriers are public and two are private, so it belongs to neither cohort exclusively. Do not
-  "fix" its location by moving it.
+  default carriers resolve cross-platform (issue #40). Do not "fix" its location by moving it.
 - `Unit/Public/AccessReview.Pipeline.Tests.ps1` -- cross-cmdlet pipeline suite.
 - `Unit/Public/AmbiguousName.Guard.Tests.ps1` -- asserts every public call site of an
   ambiguity-refusing `Resolve-OER*Id` helper surfaces the candidate ids instead of a first match.
@@ -249,24 +222,19 @@ any of them as an orphan when auditing the one-test-file-per-function invariant:
   reports the no-updatable-property condition as `NothingToUpdate`, and that
   `Set-OERRoleManagementPolicy`'s separate "no rule differs" case keeps its distinct `NoChange` id.
 - `Unit/Public/GroupAliasOrder.Cohort.Tests.ps1` -- AST-driven: asserts every `source/Public/*Group*.ps1`
-  file declaring a `-Group` parameter lists the `GroupId` alias before the generic `Id` alias, so a
-  piped principal can never mis-bind as the piped group.
+  file declaring a `-Group` parameter lists the `GroupId` alias before the generic `Id` alias.
 - `Unit/Public/AdministrativeUnitAliasOrder.Cohort.Tests.ps1` -- the same AST-driven pattern for every
-  `-AdministrativeUnit` parameter, so a piped member's own `Id`/`DisplayName` can never mis-bind as
-  the piped parent unit.
-- `Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` -- AST-driven: asserts every public cmdlet that
+  `-AdministrativeUnit` parameter.- `Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` -- AST-driven: asserts every public cmdlet that
   declares `-TenantId` carries `[ValidateNotNullOrEmpty()]` on it, except `Connect-OER`, whose
   `-TenantId` must carry no validation so its own `InvalidTenantId` refusal runs after the
-  session-uncertain marker is set (A12, BL-94); it also drives the binding refusal for the cmdlets
+  session-uncertain marker is set; it also drives the binding refusal for the cmdlets
   the live checklist uses. It imports the module, so it installs the transport tripwire.
 - `Unit/Public/DirectoryRoleInventory.RoundTrip.Tests.ps1` -- exports the two directory sections
   (`directoryRoleManagementPolicies`, `directoryRoleAssignments`) from a mocked live state with
   `Get-OERInventory` and applies them back through `Invoke-OERStructure`, with and without `-Prune`,
-  asserting every row is `Unchanged`. It runs with a session -- a state the test sets for one
-  tenant, `Initialize-OERAuth` mocked -- so the export names that tenant (`tenantId`) and the apply
-  compares it; the export applied under another tenant is refused with `DocumentTenantMismatch`,
-  reading and writing nothing.
-- `Unit/Public/WarningBeforeConfirmation.Cohort.Tests.ps1` -- AST-driven: asserts no
+  asserting every row is `Unchanged`. It runs with a session (a state the test sets for one tenant,
+  `Initialize-OERAuth` mocked), so the export names that tenant (`tenantId`); applied under another
+  tenant it is refused with `DocumentTenantMismatch`, reading and writing nothing.- `Unit/Public/WarningBeforeConfirmation.Cohort.Tests.ps1` -- AST-driven: asserts no
   `source/Public/*.ps1` file writes a `Write-Warning` after its first `$PSCmdlet.ShouldProcess`,
   except the warnings its allowlist names with a reason (an entry matching no warning, or two, fails
   too); pins by name and text the twenty cmdlets that warn before their gate; and proves each moved
@@ -295,8 +263,6 @@ any of them as an orphan when auditing the one-test-file-per-function invariant:
 
 # Full test suite -- the authoritative CI gate.
 # QA tests + Unit Pester + PSScriptAnalyzer + 80% code coverage enforcement
-# (measured 2026-10-08: 94.89% over 18,579 commands, locally on Windows and on all three CI
-#  runners of PR #34; macOS measured 94.88% on main's run of bfe1b1a, whose source is the same)
 ./build.ps1 -Tasks test
 
 # Import from source for quick local development
@@ -315,10 +281,9 @@ gate is running.
 **Under `latest`, a local `output/RequiredModules` goes stale and LOCAL GREEN IS NOT CI GREEN.**
 `RequiredModules.psd1` asks for the newest release of every module
 (`Why: docs/development/rationale.md#dependencies`), but a local tree is resolved once and then left
-alone, while every CI run resolves afresh on a clean runner. Measured on 2026-09-21: a local tree
-held `Microsoft.Graph.Authentication 2.36.0` while CI resolved `2.40.0` on the same commit. So a
-full local pass proves the suite against whatever happens to be on disk, not against what the merge
-gate will run. Refresh before trusting a local run, especially before opening or updating a PR:
+alone, while every CI run resolves afresh on a clean runner. So a full local pass proves the suite
+against whatever happens to be on disk, not against what the merge gate will run. Refresh before
+trusting a local run, especially before opening or updating a PR:
 
 ```powershell
 ./build.ps1 -ResolveDependency -Tasks noop -UseModuleFast
@@ -330,14 +295,12 @@ a tree resolved without it also carries the unpacked `.nupkg` directories (`_man
 `dependencies`, `package`) beside a module's version folder. The CI workflow's dependency-report
 step prints the versions each run actually resolved, and is the authority on what the gate tested.
 
-**A refresh ADDS versions and removes nothing.** After the 2026-09-21 refresh the local tree held
-`Microsoft.Graph.Authentication` at both `2.36.0` and `2.40.0`, and still held an `Az.Resources`
-that `RequiredModules.psd1` no longer asks for at all. That is usually harmless, since PowerShell
-loads the HIGHEST version available when importing by name, so a refreshed tree does test the new
-one -- but it means the directory is a growing record of every version ever resolved, not a picture
-of what is currently requested. Confirm the version under test with
-`Get-Module <name> -ListAvailable` rather than by reading the folder listing, and delete the
-directory outright if a genuinely clean resolve is needed.
+**A refresh ADDS versions and removes nothing.** The directory is a growing record of every version
+ever resolved, not a picture of what is currently requested; PowerShell loads the HIGHEST version
+available when importing by name, so a refreshed tree does test the new one. Confirm the version
+under test with `Get-Module <name> -ListAvailable` rather than by reading the folder listing, and
+delete the directory outright if a genuinely clean resolve is needed.
+`Why: docs/development/rationale.md#build-and-test-commands`
 
 ---
 
