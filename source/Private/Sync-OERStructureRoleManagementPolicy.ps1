@@ -49,6 +49,10 @@ function Sync-OERStructureRoleManagementPolicy {
     handler emits Skipped instead of calling Set-OERRoleManagementPolicy. Reads always execute even
     under -WhatIf so the diff/plan is available.
 
+    A read of the live policy that fails, or that returns no policy and no error, reports Failed --
+    with the read's own error, or with PolicyNotFound -- before the approver lookup, the diff and the
+    ShouldProcess gate, so nothing is written and -WhatIf reports the same row (BL-40).
+
     An entry whose change would send approvers naming nobody (the diff's ApproverRequired flag) is
     reported Failed, with the ApproverRequired error Set-OERRoleManagementPolicy publishes for the
     same refusal, before the ShouldProcess gate: the -WhatIf plan and the run report the same row,
@@ -119,15 +123,38 @@ function Sync-OERStructureRoleManagementPolicy {
         }
 
         # -- Read the current policy --------------------------------------------------------
+        # BL-40: -ErrorAction Stop. Get-OERRoleManagementPolicy reports a failed read (a role or policy
+        # it cannot find, a 403, a scope it cannot resolve) as a NON-terminating error and returns
+        # nothing. Left at the preference's default, the error went to the stream and the read became
+        # $null, which the diff took as "every declared field changed" -- and, for an entry declaring
+        # one approver side, as an EMPTY undeclared side, so the write removed every live approver on
+        # it. A failed read is reported as itself, with one Failed row, and nothing is written.
         $Cur = $null
         try {
-            $Cur = Get-OERRoleManagementPolicy -Role $Item.role @ScopeSplat
+            $Cur = Get-OERRoleManagementPolicy -Role $Item.role @ScopeSplat -ErrorAction Stop
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             $Caller.WriteError($PSItem)
             ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Failed' `
                 -Detail "could not read role management policy for '$($Item.role)' at '$($Item.scope)': $($PSItem.Exception.Message)" `
                 -ErrorRecord $PSItem
+            return
+        }
+        if ($null -eq $Cur) {
+            # A read that answered with no policy and no error is no evidence of the live policy either:
+            # comparing the declared fields with $null would send every one of them. Refused before the
+            # approver lookup, the diff, the ApproverRequired check and ShouldProcess, so the -WhatIf plan
+            # reports the same row. PolicyNotFound is the id Get-OERRoleManagementPolicy publishes for a
+            # policy it cannot find.
+            $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new("Get-OERRoleManagementPolicy returned no role management policy for '$($Item.role)' at '$($Item.scope)' and no error, so the live policy is unknown. The policy was not changed."),
+                'PolicyNotFound',
+                [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                $Label)
+            $Caller.WriteError($ErrRec)
+            ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Failed' `
+                -Detail "Get-OERRoleManagementPolicy returned no policy for '$($Item.role)' at '$($Item.scope)'; the policy was not changed" `
+                -ErrorRecord $ErrRec
             return
         }
 

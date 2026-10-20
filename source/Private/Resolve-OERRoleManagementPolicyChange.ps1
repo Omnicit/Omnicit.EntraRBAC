@@ -42,8 +42,10 @@ function Resolve-OERRoleManagementPolicyChange {
     the whole approver list -- is not sent by this diff's caller: the result's ApproverRequired
     property is $true for it (never with -SendDeclaredApproverSideOnly), and
     Sync-OERStructureRoleManagementPolicy reports the entry Failed before its ShouldProcess gate. A
-    null Current (the policy could not be read) is treated as everything-declared-is-changed. No
-    Graph, ARM, or authentication occurs.
+    null Current is treated as everything-declared-is-changed; neither engine caller passes one, since
+    both report a policy read that failed (or, for the Azure Resource Manager caller, returned no
+    policy) as Failed before this diff runs, so that branch serves a direct caller only. No Graph, ARM,
+    or authentication occurs.
 
     .PARAMETER Declared
     One roleManagementPolicies[] entry from the structure document. Recognized fields:
@@ -149,8 +151,13 @@ function Resolve-OERRoleManagementPolicyChange {
             $D = [int]$Declared.($Map.Decl)
             $C = if ($null -ne $Current -and $null -ne $Current.($Map.Cur)) { [int]$Current.($Map.Cur) } else { $null }
         }
-        # An unreadable policy (null Current) forces every declared field to be written, matching the
-        # sibling Resolve-OERGroupPimPolicyChange. A live policy that WAS read but whose single
+        # A null Current forces every declared field to be written, matching the sibling
+        # Resolve-OERGroupPimPolicyChange. It no longer reaches this diff from the engine (BL-40): both
+        # engine callers read the live policy with -ErrorAction Stop and report a read that failed as
+        # Failed, writing nothing; Sync-OERStructureRoleManagementPolicy also refuses a read that
+        # returned no policy and no error (PolicyNotFound), and Get-OERDirectoryRoleManagementPolicy
+        # writes an error for each -Role read that returns no policy. The branch stays for a direct
+        # caller. A live policy that WAS read but whose single
         # property could not be derived leaves $C null -- and PowerShell's -ne $null is true for every
         # non-null left operand (including $false and 0) -- so that field is written too. That is the
         # right call: it cannot be proven equal, and for the durations the live value genuinely is not

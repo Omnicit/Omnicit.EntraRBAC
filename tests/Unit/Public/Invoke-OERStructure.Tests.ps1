@@ -1207,6 +1207,114 @@ Describe 'Invoke-OERStructure roleManagementPolicies touches only the declared p
     }
 }
 
+Describe 'Invoke-OERStructure roleManagementPolicies: a failed policy read writes nothing (BL-40)' {
+    # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere above
+    # it, as at a prompt, with the runspace's own error preference (Continue). The REAL
+    # Get-OERRoleManagementPolicy reads the live policy: the role definition lookup is answered and the
+    # policy assignment list fails, so the cmdlet reports PolicyNotFound as a non-terminating error and
+    # returns nothing. The entry declares only approvers.users; a read taken as $null seeded the groups side
+    # EMPTY and the write removed every live group approver. The script installs its own fakes in ITS copy
+    # of the module scope and logs every ARM request, approver lookup and policy write with AppendAllText,
+    # whose path is substituted into the text. A second scenario replaces the read with one that returns no
+    # policy and no error. In the control the policy list answers, so the scenario can tell a refusal from
+    # silence.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        function script:New-RfNoTryScenario {
+            param([string]$Log, [string]$PolicyList)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Get-OERSubscriptionHomeTenant -Value { [pscustomobject]@{ Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'; SubscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null } }
+    Set-Item -Path function:script:Resolve-OERDeclaredApprover -Value { param($Declared) [System.IO.File]::AppendAllText('#LOG#', "APPROVER LOOKUP`n"); $Declared }
+    Set-Item -Path function:script:Set-OERRoleManagementPolicy -Value {
+        [CmdletBinding(SupportsShouldProcess)]
+        param([string]$Role, [string]$Scope, [string[]]$ApproverUser, [string[]]$ApproverGroup)
+        [System.IO.File]::AppendAllText('#LOG#', "POLICY SET users=$($ApproverUser -join ',') groups=$($ApproverGroup -join ',')`n")
+        [pscustomobject]@{ PolicyId = 'p-1' }
+    }
+    Set-Item -Path function:script:Invoke-OERArmRequest -Value {
+        param([string]$Method = 'GET', [string]$Path, [hashtable]$Body, [switch]$All)
+        [System.IO.File]::AppendAllText('#LOG#', "$Method $Path`n")
+        $Sub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $Reader = "$Sub/providers/Microsoft.Authorization/roleDefinitions/bbbb4040-0000-0000-0000-000000000001"
+        if ($Method -eq 'GET' -and $Path -like '*/roleDefinitions?*') { return [pscustomobject]@{ value = @([pscustomobject]@{ id = $Reader }) } }
+        if ($Method -eq 'GET' -and $Path -like '*/roleManagementPolicyAssignments?*') {
+            if ('#POLICYLIST#' -eq 'fails') { throw 'ARM 403 AuthorizationFailed' }
+            return [pscustomobject]@{ value = @([pscustomobject]@{ properties = [pscustomobject]@{
+                policyId = "$Sub/providers/Microsoft.Authorization/roleManagementPolicies/eeee4040-0000-0000-0000-000000000001"
+                roleDefinitionId = $Reader; scope = $Sub; effectiveRules = @() } }) }
+        }
+        throw "unexpected $Method $Path"
+    }
+    if ('#POLICYLIST#' -eq 'noobject') {
+        # A read that answers with no policy and no error.
+        Set-Item -Path function:script:Get-OERRoleManagementPolicy -Value {
+            [CmdletBinding()]
+            param([string]$Role, [string]$Scope)
+            [System.IO.File]::AppendAllText('#LOG#', "POLICY GET $Scope`n")
+        }
+    }
+}
+$Json = '{ "version": "1.0", "roleManagementPolicies": [ { "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "approvers": { "users": [ "dddd4040-0000-0000-0000-000000000001" ] } } ] }'
+Invoke-OERStructure -Json $Json -Confirm:$false -ErrorVariable RunErrors | ForEach-Object { "ROW:$($_.Action):$($_.Item)" }
+$RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' } | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#POLICYLIST#', $PolicyList))
+        }
+        $script:RfLabel = 'Reader @ /subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $script:RfPolicyList = 'GET /subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleManagementPolicyAssignments?api-version=2020-10-01'
+    }
+
+    It 'reaches the end of a script with no try above it, with one Failed row and the read''s record, and writes nothing' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-RfNoTryScenario -Log $Log -PolicyList 'fails')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        # Reached: the real cmdlet sent the policy list request, and it failed.
+        $Logged | Should -Contain $script:RfPolicyList
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @("ROW:Failed:$($script:RfLabel)")
+        # The read's own record reached the error stream, once, and no other error did.
+        @($Run.Errors).Count | Should -Be 1
+        $Run.Errors[0] | Should -BeExactly 'ARM 403 AuthorizationFailed'
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @('ERRID:PolicyNotFound,Invoke-OERStructure')
+        # Nothing after the read ran: no approver lookup and no policy write.
+        @($Logged | Where-Object { $_ -like 'POLICY SET*' }) | Should -BeNullOrEmpty -Because "the requests were:`n$($Logged -join "`n")"
+        $Logged | Should -Not -Contain 'APPROVER LOOKUP'
+        @($Logged | Where-Object { $_ -notlike 'GET *' }) | Should -BeNullOrEmpty
+        @($Run.Prompts).Count | Should -Be 0
+    }
+
+    It 'reaches the end of a script with no try above it, with one Failed PolicyNotFound row, when the read returns no policy and no error, and writes nothing' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-RfNoTryScenario -Log $Log -PolicyList 'noobject')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        # Reached: the read was made at the scope the engine resolved.
+        $Logged | Should -Contain 'POLICY GET /subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @("ROW:Failed:$($script:RfLabel)")
+        @($Run.Errors).Count | Should -Be 1
+        $Run.Errors[0] | Should -BeExactly ("Get-OERRoleManagementPolicy returned no role management policy for 'Reader' at " +
+            "'/subscriptions/aaaa1111-0000-0000-0000-000000000001' and no error, so the live policy is unknown. The policy was not changed.")
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @('ERRID:PolicyNotFound,Invoke-OERStructure')
+        @($Logged | Where-Object { $_ -like 'POLICY SET*' }) | Should -BeNullOrEmpty -Because "the requests were:`n$($Logged -join "`n")"
+        $Logged | Should -Not -Contain 'APPROVER LOOKUP'
+        @($Run.Prompts).Count | Should -Be 0
+    }
+
+    It 'writes the declared side in the same script when the read answers, so the scenario can tell a refusal from silence' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-RfNoTryScenario -Log $Log -PolicyList 'answers')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        $Logged | Should -Contain 'APPROVER LOOKUP'
+        $Logged | Should -Contain 'POLICY SET users=dddd4040-0000-0000-0000-000000000001 groups='
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @("ROW:Updated:$($script:RfLabel)")
+        @($Run.Errors).Count | Should -Be 0
+    }
+}
+
 Describe 'Invoke-OERStructure roleAssignments grouped on the resolved scope' {
     # Two entries that spell one Azure scope differently must form ONE group with ONE prune pass.
     # Grouped on the text instead, each group's pass removed the other group's declared assignment

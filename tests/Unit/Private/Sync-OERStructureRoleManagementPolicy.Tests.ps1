@@ -724,4 +724,201 @@ Describe 'Sync-OERStructureRoleManagementPolicy' {
             $Rows[0].Item | Should -BeExactly "Reader @ $DocScope"
         }
     }
+
+    # BL-40 (Sprint 11 step 11): the handler reads the live policy with -ErrorAction Stop, since
+    # Get-OERRoleManagementPolicy reports a failed read (a role or policy it cannot find, a 403, a scope
+    # it cannot resolve) as a NON-terminating error and returns nothing. Left at the preference's default,
+    # the error went to the stream and the read became $null: the diff then treated every declared field
+    # as changed and, for an entry declaring one approver side, seeded the undeclared side EMPTY instead
+    # of from the live policy, so the write removed every live approver on that side. A read that returns
+    # no policy and no error is refused the same way (PolicyNotFound). Both come before the approver
+    # lookup, the diff, the ApproverRequired check and ShouldProcess, so -WhatIf reports the same row.
+    #
+    # The calls below carry NO -ErrorAction: any -ErrorAction on the wrapper sets the preference in the
+    # wrapper's scope and shadows the global one the module reads. The global preference is pinned to
+    # Continue instead, so the proof does not depend on the preference the runner carries (Stop on CI
+    # would turn the read's error terminating by itself and hide a missing -ErrorAction Stop).
+    Context 'a failed read of the live policy never feeds a write (BL-40)' {
+        BeforeAll {
+            InModuleScope $script:moduleName {
+                function script:Invoke-SyncRmpReadViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureRoleManagementPolicy -Item $Item -Caller $PSCmdlet
+                }
+            }
+            $script:RmpReadScope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            $script:RmpReadLabel = "Reader @ $($script:RmpReadScope)"
+            # Installs the read failure a case names, in module scope, for the current It.
+            function script:Set-RmpReadFailure {
+                param([string]$Failure)
+                InModuleScope $script:moduleName -Parameters @{ Failure = $Failure } {
+                    param($Failure)
+                    switch ($Failure) {
+                        'NonTerminatingMock' {
+                            # The shape the real cmdlet fails in: a [CmdletBinding()] body that writes
+                            # its record through $PSCmdlet.WriteError and returns nothing.
+                            Mock Get-OERRoleManagementPolicy {
+                                [CmdletBinding()] param($Role, $Scope, $Subscription, $ManagementGroup, $ResourceGroup)
+                                $script:RmpReadLog.Add('Get-OERRoleManagementPolicy')
+                                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                                        [System.Exception]::new('ARM 403 AuthorizationFailed'), 'RoleDefinitionNotFound',
+                                        [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Role))
+                            }
+                        }
+                        'NonTerminatingReal' {
+                            # The REAL Get-OERRoleManagementPolicy runs: the role definition lookup is
+                            # answered and the policy assignment list fails, so the cmdlet's own
+                            # Write-CmdletError publishes PolicyNotFound, non-terminating.
+                            Mock Invoke-OERArmRequest {
+                                $script:RmpReadLog.Add("ARM $Path")
+                                if ($Path -like '*/providers/Microsoft.Authorization/roleDefinitions?*') {
+                                    return [PSCustomObject]@{ value = @([PSCustomObject]@{
+                                                id = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleDefinitions/bbbb4040-0000-0000-0000-000000000001' }) }
+                                }
+                                if ($Path -like '*/providers/Microsoft.Authorization/roleManagementPolicyAssignments?*') {
+                                    throw 'ARM 403 AuthorizationFailed'
+                                }
+                                throw "unexpected ARM request: $Path"
+                            }
+                        }
+                        'Terminating' {
+                            Mock Get-OERRoleManagementPolicy {
+                                $script:RmpReadLog.Add('Get-OERRoleManagementPolicy')
+                                throw [System.Management.Automation.ErrorRecord]::new(
+                                    [System.Exception]::new('ARM 503 ServiceUnavailable'), 'ArmServiceUnavailable',
+                                    [System.Management.Automation.ErrorCategory]::ReadError, $Role)
+                            }
+                        }
+                        'NoObject' {
+                            # No error and no object: the live policy is just as unknown.
+                            Mock Get-OERRoleManagementPolicy { $script:RmpReadLog.Add('Get-OERRoleManagementPolicy') }
+                        }
+                    }
+                }
+            }
+        }
+        BeforeEach {
+            $script:RmpReadSavedPreference = $global:ErrorActionPreference
+            $global:ErrorActionPreference = 'Continue'
+            InModuleScope $script:moduleName {
+                $script:RmpReadLog = [System.Collections.Generic.List[string]]::new()
+                Mock Initialize-OERAuth { }
+                Mock Invoke-OERArmRequest { throw "unexpected ARM request: $Path" }
+                Mock Set-OERRoleManagementPolicy { $script:RmpReadLog.Add('Set-OERRoleManagementPolicy') }
+                # The approver lookup is an identity pass-through: reaching it at all is the defect.
+                Mock Resolve-OERDeclaredApprover { param($Declared) $script:RmpReadLog.Add('Resolve-OERDeclaredApprover'); $Declared }
+            }
+        }
+        AfterEach {
+            $global:ErrorActionPreference = $script:RmpReadSavedPreference
+        }
+
+        It 'reports one Failed row carrying the read''s record, writes it once and sends nothing when <Name>' -ForEach @(
+            @{ Name = 'the read fails non-terminating'; Failure = 'NonTerminatingMock'; ErrorId = 'RoleDefinitionNotFound'; Message = 'ARM 403 AuthorizationFailed'; Category = 'ObjectNotFound' }
+            @{ Name = 'the real cmdlet fails its read non-terminating'; Failure = 'NonTerminatingReal'; ErrorId = 'PolicyNotFound'; Message = 'ARM 403 AuthorizationFailed'; Category = 'ObjectNotFound' }
+            @{ Name = 'the read fails terminating'; Failure = 'Terminating'; ErrorId = 'ArmServiceUnavailable'; Message = 'ARM 503 ServiceUnavailable'; Category = 'ReadError' }
+        ) {
+            Set-RmpReadFailure -Failure $Failure
+            $Result = InModuleScope $script:moduleName -Parameters @{ Scope = $script:RmpReadScope } {
+                param($Scope)
+                # A declared field that differs from any policy: with the read taken as $null it was sent.
+                $Item = [PSCustomObject]@{ scope = $Scope; role = 'Reader'; activationMaxHours = 4 }
+                $Rows = @(Invoke-SyncRmpReadViaCaller -Item $Item -ErrorVariable Err 2>$null)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err); Log = @($script:RmpReadLog) }
+            }
+
+            $Result.Rows.Count | Should -Be 1
+            $Result.Rows[0].Section | Should -BeExactly 'roleManagementPolicies'
+            $Result.Rows[0].Item | Should -BeExactly $script:RmpReadLabel
+            $Result.Rows[0].Action | Should -BeExactly 'Failed'
+            $Result.Rows[0].Detail | Should -BeExactly "could not read role management policy for 'Reader' at '$($script:RmpReadScope)': $Message"
+            [string]$Result.Rows[0].Error.FullyQualifiedErrorId | Should -BeLike "$ErrorId,*"
+            $Result.Rows[0].Error.Exception.Message | Should -BeExactly $Message
+            # Written once through the caller. -ErrorVariable also holds the inner layers' records, so the
+            # handler's own is counted by the suffix the caller's WriteError gives its id.
+            $Own = @($Result.Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncRmpReadViaCaller' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -BeExactly "$ErrorId,Invoke-SyncRmpReadViaCaller"
+            [string]$Own[0].CategoryInfo.Category | Should -BeExactly $Category
+            $Own[0].Exception.Message | Should -BeExactly $Message
+
+            # Reached: the read was made. Nothing after it ran: no approver lookup, no write.
+            if ($Failure -eq 'NonTerminatingReal') {
+                @($Result.Log | Where-Object { $_ -like 'ARM *roleManagementPolicyAssignments*' }).Count | Should -Be 1
+            } else {
+                @($Result.Log | Where-Object { $_ -eq 'Get-OERRoleManagementPolicy' }).Count | Should -Be 1
+            }
+            $Result.Log | Should -Not -Contain 'Resolve-OERDeclaredApprover'
+            $Result.Log | Should -Not -Contain 'Set-OERRoleManagementPolicy'
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERDeclaredApprover -Times 0
+            Should -Invoke -ModuleName $script:moduleName Set-OERRoleManagementPolicy -Times 0
+        }
+
+        It 'fails an entry declaring only approvers.users, never Skipped or Updated, when <Name> (<Mode>)' -ForEach @(
+            @{ Name = 'the read fails non-terminating'; Failure = 'NonTerminatingMock'; Mode = 'a real run'; WhatIf = $false; ErrorId = 'RoleDefinitionNotFound'; DetailStart = 'could not read role management policy' }
+            @{ Name = 'the read fails non-terminating'; Failure = 'NonTerminatingMock'; Mode = 'a -WhatIf plan'; WhatIf = $true; ErrorId = 'RoleDefinitionNotFound'; DetailStart = 'could not read role management policy' }
+            @{ Name = 'the real cmdlet fails its read non-terminating'; Failure = 'NonTerminatingReal'; Mode = 'a real run'; WhatIf = $false; ErrorId = 'PolicyNotFound'; DetailStart = 'could not read role management policy' }
+            @{ Name = 'the real cmdlet fails its read non-terminating'; Failure = 'NonTerminatingReal'; Mode = 'a -WhatIf plan'; WhatIf = $true; ErrorId = 'PolicyNotFound'; DetailStart = 'could not read role management policy' }
+            @{ Name = 'the read fails terminating'; Failure = 'Terminating'; Mode = 'a real run'; WhatIf = $false; ErrorId = 'ArmServiceUnavailable'; DetailStart = 'could not read role management policy' }
+            @{ Name = 'the read fails terminating'; Failure = 'Terminating'; Mode = 'a -WhatIf plan'; WhatIf = $true; ErrorId = 'ArmServiceUnavailable'; DetailStart = 'could not read role management policy' }
+            @{ Name = 'the read returns no policy and no error'; Failure = 'NoObject'; Mode = 'a real run'; WhatIf = $false; ErrorId = 'PolicyNotFound'; DetailStart = 'Get-OERRoleManagementPolicy returned no policy' }
+            @{ Name = 'the read returns no policy and no error'; Failure = 'NoObject'; Mode = 'a -WhatIf plan'; WhatIf = $true; ErrorId = 'PolicyNotFound'; DetailStart = 'Get-OERRoleManagementPolicy returned no policy' }
+        ) {
+            Set-RmpReadFailure -Failure $Failure
+            $Result = InModuleScope $script:moduleName -Parameters @{ Scope = $script:RmpReadScope; WhatIf = $WhatIf } {
+                param($Scope, $WhatIf)
+                # Only the users side is declared: a $null read seeded the groups side EMPTY, so the
+                # write removed every live group approver.
+                $Item = [PSCustomObject]@{
+                    scope = $Scope; role = 'Reader'
+                    approvers = [PSCustomObject]@{ users = @('dddd4040-0000-0000-0000-000000000001') }
+                }
+                $Switches = @{}
+                if ($WhatIf) { $Switches.WhatIf = $true }
+                $Rows = @(Invoke-SyncRmpReadViaCaller -Item $Item @Switches -ErrorVariable Err 2>$null)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err); Log = @($script:RmpReadLog) }
+            }
+
+            @($Result.Rows.Action) | Should -Be @('Failed')
+            $Result.Rows[0].Item | Should -BeExactly $script:RmpReadLabel
+            $Result.Rows[0].Detail | Should -BeLike "$DetailStart for 'Reader' at '$($script:RmpReadScope)'*"
+            $Result.Rows[0].Detail | Should -Not -Match 'would update'
+            [string]$Result.Rows[0].Error.FullyQualifiedErrorId | Should -BeLike "$ErrorId,*"
+            @($Result.Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncRmpReadViaCaller' }).FullyQualifiedErrorId |
+                Should -Be @("$ErrorId,Invoke-SyncRmpReadViaCaller")
+            # Reached: the read was made, and nothing after it ran.
+            @($Result.Log | Where-Object { $_ -eq 'Get-OERRoleManagementPolicy' -or $_ -like 'ARM *roleManagementPolicyAssignments*' }).Count | Should -Be 1
+            $Result.Log | Should -Not -Contain 'Resolve-OERDeclaredApprover'
+            $Result.Log | Should -Not -Contain 'Set-OERRoleManagementPolicy'
+            Should -Invoke -ModuleName $script:moduleName Set-OERRoleManagementPolicy -Times 0
+        }
+
+        It 'refuses a read that returns no policy and no error as PolicyNotFound, before the approver lookup, the diff and ShouldProcess' {
+            Set-RmpReadFailure -Failure 'NoObject'
+            $Result = InModuleScope $script:moduleName -Parameters @{ Scope = $script:RmpReadScope } {
+                param($Scope)
+                $Item = [PSCustomObject]@{ scope = $Scope; role = 'Reader'; activationMaxHours = 4 }
+                $Rows = @(Invoke-SyncRmpReadViaCaller -Item $Item -ErrorVariable Err 2>$null)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err); Log = @($script:RmpReadLog) }
+            }
+
+            $Result.Rows.Count | Should -Be 1
+            $Result.Rows[0].Section | Should -BeExactly 'roleManagementPolicies'
+            $Result.Rows[0].Item | Should -BeExactly $script:RmpReadLabel
+            $Result.Rows[0].Action | Should -BeExactly 'Failed'
+            $Result.Rows[0].Detail | Should -BeExactly "Get-OERRoleManagementPolicy returned no policy for 'Reader' at '$($script:RmpReadScope)'; the policy was not changed"
+            [string]$Result.Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'PolicyNotFound,*'
+            # The record is the handler's own, written once through the caller and carried by the row.
+            @($Result.Err).Count | Should -Be 1
+            $Result.Err[0].FullyQualifiedErrorId | Should -BeExactly 'PolicyNotFound,Invoke-SyncRmpReadViaCaller'
+            [string]$Result.Err[0].CategoryInfo.Category | Should -BeExactly 'ObjectNotFound'
+            $Result.Err[0].TargetObject | Should -BeExactly $script:RmpReadLabel
+            $Result.Err[0].Exception.Message | Should -BeExactly ("Get-OERRoleManagementPolicy returned no role management policy for 'Reader' at " +
+                "'$($script:RmpReadScope)' and no error, so the live policy is unknown. The policy was not changed.")
+            [object]::ReferenceEquals($Result.Rows[0].Error, $Result.Err[0]) | Should -BeTrue
+            @($Result.Log) -join ',' | Should -BeExactly 'Get-OERRoleManagementPolicy'
+            Should -Invoke -ModuleName $script:moduleName Set-OERRoleManagementPolicy -Times 0
+        }
+    }
 }
