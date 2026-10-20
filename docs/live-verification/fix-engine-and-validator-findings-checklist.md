@@ -937,6 +937,30 @@ the user owner, or a plan that differs from the run.
 
 Result:
 
+### 7.4. BL-154: what the Microsoft Graph transport returns for a date-and-time property
+
+- [ ] **7.4** A measurement: a date-and-time property read through the Microsoft Graph PowerShell SDK, raw and through the module's transport, arrives as a `DateTime` or as a string, and its `[string]` form is or is not an ISO 8601 date and time with seconds. An export writes an assignment policy's `expirationDateTime` as that `[string]` form, and on PowerShell 7.2 to 7.4 the validator refuses a date and time with seconds. #type/subtask
+
+```powershell
+Connect-OerLive -Arm
+Start-S1111NoPrompt
+$Ids = Get-S1111Ids
+$Raw = Microsoft.Graph.Authentication\Invoke-MgGraphRequest -Uri "v1.0/users/$($Ids['u1'])?`$select=createdDateTime" -ErrorAction Stop -Verbose:$false
+$Mod = & (Get-Module -Name Omnicit.EntraRBAC) { param($Id) Invoke-OERGraphRequest -Uri "v1.0/users/$Id`?`$select=createdDateTime" } $Ids['u1']
+foreach ($Pair in @(@{ Name = 'raw SDK'; V = $Raw.createdDateTime }, @{ Name = 'module transport'; V = $Mod.createdDateTime })) {
+    $Text = [string]$Pair.V
+    Write-OerLiveStep "$($Pair.Name): createdDateTime arrives as $(if ($null -eq $Pair.V) { 'null' } else { $Pair.V.GetType().Name }); its [string] form is an ISO 8601 date and time with seconds: $($Text -match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}')"
+}
+Disconnect-OerLive
+```
+
+**Expect:** a measurement. `DateTime` with a `[string]` form that is not ISO 8601 means an export's
+`expirationDateTime` is never refused on PowerShell 7.2 to 7.4; a `String` in ISO 8601 form with seconds means
+such an export is refused there, and the texts must say so.
+**Failure looks like:** a 401 or 403 (STOP), or a null value.
+
+Result:
+
 ## B. Proved offline (class B)
 
 - **B.1** A failed read of the live Azure role policy, non-terminating and terminating, with an entry that
