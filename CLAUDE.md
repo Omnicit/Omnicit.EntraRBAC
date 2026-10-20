@@ -451,191 +451,177 @@ either shape freely.
 
 **Public:** `Connect-OER`, `Disconnect-OER`. **Private:** `Initialize-OERAuth` (single entry point).
 
-Every public cmdlet that calls Graph or Azure invokes `Initialize-OERAuth` at the start of its
-`begin`/`process` block, with `-IncludeARM` when it needs ARM. `Connect-OER` is an optional pre-auth
-shortcut. Auth uses AzAuth's `Get-AzToken` for every credential type; state is cached in
-`$script:_OERAuthState`, keyed on tenant, auth identity, **and cloud**; it carries `SignedInObjectId`
-(the Graph token's `oid` claim), never the token. `Why: docs/development/rationale.md#auth-state`
+Every public cmdlet calling Graph or Azure invokes `Initialize-OERAuth` at the start of its
+`begin`/`process` block, with `-IncludeARM` when it needs ARM; `Connect-OER` is an optional pre-auth
+shortcut. Auth uses AzAuth's `Get-AzToken` for every credential type; state in
+`$script:_OERAuthState`, keyed on tenant, auth identity, **and cloud**, carries `SignedInObjectId`
+(Graph token `oid` claim), never the token. `Why: docs/development/rationale.md#auth-state`
 
-**The state also carries `GraphSessionFingerprint`**, the Graph SDK session the module's own
-`Connect-MgGraph` left -- never a token, never the context object, never written to any stream.
-`Get-OERGraphSessionFingerprint` is the single owner of the fingerprint, `Get-OERGraphSessionState`
-of the comparison. Every `Initialize-OERAuth` entry past its nested-sign-in check (cached return
-included) and `Invoke-OERGraphRequest` before every Graph call check it; a session another
-`Connect-MgGraph` started is refused with `GraphSessionChanged`. Only `Connect-OER` passes
-`-ReclaimGraphSession` (it takes the session back); never add a second reclaim caller, never make
-the module switch the session back by itself -- either moves the other session's Graph calls to this
-module's tenant. The switch also passes the session-uncertain refusal and clears that marker without
-a tenant, so gate 10 of `tests/QA/sourcehygiene.tests.ps1` holds the NAME `ReclaimGraphSession` to
-`Connect-OER.ps1` and `Initialize-OERAuth.ps1`. `Why: docs/development/rationale.md#auth-state`
+**The state also carries `GraphSessionFingerprint`** (the Graph SDK session the module's own
+`Connect-MgGraph` left; never a token or the context object, never written to any stream). Owners:
+`Get-OERGraphSessionFingerprint` (fingerprint), `Get-OERGraphSessionState` (comparison). Checked by
+every `Initialize-OERAuth` entry past its nested-sign-in check, cached return included, and by
+`Invoke-OERGraphRequest` before every Graph call; a session another `Connect-MgGraph` started is
+refused with `GraphSessionChanged`. Only `Connect-OER` passes `-ReclaimGraphSession` (takes the
+session back, passes the session-uncertain refusal, clears that marker without a tenant); never add
+a second reclaim caller, never make the module switch the session back by itself. Gate 10 of
+`tests/QA/sourcehygiene.tests.ps1` holds the NAME `ReclaimGraphSession` to `Connect-OER.ps1` and
+`Initialize-OERAuth.ps1`. `Why: docs/development/rationale.md#auth-state`
 
 **A command whose sign-in is refused sends nothing -- no Graph and no ARM request.**
 `Initialize-OERAuth` latches its calling command (`Lock-OERSignIn`) directly after the
-nested-sign-in check and releases it only on success (`Unlock-OERSignIn`: the cached return, or a
-new connection that went the whole way); both are called only there. Every refusal, terminating
-error and early return leaves the command latched, `ArmTokenAcquisitionFailed` included, so its
-Graph calls are refused too although its Graph half connected -- except the nested-sign-in refusal:
-it comes before `Lock-OERSignIn`, latches nothing of its own, and the latched outer command it found
-covers the caller.
+nested-sign-in check; releases only on success (`Unlock-OERSignIn`: cached return, or a new
+connection that went the whole way); both called only there. Every refusal, terminating error and
+early return leaves it latched, `ArmTokenAcquisitionFailed` included, so its Graph calls are refused
+although its Graph half connected. Exception: the nested-sign-in refusal, before `Lock-OERSignIn`,
+latches nothing of its own (the latched outer command it found covers the caller). The latch is
+keyed weakly on the calling command's INVOCATION, never a module boolean (a pipeline neighbour's
+successful sign-in releases only its own entry).
 
-Both transports ask `Get-OERSignInRefusal` before every request and refuse it while any frame on
-the call stack is latched, with `SignInRefused` (`New-OERSignInRefusedError` owns id and message):
-the Graph wrapper after its session gate, so a changed session still reads `GraphSessionChanged`;
-after a `GraphSessionChanged` refusal at the cmdlet's entry its ARM calls read `SignInRefused`. The
-latch is keyed weakly on the calling command's INVOCATION, never a module boolean: a pipeline
-neighbour's successful sign-in releases only its own entry.
+Both transports ask `Get-OERSignInRefusal` before every request and refuse while any call-stack
+frame is latched, with `SignInRefused` (`New-OERSignInRefusedError` owns id and message): Graph
+wrapper after its session gate (a changed session still reads `GraphSessionChanged`); after a
+`GraphSessionChanged` refusal at the cmdlet's entry, ARM calls read `SignInRefused`.
 
 A refused command's nested sign-ins are refused before they are made: before `Lock-OERSignIn`,
-`Initialize-OERAuth` asks `Get-OERSignInRefusal -OutsideCaller` and, when a command OUTSIDE its
-caller is latched (the caller is a cmdlet that command calls, or signs in inside its output), raises
-a terminating `SignInRefused` naming that command -- no token call, no `Connect-MgGraph`, no latch
-of its own. The caller's own latched frame does not count: a command refused earlier in the same
-invocation (`Invoke-OERStructure`, next piped document) may sign in again. Only
-`Initialize-OERAuth` passes `-OutsideCaller`; never make that check walk the whole stack. A finished
-command is on no call stack: the next command, or `Connect-OER`, sends again. An ARM call of a
-command whose entry was not refused still goes out with the module's own token (ARM has no session
-gate).
+`Initialize-OERAuth` asks `Get-OERSignInRefusal -OutsideCaller`; when a command OUTSIDE its caller
+is latched (the caller is a cmdlet it calls, or signs in inside its output) it raises a terminating
+`SignInRefused` naming it -- no token call, no `Connect-MgGraph`, no latch of its own. The caller's
+own latched frame does not count: a command refused earlier in the same invocation
+(`Invoke-OERStructure`, next piped document) may sign in again. Only `Initialize-OERAuth` passes
+`-OutsideCaller`; never make that check walk the whole stack. A finished command is on no call
+stack: the next command, or `Connect-OER`, sends again. An ARM call of a command whose entry was
+not refused still goes out with the module's own token.
 
-Never write that the cmdlet stops -- it carries on and sends nothing -- except for
-`Export-OERInventory`, the one named exception (below). Never call `Lock-OERSignIn` or
-`Unlock-OERSignIn` outside `Initialize-OERAuth`. Call `Initialize-OERAuth` directly in the command's
-own block, never from a nested function, `& { }` or any other scriptblock (the latch is keyed on the
-calling frame); the transports' own refreshes, in `Invoke-GraphSingle` and
-`Invoke-ArmCallWithRefresh`, are the one exception. `Why: docs/development/rationale.md#auth-state`
+Never write that the cmdlet stops -- it carries on and sends nothing -- except `Export-OERInventory`
+(below). Never call `Lock-OERSignIn` or `Unlock-OERSignIn` outside `Initialize-OERAuth`. Call
+`Initialize-OERAuth` directly in the command's own block, never from a nested function, `& { }` or
+any scriptblock; the transports' own refreshes, in `Invoke-GraphSingle` and
+`Invoke-ArmCallWithRefresh`, are the one exception.
+`Why: docs/development/rationale.md#auth-state`
 
 **`Export-OERInventory` stops on a refused sign-in and writes nothing -- the one public cmdlet that
-does.** Its `begin` calls `Initialize-OERAuth` directly in a `try` (neither a script block nor a
-nested function: the latch stays keyed on its own frame and gate 10 allows it) with
-`-ErrorVariable SignInErrors`. A terminating refusal is caught, scrubbed first and raised again with
-`$PSCmdlet.ThrowTerminatingError` (the sign-in's own record and ErrorId: a caller's `try` still
-catches it and, outside one, only that statement ends); never `WriteError`, which changed what a
-caller sees. The one refusal written without terminating, `ArmTokenAcquisitionFailed`, is found in
-`SignInErrors` by the first comma segment of its `FullyQualifiedErrorId`, compared whole and
-ordinally, never searched for; the export marks itself refused and raises nothing for it (the record
-already reached the error stream; a caller's `try` catches it only under a Stop error preference).
+does.** `begin` calls `Initialize-OERAuth` directly in a `try` (not a script block or nested
+function; gate 10 allows it) with `-ErrorVariable SignInErrors`. A terminating refusal is caught,
+scrubbed first, re-raised with `$PSCmdlet.ThrowTerminatingError` (the sign-in's own record and
+ErrorId; a caller's `try` still catches it); never `WriteError`. The one refusal written without
+terminating, `ArmTokenAcquisitionFailed`, is found in `SignInErrors` by the first comma segment of
+its `FullyQualifiedErrorId`, compared whole and ordinally, never searched for; the export marks
+itself refused and raises nothing (a caller's `try` catches it only under a Stop error preference).
 Under `-ErrorAction Ignore` or `$ErrorActionPreference = 'Ignore'`, which add a record to no
-`-ErrorVariable`, the call is pinned to `SilentlyContinue`, and under no other preference. A refused
-export asks for no tenant ID, reads nothing, writes no folder and returns no object, under every
-error preference. Every other command keeps the rule above; `Get-OERInventory` keeps its behaviour.
+`-ErrorVariable`, the call is pinned to `SilentlyContinue`, under no other preference. A refused
+export asks for no tenant ID, reads nothing, writes no folder, returns no object, under every error
+preference. Every other command keeps the rule above; `Get-OERInventory` keeps its behaviour.
 `Why: docs/development/rationale.md#a-command-whose-sign-in-is-refused-sends-nothing`
 
 **A command sends nothing under a sign-in a later command replaced.** Where `Initialize-OERAuth`
 succeeds -- exactly where `Unlock-OERSignIn` releases the latch -- `Register-OERSignInIdentity`
-remembers, keyed weakly on the calling command's invocation, the identity the state carries: tenant,
-method, client and cloud, never a token. `Get-OERSignInIdentity` is the single owner of that
-identity. Both transports ask `Get-OERSignInSupersession` before every request and refuse it with
-`SignInSuperseded` (`New-OERSignInSupersededError` owns id and message) while ANY frame on the call
-stack remembers another identity than the state now carries: an outer command whose nested cmdlets
-inherited the switched state is refused too, and so is a downstream command's request made inside
-the upstream command's output call (the upstream frame is still on the stack).
+remembers, keyed like the latch, the identity the state carries: tenant, method, client, cloud,
+never a token. `Get-OERSignInIdentity` is its single owner. Both transports ask
+`Get-OERSignInSupersession` before every request and refuse with `SignInSuperseded`
+(`New-OERSignInSupersededError` owns id and message) while ANY frame on the call stack remembers
+another identity than the state now carries: an outer command whose nested cmdlets inherited the
+switched state is refused too, as is a downstream command's request made inside the upstream
+command's output call.
 
-`Invoke-OERStructure` and `Connect-OER` sign in in `process`, not `begin`, and a downstream
-command's `begin` runs first, even with no pipeline input. When they name a tenant, their own
-sign-in switches the state back to it, so the downstream command is the one refused. WITHOUT
-`-TenantId` a sign-in in `process` inherits the state the downstream command's `begin` left and
-remembers it, so no gate sees the switch: `Invoke-OERStructure`'s document, `-Prune` included, would
-apply to the downstream command's tenant, and so would the name lookup of the three builders that
-sign in only to look up a name -- `New-OERAccessPackageApprovalStage`,
-`New-OERAccessPackageRequestorScope` (through `Resolve-OERTargetList`) and
-`New-OERAccessReviewStage` (through `Resolve-OERReviewerScope`). So those four commands take a
-snapshot of the session in `begin` and, without `-TenantId`, compare it in `process` directly before
-that sign-in or lookup -- `Invoke-OERStructure` after the document is read and validated, the
-builders after their argument checks -- refusing with `SignInSuperseded` and sending nothing when
-the identity changed, or when the module held no session and now holds one.
+`Invoke-OERStructure` and `Connect-OER` sign in in `process`, not `begin`; a downstream command's
+`begin` runs first, even with no pipeline input. When they name a tenant, their own sign-in switches
+the state back, so the downstream command is refused. WITHOUT `-TenantId` a sign-in in `process`
+inherits the state the downstream command's `begin` left and remembers it, so no gate sees the
+switch: `Invoke-OERStructure`'s document, `-Prune` included, would apply to the downstream command's
+tenant, as would the name lookups of the three builders that sign in only to look up a name --
+`New-OERAccessPackageApprovalStage`, `New-OERAccessPackageRequestorScope` (through
+`Resolve-OERTargetList`), `New-OERAccessReviewStage` (through `Resolve-OERReviewerScope`). So those
+four commands take a snapshot of the session in `begin` and, without `-TenantId`, compare it in
+`process` directly before that sign-in or lookup (`Invoke-OERStructure` after the document is read
+and validated, the builders after their argument checks), refusing with `SignInSuperseded` and
+sending nothing when the identity changed, or when the module held no session and now holds one.
 
-`Checkpoint-OERSignIn` is the single owner of the session a command began with: it builds the
+`Checkpoint-OERSignIn` is the single owner of the session a command began with; it builds the
 snapshot only through `Get-OERSignInIdentity`, so its terms are the memory's. `Invoke-OERStructure`
 takes it again after every sign-in, refused or not, so its next piped document is compared with the
 session that sign-in left; the builders take no pipeline input and never take it again. A new
 command that signs in only in `process`, directly or through a helper, without `-TenantId` takes the
 same snapshot. Never name the tenant the command began with as `-TenantId` in `process` instead: a
-`-TenantId` other than the state's inherits nothing, so an app-only session would get a browser
-prompt.
+`-TenantId` other than the state's inherits nothing.
 
-The snapshot is taken when the command's own `begin` runs: it covers a command that stands in the
-pipeline itself, not one called inside a script block or a function in a pipeline --
-`ForEach-Object { Invoke-OERStructure ... }` begins after every `begin` block of the outer
-pipeline, so takes a downstream command's sign-in for the session it began with. The gap is closed
-for a document that names its tenant (`tenantId`, which `Get-OERInventory` and
-`Export-OERInventory` write): `Get-OERDocumentTenantMismatch` refuses the document in any other
-tenant with `DocumentTenantMismatch`, whatever session the command began with. It stays open for a
-document without `tenantId` (applied, `-Prune` included, in the downstream command's tenant) and for
-the builders, which look their names up there. So never call a name-looking builder, or
-`Invoke-OERStructure` with a document that carries no `tenantId`, without `-TenantId` inside a
-script block or function in a pipeline that signs in to another tenant or identity.
+The snapshot is taken in the command's own `begin`: it covers a command standing in the pipeline
+itself, not one called inside a script block or function in a pipeline --
+`ForEach-Object { Invoke-OERStructure ... }` begins after every `begin` of the outer pipeline, so
+takes a downstream command's sign-in for the session it began with. Closed for a document naming its
+tenant (`tenantId`, which `Get-OERInventory` and `Export-OERInventory` write):
+`Get-OERDocumentTenantMismatch` refuses it in any other tenant with `DocumentTenantMismatch`,
+whatever session the command began with. Still open for a document without `tenantId` (applied,
+`-Prune` included, in the downstream command's tenant) and for the builders, which look names up
+there. So never call a name-looking builder, or `Invoke-OERStructure` with a document that carries
+no `tenantId`, without `-TenantId` inside a script block or function in a pipeline that signs in to
+another tenant or identity.
 
-The identity's tenant term is the tenant the Graph token was issued for (`TokenTenantId`) when that
-is a GUID, and the tenant as NAMED otherwise, never the ARM token's: one tenant named by GUID on one
-command and by domain on another -- or not named at all -- is ONE identity, to the snapshot as to
-the memory, whenever the token reports a GUID tenant. Never key the identity on the name again, and
-never on the ARM tenant, which is not always acquired. The session CACHE is still keyed on the
+The identity's tenant term is the tenant the Graph token was issued for (`TokenTenantId`) when a
+GUID, else the tenant as NAMED, never the ARM token's: one tenant named by GUID, by domain or not at
+all is ONE identity, to the snapshot as to the memory, whenever the token reports a GUID tenant.
+Never key the identity on the name again, nor on the ARM tenant. The session CACHE stays keyed on the
 tenant as named: a command naming its tenant differently from the session inherits nothing and signs
-in again (interactively when it names no credential), so the "Name the tenant explicitly and
-consistently" advice in README.md and the about topic's equivalent under SOVEREIGN CLOUDS stand.
+in again, so README.md's "Name the tenant explicitly and consistently" and the about topic's
+equivalent under SOVEREIGN CLOUDS stand.
 
-The order is fixed: in the Graph wrapper the session gate, then the latch gate, then the
-supersession gate; in the ARM wrapper the latch gate, then the supersession gate. A command with no
-memory is not compared by that gate. A pipeline must not span tenants or identities: run the
-commands as separate statements, for example collecting into a variable first. Never call
-`Register-OERSignInIdentity` outside `Initialize-OERAuth` or anywhere but directly after an
-`Unlock-OERSignIn` with the same invocation, and never read the supersession outside the two
-transports. `Why: docs/development/rationale.md#auth-state`
+The order is fixed: Graph wrapper session gate, latch gate, supersession gate; ARM wrapper latch
+gate, supersession gate. A command with no memory is not compared by that gate. A pipeline must not
+span tenants or identities: run the commands as separate statements, for example collecting into a
+variable first. Never call `Register-OERSignInIdentity` outside `Initialize-OERAuth` or anywhere but
+directly after an `Unlock-OERSignIn` with the same invocation; never read the supersession outside
+the two transports. `Why: docs/development/rationale.md#auth-state`
 
 **A tenant named by domain is looked up before any token request, and checked like a GUID.**
 `Initialize-OERAuth` resolves every requested tenant that is neither a GUID nor `organizations`
 through `Resolve-OERTenantDomain` -- after the cached return and the credential checks, before the
-AzAuth trackers move and before any token call -- and both `TenantMismatch` checks, Graph and ARM,
-compare the granted tenant with the tenant ID it returns (a granted tenant that is not a GUID is not
-compared, the limit below). A failed lookup refuses the sign-in with `TenantResolutionFailed`
-(raised after the lookup's `try`, never inside its `catch`) and no token is requested; `common`
-names no tenant and is refused the same way. The token request still names the tenant as given.
-`organizations` is never looked up or compared. Never call `Resolve-OERTenantDomain` outside
-`Initialize-OERAuth`, never move the lookup above the cached return or the credential checks, and
-never exempt another non-GUID value the way `organizations` is.
-`Why: docs/development/rationale.md#switching-tenants-in-one-process`
+AzAuth trackers move and before any token call; both `TenantMismatch` checks, Graph and ARM, compare
+the granted tenant with the tenant ID it returns (a granted tenant that is not a GUID is not
+compared: the limit below). A failed lookup refuses the sign-in with `TenantResolutionFailed` (raised
+after the lookup's `try`, never inside its `catch`), no token requested; `common` names no tenant and
+is refused the same way. The token request still names the tenant as given. `organizations` is never
+looked up or compared. Never call `Resolve-OERTenantDomain` outside `Initialize-OERAuth`, never move
+the lookup above the cached return or the credential checks, never exempt another non-GUID value as
+`organizations` is. `Why: docs/development/rationale.md#switching-tenants-in-one-process`
 
 **A refused sign-in leaves the session uncertain.** `Initialize-OERAuth` sets the marker directly
-after `Lock-OERSignIn`, and refuses with `SignInRefused`
-(`New-OERSignInRefusedError -SessionUncertain`), after the `GraphSessionChanged` refusal and before
-the cached return and every token call, a call that names no tenant (no `-TenantId`, or
-`-TenantId organizations`) while the marker it found was set, unless the call is `Connect-OER`'s
-(`-ReclaimGraphSession`). The caller stays latched, so it
-sends nothing. At each success end, directly after `Register-OERSignInIdentity`, it clears the
-marker when the call named its tenant and is not a transport's own refresh (`-ForceRefresh` or
-`-ClaimsChallenge`), or is `Connect-OER`'s, and otherwise puts back the value it found.
-`Connect-OER` sets the marker first thing in `process`, so its own refusals before any sign-in
-count; `Disconnect-OER` clears it inside its `ShouldProcess`.
+after `Lock-OERSignIn` and, after the `GraphSessionChanged` refusal and before the cached return and
+every token call, refuses with `SignInRefused` (`New-OERSignInRefusedError -SessionUncertain`) a call
+that names no tenant (no `-TenantId`, or `-TenantId organizations`) while the marker it found was
+set, unless the call is `Connect-OER`'s (`-ReclaimGraphSession`); the caller stays latched. At each
+success end, directly after `Register-OERSignInIdentity`, it clears the marker when the call named
+its tenant and is not a transport's own refresh (`-ForceRefresh` or `-ClaimsChallenge`), or is
+`Connect-OER`'s, else puts back the value it found. `Connect-OER` sets the marker first thing in
+`process`, so its own refusals before any sign-in count; `Disconnect-OER` clears it inside its
+`ShouldProcess`. `Set-OERSessionUncertain` is the single owner of `$script:_OERSessionUncertain`:
+never read or write the variable elsewhere, never call the helper outside `Initialize-OERAuth`,
+`Connect-OER` and `Disconnect-OER`, never let a transport's refresh clear the marker, never count
+`organizations` as naming a tenant. A command that names its tenant is never refused by the marker;
+a parameter binding error of `Connect-OER` never reaches it (known limit).
 
-`Set-OERSessionUncertain` is the single owner of `$script:_OERSessionUncertain`: never read or write
-the variable anywhere else, never call the helper outside `Initialize-OERAuth`, `Connect-OER` and
-`Disconnect-OER`, never let a transport's refresh clear the marker, and never count `organizations`
-as naming a tenant. A command that names its tenant is never refused by the marker; a parameter
-binding error of `Connect-OER` never reaches it (known limit).
-
-`Connect-OER` sends every BOUND `-TenantAlias` to its alias check, so an empty, whitespace or `$null`
-alias is refused with `InvalidTenantAlias` and leaves the marker set; every BOUND `-TenantId` that
-is empty, whitespace or `$null` is refused the same way, in `process` after the marker is set, with
-`InvalidTenantId`. Never test either for truthiness there, and never give either
-`[ValidateNotNullOrEmpty()]`, whose binding error marks nothing. Every OTHER public cmdlet that
-declares `-TenantId` carries `[ValidateNotNullOrEmpty()]` on it, so an empty value stops that
-command at parameter binding and it sends nothing;
-`tests/Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` holds both halves, with `Connect-OER` the one
-named exception; a new public `-TenantId` takes the attribute. `New-OERConfiguration` and
-`Set-OERConfiguration`, whose `-TenantId` is stored rather than signed in to, also refuse a value of
-white space only at binding, with a `[ValidateScript()]` declared above that attribute; a stored
-blank `TenantId` is still read as it is, and an update that names no `-TenantId` keeps it. The
-`(BL-96)` Contexts of `tests/Unit/Public/New-OERConfiguration.Tests.ps1` and
-`Set-OERConfiguration.Tests.ps1` hold it.
+`Connect-OER` sends every BOUND `-TenantAlias` to its alias check: an empty, whitespace or `$null`
+alias is refused with `InvalidTenantAlias` and leaves the marker set; a BOUND `-TenantId` that is
+empty, whitespace or `$null` is refused the same way, in `process` after the marker is set, with
+`InvalidTenantId`. Never test either for truthiness there, never give either
+`[ValidateNotNullOrEmpty()]`. Every OTHER public cmdlet declaring `-TenantId` carries
+`[ValidateNotNullOrEmpty()]` on it, so an empty value stops it at parameter binding and it sends
+nothing; `tests/Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` holds both
+halves, `Connect-OER` the one named exception; a new public `-TenantId` takes the attribute.
+`New-OERConfiguration` and `Set-OERConfiguration`, whose `-TenantId` is stored rather than signed in
+to, also refuse a value of white space only at binding, with a `[ValidateScript()]` declared above
+that attribute; a stored blank `TenantId` is still read as it is, and an update naming no
+`-TenantId` keeps it. The `(BL-96)` Contexts of `tests/Unit/Public/New-OERConfiguration.Tests.ps1`
+and `Set-OERConfiguration.Tests.ps1` hold it.
 
 An internal call passes `-TenantId` on only when it is set (`if ($TenantId) { ... }`), never an
 empty value -- except `Connect-OER`'s own call of `Initialize-OERAuth`, which passes `''` when
-neither `-TenantId` nor `-TenantAlias` is bound and which `Initialize-OERAuth` reads as no tenant
-named. Gate 10 of `tests/QA/sourcehygiene.tests.ps1` holds it for a `-TenantId` parameter, or a
-`TenantId` key the calling function writes into a hashtable it splats, on a call of a command that
-signs in, with `Connect-OER`'s call and the two transports' refreshes as its named exemptions, and
-refuses any positional argument written on a call of `Initialize-OERAuth`, whose `-TenantId` binds
-by position 0 -- after a switch too, `-Verbose` and `-Debug` (`-vb`, `-db`) among them; what it
-cannot see is listed in `docs/development/rationale.md#static-source-gates`.
+neither `-TenantId` nor `-TenantAlias` is bound (read as no tenant named). Gate 10 of
+`tests/QA/sourcehygiene.tests.ps1` holds it for a `-TenantId` parameter, or a `TenantId` key the
+calling function writes into a splatted hashtable, on a call of a command that signs in, with
+`Connect-OER`'s call and the two transports' refreshes as its named exemptions, and refuses any
+positional argument on a call of `Initialize-OERAuth` (`-TenantId` binds by position 0), after a
+switch too, `-Verbose` and `-Debug` (`-vb`, `-db`) among them; what it cannot see is listed in
+`docs/development/rationale.md#static-source-gates`.
 `Why: docs/development/rationale.md#a-refused-sign-in-leaves-the-session-uncertain`
 
 | Parameter set | Key parameters | Use case |
@@ -648,52 +634,48 @@ cannot see is listed in `docs/development/rationale.md#static-source-gates`.
 | `ByAlias` | `-TenantAlias` | Resolve TenantId from a stored Tenant Profile |
 
 Common optional: `-IncludeARM` (acquire ARM token and connect to Azure); `-Environment` (the
-sovereign cloud -- `Global` (default), `USGov`, `USGovDoD` or `China`). The cloud joins tenant and
-auth identity in the `$script:_OERAuthState` cache key, so a different cloud always
-re-authenticates. Microsoft 365 GCC runs on the commercial (`Global`) endpoints and needs no
-`-Environment` at all; only GCC High (`USGov`), DoD (`USGovDoD`) and a 21Vianet tenant (`China`)
-are separate cloud boundaries. `Disconnect-OER` clears `$script:_OERAuthState` and calls
-`Disconnect-MgGraph` only when `Get-OERGraphSessionState` reports `Own`: a session the module did
-not connect, or has no record of connecting, is left, with a warning written before its
-`ShouldProcess`. It does NOT call `Disconnect-AzAccount`: the module establishes no Az context, so
-any Az session on the machine is the operator's own (Philip, 2026-09-21).
+sovereign cloud -- `Global` (default), `USGov`, `USGovDoD` or `China`); the cloud joins tenant and
+auth identity in the `$script:_OERAuthState` cache key, so a different cloud always re-authenticates.
+Microsoft 365 GCC runs on the commercial (`Global`) endpoints and needs no `-Environment`; only GCC
+High (`USGov`), DoD (`USGovDoD`) and a 21Vianet tenant (`China`) are separate cloud boundaries.
+`Disconnect-OER` clears `$script:_OERAuthState` and calls `Disconnect-MgGraph` only when
+`Get-OERGraphSessionState` reports `Own` (a session the module did not connect, or has no record of
+connecting, is left, with a warning written before its `ShouldProcess`); it does NOT call
+`Disconnect-AzAccount` (Philip, 2026-09-21).
 `Why: docs/development/rationale.md#sovereign-clouds`
 
 **IMPORTANT:** `-ClientSecret` is a `[securestring]`. Never accept or store client secrets as plain
 strings.
 
 **Same-session tenant switch is limited by sign-in type.** AzAuth keeps ONE credential for the whole
-process, and `Get-AzToken -Tenant` is not honoured by every credential type: device code and managed
+process and `Get-AzToken -Tenant` is not honoured by every credential type: device code and managed
 identity requests do not carry the named tenant at all; a client secret credential refuses a
 different tenant until `-Force` rebuilds it (with `AZURE_IDENTITY_DISABLE_MULTITENANTAUTH` set, it
 silently requests the token from the previous tenant). `Initialize-OERAuth` refuses, with
-`TenantMismatch`, a token issued for another tenant than the one named -- by GUID or, through the
-lookup above, by domain -- so a switch that did not take effect does not become a session, within
-two limits: a token whose tenant AzAuth does not report as a GUID (one without a `tid` claim) is not
-compared, and `organizations` names no tenant, so its tokens are compared with no requested tenant
--- an ARM token a sign-in acquires under it is compared with the session's Graph token
-(`TokenTenantId`) instead, when both are GUIDs, and refused with the same `TenantMismatch` when they
-differ.
+`TenantMismatch`, a token issued for another tenant than the one named (by GUID or, through the
+lookup above, by domain), within two limits: a token whose tenant AzAuth does not report as a GUID
+(no `tid` claim) is not compared; `organizations` names no tenant, so its tokens are compared with no
+requested tenant, but an ARM token acquired under it is compared with the session's Graph token
+(`TokenTenantId`) when both are GUIDs, and refused with the same `TenantMismatch` when they differ.
 
-A state rebuild -- a renewal of the Graph token, or a transport's refresh -- carries the cached ARM
-token into the new state only when, besides the unchanged tenant label, identity and cloud
-(`$ArmIdentityUnchanged`), its `ArmTokenTenantId` equals the new Graph token's tenant, both GUIDs
-(`$ArmTokenKept`); otherwise it is dropped, the ARM step of that same call runs under
-`-IncludeARM`, and the new ARM token is compared as above. Never carry it on the label alone:
-`organizations` stays `organizations` when a renewal is answered from another tenant. Before the
-call it only warns, for a client secret switch it can predict will not take effect (a
-`-WarningAction Stop`/`$WarningPreference = 'Stop'` caller is stopped at that `Write-Warning`,
-before any token request). The post-call warning that compared granted tenants is retired; do not
-bring it back. `Connect-OER -Force` is the only public lever that makes a switch take effect.
+A state rebuild (a Graph token renewal, a transport's refresh) carries the cached ARM token into the
+new state only when, besides the unchanged tenant label, identity and cloud (`$ArmIdentityUnchanged`),
+its `ArmTokenTenantId` equals the new Graph token's tenant, both GUIDs (`$ArmTokenKept`); otherwise
+it is dropped, the ARM step of that call runs under `-IncludeARM`, and the new ARM token is compared
+as above. Never carry it on the label alone (`organizations` stays `organizations` across a renewal
+answered from another tenant). Before the call it only warns, for a client secret switch it can
+predict will not take effect (a `-WarningAction Stop`/`$WarningPreference = 'Stop'` caller is
+stopped at that `Write-Warning`, before any token request). The post-call warning that compared
+granted tenants is retired; do not bring it back. `Connect-OER -Force` is the only public lever that
+makes a switch take effect.
 
-**Every device code token request, Graph and ARM, carries `Force`** (Philip, 2026-10-09; without it
-a request that reuses a stored credential never returns). `$DeviceCodeForced` in
-`Initialize-OERAuth` is the single owner of that decision, read only by the `Force` condition and by
-the removal of `Force` after a Graph acquisition; it is NOT a cache term: `$GraphCached`,
-`$ArmCached` and `$ClearsUncertainty` never read it, so a device code session whose tokens are still
-valid answers from the cached return with no token request. Never add an automatic `-Force` to any
-other sign-in type without a new decision, and never make the device code `Force` bypass the cached
-return. `Why: docs/development/rationale.md#auth-state`,
+**Every device code token request, Graph and ARM, carries `Force`** (Philip, 2026-10-09).
+`$DeviceCodeForced` in `Initialize-OERAuth` is the single owner of that decision, read only by the
+`Force` condition and by the removal of `Force` after a Graph acquisition; it is NOT a cache term:
+`$GraphCached`, `$ArmCached` and `$ClearsUncertainty` never read it, so a device code session whose
+tokens are still valid answers from the cached return with no token request. Never add an automatic
+`-Force` to any other sign-in type without a new decision, never make the device code `Force`
+bypass the cached return. `Why: docs/development/rationale.md#auth-state`,
 `docs/development/rationale.md#switching-tenants-in-one-process`,
 `docs/development/rationale.md#requested-tenant-vs-granted-tenant`,
 `docs/development/rationale.md#every-device-code-sign-in-is-forced`
