@@ -1012,310 +1012,289 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   derivation, never hand-list an exemption). The check does NOT hold the two engine waits;
   `tests/Unit/Private/Sync-OERStructureGroup.Tests.ps1` does.
   `Why: docs/development/rationale.md#failed-schedule-request`
-- **`Get-OERCloudEndpoint` is the single owner of the cloud-to-endpoint table.** Every Graph
+- **`Get-OERCloudEndpoint` is the single owner of the cloud-to-endpoint table:** every Graph
   resource/audience, Graph service root, ARM resource/host and authority (STS) host for a sovereign
-  cloud is read from it; never hardcode one of those hosts a second time. `source/Private/Invoke-OERArmRequest.ps1`
-  keeps one documented public-cloud fallback for the no-auth-state case, exempted by name rather than
-  deleted. `tests/QA/sourcehygiene.tests.ps1` machine-checks this the same way it checks the other
-  single-owner rules above. `Why: docs/development/rationale.md#sovereign-clouds`
+  cloud is read from it, never hardcoded a second time. `source/Private/Invoke-OERArmRequest.ps1`
+  keeps one documented public-cloud fallback for the no-auth-state case, exempted by name.
+  `tests/QA/sourcehygiene.tests.ps1` machine-checks it like the other single-owner rules above.
+  `Why: docs/development/rationale.md#sovereign-clouds`
 - **`Get-OERDerivedMailNickname` is the single owner of the mail alias `New-OERGroup` derives from a
   display name** (every character outside A-Z, a-z, 0-9, '.', '_' and '-' removed). `New-OERGroup`
-  refuses a derived alias that is empty or longer than 64 characters with `DerivedMailNicknameInvalid`,
-  and `Test-OERStructureSchema` compares a renamed group's `mailNickname` with the alias derived from
+  refuses an empty derived alias, or one over 64 characters, with `DerivedMailNicknameInvalid`;
+  `Test-OERStructureSchema` compares a renamed group's `mailNickname` with the alias derived from
   its previous name. Never re-implement the derivation inline.
   `Why: docs/development/rationale.md#mail-nickname`
-- **`Test-OERNamingStandardName` is the single owner of the naming rules, their order and their Detail
-  texts; `Read-OERNamingStandard` of reading and refusing the naming standard file; and
+- **`Test-OERNamingStandardName` is the single owner of the naming rules, their order and Detail
+  texts; `Read-OERNamingStandard` of reading and refusing the naming standard file;
   `Get-OERNamingStandardSchemaJson` of its schema.** `Test-OERStructureSchema` (Rule 17) adds one
-  Warning per object and broken rule, only when `Test-OERStructure -NamingStandard` hands it a standard,
-  and `Invoke-OERStructure` never passes one: a naming finding is never an Error, and applying a
-  document is unchanged. Every pattern matches the whole text, values compare ordinally, and a file
-  the reader refuses is `InvalidNamingStandard`, once, with no document read or validated. The reader
-  checks the file by hand and never calls `Test-Json`; `docs/examples/naming-standard.schema.json` is
-  the schema function's output, held identical by a test, and is never edited by hand. Never
-  re-implement a rule, a Detail text or the file's validation elsewhere.
+  Warning per object and broken rule, only when `Test-OERStructure -NamingStandard` hands it a
+  standard; `Invoke-OERStructure` never passes one (a naming finding is never an Error; applying a
+  document is unchanged). Patterns match the whole text; values compare ordinally. A file the reader
+  refuses is `InvalidNamingStandard`, once, with no document read or validated. The reader checks
+  the file by hand, never via `Test-Json`. `docs/examples/naming-standard.schema.json` is the schema
+  function's output, held identical by a test, never edited by hand. Never re-implement a rule, a
+  Detail text or the file's validation elsewhere.
   `Why: docs/development/rationale.md#naming-standard`
 - **`Test-OERJsonDateKindSupport` is the single owner of whether the running `ConvertFrom-Json` has
-  `-DateKind`** (Sprint 11 step 11, BL-154): one `Get-Command` of the module-qualified
-  `Microsoft.PowerShell.Utility\ConvertFrom-Json`, true when it has the parameter (PowerShell 7.5 or
-  later). `Read-OERStructureDocument` adds `-DateKind String` to its parse when it answers true, so a
-  structure document reaches the validator and the engine as written; on PowerShell 7.2 to 7.4
-  `Test-OERStructureSchema` refuses every date value the parse made (Rule 2b), with no field exempted.
-  Never ask the question anywhere else, and never "repair" a parsed date into text. A test mocks it in
-  module scope to run the 7.2 to 7.4 path on a newer PowerShell.
-  `Why: docs/development/rationale.md#structure-document-text`
+  `-DateKind`:** one `Get-Command` of the module-qualified
+  `Microsoft.PowerShell.Utility\ConvertFrom-Json`, true on PowerShell 7.5 or later.
+  `Read-OERStructureDocument` adds `-DateKind String` to its parse when true, so a structure
+  document reaches the validator and the engine as written; on 7.2-7.4 `Test-OERStructureSchema`
+  refuses every date value the parse made (Rule 2b), no field exempted. Never ask the question
+  elsewhere or "repair" a parsed date into text. A test mocks it in module scope to run the 7.2-7.4
+  path on a newer PowerShell. `Why: docs/development/rationale.md#structure-document-text`
 - **`Test-OERHostCanConfirm` is the single owner of whether the host can show a confirmation prompt
-  that is decidable beforehand, and `Test-OERConfirmPromptFailure` of whether a caught record is a
-  `ShouldProcess` that failed because the host could not ask** (Sprint 11 step 11, BL-53). The first is
-  `$Host.Name -ne 'Default Host'`, the only host the measurement found safely decidable;
-  `Invoke-OERStructure` refuses with `ConfirmationUnavailable`, before the sign-in, a document whose run
-  would prompt (not `-WhatIf`, `$ConfirmPreference` not `None`) when it answers false. The second is
-  true only for a `MethodInvocationException` whose inner exception is a `HostException`,
+  that is decidable beforehand; `Test-OERConfirmPromptFailure` of whether a caught record is a
+  `ShouldProcess` that failed because the host could not ask.** The first is
+  `$Host.Name -ne 'Default Host'`, the only host found safely decidable; when false,
+  `Invoke-OERStructure` refuses with `ConfirmationUnavailable`, before the sign-in, a document whose
+  run would prompt (not `-WhatIf`, `$ConfirmPreference` not `None`). The second is true only for a
+  `MethodInvocationException` whose inner exception is a `HostException`,
   `PSInvalidOperationException` or `NullReferenceException` (or derives from one) and whose message
-  names `ShouldProcess` (ordinal); the engine's two handler-error catches word the Detail through it.
-  Never decide either anywhere else.
-  `Why: docs/development/rationale.md#confirmation-unavailable`
+  names `ShouldProcess` (ordinal); the engine's two handler-error catches word the Detail through
+  it. Never decide either elsewhere. `Why: docs/development/rationale.md#confirmation-unavailable`
 - **`Select-OERManagedDirectoryRoleAssignment` is the single owner of which live directory role
   assignment the apply engine may match or prune** (tenant scope, `memberType` Direct, Active only
-  `assignmentType` Assigned), and `Get-OERTokenObjectId` the single owner of reading the signed-in
-  identity's object id (the token's `oid` claim, delegated and app-only alike; never `/me`). Never
-  re-implement either inline. `Why: docs/development/rationale.md#directory-role-assignments`
-- **`Test-OERGroupPimInUse` is the single owner of whether a group uses PIM for Groups** -- PIM
-  eligibility, or a PIM-for-Groups policy with a non-empty `lastModifiedDateTime`, `lastModifiedBy.id`
-  or `lastModifiedBy.displayName`. Graph lists those policies for EVERY group, so a listed policy is
-  not evidence of use. `Get-OERInventory` exports `pimPolicy` only for a group found in use (a
-  criterion it could not read, or a "not in use" reached while the group's eligibility was unread,
-  omits `pimPolicy` AND reports it unread), and `Sync-OERStructureGroup` warns, never blocks, before
-  a changed policy onboards an existing group. Never re-implement the check inline. The criterion is
-  documented, not yet measured live, and misses a group used only through PIM active assignments.
-  `Why: docs/development/rationale.md#pim-in-use-criterion`
+  `assignmentType` Assigned); `Get-OERTokenObjectId` of reading the signed-in identity's object id
+  (the token's `oid` claim, delegated and app-only alike; never `/me`). Never re-implement either
+  inline. `Why: docs/development/rationale.md#directory-role-assignments`
+- **`Test-OERGroupPimInUse` is the single owner of whether a group uses PIM for Groups:** PIM
+  eligibility, or a PIM-for-Groups policy with a non-empty `lastModifiedDateTime`,
+  `lastModifiedBy.id` or `lastModifiedBy.displayName`. `Get-OERInventory` exports `pimPolicy` only
+  for a group found in use; a criterion it could not read, or a "not in use" reached while the
+  group's eligibility was unread, omits `pimPolicy` AND reports it unread. `Sync-OERStructureGroup`
+  warns, never blocks, before a changed policy onboards an existing group. Never re-implement the
+  check inline. The criterion is documented, not yet measured live, and misses a group used only
+  through PIM active assignments. `Why: docs/development/rationale.md#pim-in-use-criterion`
 - **`Test-OERGroupOnPremisesSynced` is the single owner of whether a live group is synchronized from
-  on-premises** -- `OnPremisesSyncEnabled` (Graph's `onPremisesSyncEnabled`, carried by
-  `ConvertTo-OERGroup`) is the boolean true; false (no longer synced) and empty (never synced, or its
-  source of authority converted to the cloud) are not. `Sync-OERStructureGroup` writes nothing to such
-  a group, deciding on its LIVE read and never on the document's `onPremisesSynced` key: every
+  on-premises:** `OnPremisesSyncEnabled` (Graph's `onPremisesSyncEnabled`, carried by
+  `ConvertTo-OERGroup`) is the boolean true; false (no longer synced) and empty (never synced, or
+  source of authority converted to the cloud) are not. `Sync-OERStructureGroup` writes nothing to
+  such a group, deciding on its LIVE read, never the document's `onPremisesSynced` key: every
   property, member, owner, eligibility or `pimPolicy` change is `Skipped` with no `ShouldProcess`
-  call, one warning per item, and each prune candidate is withheld
+  call, one warning per item; each prune candidate is withheld
   (`ConvertTo-OERPruneWithheldResult -SyncedGroup`). `Get-OERInventory` writes the document key
-  `onPremisesSynced` only as true, and `Export-OERInventory` the roster flag (a boolean on every row)
-  from the same predicate; the key is information only and never sent.
-  Never read `OnPremisesSyncEnabled` anywhere else -- the cohort check in
+  `onPremisesSynced` only as true, `Export-OERInventory` the roster flag (a boolean on every row)
+  from the same predicate; the key is information only, never sent. Never read
+  `OnPremisesSyncEnabled` elsewhere: the cohort check in
   `tests/Unit/Private/Test-OERGroupOnPremisesSynced.Tests.ps1` holds the member-access form
-  (`.OnPremisesSyncEnabled` spelled as a constant member name, outside `ConvertTo-OERGroup` and the
-  helper); it does NOT hold a read through `Select-Object`, `Where-Object` or
-  `PSObject.Properties[...]`, which keeps by review.
-  `Why: docs/development/rationale.md#synced-groups`
+  (`.OnPremisesSyncEnabled` as a constant member name, outside `ConvertTo-OERGroup` and the helper);
+  it does NOT hold a read through `Select-Object`, `Where-Object` or `PSObject.Properties[...]`
+  (kept by review). `Why: docs/development/rationale.md#synced-groups`
 - **`Get-OERInventoryGroup` is the single reader of the inventory's Groups section.**
-  `Get-OERInventory` calls it in its full mode (one `Get-OERGroup` call carrying the three include
-  switches; its output stays what it was). `Export-OERInventory` calls it with `-RelevantOnly` unless
-  `-AllGroupsDetailed`, and always with `-ExcludeSharedName`, `-SecurityEnabledOnly` and
-  `-ProgressActivity`: relevance decided first, from the group's PIM eligibility and then
-  `Test-OERGroupPimInUse`, so a group found not relevant costs exactly two requests and is never read
-  further, and a group whose relevance could not be read is read in full. The export's keep filter on
-  the projections stays the final say. The reader never writes an error record -- it returns
-  `Groups`, `Unread`, raw `Causes`, `PimLeftOut`, `DynamicMembers` and `SharedNames` -- and both
-  callers catch a reader that stops and report the groups section unread, never empty. Never read
-  the Groups section, or decide relevance before a full read, anywhere else. **A dynamic group's
-  `members` is an EXPLICIT null, never an omitted key and never a list** (Sprint 11 step 10, BL-43,
-  R-1): its membership rule owns the membership, and `Set-OERGroup` cannot convert a group's
-  membership type, so an omitted key would meet the static path of a group made static after the
-  export, which reconciles and, under `-Prune`, removes every live member. The null is no gap, so it
-  is named unread nowhere, and a failed read of those members records no cause (R-24); the members
-  are still read, for a group read in full, and counted per group in `DynamicMembers` (beside
-  `PimLeftOut`) so the roster keeps a `memberCount`. `Sync-OERStructureGroup` writes no aggregate
-  member row for an explicit null (R-2); a declared list, `[]` and an omitted key keep their rows.
-  Never write a dynamic group's members, and never name their failed read unread.
-  `Why: docs/development/rationale.md#export-group-selection`
+  `Get-OERInventory` calls it in full mode (one `Get-OERGroup` call with the three include switches;
+  output unchanged). `Export-OERInventory` calls it with `-RelevantOnly` unless
+  `-AllGroupsDetailed`, always with `-ExcludeSharedName`, `-SecurityEnabledOnly` and
+  `-ProgressActivity`: relevance first, from the group's PIM eligibility, then
+  `Test-OERGroupPimInUse`, so a group found not relevant costs exactly two requests and is never
+  read further; a group whose relevance could not be read is read in full. The export's keep filter
+  on the projections stays the final say. The reader never writes an error record; it returns
+  `Groups`, `Unread`, raw `Causes`, `PimLeftOut`, `DynamicMembers`, `SharedNames`. Both callers
+  catch a reader that stops and report the section unread, never empty. Never read the Groups
+  section, or decide relevance before a full read, elsewhere. **A dynamic group's `members` is an
+  EXPLICIT null, never an omitted key and never a list:** the null is no gap, so it is named unread
+  nowhere, and a failed read of those members records no cause. Members are still read (group read
+  in full) and counted per group in `DynamicMembers` (beside `PimLeftOut`), so the roster keeps a
+  `memberCount`. `Sync-OERStructureGroup` writes no aggregate member row for an explicit null; a
+  declared list, `[]` and an omitted key keep their rows. Never write a dynamic group's members or
+  name their failed read unread. `Why: docs/development/rationale.md#export-group-selection`
 - **`Get-OEROrderedInventoryEntry` is the single owner of the order the inventory writes its lists
-  in** (Sprint 11 step 10, BL-121): a group's `members`, `owners` and `eligibility` and an
-  administrative unit's `members`. Text is ordered by `[System.StringComparer]::OrdinalIgnoreCase`,
-  ties by `[System.StringComparer]::Ordinal`, so the order is total and culture independent;
-  eligibility by `principal`, `accessType`, `durationDays` (absent first, then ascending) and `id`.
-  `Get-OERInventoryGroup` orders the three group lists and `Get-OERInventory` the unit members; never
-  order such a list anywhere else. Its LINQ calls take their generic arguments by INFERENCE and never
-  write them out: an explicit type argument on a generic method call is PowerShell 7.3 syntax, a parse
-  error under the module's 7.2 floor that fails the whole merged module, and CI runs a current
-  PowerShell only, so nothing but the helper's own test (an AST check of its file) would show it.
+  in:** a group's `members`, `owners`, `eligibility` and an administrative unit's `members`. Text by
+  `[System.StringComparer]::OrdinalIgnoreCase`, ties by `[System.StringComparer]::Ordinal`, so the
+  order is total and culture independent; eligibility by `principal`, `accessType`, `durationDays`
+  (absent first, then ascending), `id`. `Get-OERInventoryGroup` orders the three group lists,
+  `Get-OERInventory` the unit members; never order such a list elsewhere. Its LINQ calls take
+  generic arguments by INFERENCE, never written out (an explicit type argument is PowerShell 7.3
+  syntax, a parse error under the 7.2 floor). CI runs a current PowerShell only, so nothing but the
+  helper's own test (an AST check of its file) would show it.
   `Why: docs/development/rationale.md#export-group-selection`
 - **`Read-OERGroupCollection` is the single owner of the three per-group collection reads
-  `Get-OERGroup` attaches and the inventory's group reader uses** (members, owners and PIM
-  eligibility) **and of wording their failure** exactly as `Get-OERGroup` publishes it. It returns the
-  read or its failure and never writes an error record; `Get-OERGroup` and `Get-OERInventoryGroup`
-  call it, and neither reads one of the three inline. `Get-OERGroupRelation` stays the single reader
-  of the members and owners requests: `Read-OERGroupCollection` calls it, and `Get-OERGroupMember`
-  calls it directly. `Why: docs/development/rationale.md#export-group-selection`
-- **`Get-OERGroupPimHeldAccess` is the single owner of which PIM-for-Groups instance holds a member's
-  or owner's access**: held unless `assignmentType` is `assigned` (any letter case) AND `endDateTime`
-  is empty; every eligibility instance is held as Eligible; `memberType` is never consulted; access is
-  matched per access type. `Read-OERGroupPimAssignment` is the single reader of
+  `Get-OERGroup` attaches and the inventory's group reader uses** (members, owners, PIM eligibility)
+  **and of wording their failure** exactly as `Get-OERGroup` publishes it. It returns the read or
+  its failure, never an error record; `Get-OERGroup` and `Get-OERInventoryGroup` call it and neither
+  reads one of the three inline. `Get-OERGroupRelation` stays the single reader of the members and
+  owners requests: `Read-OERGroupCollection` calls it, `Get-OERGroupMember` calls it directly.
+  `Why: docs/development/rationale.md#export-group-selection`
+- **`Get-OERGroupPimHeldAccess` is the single owner of which PIM-for-Groups instance holds a
+  member's or owner's access:** held unless `assignmentType` is `assigned` (any letter case) AND
+  `endDateTime` is empty; every eligibility instance is held as Eligible; `memberType` is never
+  consulted; access is matched per access type. `Read-OERGroupPimAssignment` is the single reader of
   `assignmentScheduleInstances` (`ResourceTypeNotSupported` is an empty answer, a thrown failure is
-  unread) and `Read-OERGroupPimHold` the apply engine's one read of the hold state. The export leaves
-  out of `members`/`owners` a member or owner held by an assignment kind (eligibility alone decides
-  only when the assignment read failed); the engine adds and prunes none, Eligible included. Never
-  re-implement the rule inline. `Why: docs/development/rationale.md#pim-activation-is-not-membership`
+  unread); `Read-OERGroupPimHold` is the apply engine's one read of the hold state. The export
+  leaves out of `members`/`owners` a member or owner held by an assignment kind (eligibility alone
+  decides only when the assignment read failed); the engine adds and prunes none, Eligible included.
+  Never re-implement the rule inline.
+  `Why: docs/development/rationale.md#pim-activation-is-not-membership`
 - **`Format-OERUnreadCauseClause` is the single owner of the causes clause of an inventory's
-  `InventoryPartial` message** -- the deduplication with the failing object's id normalised away, the
-  cap and the wording -- and `Get-OERSharedNameCause` of the text for objects left out because two of
-  them share a name, which carries how many live objects share it (`-Count`). The clause is built by
+  `InventoryPartial` message** (deduplication with the failing object's id normalised away, the cap,
+  the wording); `Get-OERSharedNameCause` of the text for objects left out because two of them share
+  a name, carrying how many live objects share it (`-Count`). The clause is built by
   `Get-OERInventory` and `Export-OERInventory`, the shared-name text by `Get-OERInventory` and
-  `Get-OERInventoryGroup`; never word either inline. A cause registered with a BLANK `Target` is keyed
-  on its full text instead of a normalised one: the shared-name causes are registered with none, so
-  two names that share one count are two causes and one name is still stated once (BL-156).
+  `Get-OERInventoryGroup`; never word either inline. A cause registered with a BLANK `Target` is
+  keyed on its full text, not a normalised one: shared-name causes carry none, so two names sharing
+  one count are two causes and one name is stated once.
   `Why: docs/development/rationale.md#export-group-selection`,
   `docs/development/rationale.md#roster-identity-and-shared-names`
 - **`Get-OERGroupNameIndex` is the single owner of which groups in the tenant carry a display
-  name**: from the groups given (`-Group`, the export's roster) with no request, or from ONE paged
-  listing `v1.0/groups?$select=id,displayName&$top=999`, which `Get-OERInventory` reads at most once
-  per invocation, and `Export-OERInventory` at most once per export through its run context (below).
-  It never throws and never writes an error record: it returns `Read`, `IdsByName`
-  (a name, compared without regard to letter case, to the lower-cased ids that carry it; `$null` when
-  the listing failed, never an empty index) and `Message`. **`Get-OERGroupReference` is the single
-  owner of how the export names a group it references as the principal of a role assignment or a
-  directory role assignment**: its display name only when the index was read and exactly this group
-  carries the name; otherwise its object id, written with `principalType` `Group` in
-  `roleAssignments` and `directoryRoleAssignments`. A group named as an eligibility principal, a
-  reviewer, a catalog resource or a resource role is outside it and keeps its display name (R-6).
-  Never re-implement either inline.
+  name:** from the groups given (`-Group`, the export's roster) with no request, or from ONE paged
+  listing `v1.0/groups?$select=id,displayName&$top=999`, read by `Get-OERInventory` at most once per
+  invocation and by `Export-OERInventory` at most once per export through its run context. It never
+  throws and never writes an error record; it returns `Read`, `IdsByName` (a name, compared ignoring
+  letter case, to the lower-cased ids carrying it; `$null` when the listing failed, never an empty
+  index) and `Message`. **`Get-OERGroupReference` is the single owner of how the export names a
+  group it references as the principal of a role assignment or a directory role assignment:** its
+  display name only when the index was read and exactly this group carries the name, else its object
+  id, written with `principalType` `Group` in `roleAssignments` and `directoryRoleAssignments`. A
+  group named as an eligibility principal, a reviewer, a catalog resource or a resource role is
+  outside it and keeps its display name. Never re-implement either inline.
   `Why: docs/development/rationale.md#roster-identity-and-shared-names`
 - **`Export-OERInventory` is the only command that sets and clears the export run context
-  (`$script:_OERInventoryRunContext`)**, the one object its `Get-OERInventory` calls share (the
-  group name index, the principal names the group read looked up, `PrincipalNameCache`, the deleted
-  items answers, the role assignment principals that could not be read, and the subscription home
-  tenant answers, `SubscriptionTenant`);
-  `Get-OERInventory` fills its members, `Get-OERDeletedPrincipalStatus` through the `PrincipalStatus`
-  dictionary it is handed, except `SubscriptionTenant`, which the export hands to
-  `Resolve-OERInventoryScopeTree -Cache` and `Get-OERInventory` to the owner the same way, so
-  `Get-OERSubscriptionHomeTenant -Cache` is what fills it (a context without the member reads as
-  none). Export creates it in ONE place, directly before its Entra ID
-  `Get-OERInventory` call, with `Owner` set to its own `$MyInvocation`, and sets it back to `$null`
-  with a plain statement directly after the Azure walk -- never in a `finally`, which turns a
-  statement-terminating error into a skip of the rest of the walk. `Get-OERInventory` reads it once
-  per invocation and uses it only while its `Owner` is the `InvocationInfo` of a frame of the current
-  call stack (`Microsoft.PowerShell.Utility\Get-PSCallStack`, compared by reference), and behaves
-  standalone otherwise, so a context a stopped export left behind is ignored. Never read or write it
-  anywhere else, never replace it by a public parameter (A9), and add a member to it rather than a
-  second module variable. `PrincipalNameCache` (Sprint 11 step 10, BL-122) is a `[hashtable]`, id to
-  name, that the export creates before its group read and hands, the very same object, to
-  `Get-OERInventoryGroup -PrincipalNameCache` and to the context, so a principal the group read named
-  is not looked up again by the Entra ID call; `Get-OERInventory` takes it, read through
-  `PSObject.Properties` as `SubscriptionTenant` is, only when the context is its own and the member
-  is a `[hashtable]` (its consumers bind one and call `ContainsKey`), and keeps its own otherwise.
-  Known limit: a lookup that failed in the group read is not retried, since the map
-  `Resolve-OERPrincipalName` returns answers the id as the name.
+  (`$script:_OERInventoryRunContext`),** the one object its `Get-OERInventory` calls share: group
+  name index, principal names the group read looked up, `PrincipalNameCache`, deleted items answers,
+  role assignment principals that could not be read, subscription home tenant answers
+  (`SubscriptionTenant`). `Get-OERInventory` fills its members; `Get-OERDeletedPrincipalStatus`
+  fills through the `PrincipalStatus` dictionary it is handed;
+  `Get-OERSubscriptionHomeTenant -Cache` fills `SubscriptionTenant`, which the export hands to
+  `Resolve-OERInventoryScopeTree -Cache` and `Get-OERInventory` to the owner the same way (a context
+  without the member reads as none). Created in ONE place, directly before the export's Entra ID
+  `Get-OERInventory` call, with `Owner` set to its own `$MyInvocation`; set back to `$null` with a
+  plain statement directly after the Azure walk, never in a `finally`. `Get-OERInventory` reads it
+  once per invocation and uses it only while its `Owner` is the `InvocationInfo` of a frame of the
+  current call stack (`Microsoft.PowerShell.Utility\Get-PSCallStack`, compared by reference), else
+  behaves standalone. Never read or write it elsewhere, never replace it by a public parameter; add
+  a member to it, not a second module variable. `PrincipalNameCache` is a `[hashtable]`, id to name,
+  created by the export before its group read and handed, the very same object, to
+  `Get-OERInventoryGroup -PrincipalNameCache` and to the context; `Get-OERInventory` takes it, read
+  through `PSObject.Properties` as `SubscriptionTenant` is, only when the context is its own and the
+  member is a `[hashtable]` (its consumers bind one and call `ContainsKey`), else keeps its own.
+  Known limit: a lookup that failed in the group read is not retried (the map
+  `Resolve-OERPrincipalName` returns answers the id as the name).
   `Why: docs/development/rationale.md#export-run-context`
-- **`Get-OERDeletedPrincipalStatus` is the single read of `directory/deletedItems`, and
-  `Resolve-OERPrincipalName -Detailed` the lookup that tells a principal the directory returned from
-  one it did not return and from one whose lookup failed** (BL-133, A18). Only the `roleAssignments`
-  section of `Get-OERInventory` uses both. `-Detailed` alone has two more callers since Sprint 11
-  step 8, neither of which reads the deleted items: the `administrativeUnits` section's scoped role
-  type lookup, and `Get-OERServicePrincipalAccess` for the users named in delegated permission
-  grants (see the next bullet). In the `roleAssignments` section a principal not returned is written
-  by its object id with `principalStatus` `Deleted` or `Unresolved`, and a failed lookup or a failed
-  deleted items read is
-  never a fact -- it is named unread (`.../principal`, `.../principalStatus`; the second still written
-  `Unresolved`, never as a principal that exists). The read never throws, never writes an error
-  record, and caches only an answer that was read. `Sync-OERStructureRoleAssignment` looks no principal
-  up for an entry that declares `principalStatus` and never creates its assignment (`Skipped`, no
-  `ShouldProcess`). The other sections keep `Resolve-OERPrincipalName`'s default map, which is
-  unchanged. Never read `directory/deletedItems` anywhere else.
+- **`Get-OERDeletedPrincipalStatus` is the single read of `directory/deletedItems`;
+  `Resolve-OERPrincipalName -Detailed` is the lookup that tells a principal the directory returned
+  from one it did not return and from one whose lookup failed.** Only the `roleAssignments` section
+  of `Get-OERInventory` uses both; `-Detailed` alone has two more callers, neither reading the
+  deleted items: the `administrativeUnits` section's scoped role type lookup and
+  `Get-OERServicePrincipalAccess`. In `roleAssignments` a principal not returned is written by its
+  object id with `principalStatus` `Deleted` or `Unresolved`; a failed lookup or deleted items read
+  is never a fact: it is named unread (`.../principal`, `.../principalStatus`; the second still
+  written `Unresolved`, never as a principal that exists). The read never throws, never writes an
+  error record, caches only an answer that was read. `Sync-OERStructureRoleAssignment` looks no
+  principal up for an entry that declares `principalStatus` and never creates its assignment
+  (`Skipped`, no `ShouldProcess`). The other sections keep `Resolve-OERPrincipalName`'s unchanged
+  default map. Never read `directory/deletedItems` elsewhere.
   `Why: docs/development/rationale.md#unresolved-principals`
 - **`Get-OERServicePrincipalAccess` is the single reader of what `servicePrincipalAccess.json`
-  holds** (Sprint 11 step 8, A7): the service principal list with `$expand=appRoleAssignments` (the
-  application permissions, read from the client side), the service principal and app registration
-  lists with `$expand=owners(...)`, and one paged `oauth2PermissionGrants` list whose users it looks
-  up with ONE `Resolve-OERPrincipalName -Detailed` call. An object whose expanded collection holds
-  20 or more entries, or one of whose expanded entries lacks the id its row needs (an app role
-  assignment without `resourceId` or `appRoleId`, an owner without `id`), is read again in full with
-  a paged read of its own, since Microsoft Graph documents at most 20 for an expanded directory
-  relationship and was measured to return an expanded app role assignment with a null `resourceId`.
-  An app role assignment the full read still returns without them leaves only
-  `applicationPermissions` unread (R-14). A part is read whole or not at all: any failure inside it
-  leaves it `$null`, never `[]`, and names it `servicePrincipalAccess/<part>`; the grants are not
-  read when the service principal list was not. It never throws, never writes an error record or a
-  warning, and sends GET requests only, with no `-Method` (the requiredscope gate would judge every
-  literal of a function that writes as a write). `Export-OERInventory` calls it once, only with
-  `-IncludeServicePrincipalAccess` (A9), and nothing reads the file back: never add its content to
+  holds:** the service principal list with `$expand=appRoleAssignments` (application permissions,
+  read client side), the service principal and app registration lists with `$expand=owners(...)`,
+  and one paged `oauth2PermissionGrants` list whose users it looks up with ONE
+  `Resolve-OERPrincipalName -Detailed` call. An object whose expanded collection holds 20 or more
+  entries, or one of whose expanded entries lacks the id its row needs (an app role assignment
+  without `resourceId` or `appRoleId`, an owner without `id`), is read again in full with a paged
+  read of its own; an app role assignment the full read still returns without them leaves only
+  `applicationPermissions` unread. A part is read whole or not at all: any failure inside it leaves
+  it `$null`, never `[]`, and names it `servicePrincipalAccess/<part>`; the grants are not read when
+  the service principal list was not. It never throws, never writes an error record or a warning,
+  and sends GET requests only, with no `-Method` (the requiredscope gate would judge every literal
+  of a function that writes as a write). `Export-OERInventory` calls it once, only with
+  `-IncludeServicePrincipalAccess`; nothing reads the file back: never add its content to
   `inventory.json`, `schema.json` or the apply engine. **`ConvertTo-OERPrincipalType` is the single
   owner of mapping a Microsoft Graph object type to the document's principal type** (`User`, `Group`
   or `ServicePrincipal`, the `#microsoft.graph.` prefix optional, letter case ignored; anything else
   `$null`, never guessed), used for the owner rows and for the `principalType` `Get-OERInventory`
   writes on an `administrativeUnits[].scopedRoles` row whose principal the directory returned.
-  `ConvertTo-OERDirectoryRoleAssignment` keeps the mapping it had before this one (a named
-  exception, not a precedent); never map a Graph type inline anywhere else. The validator holds the
-  scoped role `principalType` to the enum and `Read-OERStructureDocument` canonicalises it, but
+  `ConvertTo-OERDirectoryRoleAssignment` keeps its own earlier mapping (a named exception, not a
+  precedent); never map a Graph type inline elsewhere. The validator holds the scoped role
+  `principalType` to the enum and `Read-OERStructureDocument` canonicalises it;
   `Sync-OERStructureAdministrativeUnit` never uses it to match or write.
   `Why: docs/development/rationale.md#service-principal-access`,
   `docs/development/rationale.md#scoped-role-principal-type`
 - **A group that uses PIM for Groups in a restricted management administrative unit is a Warning,
-  never an Error or a refusal**: `Export-OERInventory` warns before its `ShouldProcess` (with `Groups`
-  and `AdministrativeUnits` included, from what it read, with no request) and lists the groups in the
-  bundle README, and validator Rule 16 warns on a document that places such a group in a restricted
-  unit it declares. State the limit as Microsoft Learn documents it, as fact, and what Microsoft Graph
-  answers to the engine's PIM writes for such a group as unmeasured until a live run measures it.
-  `Why: docs/development/rationale.md#restricted-unit-pim`
+  never an Error or a refusal:** `Export-OERInventory` warns before its `ShouldProcess` (with
+  `Groups` and `AdministrativeUnits` included, from what it read, with no request) and lists the
+  groups in the bundle README; validator Rule 16 warns on a document that places such a group in a
+  restricted unit it declares. State the limit as Microsoft Learn documents it, as fact; what
+  Microsoft Graph answers to the engine's PIM writes for such a group stays unmeasured until a live
+  run measures it. `Why: docs/development/rationale.md#restricted-unit-pim`
 - **`Test-OERRolePolicyModified` is the single owner of whether an Azure role management policy has
-  been changed** -- the list row's `policyAssignmentProperties.policy` (carried as `PolicyMetadata`
-  by `Get-OERRoleManagementPolicyForScope`, with no request of its own) with a non-empty
+  been changed:** the list row's `policyAssignmentProperties.policy` (carried as `PolicyMetadata` by
+  `Get-OERRoleManagementPolicyForScope`, with no request of its own) with a non-empty
   `lastModifiedDateTime`, `lastModifiedBy.id` or `lastModifiedBy.displayName`, the three fields
-  `Test-OERGroupPimInUse` reads. An empty `lastModifiedBy` object is not a change (measured on one
-  subscription: every untouched policy carried one), `isOrganizationDefault` is no signal (`false`
-  on every policy there), and a row with no policy object returns `$null`, which a caller never
-  reads as "not changed". Never re-implement the check inline.
+  `Test-OERGroupPimInUse` reads. An empty `lastModifiedBy` object is not a change,
+  `isOrganizationDefault` is no signal, and a row with no policy object returns `$null`, which a
+  caller never reads as "not changed". Never re-implement the check inline.
   `Why: docs/development/rationale.md#export-role-policy-selection`
 - **`Select-OERInventoryRolePolicy` is the single owner of which Azure role management policies
-  `Export-OERInventory` keeps without `-AllRolePolicies`** -- pure, every side keyed on the canonical
-  scope and the role definition guid: a policy whose role has a role assignment or an eligibility
-  EXACTLY at its scope, or that has been changed, is kept; one that cannot be judged (no policy
-  object, no role definition id, or a scope whose role assignment or eligibility read failed) is
-  kept AND its scope named, as `roleManagementPolicies/role selection at <scope>` last in
-  `IncompleteReads`, with an `InventoryPartial` clause of its own; anything else is omitted. The
-  export reads the candidates through `Get-OERInventoryRolePolicy` (the same one paged list and the
-  same converters as `Get-OERInventory -AllRolesAtScope`) and the assignments with one extra
+  `Export-OERInventory` keeps without `-AllRolePolicies`** -- pure, every side keyed on the
+  canonical scope and the role definition guid. Kept: a policy whose role has a role assignment or
+  an eligibility EXACTLY at its scope, or that has been changed. One that cannot be judged (no
+  policy object, no role definition id, or a scope whose role assignment or eligibility read failed)
+  is kept AND its scope named, as `roleManagementPolicies/role selection at <scope>` last in
+  `IncompleteReads`, with an `InventoryPartial` clause of its own. Anything else is omitted. The
+  export reads the candidates through `Get-OERInventoryRolePolicy` (the same one paged list and
+  converters as `Get-OERInventory -AllRolesAtScope`) and the assignments with one extra
   `Get-OERRoleAssignment -AtScope` list per scope, read before the policy list; `-AllRolePolicies`
-  makes the per-scope call earlier versions made and selects nothing. Never decide the selection
-  anywhere else -- except the export's fallback when the selection itself stops (Sprint 11 step 10,
-  R-5), which keeps every candidate and names each distinct scope among them as not judged -- never drop a
-  policy that cannot be judged, and never add a request per policy.
-  `Why: docs/development/rationale.md#export-role-policy-selection`
+  makes the earlier per-scope call and selects nothing. Never decide the selection elsewhere, except
+  the export's fallback when the selection itself stops, which keeps every candidate and names each
+  distinct scope among them as not judged; never drop a policy that cannot be judged, never add a
+  request per policy. `Why: docs/development/rationale.md#export-role-policy-selection`
 - **`Resolve-OERTenantDomain` is the single owner of the module's one network call outside the
   Microsoft Graph and Azure Resource Manager transports** -- the deliberately unauthenticated OpenID
   discovery lookup of a tenant named by domain at the cloud's Microsoft Entra ID authority, the host
-  read from `Get-OERCloudEndpoint` -- and the only caller of `Invoke-RestMethod`.
-  The call carries `-Uri`, `-Method`, `-TimeoutSec` and `-ErrorAction` and nothing else: never a
-  header, a credential or a splat, never a second sender. It caches a tenant ID per cloud and
-  lower-cased domain for the process and never caches a failure.
-  `Why: docs/development/rationale.md#switching-tenants-in-one-process`
+  read from `Get-OERCloudEndpoint` -- and the only caller of `Invoke-RestMethod`. The call carries
+  `-Uri`, `-Method`, `-TimeoutSec` and `-ErrorAction` and nothing else: never a header, a credential
+  or a splat, never a second sender. It caches a tenant ID per cloud and lower-cased domain for the
+  process, never a failure. Its place in the sign-in and the refusals: see **Authentication
+  Architecture**. `Why: docs/development/rationale.md#switching-tenants-in-one-process`
 - **`Set-OERSessionUncertain` is the single owner of the session-uncertain marker**
   (`$script:_OERSessionUncertain`), called only by `Initialize-OERAuth`, `Connect-OER` and
   `Disconnect-OER` (see **Authentication Architecture**).
   `Why: docs/development/rationale.md#a-refused-sign-in-leaves-the-session-uncertain`
 - **`Get-OERDocumentTenantMismatch` is the single owner of the comparison of a structure document's
-  `tenantId`** with the tenant `Invoke-OERStructure` acts in, and of the `DocumentTenantMismatch` id
-  and message (BL-88, A14); `Get-OERInventoryTenantId` is the single owner of which tenant an export's
-  `inventory.json` names -- the Graph token's granted tenant (`TokenTenantId`) when it is a GUID, never
-  the tenant as named, and otherwise no key at all, with no warning. `Get-OERInventory` and `Export-OERInventory`
+  `tenantId` with the tenant `Invoke-OERStructure` acts in, and of the `DocumentTenantMismatch` id
+  and message** (the refusal itself: see **Authentication Architecture**);
+  **`Get-OERInventoryTenantId` is the single owner of which tenant an export's `inventory.json`
+  names** -- the Graph token's granted tenant (`TokenTenantId`) when it is a GUID, never the tenant
+  as named, otherwise no key at all, with no warning. `Get-OERInventory` and `Export-OERInventory`
   call it in `begin`, directly after their own sign-in (the export not at all when that sign-in was
-  refused). It is also the second term of the bundle folder's label (BL-101, R-9): the export names
-  the folder, and the summary's `TenantId`, after the tenant the session names unless that is blank
-  or `organizations` (letter case ignored), else after that granted tenant ID, else after
-  `-TenantId` as given, else `tenant`. `Invoke-OERStructure` calls the comparison
-  twice per document: before the sign-in whenever `-TenantId` is bound -- where the owner compares
-  only a canonical GUID and leaves any other name (a domain, `organizations`) to the second call;
-  keep that GUID test in the owner, never in the caller -- and after the sign-in against
-  `TokenTenantId` (and `ArmTokenTenantId` when ARM is used), directly after the snapshot is taken
-  again and before anything is read or written for the document. A present `tenantId` that is
-  not a canonical GUID, `null` included, fails validation; a document without the key is applied
-  exactly as before. Never sign in WITH the document's tenant (A6), never compare it inline, and
-  never read a missing or non-GUID token tenant as a match. Gate 10 holds the comparison to
-  `Invoke-OERStructure`, in a row with an `It` of its own; nothing machine-checks who calls
-  `Get-OERInventoryTenantId`. `Why: docs/development/rationale.md#a-document-names-the-tenant-it-was-exported-from`
+  refused). It is also the second term of the bundle folder's label: the export names the folder,
+  and the summary's `TenantId`, after the tenant the session names unless that is blank or
+  `organizations` (letter case ignored), else after that granted tenant ID, else after `-TenantId`
+  as given, else `tenant`. `Invoke-OERStructure` calls the comparison twice per document: before the
+  sign-in whenever `-TenantId` is bound (the owner compares only a canonical GUID there and leaves
+  any other name -- a domain, `organizations` -- to the second call; keep that GUID test in the
+  owner, never in the caller), and after the sign-in against `TokenTenantId` (and `ArmTokenTenantId`
+  when ARM is used), directly after the snapshot is taken again and before anything is read or
+  written for the document. A present `tenantId` that is not a canonical GUID, `null` included,
+  fails validation; a document without the key is applied exactly as before. Never sign in WITH the
+  document's tenant, never compare it inline, never read a missing or non-GUID token tenant as a
+  match. Gate 10 holds the comparison to `Invoke-OERStructure`, in a row with an `It` of its own;
+  nothing machine-checks who calls `Get-OERInventoryTenantId`.
+  `Why: docs/development/rationale.md#a-document-names-the-tenant-it-was-exported-from`
 - **`Get-OERSubscriptionHomeTenant` is the single owner of whether a subscription's home tenant is
-  the session's tenant (A19, BL-150)** -- ARM's subscription `tenantId` (Subscriptions - Get or List,
-  api-version `2022-12-01`) against `Get-OERInventoryTenantId`, compared without regard to letter
-  case and only when both are canonical GUIDs. It is called only by `Resolve-OERInventoryScopeTree`,
-  `Invoke-OERStructure` and `Get-OERInventory` (gate 10), never by another public cmdlet: the role
-  assignment and policy cmdlets use the scope they are given. `Get-OERInventory` (A20, BL-152) checks
-  each of `-Scope` and `-Subscription` (as `sub:<value>`) that is given, ONCE per invocation, before
-  the first read of RoleAssignments or RoleManagementPolicies; `-ManagementGroup` is never checked.
-  That check reads through the ARM transport, so its `begin` asks for the ARM token in its one
-  `Initialize-OERAuth` call, exactly as `-IncludeARM` does, whenever RoleAssignments, or
-  RoleManagementPolicies with exactly one of `-Role`, `-CommonRoles` and `-AllRolesAtScope`
-  (the rule that section reads by, from the one `$RoleSources` list), is included with a `-Scope` or
-  `-Subscription` that is not blank (R-9); a `-ManagementGroup` alone keeps the readers'
-  acquisition on first use, and a call with neither section asks for none. A
-  foreign subscription is read for nothing -- each included section empty, the owner's
-  `SubscriptionTenantMismatch` record written once (the first foreign verdict's), after the inventory,
-  and not unread; an undecided
-  one is read for nothing too, each included section named unread by its own name through
-  `InventoryPartial`. Inside an export the answers are shared through the run context's
-  `SubscriptionTenant`, which the tree fills (`-Cache`, the listed facts included), so the check sends
-  no extra request. `Export-OERInventory`'s walk enters
-  only a subscription of the session's tenant, names one of another tenant with one warning and in
-  its README, and names one it cannot decide in `IncompleteReads` (partial). The engine checks once
-  per subscription and document, before the first read or write of a `roleAssignments` or
-  `roleManagementPolicies` scope there, and refuses the entry `Failed` with `SubscriptionTenantMismatch`
-  -- or with the read's or the resolver's own record when that failed -- reading no role assignment or
-  policy there, writing nothing and never pruning there. Never decide a subscription's tenant anywhere else.
+  the session's tenant:** ARM's subscription `tenantId` (Subscriptions - Get or List, api-version
+  `2022-12-01`) against `Get-OERInventoryTenantId`, ignoring letter case, only when both are
+  canonical GUIDs. Called only by `Resolve-OERInventoryScopeTree`, `Invoke-OERStructure` and
+  `Get-OERInventory` (gate 10), never by another public cmdlet. `Get-OERInventory` checks each given
+  `-Scope` and `-Subscription` (as `sub:<value>`) ONCE per invocation, before the first read of
+  RoleAssignments or RoleManagementPolicies; `-ManagementGroup` is never checked. The check reads
+  through the ARM transport, so `begin` asks for the ARM token in its one `Initialize-OERAuth` call,
+  exactly as `-IncludeARM` does, whenever RoleAssignments, or RoleManagementPolicies with exactly
+  one of `-Role`, `-CommonRoles`, `-AllRolesAtScope` (the rule that section reads by, from the one
+  `$RoleSources` list), is included with a non-blank `-Scope` or `-Subscription`; a
+  `-ManagementGroup` alone keeps the readers' acquisition on first use, and a call with neither
+  section asks for none. A foreign subscription is read for nothing: each included section empty,
+  the owner's `SubscriptionTenantMismatch` record written once (the first foreign verdict's), after
+  the inventory, not unread. An undecided one is read for nothing too, each included section named
+  unread by its own name through `InventoryPartial`. Inside an export the answers are shared through
+  the run context's `SubscriptionTenant`, which the tree fills (`-Cache`, the listed facts
+  included): no extra request. `Export-OERInventory`'s walk enters only a subscription of the
+  session's tenant, warns once for one of another tenant (and names it in its README), and names one
+  it cannot decide in `IncompleteReads` (partial). The engine checks once per subscription and
+  document, before the first read or write of a `roleAssignments` or `roleManagementPolicies` scope
+  there, and refuses the entry `Failed` with `SubscriptionTenantMismatch` (or the read's or the
+  resolver's own record when that failed), reading no role assignment or policy there, writing
+  nothing, never pruning there. Never decide a subscription's tenant elsewhere.
   `Why: docs/development/rationale.md#home-tenant-subscriptions`
 
 ---
