@@ -125,8 +125,9 @@ Describe 'Invoke-OERStructure' {
         # The validator reads an explicit null as "not declared", yet @($null) is ONE element, and the
         # scope pre-pass runs outside the per-entry try/catch: a null entry made it throw a
         # parameter-binding error that aborted the whole run inside an operator's try/catch, after the
-        # earlier sections had been written. The engine drops the null before the pre-pass and skips
-        # the section.
+        # earlier sections had been written. Since BL-38 the engine reads the section as the validator
+        # does (Test-OERDeclaredProperty) and skips it before its entries are read, so the pre-pass never
+        # sees it.
         InModuleScope $script:moduleName {
             $script:RaPreCalls = 0
             Mock Resolve-OERStructureRoleAssignmentScope { $script:RaPreCalls++; @() }
@@ -5681,5 +5682,478 @@ $RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OER
         # The plan reached the host as 'What if:' lines for the property update and the member add only.
         @($Run.Events | Where-Object { $_ -like 'Line: What if:*' }).Count | Should -Be 2
         @($Run.Events | Where-Object { $_ -like 'Line: What if:*scopedRole*' }).Count | Should -Be 0
+    }
+}
+
+Describe 'Invoke-OERStructure: a top-level section that is null is not declared (BL-38)' {
+    # R-3: the engine decides on a top-level section the way the validator does, with Test-OERDeclaredProperty
+    # (present and not null): the dispatch loop, the Azure Resource Manager decision, the undecided-rename
+    # pre-pass and the administrative unit pre-pass. A null section is read as an omitted one: no handler call,
+    # no row, no ARM token on its account and never the subscription home tenant check. An empty array stays
+    # declared. Every handler is mocked to return one row, so a call cannot go unseen.
+    BeforeAll {
+        $script:NsSection = @(
+            @{ Key = 'groups'; Handler = 'Sync-OERStructureGroup' }
+            @{ Key = 'administrativeUnits'; Handler = 'Sync-OERStructureAdministrativeUnit' }
+            @{ Key = 'catalogs'; Handler = 'Sync-OERStructureCatalog' }
+            @{ Key = 'accessPackages'; Handler = 'Sync-OERStructureAccessPackage' }
+            @{ Key = 'accessReviews'; Handler = 'Sync-OERStructureAccessReview' }
+            @{ Key = 'directoryRoleManagementPolicies'; Handler = 'Sync-OERStructureDirectoryRoleManagementPolicy' }
+            @{ Key = 'directoryRoleAssignments'; Handler = 'Sync-OERStructureDirectoryRoleAssignment' }
+            @{ Key = 'roleAssignments'; Handler = 'Sync-OERStructureRoleAssignment' }
+            @{ Key = 'roleManagementPolicies'; Handler = 'Sync-OERStructureRoleManagementPolicy' }
+        )
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Get-OERDocumentTenantMismatch { }
+        Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { [PSCustomObject]@{ Scope = $null; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null } }
+        Mock -ModuleName $script:moduleName Resolve-OERStructureRoleAssignmentScope { @() }
+        foreach ($Section in $script:NsSection) {
+            Mock -ModuleName $script:moduleName -CommandName $Section.Handler -MockWith ([scriptblock]::Create(
+                    "[PSCustomObject]@{ Section = '$($Section.Key)'; Item = 'stub'; Action = 'Unchanged'; Detail = 'stub row' }"))
+        }
+    }
+
+    It 'gives no row and calls no handler for "<Key>": null, and applies the declared section beside it' -TestCases @(
+        @{ Key = 'groups'; Handler = 'Sync-OERStructureGroup' }
+        @{ Key = 'administrativeUnits'; Handler = 'Sync-OERStructureAdministrativeUnit' }
+        @{ Key = 'catalogs'; Handler = 'Sync-OERStructureCatalog' }
+        @{ Key = 'accessPackages'; Handler = 'Sync-OERStructureAccessPackage' }
+        @{ Key = 'accessReviews'; Handler = 'Sync-OERStructureAccessReview' }
+        @{ Key = 'directoryRoleManagementPolicies'; Handler = 'Sync-OERStructureDirectoryRoleManagementPolicy' }
+        @{ Key = 'directoryRoleAssignments'; Handler = 'Sync-OERStructureDirectoryRoleAssignment' }
+        @{ Key = 'roleAssignments'; Handler = 'Sync-OERStructureRoleAssignment' }
+        @{ Key = 'roleManagementPolicies'; Handler = 'Sync-OERStructureRoleManagementPolicy' }
+    ) {
+        $ControlKey = if ($Key -eq 'groups') { 'catalogs' } else { 'groups' }
+        $ControlHandler = if ($Key -eq 'groups') { 'Sync-OERStructureCatalog' } else { 'Sync-OERStructureGroup' }
+        $Json = "{ `"version`": `"1.0`", `"$Key`": null, `"$ControlKey`": [ { `"displayName`": `"control`" } ] }"
+        $Rows = @(Invoke-OERStructure -Json $Json -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable NullErr)
+
+        # Reached: the run passed validation and dispatched the declared section beside the null one.
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)" }) | Should -Be @("$ControlKey|stub|Unchanged")
+        Should -Invoke -ModuleName $script:moduleName -CommandName $ControlHandler -Times 1 -Exactly
+        # The null section: no handler call, no row (a handler that rejects a null item would leave a Failed
+        # row), no error record.
+        Should -Invoke -ModuleName $script:moduleName -CommandName $Handler -Times 0
+        @($Rows | Where-Object { $_.Section -eq $Key }) | Should -BeNullOrEmpty
+        @($NullErr) | Should -BeNullOrEmpty
+        # The other seven handlers are not called either.
+        foreach ($Other in @($script:NsSection | Where-Object { $_.Handler -ne $ControlHandler })) {
+            Should -Invoke -ModuleName $script:moduleName -CommandName $Other.Handler -Times 0
+        }
+    }
+
+    It 'requests no ARM token and never checks a subscription for "<Key>": null alone' -TestCases @(
+        @{ Key = 'roleAssignments' }
+        @{ Key = 'roleManagementPolicies' }
+    ) {
+        $Json = "{ `"version`": `"1.0`", `"$Key`": null, `"groups`": [ { `"displayName`": `"control`" } ] }"
+        $Rows = @(Invoke-OERStructure -Json $Json -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable NullErr)
+
+        # Reached: one sign-in, made without -IncludeARM, and the declared section was applied.
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0 -ParameterFilter { $PSBoundParameters.ContainsKey('IncludeARM') }
+        # The document tenant comparison after the sign-in follows the same decision: no ARM token compared.
+        Should -Invoke -ModuleName $script:moduleName Get-OERDocumentTenantMismatch -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERDocumentTenantMismatch -Times 0 -ParameterFilter { $IncludeARM }
+        Should -Invoke -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERStructureRoleAssignmentScope -Times 0
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)" }) | Should -Be @('groups|stub|Unchanged')
+        @($NullErr) | Should -BeNullOrEmpty
+    }
+
+    It 'still requests an ARM token for "<Key>": [] (an empty array is declared)' -TestCases @(
+        @{ Key = 'roleAssignments' }
+        @{ Key = 'roleManagementPolicies' }
+    ) {
+        $Json = "{ `"version`": `"1.0`", `"$Key`": [], `"groups`": [ { `"displayName`": `"control`" } ] }"
+        $null = @(Invoke-OERStructure -Json $Json -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $IncludeARM -eq $true }
+        Should -Invoke -ModuleName $script:moduleName Get-OERDocumentTenantMismatch -Times 1 -Exactly -ParameterFilter { $IncludeARM }
+        # An empty section has no entry, so no subscription is checked.
+        Should -Invoke -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant -Times 0
+    }
+
+    It 'runs no administrative unit pre-pass for "administrativeUnits": null while a group names a unit' {
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "administrativeUnit": "AU-1" } ], "administrativeUnits": null }'
+        $Rows = @(Invoke-OERStructure -Json $Json -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable NullErr)
+
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)" }) | Should -Be @('groups|stub|Unchanged')
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureGroup -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit -Times 0
+        @($NullErr) | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Invoke-OERStructure refuses a run the host cannot confirm (BL-53)' {
+    # R-4: Invoke-OERStructure asks for confirmation before each change (ConfirmImpact High). A host with no user
+    # interface cannot ask, and its ShouldProcess throws at the first change. The Default Host is the one such
+    # host that can be told beforehand (Test-OERHostCanConfirm, mocked here): a run that would prompt -- no
+    # -WhatIf, and $ConfirmPreference not None -- is refused there with ConfirmationUnavailable after the
+    # document is read and validated, before every sign-in step, the tenant comparisons and the sections. In
+    # every other host the engine's two handler-error rows say what is missing when a handler stopped at that
+    # prompt (Test-OERConfirmPromptFailure).
+    BeforeAll {
+        $script:CuMessage = 'Invoke-OERStructure asks for confirmation before each change (ConfirmImpact High), and this host cannot show a confirmation prompt, so nothing was read or changed; run it with -Confirm:$false to apply without prompts, or with -WhatIf to plan.'
+        $script:CuRowText = 'the host cannot show the confirmation prompt Invoke-OERStructure asks before each change ({0}); nothing was written for this entry. Run Invoke-OERStructure with -Confirm:$false to apply without prompts, or with -WhatIf to plan.'
+        $script:CuJson = '{ "version": "1.0", "groups": [ { "displayName": "g1" } ] }'
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Get-OERDocumentTenantMismatch { }
+        Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { [PSCustomObject]@{ Scope = $null; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null } }
+        Mock -ModuleName $script:moduleName Test-OERHostCanConfirm { $false }
+        Mock -ModuleName $script:moduleName Sync-OERStructureGroup { [PSCustomObject]@{ Section = 'groups'; Item = [string]$Item.displayName; Action = 'Unchanged'; Detail = 'stub row' } }
+        Mock -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit { }
+    }
+
+    It 'refuses a run that would prompt (<Case>) with ConfirmationUnavailable: no sign-in, no tenant check, no handler and no row' -TestCases @(
+        @{ Case = 'no -Confirm and no -WhatIf, with the default $ConfirmPreference'; Params = @{}; Target = 'Json' }
+        @{ Case = '-Confirm'; Params = @{ Confirm = $true }; Target = 'Json' }
+        @{ Case = '-TenantId naming a tenant ID'; Params = @{ TenantId = '00000000-0000-0000-0000-000000000001' }; Target = 'Json' }
+        @{ Case = '-Prune'; Params = @{ Prune = $true }; Target = 'Json' }
+    ) {
+        # The default preference prompts for a ConfirmImpact High command; the test host keeps it.
+        $global:ConfirmPreference | Should -Not -Be 'None'
+        $Rows = @(Invoke-OERStructure -Json $script:CuJson @Params -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable CuErr)
+
+        # Reached: the host question was asked, once.
+        Should -Invoke -ModuleName $script:moduleName Test-OERHostCanConfirm -Times 1 -Exactly
+        @($CuErr).Count | Should -Be 1
+        $CuErr[0].FullyQualifiedErrorId | Should -BeExactly 'ConfirmationUnavailable,Invoke-OERStructure'
+        $CuErr[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidOperation)
+        $CuErr[0].TargetObject | Should -BeExactly $Target
+        $CuErr[0].Exception.Message | Should -BeExactly $script:CuMessage
+        $Rows | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERDocumentTenantMismatch -Times 0
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureGroup -Times 0
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit -Times 0
+    }
+
+    It 'names the -Path it was given as the target' {
+        $Path = Join-Path $TestDrive 'cu-structure.json'
+        Set-Content -LiteralPath $Path -Value $script:CuJson -Encoding utf8
+        $null = @(Invoke-OERStructure -Path $Path -ErrorAction SilentlyContinue -ErrorVariable CuErr)
+        @($CuErr).Count | Should -Be 1
+        $CuErr[0].FullyQualifiedErrorId | Should -BeExactly 'ConfirmationUnavailable,Invoke-OERStructure'
+        $CuErr[0].TargetObject | Should -BeExactly $Path
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+    }
+
+    It 'refuses each piped document the same way' {
+        $Docs = @(($script:CuJson | ConvertFrom-Json), ($script:CuJson | ConvertFrom-Json))
+        $Rows = @($Docs | Invoke-OERStructure -ErrorAction SilentlyContinue -ErrorVariable CuErr)
+        @($CuErr | ForEach-Object { $_.FullyQualifiedErrorId }) | Should -Be @('ConfirmationUnavailable,Invoke-OERStructure', 'ConfirmationUnavailable,Invoke-OERStructure')
+        $Rows | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Test-OERHostCanConfirm -Times 2 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureGroup -Times 0
+    }
+
+    It 'refuses a document that does not validate with StructureValidationFailed first, before the host is asked about' {
+        $null = @(Invoke-OERStructure -Json '{ "groups": [] }' -ErrorAction SilentlyContinue -ErrorVariable CuErr)
+        @($CuErr | ForEach-Object { $_.FullyQualifiedErrorId }) | Should -Be @('StructureValidationFailed,Invoke-OERStructure')
+        Should -Invoke -ModuleName $script:moduleName Test-OERHostCanConfirm -Times 0
+    }
+
+    It 'is not refused <Case>, and applies the document' -TestCases @(
+        @{ Case = 'under -WhatIf'; Params = @{ WhatIf = $true }; HostCanConfirm = $false; GlobalNone = $false }
+        @{ Case = 'under -Confirm:$false'; Params = @{ Confirm = $false }; HostCanConfirm = $false; GlobalNone = $false }
+        @{ Case = 'under $ConfirmPreference None'; Params = @{}; HostCanConfirm = $false; GlobalNone = $true }
+        @{ Case = 'when the host can confirm'; Params = @{}; HostCanConfirm = $true; GlobalNone = $false }
+    ) {
+        if ($HostCanConfirm) { Mock -ModuleName $script:moduleName Test-OERHostCanConfirm { $true } }
+        $SavedPreference = $global:ConfirmPreference
+        try {
+            # Set where an operator sets it, at the prompt: a module reads the global preference.
+            if ($GlobalNone) { $global:ConfirmPreference = 'None' }
+            $Rows = @(Invoke-OERStructure -Json $script:CuJson @Params -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable CuErr)
+        } finally {
+            $global:ConfirmPreference = $SavedPreference
+        }
+
+        @($CuErr) | Should -BeNullOrEmpty
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)" }) | Should -Be @('groups|g1|Unchanged')
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureGroup -Times 1 -Exactly
+    }
+
+    It 'words the dispatch row for a handler that stopped at a confirmation prompt the host could not show (<Kind>)' -TestCases @(
+        @{ Kind = 'HostException'; Type = 'System.Management.Automation.Host.HostException' }
+        @{ Kind = 'PSInvalidOperationException'; Type = 'System.Management.Automation.PSInvalidOperationException' }
+        @{ Kind = 'NullReferenceException'; Type = 'System.NullReferenceException' }
+    ) {
+        Mock -ModuleName $script:moduleName Test-OERHostCanConfirm { $true }
+        InModuleScope $script:moduleName -Parameters @{ Type = $Type } {
+            param($Type)
+            $script:CuInnerType = $Type
+            Mock Sync-OERStructureGroup {
+                $Inner = New-Object -TypeName $script:CuInnerType -ArgumentList 'the prompt failed'
+                throw [System.Management.Automation.MethodInvocationException]::new('Exception calling "ShouldProcess" with "2" argument(s): "the prompt failed"', $Inner)
+            }
+        }
+        $Rows = @(Invoke-OERStructure -Json $script:CuJson -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable CuErr)
+
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)|$($_.Detail)" }) | Should -BeExactly @(
+            "groups|g1|Failed|handler error: $($script:CuRowText -f 'the prompt failed')"
+        )
+        # The record is published as itself, once by the engine (-ErrorVariable also holds the mock's inner layers).
+        $Own = @($CuErr | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' })
+        $Own.Count | Should -Be 1
+        $Own[0].Exception | Should -BeOfType ([System.Management.Automation.MethodInvocationException])
+        $Own[0].Exception.InnerException.GetType().FullName | Should -BeExactly $Type
+    }
+
+    It 'keeps the dispatch row''s own message for <Kind>' -TestCases @(
+        @{ Kind = 'a ShouldProcess failure of another inner type'; Message = 'Exception calling "ShouldProcess" with "2" argument(s): "not a prompt"'; Inner = $true }
+        @{ Kind = 'another handler error'; Message = 'transport failure'; Inner = $false }
+    ) {
+        Mock -ModuleName $script:moduleName Test-OERHostCanConfirm { $true }
+        InModuleScope $script:moduleName -Parameters @{ Message = $Message; Inner = $Inner } {
+            param($Message, $Inner)
+            $script:CuMessageThrown = $Message
+            $script:CuWithInner = $Inner
+            Mock Sync-OERStructureGroup {
+                if ($script:CuWithInner) {
+                    throw [System.Management.Automation.MethodInvocationException]::new($script:CuMessageThrown, [System.InvalidOperationException]::new('not a prompt'))
+                }
+                throw [System.Exception]::new($script:CuMessageThrown)
+            }
+        }
+        $Rows = @(Invoke-OERStructure -Json $script:CuJson -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)|$($_.Detail)" }) | Should -BeExactly @("groups|g1|Failed|handler error: $Message")
+    }
+
+    It 'words the pre-pass row the same way, keeping its pre-pass prefix, and keeps it for another error' -TestCases @(
+        @{ Kind = 'a prompt failure'; Prompt = $true }
+        @{ Kind = 'another error'; Prompt = $false }
+    ) {
+        Mock -ModuleName $script:moduleName Test-OERHostCanConfirm { $true }
+        InModuleScope $script:moduleName -Parameters @{ Prompt = $Prompt } {
+            param($Prompt)
+            $script:CuPrompt = $Prompt
+            Mock Sync-OERStructureAdministrativeUnit {
+                param($Item, $Caller, $Prune, $TenantAlias, $EnsureOnly, $CreatedUnitMembership, $RenameMap)
+                if (-not $EnsureOnly) { return }
+                if ($script:CuPrompt) {
+                    throw [System.Management.Automation.MethodInvocationException]::new('Exception calling "ShouldProcess" with "2" argument(s): "the prompt failed"',
+                        [System.Management.Automation.PSInvalidOperationException]::new('the prompt failed'))
+                }
+                throw [System.Exception]::new('lookup failed')
+            }
+        }
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "administrativeUnit": "AU-1" } ], "administrativeUnits": [ { "displayName": "AU-1" } ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+        $Expected = if ($Prompt) { "pre-pass handler error: $($script:CuRowText -f 'the prompt failed')" } else { 'pre-pass handler error: lookup failed' }
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)|$($_.Detail)" }) | Should -BeExactly @(
+            "administrativeUnits|AU-1|Failed|$Expected"
+            'groups|g1|Unchanged|stub row'
+        )
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit -Times 1 -Exactly -ParameterFilter { $EnsureOnly }
+    }
+
+    Context 'in a script with no try above it' {
+        # The public engine in a runspace made without a PSHost -- the Default Host, as in a [powershell]::Create()
+        # runspace or a thread job -- so no try stands anywhere above it and the REAL Test-OERHostCanConfirm
+        # answers. The script installs its own fakes in ITS copy of the module scope and logs every sign-in,
+        # tenant check and handler call with AppendAllText, whose path is substituted into the text.
+        BeforeAll {
+            function script:Invoke-CuDefaultHostScript {
+                param([scriptblock]$Script)
+                $Runspace = [runspacefactory]::CreateRunspace()
+                $Runspace.Open()
+                $Shell = [powershell]::Create()
+                try {
+                    Install-OERTransportTripwireInRunspace -Runspace $Runspace
+                    $Shell.Runspace = $Runspace
+                    $null = $Shell.AddScript($Script.ToString())
+                    $Output = $Shell.Invoke()
+                    Test-OERTransportTripwireInRunspace -Runspace $Runspace
+                    [PSCustomObject]@{
+                        Output = @($Output)
+                        Errors = @($Shell.Streams.Error | ForEach-Object { $_.ToString() })
+                    }
+                } finally {
+                    $Shell.Dispose()
+                    $Runspace.Dispose()
+                }
+            }
+            $script:CuFakes = @'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { [System.IO.File]::AppendAllText('#LOG#', "AUTH`n") }
+    Set-Item -Path function:script:Get-OERDocumentTenantMismatch -Value {
+        param($Document, $Target, $RequestedTenantId, [switch]$IncludeARM)
+        [System.IO.File]::AppendAllText('#LOG#', "TENANTCHECK`n")
+    }
+    Set-Item -Path function:script:Sync-OERStructureGroup -Value {
+        param($Item, $Caller, [switch]$Prune, $TenantAlias, $CreatedUnitMembership, $RenameMap)
+        [System.IO.File]::AppendAllText('#LOG#', "ASK group $($Item.displayName)`n")
+        if ($Caller.ShouldProcess([string]$Item.displayName, 'Update group')) { [System.IO.File]::AppendAllText('#LOG#', "WRITE group`n") }
+        ConvertTo-OERStructureResult -Section 'groups' -Item ([string]$Item.displayName) -Action 'Unchanged' -Detail 'stub row'
+    }
+    Set-Item -Path function:script:Sync-OERStructureAdministrativeUnit -Value {
+        param($Item, $Caller, [switch]$Prune, $TenantAlias, [switch]$EnsureOnly, $CreatedUnitMembership, $RenameMap)
+        [System.IO.File]::AppendAllText('#LOG#', "ASK unit $($Item.displayName) ensure=$EnsureOnly`n")
+        if ($Caller.ShouldProcess([string]$Item.displayName, 'Update administrative unit')) { [System.IO.File]::AppendAllText('#LOG#', "WRITE unit`n") }
+    }
+    #EXTRA#
+}
+'@
+        }
+
+        It 'refuses a run that would prompt in the Default Host and reaches the end of the script, while -WhatIf, -Confirm:$false and $ConfirmPreference None run' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Script = [scriptblock]::Create(($script:CuFakes + @'
+
+"HOST:$($Host.Name)"
+$Json = '{ "version": "1.0", "groups": [ { "displayName": "g1" } ] }'
+[System.IO.File]::AppendAllText('#LOG#', "STEP plain`n")
+Invoke-OERStructure -Json $Json -ErrorVariable RunErrors | ForEach-Object { "ROW:plain:$($_.Item):$($_.Action)" }
+$RunErrors | ForEach-Object { "ERRID:plain:$($_.FullyQualifiedErrorId)" }
+'AFTER'
+[System.IO.File]::AppendAllText('#LOG#', "STEP whatif`n")
+Invoke-OERStructure -Json $Json -WhatIf -ErrorVariable RunErrors | ForEach-Object { "ROW:whatif:$($_.Item):$($_.Action)" }
+$RunErrors | ForEach-Object { "ERRID:whatif:$($_.FullyQualifiedErrorId)" }
+[System.IO.File]::AppendAllText('#LOG#', "STEP confirmfalse`n")
+Invoke-OERStructure -Json $Json -Confirm:$false -ErrorVariable RunErrors | ForEach-Object { "ROW:confirmfalse:$($_.Item):$($_.Action)" }
+$RunErrors | ForEach-Object { "ERRID:confirmfalse:$($_.FullyQualifiedErrorId)" }
+[System.IO.File]::AppendAllText('#LOG#', "STEP none`n")
+$ConfirmPreference = 'None'
+Invoke-OERStructure -Json $Json -ErrorVariable RunErrors | ForEach-Object { "ROW:none:$($_.Item):$($_.Action)" }
+$RunErrors | ForEach-Object { "ERRID:none:$($_.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#EXTRA#', '').Replace('#LOG#', $Log.Replace("'", "''")))
+            $Run = Invoke-CuDefaultHostScript -Script $Script
+
+            $Run.Output | Should -Be @(
+                'HOST:Default Host'
+                'ERRID:plain:ConfirmationUnavailable,Invoke-OERStructure'
+                'AFTER'
+                'ROW:whatif:g1:Unchanged'
+                'ROW:confirmfalse:g1:Unchanged'
+                'ROW:none:g1:Unchanged'
+                'END'
+            )
+            @($Run.Errors) | Should -Be @($script:CuMessage)
+            # The refused run signed nothing in, compared no tenant and called no handler; each of the other
+            # three did, and none of them asked the host (the -WhatIf plan writes no change).
+            @(Get-Content -LiteralPath $Log) | Should -Be @(
+                'STEP plain'
+                'STEP whatif'
+                'AUTH', 'TENANTCHECK', 'ASK group g1'
+                'STEP confirmfalse'
+                'AUTH', 'TENANTCHECK', 'ASK group g1', 'WRITE group'
+                'STEP none'
+                'AUTH', 'TENANTCHECK', 'ASK group g1', 'WRITE group'
+            )
+        }
+
+        It 'reports, in a host the refusal misses, each entry whose prompt failed Failed with the row that says what is missing, and reaches the end of the script' {
+            # Test-OERHostCanConfirm is stubbed to $true there, standing for a host that fails only when it asks
+            # (pwsh -NonInteractive, standard input at its end): the handlers' real ShouldProcess then throws in
+            # the Default Host, and the engine's two catches word the rows.
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Script = [scriptblock]::Create(($script:CuFakes + @'
+
+$Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "administrativeUnit": "AU-1" } ], "administrativeUnits": [ { "displayName": "AU-1" } ] }'
+Invoke-OERStructure -Json $Json -ErrorVariable RunErrors | ForEach-Object { "ROW:$($_.Section):$($_.Item):$($_.Action):$(([string]$_.Detail).Replace("`r", '').Replace("`n", ' | '))" }
+$RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' } | ForEach-Object { "INNER:$($_.Exception.GetType().Name):$($_.Exception.InnerException.GetType().Name):$(([string]$_.Exception.InnerException.Message).Replace("`r", '').Replace("`n", ' | '))" }
+'END'
+'@).Replace('#EXTRA#', 'Set-Item -Path function:script:Test-OERHostCanConfirm -Value { $true }').Replace('#LOG#', $Log.Replace("'", "''")))
+            $Run = Invoke-CuDefaultHostScript -Script $Script
+
+            $Run.Output[-1] | Should -BeExactly 'END'
+            $Inner = @($Run.Output | Where-Object { $_ -like 'INNER:*' })
+            $Inner.Count | Should -Be 3 -Because "the output was:`n$($Run.Output -join "`n")"
+            # Every record is the real ShouldProcess failure of the Default Host, published as itself.
+            foreach ($Line in $Inner) { $Line | Should -BeLike 'INNER:MethodInvocationException:HostException:?*' }
+            $Message = @($Inner | ForEach-Object { $_.Substring('INNER:MethodInvocationException:HostException:'.Length) })
+            @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -BeExactly @(
+                "ROW:administrativeUnits:AU-1:Failed:pre-pass handler error: $($script:CuRowText -f $Message[0])"
+                "ROW:groups:g1:Failed:handler error: $($script:CuRowText -f $Message[1])"
+                "ROW:administrativeUnits:AU-1:Failed:handler error: $($script:CuRowText -f $Message[2])"
+            )
+            @($Run.Errors).Count | Should -Be 3
+            # Each handler asked once and wrote nothing.
+            @(Get-Content -LiteralPath $Log) | Should -Be @('AUTH', 'TENANTCHECK', 'ASK unit AU-1 ensure=True', 'ASK group g1', 'ASK unit AU-1 ensure=False')
+        }
+    }
+}
+
+Describe 'Invoke-OERStructure refuses a document the validator refuses, in a script with no try above it (BL-139, BL-154)' {
+    # The two validator refusals of this step, through the public engine in a runspace through
+    # Invoke-OERWithConfirmAnswer, so no try stands anywhere above it: a group template the naming engine cannot
+    # resolve, and a value the reader turned into a date and time (Test-OERJsonDateKindSupport answers $false in
+    # the runspace's module scope, as on PowerShell before 7.5). Each is refused with StructureValidationFailed,
+    # with no sign-in, no handler call and no row, and the script goes on. A control document in the same script
+    # is applied, so the scenario tells a refusal from silence.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        function script:New-VrNoTryScenario {
+            param([string]$Log, [string]$Json, [string]$ControlJson)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Test-OERJsonDateKindSupport -Value { $false }
+    Set-Item -Path function:script:Initialize-OERAuth -Value { [System.IO.File]::AppendAllText('#LOG#', "AUTH`n") }
+    Set-Item -Path function:script:Get-OERDocumentTenantMismatch -Value { param($Document, $Target, $RequestedTenantId, [switch]$IncludeARM) }
+    Set-Item -Path function:script:Sync-OERStructureGroup -Value {
+        param($Item, $Caller, [switch]$Prune, $TenantAlias, $CreatedUnitMembership, $RenameMap)
+        # A template group carries no displayName (the real handler computes it); the stub names it by its template.
+        $Label = if ($Item.displayName) { [string]$Item.displayName } else { [string]$Item.template }
+        [System.IO.File]::AppendAllText('#LOG#', "HANDLER $Label`n")
+        ConvertTo-OERStructureResult -Section 'groups' -Item $Label -Action 'Unchanged' -Detail 'stub row'
+    }
+}
+Invoke-OERStructure -Json '#JSON#' -ErrorVariable RunErrors | ForEach-Object { "ROW:$($_.Item):$($_.Action)" }
+$RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' } | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
+'AFTER'
+Invoke-OERStructure -Json '#CONTROLJSON#' -ErrorVariable RunErrors | ForEach-Object { "ROW:$($_.Item):$($_.Action)" }
+$RunErrors | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#JSON#', $Json).Replace('#CONTROLJSON#', $ControlJson))
+        }
+    }
+
+    It 'refuses <Case> with StructureValidationFailed, signs nothing in, calls no handler and reaches the end of the script' -TestCases @(
+        @{
+            Case        = 'a group template that cannot be resolved'
+            Json        = '{ "version": "1.0", "groups": [ { "template": "grp-{env}-{missing}", "tokens": { "env": "prd" } } ] }'
+            ControlJson = '{ "version": "1.0", "groups": [ { "template": "grp-{env}", "tokens": { "env": "prd" } } ] }'
+            Control     = 'grp-{env}'
+            Finding     = "groups[0].template: 'template' at groups[0] cannot be resolved to a group name: "
+        }
+        @{
+            Case        = 'a value the reader turned into a date and time'
+            Json        = '{ "version": "1.0", "groups": [ { "displayName": "g1", "description": "2026-01-01T00:00:00Z" } ] }'
+            ControlJson = '{ "version": "1.0", "groups": [ { "displayName": "g1", "description": "plain text" } ] }'
+            Control     = 'g1'
+            Finding     = 'groups[0].description: The value at groups[0].description was read as a date and time, not as the text written'
+        }
+    ) {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&No' -Script (New-VrNoTryScenario -Log $Log -Json $Json -ControlJson $ControlJson)
+
+        $Run.Output | Should -Be @(
+            'ERRID:StructureValidationFailed,Invoke-OERStructure'
+            'AFTER'
+            "ROW:$($Control):Unchanged"
+            'END'
+        )
+        @($Run.Errors).Count | Should -Be 1
+        $Run.Errors[0] | Should -Match ('^' + [regex]::Escape("Structure document failed validation: $Finding"))
+        # The refused document signed nothing in and reached no handler; the control document did both.
+        @(Get-Content -LiteralPath $Log) | Should -Be @('AUTH', "HANDLER $Control")
+        @($Run.Prompts).Count | Should -Be 0
     }
 }
