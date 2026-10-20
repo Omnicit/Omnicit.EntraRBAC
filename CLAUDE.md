@@ -686,8 +686,8 @@ bypass the cached return. `Why: docs/development/rationale.md#auth-state`,
 
 Per-tenant configuration is stored as PSD1 files under
 `<home>/.config/Omnicit.EntraRBAC/Profiles/<alias>.psd1`. Never write `$env:USERPROFILE` to build
-that path -- it is Windows-only and this module is `CompatiblePSEditions = 'Core'`. Path derivation
-and the profile schema: `Why: docs/development/rationale.md#profile-path`
+that path (Windows-only; the module is `CompatiblePSEditions = 'Core'`).
+`Why: docs/development/rationale.md#profile-path`
 
 | Cmdlet | Operation | Notes |
 |---|---|---|
@@ -696,11 +696,10 @@ and the profile schema: `Why: docs/development/rationale.md#profile-path`
 | `Set-OERConfiguration` | Update | Mandatory `-TenantAlias`. Non-terminating error if alias missing. Preserves sections not specified. |
 | `Remove-OERConfiguration` | Delete | Mandatory `-TenantAlias`. `ConfirmImpact = Medium`. |
 
-A profile's optional `Environment` key names the sovereign cloud that tenant lives in (`Global`,
-`USGov`, `USGovDoD` or `China`). `Connect-OER -TenantAlias` reads it automatically when the command
-line names no `-Environment` of its own, so an operator managing both commercial and sovereign-cloud
-tenants does not have to remember, and pass, which is which on every call; an explicit `-Environment`
-on the command line always overrides it.
+A profile's optional `Environment` key names the sovereign cloud of that tenant (`Global`, `USGov`,
+`USGovDoD` or `China`). `Connect-OER -TenantAlias` reads it when the command line names no
+`-Environment` of its own; an explicit `-Environment` always overrides it.
+`Why: docs/development/rationale.md#tenant-profile-config`
 
 The private helper `Export-OERConfiguration` owns PSD1 serialization. Never inline the serialization
 logic in a public function -- always call the helper.
@@ -717,9 +716,9 @@ character validation.
 Used by every creation cmdlet. Do not duplicate template substitution logic -- always call this
 helper.
 
-The rules a name must follow are a separate matter, held in a naming standard file that
-`Test-OERStructure -NamingStandard` checks offline; `Test-OERNamingStandardName` owns them (see **Code
-Style**). `Why: docs/development/rationale.md#naming-standard`
+Naming rules live in a naming standard file that `Test-OERStructure -NamingStandard` checks offline;
+`Test-OERNamingStandardName` owns them (see **Code Style**).
+`Why: docs/development/rationale.md#naming-standard`
 
 ---
 
@@ -737,15 +736,14 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 
 **Rules for adding a completer:**
 
-1. **Never attach a `ValidateSet`.** Completion is purely additive -- free text, GUIDs and custom
-   role names must keep binding. A curated list is a hint, not a constraint.
+1. **Never attach a `ValidateSet`.** Completion is additive: free text, GUIDs and custom role names
+   must keep binding; a curated list is a hint, not a constraint.
 2. **Completers must be fast and offline.** No Graph or ARM call: they run on the interactive prompt
    path.
 3. **Never throw and never write an error record** from a completer -- return no results instead.
-4. **Register in `suffix.ps1` AND mirror it in the dev-mode psm1.** Drift means completion works from
-   the built module but not from source, or vice versa.
-5. **Quote values containing whitespace** in `CompletionText` so the inserted argument is valid as
-   typed, while `ListItemText` and the tooltip keep the raw value.
+4. **Register in `suffix.ps1` AND mirror it in the dev-mode psm1**, with no drift between the two.
+5. **Quote values containing whitespace** in `CompletionText`; `ListItemText` and the tooltip keep
+   the raw value.
 6. **Add an end-to-end registration test** driving `TabExpansion2`, not just a unit test of the
    helper.
 
@@ -760,18 +758,16 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 - `[CmdletBinding(SupportsShouldProcess)]` on every state-changing function (create, update, delete).
 - **A warning about a deletion or about widened access stands BEFORE the cmdlet's own
   `$PSCmdlet.ShouldProcess`**, so `-WhatIf` shows it and a `-Confirm` prompt is answered with it on
-  screen; written inside the gate it prints only after the answer, and never under `-WhatIf`. A
-  warning that needs a value computed only inside the gate moves out with that computation, or is
-  named, with its reason, in the allowlist of `tests/Unit/Public/WarningBeforeConfirmation.Cohort.Tests.ps1`
-  -- an outcome warning, one that depends on what the operator confirmed, or one not about the action
-  at all. That cohort fails every other `Write-Warning` after a public cmdlet's first
-  `$PSCmdlet.ShouldProcess`. In the apply engine a `Sync-OERStructure*` handler writes the same
-  warning before `$Caller.ShouldProcess` only when the cmdlet it calls will not write it, so the plan
-  shows it and a real run never warns twice: under `-WhatIf`, where the cmdlet is never called, and
-  in both modes for the group PIM MFA / authentication-context pair the diff reconciles, since
-  `Set-OERGroupPimPolicy`, given the reconciled parameters, writes none. The handler's tests run each
-  such case as a plan and as a real run with the real cmdlet, from one live state, and hold the same
-  text and exactly one warning in the run.
+  screen. One needing a value computed only inside the gate moves out with that computation, or is
+  named, with its reason, in the allowlist of
+  `tests/Unit/Public/WarningBeforeConfirmation.Cohort.Tests.ps1` (outcome warnings, ones depending on
+  the operator's answer, ones not about the action); that cohort fails every other `Write-Warning`
+  after a public cmdlet's first `$PSCmdlet.ShouldProcess`. In the apply engine a `Sync-OERStructure*`
+  handler writes the same warning before `$Caller.ShouldProcess` only when the cmdlet it calls will
+  not write it: under `-WhatIf` (cmdlet never called) and, in both modes, for the group PIM MFA /
+  authentication-context pair the diff reconciles (`Set-OERGroupPimPolicy`, given the reconciled
+  parameters, writes none). Its tests run each such case as a plan and as a real run with the real
+  cmdlet, from one live state, and hold the same text and exactly one warning.
   `Why: docs/development/rationale.md#warning-before-confirmation`
 - `[OutputType([PSCustomObject])]` on every function that returns type-tagged objects.
 - **Output tagging is mandatory** -- never return raw hashtables from `Invoke-OERGraphRequest`:
@@ -796,244 +792,225 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 - **One output shape, one `ConvertTo-*` owner.** A shape emitted by more than one cmdlet is built in
   a single private `ConvertTo-*` helper, never inline in each caller. A create path routes its
   response through the same converter the read path uses.
-- **Property naming:** an identifier is `<Noun>Id`, a display name is `<Noun>DisplayName`. A bare
-  noun must never hold a display name. Keep a historical spelling as an `AliasProperty`
-  (`Update-TypeData -Force` in `suffix.ps1`) rather than storing the value twice. An ARM-scoped
-  object (`Resource`, `ResourceGroup`, `Subscription`, `ManagementGroup`, `RoleDefinition`) exposes
-  the ARM path as `ResourceId`, never a bare `Id` -- `Id` is already claimed elsewhere by
-  `-PolicyId`/`-RoleEligibilityScheduleId`, and a bare `Id` on one of these five would mis-bind
-  those parameters from the pipeline. `RoleDefinition` stores the path as `RoleDefinitionId` and
-  exposes `ResourceId` as an `AliasProperty` of it; the other four store `ResourceId` directly --
-  either way, no ARM-scoped shape stores the path twice.
+- **Property naming:** identifier `<Noun>Id`, display name `<Noun>DisplayName`; a bare noun never
+  holds a display name. A historical spelling is an `AliasProperty` (`Update-TypeData -Force` in
+  `suffix.ps1`), never a second stored value. An ARM-scoped object (`Resource`, `ResourceGroup`,
+  `Subscription`, `ManagementGroup`, `RoleDefinition`) exposes the ARM path as `ResourceId`, never a
+  bare `Id`; `RoleDefinition` stores `RoleDefinitionId` with `ResourceId` an `AliasProperty` of it,
+  the other four store `ResourceId` directly -- no shape stores the path twice.
   `Why: docs/development/rationale.md#property-naming`
-- **Alias declaration order:** in a parameter's `[Alias()]` list, the specific `<Noun>Id` form comes
-  before the generic `Id`. `ValueFromPipelineByPropertyName` resolves the parameter NAME first, then
-  the aliases in DECLARATION ORDER, first match wins -- so an `Id`-first list on a `-Group` or
-  `-AdministrativeUnit` parameter binds a piped MEMBER's own id where the parent object's id was
-  meant, and on a `Remove-*` cmdlet that deletes the wrong tenant object. Two AST cohort suites
-  machine-check this: `Unit/Public/GroupAliasOrder.Cohort.Tests.ps1` and
+- **Alias declaration order:** in a parameter's `[Alias()]` list the specific `<Noun>Id` precedes
+  the generic `Id` (first match in declaration order wins). Two AST cohort suites hold it for
+  `-Group` and `-AdministrativeUnit`: `Unit/Public/GroupAliasOrder.Cohort.Tests.ps1` and
   `Unit/Public/AdministrativeUnitAliasOrder.Cohort.Tests.ps1`.
   `Why: docs/development/rationale.md#alias-declaration-order`
 - **`-Scope` binds from the pipeline only where the piped OBJECT is assignment-shaped, never where
-  it is scope-DEFINING** -- this is a split by object shape, not a blanket rule per cmdlet.
-  Assignment-shaped objects (`RoleAssignment` and its PIM siblings) carry `Scope` and feed the four
-  cmdlets that actually bind it: `Enable-`/`Disable-OEREligibleRoleAssignment` and
+  it is scope-DEFINING.** Assignment-shaped (`RoleAssignment` and its PIM siblings) carry `Scope`
+  and feed the four cmdlets that bind it: `Enable-`/`Disable-OEREligibleRoleAssignment`,
   `Remove-OERActiveRoleAssignment`/`Remove-OEREligibleRoleAssignment`. `Set-OERRoleAssignment` and
-  `Remove-OERRoleAssignment` have NO `-Scope` parameter at all -- they act on `-Id` alone, which
-  already embeds the scope; do not add one. Scope-DEFINING objects (`Resource`, `ResourceGroup`,
-  `Subscription`, `ManagementGroup`, `RoleDefinition`) carry only friendly properties and never
-  `Scope` or a bare `Id`, and feed the create/read cmdlets (`New-`/`Get-`) by those friendly
-  properties (`Subscription`, `ResourceGroup`, `ManagementGroup`, `ResourceType`, `ResourceName`)
-  instead.
+  `Remove-OERRoleAssignment` have NO `-Scope` (they act on `-Id`, which embeds the scope); do not
+  add one. Scope-DEFINING (`Resource`, `ResourceGroup`, `Subscription`, `ManagementGroup`,
+  `RoleDefinition`) carry only friendly properties, never `Scope` or a bare `Id`, and feed the
+  `New-`/`Get-` cmdlets by `Subscription`, `ResourceGroup`, `ManagementGroup`, `ResourceType`,
+  `ResourceName`.
   `Why: docs/development/rationale.md#scope-pipeline-binding`
-- **`ConvertTo-OERODataFilterValue` is the single owner of OData filter-value escaping.** Any Graph
+- **`ConvertTo-OERODataFilterValue` is the single owner of OData filter-value escaping:** any Graph
   display-name lookup interpolating a caller-supplied value into a `$filter=... eq '...'` URL must
-  escape through it. Four deliberate exceptions exist; a new unescaped site is a bug, not the house
-  style. An operator's whole OData expression (`-Filter`, `-GroupFilter`) is never escaped through
-  it; `Export-OERInventory -GroupFilter`, ANDed as `securityEnabled eq true and (...)`, is guarded by
-  the post-read check that keeps only groups the read shows `securityEnabled` true, never by the
+  escape through it (four deliberate exceptions exist; a new unescaped site is a bug). An operator's
+  whole OData expression (`-Filter`, `-GroupFilter`) is never escaped through it;
+  `Export-OERInventory -GroupFilter`, ANDed as `securityEnabled eq true and (...)`, is guarded by the
+  post-read check that keeps only groups the read shows `securityEnabled` true, never by the
   parentheses. `Why: docs/development/rationale.md#odata-escaping`
 - **A resolver on the cohort's list publishes its failure as itself and an ambiguous name as
-  `Ambiguous*`, never as `*NotFound` -- a COHORT check holds that, not a helper.** The principal
-  and Azure role definition lookups are the decided exception, still publishing a failed read as
-  `PrincipalNotFound` or `RoleDefinitionNotFound` -- never "fix" one of them into a changed
-  published ErrorId. The PIM approver lookups follow the rule: an ambiguous approver name is
-  `AmbiguousApproverName`, a failed lookup is published as itself, and `ApproverNotFound` means only
-  an approver that matches nothing, in the three policy cmdlets and the three apply handlers alike.
-  They tell the three apart by the internal ids `PrincipalUnresolved` and `ApproverUnresolved`,
-  which no cmdlet or handler publishes, through `Get-OERApproverErrorClass` (next bullet).
+  `Ambiguous*`, never `*NotFound`; a COHORT check holds that, not a helper.** Decided exception: the
+  principal and Azure role definition lookups still publish a failed read as `PrincipalNotFound` or
+  `RoleDefinitionNotFound`; never change those ErrorIds. PIM approver lookups follow the rule:
+  ambiguous is `AmbiguousApproverName`, a failed lookup is published as itself, `ApproverNotFound`
+  means only an approver matching nothing -- in the three policy cmdlets and the three apply
+  handlers alike -- told apart by the internal ids `PrincipalUnresolved` and `ApproverUnresolved`
+  (published by none) through `Get-OERApproverErrorClass`.
   `Why: docs/development/rationale.md#approver-lookup`
   `tests/Unit/Public/AmbiguousName.Guard.Tests.ps1` runs every call site on its hand-kept
-  `$script:GuardCases` list with an ambiguous name and with a 403 -- the approver lookups of
+  `$script:GuardCases` list with an ambiguous name and with a 403 (the approver lookups of
   `Set-OERGroupPimPolicy`, `Set-OERDirectoryRoleManagementPolicy` and `Set-OERRoleManagementPolicy`
-  included -- so a new public call site of an ambiguity-refusing `Resolve-OER*Id` helper, an
-  approver lookup among them, joins that list. The 403 case narrows to the cmdlet's own record:
+  included); a new public call site of an ambiguity-refusing `Resolve-OER*Id` helper, an approver
+  lookup among them, joins that list. The 403 case narrows to the cmdlet's own record:
   `Why: docs/development/rationale.md#bearer-scrub-tests`
-- **`Get-OERApproverErrorClass` is the single owner of classifying an approver lookup failure**
-  (Sprint 11 step 11, BL-52): `Ambiguous` when `Test-OERAmbiguousNameError` says so, `NotFound` when
-  the record's FullyQualifiedErrorId starts, ordinally, with `ApproverUnresolved` or
-  `PrincipalUnresolved`, and `Other` for anything else, a null record included. The six approver call
-  sites -- the three policy cmdlets and the three apply handlers -- switch on its answer and keep
-  their own message, target, category and inner exception, so every published record stays
-  byte-identical. Never test either internal id anywhere else: the cohort in
-  `tests/Unit/Private/Get-OERApproverErrorClass.Tests.ps1` fails a string constant naming one as an
-  operand of a comparison operator, an argument of a string comparison method or a `switch` clause
-  outside the classifier and the three producers (`Resolve-OERPrincipal`, `Resolve-OERApproverInput`,
-  `Resolve-OERDeclaredApprover`); it does NOT see an id held in a variable, a command parameter value
-  (`Where-Object ... -like`, `Select-String -Pattern`) or a regular-expression method, which keep by
-  review. `Why: docs/development/rationale.md#approver-lookup`
+- **`Get-OERApproverErrorClass` is the single owner of classifying an approver lookup failure:**
+  `Ambiguous` when `Test-OERAmbiguousNameError` says so; `NotFound` when the FullyQualifiedErrorId
+  starts, ordinally, with `ApproverUnresolved` or `PrincipalUnresolved`; `Other` otherwise, a null
+  record included. The six approver call sites (three policy cmdlets, three apply handlers) switch
+  on its answer and keep their own message, target, category and inner exception. Never test either
+  internal id elsewhere: the cohort in `tests/Unit/Private/Get-OERApproverErrorClass.Tests.ps1`
+  fails a string constant naming one as an operand of a comparison operator, an argument of a
+  string comparison method or a `switch` clause outside the classifier and the three producers
+  (`Resolve-OERPrincipal`, `Resolve-OERApproverInput`, `Resolve-OERDeclaredApprover`); it does NOT
+  see an id held in a variable, a command parameter value (`Where-Object ... -like`,
+  `Select-String -Pattern`) or a regular-expression method (kept by review).
+  `Why: docs/development/rationale.md#approver-lookup`
 - **`Resolve-OERReviewerScopeQuery` is the single owner of the access review reviewer scope query
   grammar.** Never re-implement the `/users/` and `/groups/` regex pair inline; `./manager` is
   matched FIRST, always, and an `Unparsed` scope is NOT the same as an empty reviewers collection.
   `Why: docs/development/rationale.md#reviewer-scope-query`
-- **`Get-OERAccessReviewCadence` is the single owner of the access review cadence table** (Sprint 11
-  step 11, BL-117 third point): each cadence's Graph pattern type and interval (`Weekly` weekly 1;
-  `Monthly`, `Quarterly`, `SemiAnnually`, `Annually` absoluteMonthly 1, 3, 6, 12; `OneTime` no
-  pattern), a live pattern read back as a cadence, and whether that pattern is one the module can write
-  back (`Representable`). `New-OERAccessReviewRecurrence`, `Resolve-OERAccessReviewChange` and
-  `Get-OERInventory` ask it; never spell the interval numbers or an interval `switch` anywhere else. The
-  scan in `tests/Unit/Private/Get-OERAccessReviewCadence.Tests.ps1` fails an array of exactly 1, 3, 6
-  and 12, a `switch` clause between those integers and the cadence names in either direction, and a
-  `switch` clause on the pattern type, in any file under `source/` but the owner's; it does NOT see a
-  hashtable mapping, an `if` chain, an `-eq` comparison or a table split across variables, and
-  `OER_COHORT_SOURCE_ROOT` points it at a mutated copy (never set in CI). The cadence NAMES stay with
+- **`Get-OERAccessReviewCadence` is the single owner of the access review cadence table:** per
+  cadence the Graph pattern type and interval (`Weekly` weekly 1; `Monthly`, `Quarterly`,
+  `SemiAnnually`, `Annually` absoluteMonthly 1, 3, 6, 12; `OneTime` no pattern), a live pattern read
+  back as a cadence, and whether the module can write it back (`Representable`).
+  `New-OERAccessReviewRecurrence`, `Resolve-OERAccessReviewChange` and `Get-OERInventory` ask it;
+  never spell the interval numbers or an interval `switch` elsewhere. The scan in
+  `tests/Unit/Private/Get-OERAccessReviewCadence.Tests.ps1` fails, in any file under `source/` but
+  the owner's, an array of exactly 1, 3, 6 and 12, a `switch` clause between those integers and the
+  cadence names in either direction, and a `switch` clause on the pattern type; it does NOT see a
+  hashtable mapping, an `if` chain, an `-eq` comparison or a table split across variables.
+  `OER_COHORT_SOURCE_ROOT` points it at a mutated copy (never set in CI). Cadence NAMES stay with
   `Resolve-OERStructureEnumCasing` and the vocabulary cohort.
   `Why: docs/development/rationale.md#access-review-cadence`
-- **`Test-OERGuid` is the single GUID predicate.** Never re-implement the canonical GUID regex
-  inline. The wider `-as [guid]` cast in `Get-OERInventory` and `New-OERGroup` is a deliberate
-  exception -- do not migrate those two -- and so are the places that read a group's
-  `administrativeUnit` the way `New-OERGroup` does: the created-membership match in
-  `Sync-OERStructureAdministrativeUnit`, and in `Test-OERStructureSchema` the unit placement check
-  (Rule 12) and the restricted-unit check (Rule 16), which share one local helper.
+- **`Test-OERGuid` is the single GUID predicate:** never re-implement the canonical GUID regex
+  inline. Deliberate exceptions: the wider `-as [guid]` cast in `Get-OERInventory` and `New-OERGroup`
+  (do not migrate those two), and the places that read a group's `administrativeUnit` the way
+  `New-OERGroup` does -- the created-membership match in `Sync-OERStructureAdministrativeUnit`, and
+  in `Test-OERStructureSchema` the unit placement check (Rule 12) and the restricted-unit check
+  (Rule 16), which share one local helper.
   `Why: docs/development/rationale.md#guid-predicate`
 - **`Test-OERAzureRootScope` is the single owner of whether an Azure role assignment scope addresses
-  the root scope `/` (any spelling the ARM transport sends there)**, and
-  `Format-OERRootScopeAssignment` of the order, the deduplication and the list text of the
-  root-scope assignments that `Get-OERInventory` and `Export-OERInventory` name in their warnings.
-  The rule is for the Azure `roleAssignments` section only: never apply it to
-  `roleManagementPolicies`, nor to the directory role sections, whose
-  `/` is the Microsoft Entra tenant scope (`directoryScopeId`), not the Azure root scope. The export
-  never writes a root-scope assignment, the validator warns on one, and `Sync-OERStructureRoleAssignment`
-  skips one before any lookup or request and never prunes the root scope.
-  **`Get-OERAccessReviewTargetMismatch` is the single owner of whether a live access review found by
+  the root scope `/` (any spelling the ARM transport sends there)**; `Format-OERRootScopeAssignment`
+  owns the order, deduplication and list text of the root-scope assignments `Get-OERInventory` and
+  `Export-OERInventory` name in their warnings. Azure `roleAssignments` only: never apply it to
+  `roleManagementPolicies` or the directory role sections (their `/` is the Entra tenant scope,
+  `directoryScopeId`). The export never writes a root-scope assignment, the validator warns on one,
+  and `Sync-OERStructureRoleAssignment` skips one before any lookup or request and never prunes the
+  root scope.
+  `Why: docs/development/rationale.md#root-scope-is-not-in-the-document`
+- **`Get-OERAccessReviewTargetMismatch` is the single owner of whether a live access review found by
   display name reviews the access package and assignment policy an `accessReviews[]` entry
-  declares**, and `Resolve-OERAssignmentPolicyId` of the assignment policy name lookup it shares with
+  declares**; `Resolve-OERAssignmentPolicyId` owns the assignment policy name lookup it shares with
   creation (`Resolve-OERAccessReviewScopeTarget`). A review that does not is refused with
-  `AccessReviewScopeMismatch` before any reviewer lookup or `ShouldProcess`, and nothing is written to
-  it. Never re-implement either check, or the policy lookup, inline. There is ONE named deviation:
-  `Get-OERInventory`'s check of whether an access review's access package or assignment policy name is
-  unique sends the same two lookups as `Resolve-OERAccessPackageId` and `Resolve-OERAssignmentPolicyId`
-  itself, so a shared name never raises `AmbiguousName` inside the export; the Context "the export's
+  `AccessReviewScopeMismatch` before any reviewer lookup or `ShouldProcess`, nothing written to it.
+  Never re-implement either check or the policy lookup inline. ONE named deviation, never a second:
+  `Get-OERInventory`'s uniqueness check of a review's access package or assignment policy name sends
+  the same two lookups as `Resolve-OERAccessPackageId` and `Resolve-OERAssignmentPolicyId` itself,
+  so a shared name never raises `AmbiguousName` inside the export; the Context "the export's
   review-reference lookups agree with the resolvers (named deviation)" in
-  `tests/Unit/Public/Get-OERInventory.Tests.ps1` holds the two in step. Never add a second.
-  `Why: docs/development/rationale.md#root-scope-is-not-in-the-document`,
-  `docs/development/rationale.md#access-review-target`,
+  `tests/Unit/Public/Get-OERInventory.Tests.ps1` holds the two in step.
+  `Why: docs/development/rationale.md#access-review-target`,
   `docs/development/rationale.md#roster-identity-and-shared-names`
-- **`Resolve-OERStructureRename` is the single owner of the keys of the run's rename map, and every
-  `accessPackages` entry registers its package there, not only a rename** (BL-147): an entry that
-  renames nothing through `-Identified -Id` once it has found the package in its catalog or created it
-  there, and through `-Unidentified -Reason` (refused, no ErrorId) until then; such an entry carries
-  no previous name, which is how a reader tells it from a rename and words its rows. So
-  `Sync-OERStructureAccessReview` reads a declared package's name only through the map and never
-  looks it up in the whole tenant; with `-Include` leaving AccessPackages out every such review is
-  refused. Validator Rule 15 refuses a review that names by display name a package two or more
+- **`Resolve-OERStructureRename` is the single owner of the keys of the run's rename map; every
+  `accessPackages` entry registers its package there, not only a rename.** An entry that renames
+  nothing registers through `-Identified -Id` once it has found the package in its catalog or
+  created it there, and through `-Unidentified -Reason` (refused, no ErrorId) until then; it carries
+  no previous name. `Sync-OERStructureAccessReview` reads a declared package's name only through the
+  map, never in the whole tenant; with `-Include` leaving AccessPackages out every such review is
+  refused. Validator Rule 15 refuses a review naming by display name a package two or more
   `accessPackages` entries declare, with or without a rename. Never register a map key outside the
-  owner, and never let a review resolve a declared package's name past a refusal.
+  owner; never let a review resolve a declared package's name past a refusal.
   `Why: docs/development/rationale.md#review-package-in-the-same-run`
-- **`ConvertTo-OERCanonicalScope` is the single owner of how a document scope is compared, and
-  `ConvertTo-OERScopeSplat` of the `sub:`/`subscription:`/`mg:` scope syntax** -- never re-implement
-  either inline; the first is pure, since the offline validator uses it. A document scope that
-  ends with `/` (other than `/`) or contains `//` is REFUSED by the validator, not merged by the
-  helper's trim, and so is a path with a `.` or `..` segment, a `%`, a `\`, a `?` or a `#`, white
-  space at the start or end of the scope or of a segment, white space other than a space, or a control
-  character (A13, narrowed in Sprint 11 step 3 round 1; the `mg:`/`sub:`/`subscription:` forms
-  excepted, as `ConvertTo-OERScopeSplat` reads them). A space between other characters of a segment
-  is accepted, since an Azure resource name can hold one: never widen the white space rule back to
-  every space, which refused a whole export. Never drop the rule in favour of the trim, which would
-  make such a scope prune. **`Get-OERScopeSpellingProblem` is the single owner of those two spelling
-  rules** -- their checks, their order and their message texts, for the `roleAssignments` and
-  `roleManagementPolicies` scopes: the validator's `Add-ScopeSlashFinding` and
-  `Add-ScopeSegmentFinding` add one Error per problem it returns and decide no spelling, and
-  `Get-OERInventory` leaves a role assignment at a scope with any problem out of the document (one
-  warning and one `Omnicit.EntraRBAC.UndeclarableScope` record per call), which the engine never
-  prunes, and `Get-OERSubscriptionHomeTenant` rates a raw scope with any problem (and any other
+- **`ConvertTo-OERCanonicalScope` is the single owner of how a document scope is compared,
+  `ConvertTo-OERScopeSplat` of the `sub:`/`subscription:`/`mg:` scope syntax;** never re-implement
+  either inline (the first is pure: the offline validator uses it). The validator REFUSES, not
+  merges by the helper's trim: a scope ending with `/` (other than `/`) or containing `//`; a path
+  with a `.` or `..` segment, `%`, `\`, `?` or `#`; white space at the start or end of the scope or
+  of a segment, white space other than a space, or a control character (the
+  `mg:`/`sub:`/`subscription:` forms excepted, as `ConvertTo-OERScopeSplat` reads them). A space
+  between other characters of a segment is accepted: never widen the white space rule to every
+  space. Never drop the rule in favour of the trim, which would make such a scope prune.
+  `Why: docs/development/rationale.md#role-assignment-key`
+- **`Get-OERScopeSpellingProblem` is the single owner of those two spelling rules** (checks, order,
+  message texts) for the `roleAssignments` and `roleManagementPolicies` scopes. The validator's
+  `Add-ScopeSlashFinding` and `Add-ScopeSegmentFinding` add one Error per problem it returns and
+  decide no spelling; `Get-OERInventory` leaves a role assignment at a scope with any problem out of
+  the document (one warning and one `Omnicit.EntraRBAC.UndeclarableScope` record per call), which
+  the engine never prunes; `Get-OERSubscriptionHomeTenant` rates such a raw scope (and any other
   non-`mg:` scope with a stray `/`) `Undecided` with `SubscriptionTenantMismatch`, resolving and
-  reading nothing for it, so an `Export-OERInventory -Scope` spelled so is unread (Ruling R-27: the
-  transport's `System.Uri` need not send the path the text names). Never decide a scope
-  spelling anywhere else. The owner's help is the reference list of the
-  rules and names every text that must follow a new one: README.md, the about topic, the two scope
-  descriptions in the schema JSON, this bullet, and `Get-OERInventory`'s words for each rule in the
-  Reason. Every other help, the bundle README and the prompt point at a list or give an example.
-  `Why: docs/development/rationale.md#role-assignment-key`,
-  `docs/development/rationale.md#undeclarable-scope`
+  reading nothing, so an `Export-OERInventory -Scope` spelled so is unread. Never decide a scope
+  spelling elsewhere. The owner's help is the reference list of the rules and names every text that
+  must follow a new one: README.md, the about topic, the two scope descriptions in the schema JSON,
+  these two bullets, and `Get-OERInventory`'s words for each rule in the Reason; every other help,
+  the bundle README and the prompt point at a list or give an example.
+  `Why: docs/development/rationale.md#undeclarable-scope`
 - **`Resolve-OERPimActivationConflict` is the single owner of the MFA / authentication-context
-  mutual-exclusion rule.** An enabled authentication context and `MultiFactorAuthentication` on
-  activation cannot both be in force. All call sites -- the Graph group write path, the apply
-  diff, and the shared rule-patch builder (`Resolve-OERPolicyRulePatch`) -- take the DECISION from
-  this helper and apply it in their own idiom. Never re-implement the check inline. The rule-patch
-  builder is shared by two callers that pass a different `-ResolveUnrequestedConflict`: the Azure
-  (ARM) policy path passes `$true` because ARM PATCHes the full rule set, so every apply run
-  re-validates a combination even when this call did not touch either side of it; the directory-role
-  (Graph) path passes `$false` because it patches one rule at a time and leaves an untouched
-  combination alone. `Get-OERPimRulePatchOrder` is the single owner of the authentication-context
-  PATCH order this conflict resolution requires, called by both `Set-OERGroupPimPolicy` and
+  mutual-exclusion rule:** an enabled authentication context and `MultiFactorAuthentication` on
+  activation cannot both be in force. Every call site -- the Graph group write path, the apply diff,
+  the shared rule-patch builder (`Resolve-OERPolicyRulePatch`) -- takes the DECISION from it and
+  applies it in its own idiom; never re-implement it inline. The builder's two callers pass a
+  different `-ResolveUnrequestedConflict`: the Azure (ARM) policy path `$true`, since ARM PATCHes the
+  full rule set and every apply run re-validates a combination even when this call touched neither
+  side; the directory-role (Graph) path `$false`, since it patches one rule at a time and leaves an
+  untouched combination alone. `Get-OERPimRulePatchOrder` is the single owner of the
+  authentication-context PATCH order this requires, called by `Set-OERGroupPimPolicy` and
   `Set-OERDirectoryRoleManagementPolicy`.
   `Why: docs/development/rationale.md#mfa-authcontext-exclusion`
-- **`ConvertFrom-OERGraphApprover` is the single reader of a Graph approver, and
+- **`ConvertFrom-OERGraphApprover` is the single reader of a Graph approver;
   `Resolve-OERApproverInput` / `Resolve-OERGraphApproverSet` are the single owners of the Graph
-  approver-side semantics shared by `Set-OERGroupPimPolicy` and `Set-OERDirectoryRoleManagementPolicy`
-  -- never re-implement the carry/count/ApproverRequired decision inline.** `-RequireApproval $false`
-  beside a bound `-ApproverUser` or `-ApproverGroup` (an empty list included) is refused with
-  `MutuallyExclusiveParameter` by the three policy cmdlets -- those two and `Set-OERRoleManagementPolicy`
-  -- before any lookup or request, and `Resolve-OERGraphApproverSet` throws the same id as a backstop;
-  never let that combination reach a request. The two apply handlers that call those cmdlets,
-  `Sync-OERStructureGroup` (pimPolicy) and `Sync-OERStructureDirectoryRoleManagementPolicy`, ask
-  `Resolve-OERGraphApproverSet` too, with the live approval rule they read and the parameters their
-  diff binds, and refuse a change that would need approval by nobody with the cmdlet's own
-  `ApproverRequired` message before their `ShouldProcess`, so a `-WhatIf` plan reports the run's row
-  (BL-113); the cmdlets keep their refusal as the backstop.
+  approver-side semantics** shared by `Set-OERGroupPimPolicy` and
+  `Set-OERDirectoryRoleManagementPolicy`; never re-implement the carry/count/ApproverRequired
+  decision inline. `-RequireApproval $false` beside a bound `-ApproverUser` or `-ApproverGroup` (an
+  empty list included) is refused with `MutuallyExclusiveParameter` by the three policy cmdlets
+  (those two and `Set-OERRoleManagementPolicy`) before any lookup or request, and
+  `Resolve-OERGraphApproverSet` throws the same id as a backstop; never let that combination reach a
+  request. The apply handlers `Sync-OERStructureGroup` (pimPolicy) and
+  `Sync-OERStructureDirectoryRoleManagementPolicy` ask `Resolve-OERGraphApproverSet` too, with the
+  live approval rule they read and the parameters their diff binds, and refuse a change needing
+  approval by nobody with the cmdlet's own `ApproverRequired` message before their `ShouldProcess`,
+  so a `-WhatIf` plan reports the run's row; the cmdlets keep their refusal as the backstop.
   `Why: docs/development/rationale.md#approver-lookup`
-- **A public `Set-OER*` cmdlet's own read that decides a written value refuses the call when it fails
-  or answers without the value** (Sprint 11 step 11, A24): never fall back to a parameter default, a
-  declared-only write or a warning in its place. In `Set-OERGroupPimPolicy` the two duration reads and
-  the two reconcile reads of the MFA / authentication context pair publish a thrown read as itself,
-  the approval rule read refuses a thrown read as `ApprovalRuleReadFailed`, and all five refuse a read
-  that answers without the value with `PimRuleValueUnknown`, before `ShouldProcess` and every PATCH --
-  for the approval rule only a read that returns NO rule: a rule with no stage still takes
-  `New-OERPimRuleSet`'s defaults, the documented "no stage yet" case. Two reads only warn, by design,
-  since neither decides a written value: the put-back read of the pair's first half, whose failure only
-  loses the put-back (it warns before any PATCH and writes no default), and the authentication context
-  validation read, whose failure skips the validation. The apply engine reaches the pair reads when its
-  diff binds one half, and its row is then `Failed`. It never reaches the duration reads: its diff
-  binds both halves of an expiration pair, and when the half the document leaves out has no live value
-  (the read gave none, or its `maximumDuration` is not a positive whole number of days) and the
-  declared half does not already match, `Resolve-OERGroupPimPolicyChange` names the pair in
-  `UnknownLiveValues`, binds neither half, and `Sync-OERStructureGroup` refuses that access type with
-  `PimRuleValueUnknown` before `ShouldProcess` -- never a default in its place.
-  Known and NOT fixed, outside this cmdlet (unmeasured findings of the step's audit): a successful read
-  that lacks a key makes `Set-OERAccessPackageAssignmentPolicy` write the body builder's default, and
-  an empty Azure Resource Manager body makes `Set-OERResourceGroup` send an empty location.
+- **A public `Set-OER*` cmdlet's own read that decides a written value refuses the call when it
+  fails or answers without the value;** never fall back to a parameter default, a declared-only
+  write or a warning. In `Set-OERGroupPimPolicy` the two duration reads and the two MFA /
+  authentication-context pair reconcile reads publish a thrown read as itself; the approval rule
+  read refuses a thrown read as `ApprovalRuleReadFailed`; all five refuse a read answering without
+  the value with `PimRuleValueUnknown`, before `ShouldProcess` and every PATCH -- for the approval
+  rule only a read returning NO rule (a rule with no stage still takes `New-OERPimRuleSet`'s
+  defaults: the documented "no stage yet" case). Two reads only warn, by design, since neither
+  decides a written value: the put-back read of the pair's first half (a failure only loses the
+  put-back; it warns before any PATCH and writes no default) and the authentication context
+  validation read (a failure skips the validation). The apply engine reaches the pair reads when its
+  diff binds one half; its row is then `Failed`. It never reaches the duration reads: its diff binds
+  both halves of an expiration pair, and when the half the document leaves out has no live value (no
+  read, or `maximumDuration` not a positive whole number of days) and the declared half does not
+  already match, `Resolve-OERGroupPimPolicyChange` names the pair in `UnknownLiveValues`, binds
+  neither half, and `Sync-OERStructureGroup` refuses that access type with `PimRuleValueUnknown`
+  before `ShouldProcess` -- never a default. Known and NOT fixed, outside this cmdlet: a successful
+  read lacking a key makes `Set-OERAccessPackageAssignmentPolicy` write the body builder's default,
+  and an empty Azure Resource Manager body makes `Set-OERResourceGroup` send an empty location.
   `Why: docs/development/rationale.md#a-set-cmdlets-own-read-decides-a-written-value`
 - **`Send-OERPimRulePatch` is the single owner of sending a Microsoft Graph PIM rule set, one PATCH
-  per rule.** That covers the pair put-back -- when Graph accepts the first rule of the MFA /
-  authentication-context pair and rejects the second, the first is PATCHed straight back to its live
-  version -- and the rule that no warning is written between the first PATCH and the last put-back:
-  the helper returns its messages and the caller writes them after it returns, since a
-  `-WarningAction Stop` caller is otherwise stopped before the put-back. It is called by
+  per rule**, including the pair put-back (Graph accepts the first rule of the MFA /
+  authentication-context pair and rejects the second: the first is PATCHed straight back to its live
+  version) and the rule that no warning is written between the first PATCH and the last put-back --
+  the helper returns its messages, the caller writes them after it returns. Called by
   `Set-OERGroupPimPolicy` and `Set-OERDirectoryRoleManagementPolicy`, which confirm first and order
-  the rules with `Get-OERPimRulePatchOrder`. Never PATCH a rule from either cmdlet directly, and
-  never write a warning inside the helper. Held by the AST check in
-  `tests/Unit/Private/Send-OERPimRulePatch.Tests.ps1` and, for the caller-side half (the messages
-  written only after the last request), by the `-WarningAction Stop` tests in
+  the rules with `Get-OERPimRulePatchOrder`. Never PATCH a rule from either cmdlet directly; never
+  write a warning inside the helper. Held by the AST check in
+  `tests/Unit/Private/Send-OERPimRulePatch.Tests.ps1` and, for the caller-side half (messages only
+  after the last request), by the `-WarningAction Stop` tests in
   `tests/Unit/Public/Set-OERGroupPimPolicy.Tests.ps1` and
-  `tests/Unit/Public/Set-OERDirectoryRoleManagementPolicy.Tests.ps1`, in a `try` and in a script with
-  no `try`; `tests/QA/requiredscope.tests.ps1` counts a call to it as a Graph write by the caller, since
-  the helper carries no path literal of its own. `Set-OERGroupPimPolicy`'s warning for a split
-  `-Confirm` answer to the pair (BL-97 F2) is written after the helper returns and after its messages,
-  by the same rule.
+  `tests/Unit/Public/Set-OERDirectoryRoleManagementPolicy.Tests.ps1`, in a `try` and in a script
+  with no `try`; `tests/QA/requiredscope.tests.ps1` counts a call to it as a Graph write by the
+  caller (the helper carries no path literal). `Set-OERGroupPimPolicy`'s warning for a split
+  `-Confirm` answer to the pair is written after the helper returns and after its messages, by the
+  same rule.
   `Why: docs/development/rationale.md#pim-rule-pair-put-back`
 - **`Test-OERScheduleRequestFailed` is the single owner of which PIM schedule request status is an
-  error: the Failed family, meaning `Failed`, `FailedAsResourceIsLocked` and any later status that
-  starts with `Failed`, compared case-insensitively, and nothing else** -- `Revoked` is a removal's
-  success, and `Denied`, `Canceled` and the `Pending*` values are not errors. It is called by the
-  twelve cmdlets that send a schedule request -- `Add-`/`Remove-OERGroupEligibility`, `New-`/
+  error: the Failed family -- `Failed`, `FailedAsResourceIsLocked` and any later status starting
+  with `Failed`, compared case-insensitively -- and nothing else** (`Revoked` is a removal's
+  success; `Denied`, `Canceled` and the `Pending*` values are not errors). Called by the twelve
+  cmdlets that send a schedule request -- `Add-`/`Remove-OERGroupEligibility`, `New-`/
   `Remove-OEREligibleDirectoryRoleAssignment`, `New-`/`Remove-OERActiveDirectoryRoleAssignment`,
-  `New-`/`Remove-OEREligibleRoleAssignment`, `New-`/`Remove-OERActiveRoleAssignment` and
-  `Enable-`/`Disable-OEREligibleRoleAssignment` -- and by the two new-group replication waits in
-  `Sync-OERStructureGroup`. A cmdlet emits the request object FIRST and then writes the non-terminating
+  `New-`/`Remove-OEREligibleRoleAssignment`, `New-`/`Remove-OERActiveRoleAssignment`, `Enable-`/
+  `Disable-OEREligibleRoleAssignment` -- and by the two new-group replication waits in
+  `Sync-OERStructureGroup`. A cmdlet emits the request object FIRST, then writes the non-terminating
   `EligibilityRequestFailed` (group, directory role and Azure eligibility requests) or
   `AssignmentRequestFailed` (active assignment, activation and deactivation requests), so a caller
-  under `-ErrorAction Stop` still receives the object. Never compare a status to a `Failed` literal
-  anywhere else. The cohort check in `tests/Unit/Private/Test-OERScheduleRequestFailed.Tests.ps1`
-  derives its cohort from the files -- every `source/Public` cmdlet with a string that matches
-  `ScheduleRequests`, the twelve above today, which are also kept as a control the derivation must
-  still find -- and holds that each of them calls the owner, and that no other file under `source/`
-  compares a status to a `Failed` literal in the shapes it scans. The derivation does NOT see a path
-  built at run time, a path held in a Private helper (`Send-OERNewGroupEligibilityRequest`) or a file
-  outside `source/Public`, and a cmdlet that only reads a schedule request resource would join the
-  cohort and fail it (narrow the derivation then, never hand-list an exemption); the check does NOT
-  hold the two engine waits, whose behaviour tests in
-  `tests/Unit/Private/Sync-OERStructureGroup.Tests.ps1` do.
+  under `-ErrorAction Stop` still gets the object. Never compare a status to a `Failed` literal
+  elsewhere. The cohort check in `tests/Unit/Private/Test-OERScheduleRequestFailed.Tests.ps1`
+  derives its cohort from the files (every `source/Public` cmdlet with a string matching
+  `ScheduleRequests`; the twelve above are also a control the derivation must still find) and holds
+  that each calls the owner and that no other file under `source/` compares a status to a `Failed`
+  literal in the shapes it scans. The derivation does NOT see a path built at run time, a path in a
+  Private helper (`Send-OERNewGroupEligibilityRequest`) or a file outside `source/Public`; a cmdlet
+  that only reads a schedule request resource would join the cohort and fail it (narrow the
+  derivation, never hand-list an exemption). The check does NOT hold the two engine waits;
+  `tests/Unit/Private/Sync-OERStructureGroup.Tests.ps1` does.
   `Why: docs/development/rationale.md#failed-schedule-request`
 - **`Get-OERCloudEndpoint` is the single owner of the cloud-to-endpoint table.** Every Graph
   resource/audience, Graph service root, ARM resource/host and authority (STS) host for a sovereign
