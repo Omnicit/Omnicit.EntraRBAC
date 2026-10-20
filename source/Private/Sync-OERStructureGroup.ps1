@@ -1101,9 +1101,10 @@ function Sync-OERStructureGroup {
             #      owner of another type has not been measured (a service principal never reaches it,
             #      see below).
             # The owners still standing, of any type and of type user, are tracked as removals go
-            # through (a removal that failed, or was not confirmed, leaves its owner standing), and
-            # the removal that would leave no owner, or no user owner, is refused with a Skipped
-            # record instead of firing a call Graph rejects.
+            # through (a removal that failed, or a declined confirmation, leaves its owner standing;
+            # a -WhatIf plan counts the removal it reports as done, so it refuses the same owner the
+            # run does), and the removal that would leave no owner, or no user owner, is refused with a
+            # Skipped record instead of firing a call Graph rejects.
             # Since A9 an owner the read types servicePrincipal is withheld before this guard and never
             # removed, and since BL-125 so is an owner PIM for Groups holds or makes eligible (and every
             # owner while that cannot be read), so the guard decides only for the other owners, and a
@@ -1170,6 +1171,15 @@ function Sync-OERStructureGroup {
                             if ($CurIsUserOwner) { $RemainingUserOwnerCount-- }
                             ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Removed' -Detail "removed undeclared owner '$CurId'"
                         } else {
+                            # A plan (-WhatIf) says what the run does: the removal it reports is taken as
+                            # done, so the next owner is judged against the owners that would still stand
+                            # and the last one is refused in the plan as in the run (BL-113, A23). A
+                            # declined confirmation prompt (ShouldProcess false, $WhatIfPreference false)
+                            # removes nothing, so that owner stays standing and counts nowhere.
+                            if ($WhatIfPreference) {
+                                $RemainingOwnerCount--
+                                if ($CurIsUserOwner) { $RemainingUserOwnerCount-- }
+                            }
                             ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' -Detail "would remove undeclared owner '$CurId'"
                         }
                     } else {

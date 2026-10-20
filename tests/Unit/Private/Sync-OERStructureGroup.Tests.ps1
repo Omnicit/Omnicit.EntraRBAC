@@ -1582,6 +1582,111 @@ Describe 'Sync-OERStructureGroup' {
             Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
         }
 
+        It 'plans a removal for the first of two undeclared user owners and refuses the last, beside a service principal owner (the plan says what the run does)' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'), (New-LuoOwner 'u-2' 'user'), (New-LuoOwner 'sp-1' 'servicePrincipal'))
+            $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }
+            $Plan = Invoke-LuoSync -Item $Item -Prune -WhatIf
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            # Positive identity first: the first owner is planned, the last one refused, the service
+            # principal withheld, each once.
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq "would remove undeclared owner 'u-1'" }).Count | Should -Be 1
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq (Get-LuoUserOwnerText 'u-2') }).Count | Should -Be 1
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq (Get-LuoSpOwnerText) }).Count | Should -Be 1
+            @($Plan.Rows | Where-Object { $_.Action -ne 'Unchanged' }).Count | Should -Be 3
+            @($Plan.Warnings | Where-Object { "$_" -eq "Sync-OERStructureGroup: would remove undeclared owner 'u-1' from group 'role_sec_x'." }).Count | Should -Be 1
+            @($Plan.Warnings | Where-Object { "$_" -match 'u-2' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+            # The run of the same document does what the plan said: u-1 goes, u-2 is refused with the same text.
+            $Run = Invoke-LuoSync -Item $Item -Prune -NoConfirm
+            @($Run.Rows | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared owner 'u-1'" }).Count | Should -Be 1
+            @($Run.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq (Get-LuoUserOwnerText 'u-2') }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -ParameterFilter { $PrincipalId -eq 'u-1' -and $AccessType -eq 'owner' }
+        }
+
+        It 'plans a removal for two of three undeclared user owners and refuses the last, exactly as the run does' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'), (New-LuoOwner 'u-2' 'user'), (New-LuoOwner 'u-3' 'user'))
+            $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }
+            $Plan = Invoke-LuoSync -Item $Item -Prune -WhatIf
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like 'would remove undeclared owner*' }).Count | Should -Be 2
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq "would remove undeclared owner 'u-1'" }).Count | Should -Be 1
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq "would remove undeclared owner 'u-2'" }).Count | Should -Be 1
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq (Get-LuoUserOwnerText 'u-3') }).Count | Should -Be 1
+            @($Plan.Rows | Where-Object { $_.Action -ne 'Unchanged' }).Count | Should -Be 3
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+            # The same owners, the same document, a real run: the same owner is refused with the same
+            # text, and the owners the plan would remove are the owners the run removed.
+            $Run = Invoke-LuoSync -Item $Item -Prune -NoConfirm
+            @($Run.Rows | Where-Object { $_.Action -eq 'Removed' }).Count | Should -Be 2
+            @($Run.Rows | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared owner 'u-1'" }).Count | Should -Be 1
+            @($Run.Rows | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared owner 'u-2'" }).Count | Should -Be 1
+            @($Run.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq (Get-LuoUserOwnerText 'u-3') }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 2 -Exactly
+        }
+
+        It 'plans the any-type floor the same way for owners not typed user: the first is planned, the last refused' {
+            $script:LuoOwners = @((New-LuoOwner 'x-1' $null), (New-LuoOwner 'x-2' $null))
+            $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }
+            $AnyTypeText = "did not remove owner 'x-2': it is the last remaining owner of group 'role_sec_x', and this pass refuses to remove it (this is our own guard, not a Graph rejection). Microsoft Graph refuses to remove a group's last user owner (measured 2026-10-20), and this pass holds the last owner of any other type the same way, since what Graph does with one has not been measured."
+            $Plan = Invoke-LuoSync -Item $Item -Prune -WhatIf
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq "would remove undeclared owner 'x-1'" }).Count | Should -Be 1
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq $AnyTypeText }).Count | Should -Be 1
+            @($Plan.Rows | Where-Object { $_.Action -ne 'Unchanged' }).Count | Should -Be 2
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+            $Run = Invoke-LuoSync -Item $Item -Prune -NoConfirm
+            @($Run.Rows | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared owner 'x-1'" }).Count | Should -Be 1
+            @($Run.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq $AnyTypeText }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly
+        }
+
+        It 'leaves an owner standing whose removal was declined at the confirmation prompt: the next user owner is asked about, not refused' {
+            # A genuinely DECLINED prompt (ShouldProcess false while $WhatIfPreference is false) is a
+            # state only a runspace on an answering host reaches. The first prompt is answered No, the
+            # second Yes: u-1 stays, so u-2 is not the last user owner standing and is removed.
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Scenario = [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { 'g-luo' }
+    Set-Item -Path function:script:Resolve-OERStructurePrincipal -Value { param($Reference) $Reference }
+    Set-Item -Path function:script:Resolve-OERStructureDefault -Value { $null }
+    Set-Item -Path function:script:Get-OERGroupPimPolicy -Value { $null }
+    Set-Item -Path function:script:Get-OERGroup -Value {
+        [pscustomobject]@{ Id = 'g-luo'; DisplayName = 'grp-luo'; Description = $null; MailNickname = $null
+            GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @()
+            Owners = @([pscustomobject]@{ id = 'u-1'; ObjectType = 'user' }, [pscustomobject]@{ id = 'u-2'; ObjectType = 'user' },
+                [pscustomobject]@{ id = 'sp-1'; ObjectType = 'servicePrincipal' }) }
+    }
+    Set-Item -Path function:script:Read-OERGroupPimHold -Value { [pscustomobject]@{ Read = $true; Held = @{}; Cause = $null } }
+    Set-Item -Path function:script:Remove-OERGroupMember -Value { [System.IO.File]::AppendAllText('#LOG#', "remove $args`n") }
+    function script:Invoke-SyncGroupOwnerAsk {
+        [CmdletBinding(SupportsShouldProcess)]
+        param([PSCustomObject]$Item, [switch]$Prune)
+        Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune
+    }
+}
+$Item = '{ "displayName": "grp-luo", "owners": [] }' | ConvertFrom-Json
+& $Module { param($Item) Invoke-SyncGroupOwnerAsk -Item $Item -Prune -Confirm -WarningAction SilentlyContinue } $Item | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")))
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&No' -AnswerSequence '&No', '&Yes' -Script $Scenario
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Errors) | Should -BeNullOrEmpty
+            # Both user owners reached their question, in order: the guard did not answer for the second.
+            @($Run.Prompts).Count | Should -Be 2
+            $Run.Prompts[0] | Should -Match "Remove undeclared owner 'u-1'"
+            $Run.Prompts[1] | Should -Match "Remove undeclared owner 'u-2'"
+            # u-1 was declined: it is reported as it is for a plan, and nothing was sent for it.
+            @($Run.Output | Where-Object { $_ -ceq "ROW:Skipped:would remove undeclared owner 'u-1'" }).Count | Should -Be 1
+            @($Run.Output | Where-Object { $_ -ceq "ROW:Removed:removed undeclared owner 'u-2'" }).Count | Should -Be 1
+            @($Run.Output | Where-Object { $_ -like 'ROW:*:did not remove owner*' }).Count | Should -Be 0
+            $Lines = @(if (Test-Path -LiteralPath $Log) { Get-Content -LiteralPath $Log })
+            $Lines.Count | Should -Be 1
+            $Lines[0] | Should -BeLike 'remove *u-2*'
+        }
+
         It 'reports both owners Extra without -Prune, as before' {
             $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'), (New-LuoOwner 'sp-1' 'servicePrincipal'))
             $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() })
