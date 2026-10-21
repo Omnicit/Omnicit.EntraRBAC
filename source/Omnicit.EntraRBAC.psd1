@@ -10,7 +10,7 @@
     PowerShellVersion    = '7.2'
 
     RequiredModules = @(
-        @{ ModuleName = 'AzAuth'; ModuleVersion = '2.9.0' }
+        @{ ModuleName = 'AzAuth'; ModuleVersion = '2.11.0' }
         @{ ModuleName = 'Microsoft.Graph.Authentication'; ModuleVersion = '2.36.0' }
     )
 
