@@ -80,7 +80,7 @@ Describe 'New-OERConfiguration' {
     # -------------------------------------------------------------------------------------------
     Context 'refuses a white-space -TenantId at binding (BL-96)' {
         BeforeAll {
-            $script:BlankTenantMessage = 'The TenantId consists only of white space. Supply the tenant ID or a verified domain of the tenant.'
+            $script:BlankTenantMessage = 'The TenantId consists only of white space and invisible formatting characters. Supply the tenant ID or a verified domain of the tenant.'
             # The mock WRITES a file when it is called, so "no profile file" below is a real check
             # and not a restatement of the mock doing nothing.
             Mock -ModuleName Omnicit.EntraRBAC Export-OERConfiguration {
@@ -95,6 +95,13 @@ Describe 'New-OERConfiguration' {
             @{ Label = 'a tab'; Value = "`t" }
             @{ Label = 'a carriage return and a line feed'; Value = "`r`n" }
             @{ Label = 'a no-break space (U+00A0)'; Value = [string][char]0x00A0 }
+            # BL-111 point 7: format characters (category Cf) are not white space to .NET but print as nothing.
+            @{ Label = 'a zero-width space (U+200B)'; Value = [string][char]0x200B }
+            @{ Label = 'a byte order mark (U+FEFF)'; Value = [string][char]0xFEFF }
+            @{ Label = 'a word joiner (U+2060)'; Value = [string][char]0x2060 }
+            @{ Label = 'three zero-width spaces'; Value = ([string][char]0x200B) * 3 }
+            @{ Label = 'spaces, a zero-width space and a tab'; Value = ' ' + [char]0x200B + "`t" + [char]0xFEFF + '  ' }
+            @{ Label = 'a word joiner between two spaces'; Value = ' ' + [char]0x2060 + ' ' }
         ) {
             $Base = Join-Path $TestDrive ('bl96-new-' + [guid]::NewGuid().ToString('N'))
             $Caught = $null
@@ -138,6 +145,19 @@ Describe 'New-OERConfiguration' {
         $Result.TenantId | Should -BeExactly 'contoso.onmicrosoft.com'
         Test-Path -LiteralPath (Join-Path $Base 'oer-bl96.psd1') | Should -BeTrue
         (Get-OERConfiguration -TenantAlias 'oer-bl96' -BasePath $Base).TenantId | Should -BeExactly 'contoso.onmicrosoft.com'
+    }
+
+    It 'still accepts a -TenantId that holds a real character beside a format character (BL-111)' -ForEach @(
+        @{ Label = 'a trailing zero-width space'; Value = 'contoso.onmicrosoft.com' + [char]0x200B }
+        @{ Label = 'a leading byte order mark'; Value = [string][char]0xFEFF + 'contoso.onmicrosoft.com' }
+        @{ Label = 'a single letter between format characters'; Value = [string][char]0x2060 + 'x' + [char]0x200B }
+    ) {
+        # Only a value that is NOTHING BUT white space and format characters is refused; this one is stored
+        # as given, as it was before the refusal widened.
+        $Base = Join-Path $TestDrive ('bl111-new-' + [guid]::NewGuid().ToString('N'))
+        $Result = New-OERConfiguration -TenantAlias 'oer-bl111' -TenantId $Value -BasePath $Base -ErrorAction Stop
+        $Result.TenantId | Should -BeExactly $Value
+        Test-Path -LiteralPath (Join-Path $Base 'oer-bl111.psd1') | Should -BeTrue
     }
 
     # -------------------------------------------------------------------------------------------

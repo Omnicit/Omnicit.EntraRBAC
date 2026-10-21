@@ -179,7 +179,7 @@ Describe 'Set-OERConfiguration' {
     # -------------------------------------------------------------------------------------------
     Context 'refuses a white-space -TenantId at binding (BL-96)' {
         BeforeAll {
-            $script:BlankTenantMessage = 'The TenantId consists only of white space. Supply the tenant ID or a verified domain of the tenant.'
+            $script:BlankTenantMessage = 'The TenantId consists only of white space and invisible formatting characters. Supply the tenant ID or a verified domain of the tenant.'
             # The mock WRITES a file when it is called, so "the profile file is unchanged" below is
             # a real check and not a restatement of the mock doing nothing.
             Mock -ModuleName Omnicit.EntraRBAC Export-OERConfiguration {
@@ -193,6 +193,13 @@ Describe 'Set-OERConfiguration' {
             @{ Label = 'a tab'; Value = "`t" }
             @{ Label = 'a carriage return and a line feed'; Value = "`r`n" }
             @{ Label = 'a no-break space (U+00A0)'; Value = [string][char]0x00A0 }
+            # BL-111 point 7: format characters (category Cf) are not white space to .NET but print as nothing.
+            @{ Label = 'a zero-width space (U+200B)'; Value = [string][char]0x200B }
+            @{ Label = 'a byte order mark (U+FEFF)'; Value = [string][char]0xFEFF }
+            @{ Label = 'a word joiner (U+2060)'; Value = [string][char]0x2060 }
+            @{ Label = 'three zero-width spaces'; Value = ([string][char]0x200B) * 3 }
+            @{ Label = 'spaces, a zero-width space and a tab'; Value = ' ' + [char]0x200B + "`t" + [char]0xFEFF + '  ' }
+            @{ Label = 'a word joiner between two spaces'; Value = ' ' + [char]0x2060 + ' ' }
         ) {
             $Base = Join-Path $TestDrive ('bl96-set-' + [guid]::NewGuid().ToString('N'))
             $null = New-Item -ItemType Directory -Path $Base -Force
@@ -283,6 +290,38 @@ Describe 'Set-OERConfiguration' {
         $Result = Set-OERConfiguration -TenantAlias 'oer-bl96' -TenantId 'fabrikam.onmicrosoft.com' -BasePath $Base -ErrorAction Stop
         $Result.TenantId | Should -BeExactly 'fabrikam.onmicrosoft.com'
         (Get-OERConfiguration -TenantAlias 'oer-bl96' -BasePath $Base).TenantId | Should -BeExactly 'fabrikam.onmicrosoft.com'
+    }
+
+    It 'still updates with a -TenantId that holds a real character beside a format character (BL-111)' -ForEach @(
+        @{ Label = 'a trailing zero-width space'; Value = 'fabrikam.onmicrosoft.com' + [char]0x200B }
+        @{ Label = 'a leading byte order mark'; Value = [string][char]0xFEFF + 'fabrikam.onmicrosoft.com' }
+        @{ Label = 'a single letter between format characters'; Value = [string][char]0x2060 + 'x' + [char]0x200B }
+    ) {
+        # Only a value that is NOTHING BUT white space and format characters is refused; this one is stored
+        # as given, as it was before the refusal widened.
+        $Base = Join-Path $TestDrive ('bl111-set-' + [guid]::NewGuid().ToString('N'))
+        $null = New-OERConfiguration -TenantAlias 'oer-bl111' -TenantId 'contoso.onmicrosoft.com' -BasePath $Base
+        $Result = Set-OERConfiguration -TenantAlias 'oer-bl111' -TenantId $Value -BasePath $Base -ErrorAction Stop
+        $Result.TenantId | Should -BeExactly $Value
+    }
+
+    It 'refuses a piped profile whose stored TenantId is only a format character, and still updates the next one (BL-111)' {
+        $Base = Join-Path $TestDrive ('bl111-pipe-' + [guid]::NewGuid().ToString('N'))
+        $null = New-OERConfiguration -TenantAlias 'oer-bl111' -TenantId 'contoso.onmicrosoft.com' -BasePath $Base
+        $null = New-OERConfiguration -TenantAlias 'oer-bl111-ok' -TenantId 'contoso.onmicrosoft.com' -BasePath $Base
+        $Piped = @(
+            [pscustomobject]@{ TenantAlias = 'oer-bl111'; TenantId = [string][char]0x200B }
+            [pscustomobject]@{ TenantAlias = 'oer-bl111-ok'; TenantId = 'fabrikam.onmicrosoft.com' }
+        )
+        $Error.Clear()
+        $Result = @($Piped | Set-OERConfiguration -BasePath $Base -ErrorAction SilentlyContinue)
+
+        $Refusals = @($Error | Where-Object { $_.FullyQualifiedErrorId -eq 'ParameterArgumentValidationError,Set-OERConfiguration' })
+        $Refusals.Count | Should -Be 1
+        $Refusals[0].Exception.Message | Should -BeLike '*invisible formatting characters*'
+        @($Result).Count | Should -Be 1
+        $Result[0].TenantAlias | Should -BeExactly 'oer-bl111-ok'
+        (Get-OERConfiguration -TenantAlias 'oer-bl111' -BasePath $Base).TenantId | Should -BeExactly 'contoso.onmicrosoft.com'
     }
 
     # -------------------------------------------------------------------------------------------
