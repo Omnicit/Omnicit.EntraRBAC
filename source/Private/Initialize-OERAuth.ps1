@@ -1104,6 +1104,8 @@ function Initialize-OERAuth {
         # the call, AFTER the prediction above has read the record as it stood, for the same reason the
         # authority tracker below is recorded before the call. It is still only this module's view: a
         # Get-AzToken call made outside this module, or a reload of this module, is invisible to it.
+        # Such a call can leave the tracker naming a credential AzAuth no longer holds; the object id and
+        # tenant check on the silent token (Invoke-SilentRenewal) and the single interactive fallback keep that safe.
         #
         # Every term on its own line and independently deletable, so each stays mutation-provable.
         [bool]$AzAuthBuildsNewCredential = -not $script:_OERLastTokenRequest -or

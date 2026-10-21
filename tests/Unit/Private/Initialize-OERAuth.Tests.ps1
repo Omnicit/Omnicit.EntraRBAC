@@ -6231,6 +6231,62 @@ Describe 'Initialize-OERAuth renews an interactive session silently (A22, BL-115
         }
     }
 
+    Context 'the identity check reads a real token (Get-OERTokenObjectId is not mocked)' {
+        BeforeAll {
+            # The real reader's body, taken before any test of this Context mocks the name; a script block of
+            # a module function stays bound to the module, so its private helpers resolve when it is called.
+            $script:A22RealGetOid = InModuleScope $script:moduleName { (Get-Command Get-OERTokenObjectId -CommandType Function).ScriptBlock }
+        }
+
+        BeforeEach {
+            # The real reader of the oid claim, through the silent path: the tokens the mocked Get-AzToken
+            # returns are JWT-shaped (header.payload.signature, the signature NOT-A-REAL-TOKEN text), the
+            # payload carrying the oid and tid claims, so Invoke-SilentRenewal decodes what it compares.
+            $script:A22Jwt = @{
+                $script:A22Oid      = New-TestToken -Claims @{ oid = $script:A22Oid; tid = $script:A22Tenant }
+                $script:A22OtherOid = New-TestToken -Claims @{ oid = $script:A22OtherOid; tid = $script:A22Tenant }
+            }
+            Mock -ModuleName $script:moduleName Get-OERTokenObjectId {
+                param($Token)
+                & $script:A22RealGetOid -Token $Token
+            }
+            Mock -ModuleName $script:moduleName Get-AzToken {
+                param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $WarningAction, $Interactive,
+                      $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                      $Scope, $Force, $Claim, $CredentialPrecedence)
+                $Result = & $script:A22TokenMock @PSBoundParameters
+                if ($null -ne $Result) {
+                    $Result.Token = $script:A22Jwt[($Result.Token -split '\|')[1]]
+                }
+                $Result
+            }
+        }
+
+        It 'accepts a silent JWT whose oid and tid are the session''s, and sends no interactive request' {
+            Start-A22Session
+            (Get-A22State).SignedInObjectId | Should -Be $script:A22Oid -Because 'the real reader decoded the first token'
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 1 -GraphOther 0
+            (Get-A22State).Account | Should -BeExactly 'silent@contoso.com'
+        }
+
+        It 'discards a silent JWT of another oid and sends exactly one interactive request' {
+            Start-A22Session
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+            $script:A22SilentMode = 'otheroid'
+
+            Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 1 -GraphOther 1
+            $State = Get-A22State
+            $State.Account | Should -BeExactly 'interactive@contoso.com'
+            $State.SignedInObjectId | Should -Be $script:A22Oid
+        }
+    }
+
     Context 'the tracker' {
         It 'names the client id and tenant of an interactive Microsoft Graph request' {
             Invoke-A22SignIn @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive' }
@@ -6858,6 +6914,38 @@ Describe 'Initialize-OERAuth refuses an interactive sign-in in a host started wi
             $script:NiCalls.Count | Should -Be 0 -Because 'neither a silent nor an interactive request is made'
             Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
         }
+
+        It 'refuses a cached Microsoft Graph session that needs a NEW Azure Resource Manager token, before any token request at all' {
+            # The guard stands before the Graph block, not between the Graph and the ARM block: a valid cached
+            # Graph session with -IncludeARM falls through the cached return (the ARM token is missing) and must
+            # not send even the ARM request.
+            Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $false }
+            $First = Invoke-NiProbe -Parameters @{ TenantId = $script:NiTenant; AuthMethod = 'Interactive' }
+            $First.Caught | Should -BeNullOrEmpty
+            $script:NiCalls.Count | Should -Be 1 -Because 'the control signed in once, for Microsoft Graph only'
+            $script:NiCalls.Clear()
+            Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $true }
+
+            $R = Invoke-NiProbe -Parameters @{ TenantId = $script:NiTenant; AuthMethod = 'Interactive'; IncludeARM = $true }
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'InteractiveSignInUnavailable,Initialize-OERAuth'
+            $script:NiCalls.Count | Should -Be 0 -Because 'neither a Graph nor an ARM token request is made'
+            $R.Refusal | Should -Not -BeNullOrEmpty
+        }
+
+        It 'refuses -ForceRefresh of a cached interactive session before any token request at all' {
+            Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $false }
+            $First = Invoke-NiProbe -Parameters @{ TenantId = $script:NiTenant; AuthMethod = 'Interactive' }
+            $First.Caught | Should -BeNullOrEmpty
+            $script:NiCalls.Clear()
+            Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $true }
+
+            $R = Invoke-NiProbe -Parameters @{ TenantId = $script:NiTenant; AuthMethod = 'Interactive'; ForceRefresh = $true }
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'InteractiveSignInUnavailable,Initialize-OERAuth'
+            $script:NiCalls.Count | Should -Be 0 -Because 'the Graph request a forced refresh would send is never made'
+            $R.Refusal | Should -Not -BeNullOrEmpty
+        }
     }
 
     Context 'what the refusal does not touch' {
@@ -6935,6 +7023,14 @@ Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
 }
 $All = @(Get-OERGroup -Group 'g1' -TenantId 'contoso.onmicrosoft.com' -ErrorAction Continue 2>&1)
 foreach ($E in $All) { "ERR:$($E.FullyQualifiedErrorId)" }
+# The three stubs of a transport name above shadow the tripwire's replacements in this runspace's copy of the
+# module, and the tripwire check after the scenario reads that scope (a name that no longer resolves to a
+# replacement is a hit): removed here, the nearest definition being the stub, so the check sees them again.
+& (Get-Module Omnicit.EntraRBAC) {
+    foreach ($Name in 'Get-AzToken', 'Connect-MgGraph', 'Invoke-MgGraphRequest') {
+        Remove-Item -Path ('function:' + $Name) -ErrorAction SilentlyContinue
+    }
+}
 'END'
 '@).Replace('#LOG#', $Log.Replace("'", "''")))
             }
