@@ -16,6 +16,11 @@ BeforeAll {
         Scopes = @('Group.ReadWrite.All')
     }
     Mock -ModuleName $script:moduleName Get-MgContext { $script:DefaultGraphContext }
+
+    # The tests that run the real Initialize-OERAuth sign in interactively, and the host these tests run
+    # in may have been started with -NonInteractive (the build agent's tool host is), where that sign-in
+    # is refused (BL-100). The host question is answered "no" for the whole file.
+    Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $false }
 }
 
 AfterAll {

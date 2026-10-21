@@ -54,6 +54,15 @@ function Initialize-OERAuth {
     narrows the prompts to those AzAuth cannot avoid; it does not promise none. Device code, managed
     identity, client secret and client certificate sign-ins never take this path.
 
+    An interactive (browser) sign-in in a console host that was started with pwsh -NonInteractive is
+    refused with a terminating InteractiveSignInUnavailable error (BL-100): such a host cannot complete
+    a browser sign-in, so the silent renewal above is refused with it, and nothing is requested. The
+    refusal stands after the cached return and the credential checks and before the tenant lookup and
+    every token call; the command stays latched, like every other refusal. Test-OERHostNonInteractive
+    decides it, and does not detect a service or scheduled task that runs without -NonInteractive, or a
+    host that is not the console host. Device code, managed identity, client secret and client
+    certificate sign-ins are not affected.
+
     The tenant each acquired token was actually ISSUED for is recorded beside the requested one, as
     TokenTenantId and ArmTokenTenantId. TenantId keeps naming what the caller asked for, since that
     is what the cache-key predicates compare. A requested tenant that is neither a GUID nor
@@ -713,6 +722,28 @@ function Initialize-OERAuth {
                     -Terminating
             }
         }
+    }
+
+    # BL-100 point 2: an interactive (browser) sign-in in a host started with -NonInteractive cannot be
+    # completed, and AzAuth would still open the browser from the token request. Refused here, once, for
+    # every interactive token request below (Graph, ARM and the silent renewal alike): placed after the
+    # cached return (a session that needs no token is answered), after the credential checks and the
+    # app-only check, and BEFORE the tenant lookup and every token call, so nothing is requested. The
+    # latch and the session-uncertain marker stay set, like every refusal above this line.
+    # Test-OERHostNonInteractive is the single owner of the host question.
+    if ($EffectiveMethod -eq 'Interactive' -and (Test-OERHostNonInteractive)) {
+        Write-CmdletError `
+            -Message ([System.Exception]::new(
+                "This PowerShell host was started with -NonInteractive and cannot complete a browser sign-in, " +
+                "so no token was requested for tenant '$EffectiveTenant'. Use Connect-OER with a certificate " +
+                "(-ClientId and -Certificate or -CertificatePath), a client secret (-ClientId and -ClientSecret), " +
+                "a managed identity (-ManagedIdentity) or -DeviceCode instead.")) `
+            -ErrorId 'InteractiveSignInUnavailable' `
+            -Category AuthenticationError `
+            -TargetObject $EffectiveTenant `
+            -Cmdlet $PSCmdlet `
+            -Terminating
+        return
     }
 
     # SEC (BL-12, decided by Philip 2026-10-06, P-2): a tenant named by domain is resolved to its tenant

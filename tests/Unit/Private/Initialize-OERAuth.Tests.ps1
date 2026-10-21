@@ -16,6 +16,12 @@ BeforeAll {
     }
     Mock -ModuleName $script:moduleName Get-MgContext { $script:DefaultGraphContext }
 
+    # The host these tests run in may have been started with -NonInteractive (the build agent's tool host
+    # is), and Initialize-OERAuth refuses an interactive sign-in there (BL-100). Every suite below
+    # signs in interactively as an ordinary user would, so the host question is answered "no" for the
+    # whole file; the Describe on that refusal mocks it to $true for itself.
+    Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $false }
+
     # Builds a JWT-shaped string at run time only -- never a literal starting 'eyJ' in this tracked
     # file -- for the Get-OERTokenObjectId (oid claim / SignedInObjectId) tests below. The signature
     # segment is deliberately not a real signature; nothing here checks one.
@@ -6702,6 +6708,249 @@ Describe 'Initialize-OERAuth renews an interactive session silently (A22, BL-115
             Invoke-A22SignIn @{ IncludeARM = $true }
 
             Assert-A22Calls -ArmSilent 0 -ArmOther 1
+        }
+    }
+}
+
+Describe 'Initialize-OERAuth refuses an interactive sign-in in a host started with -NonInteractive (BL-100)' {
+    # A host started with pwsh -NonInteractive cannot complete a browser sign-in, and AzAuth would still open
+    # the browser from the token request. Initialize-OERAuth refuses it with InteractiveSignInUnavailable,
+    # after the cached return and the credential checks and before the tenant lookup and every token request
+    # (the silent renewal included). Test-OERHostNonInteractive is the single owner of the host question;
+    # here it is mocked, so the answer is the test's choice and not the host this file happens to run in.
+    # Nothing reaches AzAuth, Microsoft Graph or the tenant lookup: Get-AzToken, Connect-MgGraph,
+    # Disconnect-MgGraph and Resolve-OERTenantDomain are mocked, and the root Get-MgContext mock answers.
+    BeforeAll {
+        $script:NiTenant = '66666666-6666-6666-6666-666666666666'
+        $script:NiOid = '88888888-8888-8888-8888-888888888888'
+
+        # Calls Initialize-OERAuth from ONE script block, then reads the latch and the session-uncertain
+        # marker from that same script block, as the latch Describe does. Returns the record it raised.
+        function script:Invoke-NiProbe {
+            param([hashtable]$Parameters = @{})
+            InModuleScope $script:moduleName -Parameters @{ P = $Parameters } {
+                param($P)
+                $Caught = $null
+                try { Initialize-OERAuth @P } catch { $Caught = $PSItem }
+                $Refusal = Get-OERSignInRefusal
+                $Was = Set-OERSessionUncertain -Value $true
+                $null = Set-OERSessionUncertain -Value $Was
+                @{ Caught = $Caught; Refusal = $Refusal; Marker = $Was }
+            }
+        }
+
+        function script:Set-NiGraphExpiry {
+            param([int]$Minutes)
+            InModuleScope $script:moduleName -Parameters @{ M = $Minutes } {
+                param($M)
+                $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes($M)
+            }
+        }
+
+        function script:Get-NiSilentCallCount {
+            @($script:NiCalls | Where-Object { $_.Silent }).Count
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
+            $script:_OERLastAuthorityHost = $null
+            $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
+        }
+        $script:NiCalls = [System.Collections.Generic.List[object]]::new()
+        Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $true }
+        Mock -ModuleName $script:moduleName Get-AzToken {
+            param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $WarningAction, $Interactive,
+                  $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                  $Scope, $Force, $Claim, $CredentialPrecedence)
+            $script:NiCalls.Add([pscustomobject]@{ Resource = $Resource; Silent = $PSBoundParameters.ContainsKey('CredentialPrecedence') })
+            [string]$TokenTenant = if ($Tenant -and $Tenant -match '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$') { $Tenant } else { '66666666-6666-6666-6666-666666666666' }
+            [pscustomobject]@{
+                Token     = 'NOT-A-REAL-TOKEN-ni|88888888-8888-8888-8888-888888888888'
+                ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+                Identity  = 'admin@contoso.com'
+                TenantId  = $TokenTenant
+            }
+        }
+        Mock -ModuleName $script:moduleName Connect-MgGraph { }
+        Mock -ModuleName $script:moduleName Disconnect-MgGraph { }
+        Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '66666666-6666-6666-6666-666666666666' }
+        Mock -ModuleName $script:moduleName Get-OERTokenObjectId {
+            param($Token)
+            $Plain = [System.Net.NetworkCredential]::new('', $Token).Password
+            $Parts = $Plain -split '\|'
+            if ($Parts.Count -gt 1 -and $Parts[1]) { $Parts[1] } else { $null }
+        }
+    }
+
+    Context 'an interactive sign-in in a non-interactive host' {
+        It 'is refused with InteractiveSignInUnavailable, naming the host, the tenant and the ways that work' {
+            $R = Invoke-NiProbe -Parameters @{ TenantId = $script:NiTenant; AuthMethod = 'Interactive' }
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'InteractiveSignInUnavailable,Initialize-OERAuth'
+            $R.Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
+            $R.Caught.TargetObject | Should -BeExactly $script:NiTenant
+            $R.Caught.Exception.Message | Should -Match '-NonInteractive'
+            $R.Caught.Exception.Message | Should -Match 'browser sign-in'
+            $R.Caught.Exception.Message | Should -Match 'no token was requested'
+            $R.Caught.Exception.Message | Should -Match 'Connect-OER'
+            $R.Caught.Exception.Message | Should -Match '-DeviceCode'
+            $R.Caught.Exception.Message | Should -Match '-ManagedIdentity'
+            $R.Caught.Exception.Message | Should -Match '-CertificatePath'
+            $R.Caught.Exception.Message | Should -Match '-ClientSecret'
+        }
+
+        It 'requests nothing: no token, no tenant lookup, no Connect-MgGraph, and builds no session' {
+            $R = Invoke-NiProbe -Parameters @{ TenantId = 'contoso.onmicrosoft.com'; AuthMethod = 'Interactive'; IncludeARM = $true }
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'InteractiveSignInUnavailable,Initialize-OERAuth'
+            $R.Caught.TargetObject | Should -BeExactly 'contoso.onmicrosoft.com'
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 0 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERTenantDomain -Times 0 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 0 -Exactly
+            InModuleScope $script:moduleName { $script:_OERAuthState } | Should -BeNullOrEmpty
+        }
+
+        It 'refuses a call that names no -AuthMethod, since the default is the interactive sign-in' {
+            $R = Invoke-NiProbe -Parameters @{ TenantId = $script:NiTenant }
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'InteractiveSignInUnavailable,Initialize-OERAuth'
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 0 -Exactly
+        }
+
+        It 'leaves the calling command latched and the session marked uncertain' {
+            $R = Invoke-NiProbe -Parameters @{ TenantId = $script:NiTenant; AuthMethod = 'Interactive' }
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'InteractiveSignInUnavailable,Initialize-OERAuth'
+            $R.Refusal | Should -Not -BeNullOrEmpty
+            $R.Marker | Should -BeTrue
+        }
+
+        It 'asks the host question once per call' {
+            $null = Invoke-NiProbe -Parameters @{ TenantId = $script:NiTenant; AuthMethod = 'Interactive'; IncludeARM = $true }
+
+            Should -Invoke -ModuleName $script:moduleName Test-OERHostNonInteractive -Times 1 -Exactly
+        }
+
+        It 'is refused before the silent renewal of a session that would otherwise renew without a prompt' {
+            # Control: in a host that can prompt, the same expired session renews silently (one silent request).
+            Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $false }
+            $Parameters = @{ TenantId = $script:NiTenant; AuthMethod = 'Interactive' }
+            $First = Invoke-NiProbe -Parameters $Parameters
+            $First.Caught | Should -BeNullOrEmpty
+            (InModuleScope $script:moduleName { $script:_OERInteractiveCredential }) | Should -Not -BeNullOrEmpty
+            Set-NiGraphExpiry -Minutes 2
+            $script:NiCalls.Clear()
+            $Renewed = Invoke-NiProbe -Parameters $Parameters
+            $Renewed.Caught | Should -BeNullOrEmpty
+            Get-NiSilentCallCount | Should -Be 1 -Because 'the control renews silently, so the refusal below is what stops it'
+
+            # The same session, expired again, in a -NonInteractive host: refused, no token request at all.
+            Set-NiGraphExpiry -Minutes 2
+            $script:NiCalls.Clear()
+            Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $true }
+            $R = Invoke-NiProbe -Parameters $Parameters
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'InteractiveSignInUnavailable,Initialize-OERAuth'
+            $script:NiCalls.Count | Should -Be 0 -Because 'neither a silent nor an interactive request is made'
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
+        }
+    }
+
+    Context 'what the refusal does not touch' {
+        It 'allows an interactive sign-in in a host that can prompt' {
+            Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $false }
+
+            $R = Invoke-NiProbe -Parameters @{ TenantId = $script:NiTenant; AuthMethod = 'Interactive' }
+
+            $R.Caught | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Test-OERHostNonInteractive -Times 1 -Exactly
+        }
+
+        It 'answers a session that is still valid from the cache: no refusal, no token request, no host question' {
+            Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $false }
+            $Parameters = @{ TenantId = $script:NiTenant; AuthMethod = 'Interactive' }
+            $null = Invoke-NiProbe -Parameters $Parameters
+            $script:NiCalls.Clear()
+            # Counted by the mock itself: a mock set again in the same scope keeps the call history of the one
+            # it replaces, so Should -Invoke could not tell the two sign-ins apart.
+            $script:NiHostAsked = 0
+            Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $script:NiHostAsked++; $true }
+
+            $R = Invoke-NiProbe -Parameters $Parameters
+
+            $R.Caught | Should -BeNullOrEmpty
+            $script:NiCalls.Count | Should -Be 0
+            $script:NiHostAsked | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+        }
+
+        It 'does not ask the host question for <Method>' -ForEach @(
+            @{ Method = 'DeviceCode' }
+            @{ Method = 'ManagedIdentity' }
+            @{ Method = 'ClientSecret' }
+            @{ Method = 'ClientCertificate' }
+        ) {
+            $Parameters = @{ TenantId = $script:NiTenant; AuthMethod = $Method }
+            if ($Method -eq 'ClientSecret') {
+                $Parameters.ClientId = '33333333-3333-3333-3333-333333333333'
+                $Parameters.ClientSecret = ConvertTo-SecureString 'NOT-A-REAL-TOKEN' -AsPlainText -Force
+            }
+            if ($Method -eq 'ClientCertificate') {
+                $Parameters.ClientId = '33333333-3333-3333-3333-333333333333'
+                $Parameters.CertificatePath = 'TestDrive:\oer-test.pfx'
+            }
+
+            $R = Invoke-NiProbe -Parameters $Parameters
+
+            $R.Caught | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Test-OERHostNonInteractive -Times 0 -Exactly
+        }
+    }
+
+    Context 'a public command in a script with no try above it' {
+        BeforeAll {
+            . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+            # Get-OERGroup in a runspace (Invoke-OERWithConfirmAnswer), no session, the host question faked to
+            # $true in that runspace's copy of the module. Every token and Graph request the module could make
+            # is replaced by a function that logs a line, so an empty log proves nothing was requested.
+            function script:New-NiNoTryScenario {
+                param([string]$Log)
+                [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    $script:_OERAuthState = $null
+    $script:_OERSessionUncertain = $null
+    $script:_OERInteractiveCredential = $null
+    Set-Item -Path function:script:Test-OERHostNonInteractive -Value { $true }
+    Set-Item -Path function:script:Get-AzToken -Value { [System.IO.File]::AppendAllText('#LOG#', "TOKEN`n"); throw 'NOT-A-REAL-TOKEN unexpected' }
+    Set-Item -Path function:script:Connect-MgGraph -Value { [System.IO.File]::AppendAllText('#LOG#', "CONNECT`n") }
+    Set-Item -Path function:script:Invoke-MgGraphRequest -Value { [System.IO.File]::AppendAllText('#LOG#', "GRAPH`n") }
+    Set-Item -Path function:script:Resolve-OERTenantDomain -Value { [System.IO.File]::AppendAllText('#LOG#', "LOOKUP`n"); 'eeee0000-0000-0000-0000-000000000001' }
+}
+$All = @(Get-OERGroup -Group 'g1' -TenantId 'contoso.onmicrosoft.com' -ErrorAction Continue 2>&1)
+foreach ($E in $All) { "ERR:$($E.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")))
+            }
+        }
+
+        It 'raises one InteractiveSignInUnavailable, refuses the command''s own Graph call, requests nothing and carries on' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-NiNoTryScenario -Log $Log)
+
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Output | Where-Object { $_ -like 'ERR:*' }) | Should -Be @(
+                'ERR:InteractiveSignInUnavailable,Initialize-OERAuth'
+                'ERR:SignInRefused,Get-OERGroup'
+            )
+            if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) | Should -BeNullOrEmpty }
+            $Run.Warnings | Should -BeNullOrEmpty
         }
     }
 }
