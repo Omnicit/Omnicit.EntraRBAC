@@ -24,6 +24,13 @@ function Resolve-OERTenantDomain {
     It throws an InvalidOperationException when the request fails or the document names no tenant ID;
     the caller turns that into TenantResolutionFailed.
 
+    Known limit (BL-93, measured 2026-10-21 on PowerShell 7.6.6): the 30-second timeout bounds the wait
+    for the connection and for the response headers, not the reading of the body. An authority that
+    sends its headers and then stalls leaves the call waiting, with no TenantResolutionFailed, until
+    the operator interrupts it. It is documented, not bounded: bounding the body needs
+    -OperationTimeoutSeconds, a parameter of PowerShell 7.4 and later, and the call allows no other
+    parameter. The limit is accepted as known and tracked in GitHub issue #66.
+
     .PARAMETER Domain
     The tenant as the caller named it: a verified domain such as contoso.onmicrosoft.com.
 

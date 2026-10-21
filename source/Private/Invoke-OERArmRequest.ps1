@@ -48,7 +48,14 @@ function Invoke-OERArmRequest {
     carries PartialValue (the items aggregated before it, an empty array for the first page), NextLink
     (the link, or the -Path for the first page) and PageNumber (1-based) as note properties on the
     thrown error's EXCEPTION, never on the ErrorRecord, the way Invoke-OERGraphRequest does. A single
-    request carries none of them.
+    request carries none of them. A single request whose 2xx body is empty (204) still returns $null,
+    and so does a FIRST page of a -All walk with an empty body. Get-OERPageWalkLimit owns the page
+    limit (100000 pages).
+
+    Under -ErrorAction SilentlyContinue or Ignore, with no try up the call stack, a failed call
+    returns NOTHING (no partial list, and not $null as an answer) and the record goes to the error
+    stream: a caller that asks for silence must read its -ErrorVariable and never read "no output" as
+    an empty collection.
 
     A 429, and a 503 that carries a Retry-After header, are retried with a bounded backoff: the
     Retry-After value is honoured in either RFC 9110 form (delta-seconds or an HTTP-date), with an
@@ -78,7 +85,10 @@ function Invoke-OERArmRequest {
     .PARAMETER All
     Follow nextLink/@nextLink paging on list responses and return a single object whose value
     property contains all aggregated items. Every page is requested with the call's own -Method and
-    -Body, so a POST list (Entities - List) is paged as well as a GET list.
+    -Body, so a POST list (Entities - List) is paged as well as a GET list. A walk that cannot
+    complete (a later page that is empty, JSON null or without a value member, a repeated path, a next
+    link that is not an absolute URI, a walk past the page limit) fails with ArmPagingIncomplete, and
+    an unreadable 2xx body with ArmResponseUnreadable; neither returns a partial list.
 
     .EXAMPLE
     $Subs = (Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -All).value
@@ -595,13 +605,14 @@ function Invoke-OERArmRequest {
     # the ceiling that sleeps alone would respect.
     $CallBudget = @{ StartUtc = [DateTime]::UtcNow; WaitSpent = 0 }
 
-    # The first request. Under -All a failure of it carries the three facts too (PartialValue @(),
-    # NextLink the -Path, PageNumber 1), like any later page (BL-24). A SINGLE request stays outside the
-    # try on purpose and is unchanged: a try up the call stack makes a throw in a nested function
-    # terminating even under -ErrorAction SilentlyContinue, which would change what a single request
-    # does after a refused sign-in (the 401 retry is no longer attempted, so the latch gate never
-    # refuses it). The catch scrubs first, like every catch that can see a transport failure, and
-    # rethrows the record it caught.
+    # The first request. Under -All it stands in a try, so a failure of it carries the three facts
+    # too (PartialValue @(), NextLink the -Path, PageNumber 1), like any later page (BL-24). With a try
+    # up the call stack a throw in a nested function is terminating even under -ErrorAction
+    # SilentlyContinue, so after a refused sign-in the walk's 401 retry is not attempted and nothing is
+    # sent after the refusal: the latch gate never has to refuse it. A SINGLE request stays outside the
+    # try on purpose and is unchanged: without one the nested throw does not stop the caller, the 401
+    # retry is still attempted and the latch gate refuses it. The catch scrubs first, like every catch
+    # that can see a transport failure, and rethrows the record it caught.
     $FirstFailed = $false
     if ($All) {
         try {

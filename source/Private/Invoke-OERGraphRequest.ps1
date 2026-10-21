@@ -55,6 +55,17 @@ function Invoke-OERGraphRequest {
        that failed). The single-page (without -All) path returns on the first failure exactly as
        before and attaches nothing.
 
+       A -All walk that cannot be completed is an error, never a shorter list. A page after the
+       first that is $null or has no value member, a next link already requested in this walk, and a
+       walk past the page limit (Get-OERPageWalkLimit owns the number, 100000 pages) are refused with
+       GraphPagingIncomplete (category InvalidResult), carrying the same three facts, and the page
+       after the cause is never requested. A page whose value is an empty array is a normal page,
+       and a $null FIRST page (an empty GET body) is still an empty collection. Under
+       -ErrorAction SilentlyContinue or Ignore, with no try up the call stack, a failed walk returns
+       NOTHING (no partial list and no empty collection) and the record goes to the error stream:
+       a caller that asks for silence must read its -ErrorVariable and never read "no output" as
+       "no items".
+
     6. Expected-answer codes: -ExpectedErrorCode lets a caller declare that one or more Graph error
        codes are an ANSWER to its question rather than a failure of it. A declared code is returned
        as an Omnicit.EntraRBAC.GraphExpectedError marker object instead of being raised, and the
@@ -82,7 +93,11 @@ function Invoke-OERGraphRequest {
     Follow @odata.nextLink on a GET list response and return a single object whose value property
     holds every item across all pages. Strictly opt-in: without this switch the wrapper returns the
     first page exactly as before. The next link is an absolute URL and is re-sent verbatim, per the
-    Microsoft Graph paging guidance.
+    Microsoft Graph paging guidance. A walk that cannot complete (a later page that is $null or has
+    no value member, a repeated next link, a walk past the page limit) fails with
+    GraphPagingIncomplete and returns no partial list; see the paging paragraph of the description.
+    Under -ErrorAction SilentlyContinue or Ignore the call then returns nothing: read -ErrorVariable,
+    never "no output" as an empty collection.
 
     .PARAMETER ExpectedErrorCode
     Graph error codes this caller considers an expected ANSWER rather than a failure -- for example

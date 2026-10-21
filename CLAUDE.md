@@ -1114,6 +1114,11 @@ hyphens) for em-dash contexts in comments and help text, and straight quotes `'`
 function. The wrapper owns bearer-token scrubbing, ACRS claims-challenge retry, token-rejected retry
 and structured error conversion. `Why: docs/development/rationale.md#graph-wrapper`
 
+**A `-All` walk that cannot complete is refused, never returned short:** a later page that is `$null`
+or has no `value`, a repeated next link and a walk past the page limit end it with
+`GraphPagingIncomplete`. `Get-OERPageWalkLimit` is the single owner of the limit (both wrappers read
+it, once per call); never cap a walk by truncating it. `Why: docs/development/rationale.md#graph-wrapper`
+
 `Connect-MgGraph -Environment` is passed only when the session's cloud is not `Global`; the
 environment name comes from `Get-OERCloudEndpoint`, never a literal.
 `Why: docs/development/rationale.md#sovereign-clouds`
@@ -1156,6 +1161,11 @@ wrapper. That is a convention kept by review, not a machine-checked rule, and no
 added that checks something weaker than the rule. Keep it by review.
 `Why: docs/development/rationale.md#arm-requests`
 
+**A `-All` walk that cannot complete is refused here too, never returned short:** an empty, JSON-null
+or `value`-less later page, a repeated path, a next link that is not an absolute URI and a walk past
+`Get-OERPageWalkLimit` end it with `ArmPagingIncomplete`, and a 2xx body that is not JSON with
+`ArmResponseUnreadable`. `Why: docs/development/rationale.md#arm-transport`
+
 `roleDefinitionId` in a role assignment body is always the FULL ARM resource id, never a bare GUID.
 Pinned api-versions, paging and retry semantics: `Why: docs/development/rationale.md#arm-transport`;
 sovereign-cloud ARM endpoints: `Why: docs/development/rationale.md#sovereign-clouds`
@@ -1163,8 +1173,8 @@ sovereign-cloud ARM endpoints: `Why: docs/development/rationale.md#sovereign-clo
 **`Get-OERManagementGroupParent` is the single owner of the Entities - List call.** The inventory
 walk (`Resolve-OERInventoryScopeTree`) lists management groups through `Get-OERManagementGroupList`,
 converts them itself and never calls `Get-OERManagementGroup` without `-Name`.
-`Get-OERManagementGroupList` is NOT the single owner of the list call (`Resolve-OERScope` still
-sends its own): never describe it as one.
+`Get-OERManagementGroupList` is the single owner of the Management Groups - List call, and
+`Resolve-OERScope` calls it too: never send that list a second way.
 `Why: docs/development/rationale.md#management-group-parents`
 
 ---
