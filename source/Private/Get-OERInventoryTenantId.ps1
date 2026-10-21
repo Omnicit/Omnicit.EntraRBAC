@@ -16,7 +16,10 @@ function Get-OERInventoryTenantId {
     no request and never signs in.
 
     Get-OERInventory and Export-OERInventory call it in their begin block, directly after their own
-    Initialize-OERAuth, and pass the value to ConvertTo-OERInventory -TenantId.
+    Initialize-OERAuth, and pass the value to ConvertTo-OERInventory -TenantId. Neither calls it when
+    its own sign-in was refused: a session an earlier command left is not the tenant the inventory
+    was read in, so the document then names no tenant (Export-OERInventory reads and writes nothing
+    after such a refusal at all).
 
     .EXAMPLE
     $DocumentTenantId = Get-OERInventoryTenantId

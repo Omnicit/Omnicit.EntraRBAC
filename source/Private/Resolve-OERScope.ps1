@@ -15,15 +15,21 @@ function Resolve-OERScope {
     is an ErrorRecord with ErrorId 'AmbiguousName' (category InvalidArgument, target the name) whose
     message names every candidate id, and nothing further is read. The caller re-runs with the
     subscription id, or with the management group name (which is its id). A name that exactly one
-    carries resolves as before, and a name nobody carries keeps the plain not-found throw. Throws on
+    carries resolves as before, and a name nobody carries is refused as not found (below). Throws on
     caller error -- the public cmdlets catch and route the message through Write-CmdletError. Every
-    throw of this function is an ErrorRecord (never a bare string) carrying an id the module already
-    publishes, with the message unchanged and the value as target: a refused argument combination or
-    a scope not starting with '/' is 'InvalidScope' (InvalidArgument); a subscription nobody
-    carries is 'SubscriptionNotFound', a resource nobody carries 'ResourceNotFound' and a management
-    group nobody carries 'ManagementGroupNotFound' (ObjectNotFound); an ambiguous subscription,
-    resource or management group name is 'AmbiguousName' (InvalidArgument). A caller that wraps the
-    message under its own id keeps publishing that id.
+    refusal this function raises itself is an ErrorRecord (never a bare string) carrying an id the
+    module already publishes, with the message unchanged: a refused argument combination or a scope
+    not starting with '/' is 'InvalidScope' (InvalidArgument); a subscription nobody carries is
+    'SubscriptionNotFound', a resource nobody carries 'ResourceNotFound' and a management group
+    nobody carries 'ManagementGroupNotFound' (ObjectNotFound); an ambiguous subscription, resource
+    or management group name is 'AmbiguousName' (InvalidArgument). The target is the value the
+    message names -- the subscription, resource or management group name, the -Scope, the
+    -ResourceGroup, -ResourceType or -ResourceName that lacks its companion, and for 'Supply only one
+    of' the supplied values joined with a comma and a space -- except the refusal that no scope was
+    supplied at all, whose target is $null. A failed request that is not a not-found answer is
+    rethrown as the transport raised it. A caller that wraps the message under its own id keeps
+    publishing that id; Invoke-OERStructure (through Resolve-OERStructureRoleAssignmentScope) and
+    Get-OERInventory (through Get-OERSubscriptionHomeTenant) publish the refusal's own id.
 
     .PARAMETER Scope
     A raw ARM scope string such as '/subscriptions/{id}/resourceGroups/{rg}'. Must start with '/'.

@@ -5862,6 +5862,22 @@ rule.
   document's tenant, the document passes the comparison and the sign-in latch refuses every request
   instead, as before.
 
+**Get-OERInventory after its own refused sign-in (Sprint 11 step 13, BL-157).** `Get-OERInventory` does
+not stop on a refused sign-in (no `try`; the reads that follow are refused by the transports), but a
+session an EARLIER command left in the module is not the tenant this inventory was read in, so
+`$DocumentTenantId` stays `$null` and the document carries no `tenantId`, with no warning. The refusal
+is found as `Export-OERInventory` finds its own: `Initialize-OERAuth` runs with `-ErrorVariable`, which
+holds a nested `ThrowTerminatingError` as a `CmdletInvocationException` (an `IContainsErrorRecord`)
+whose `.ErrorRecord.FullyQualifiedErrorId` is the id plus `,Initialize-OERAuth` (M5, MEASURED in a no-try
+runspace, under Continue, SilentlyContinue and Ignore), as well as a written record such as
+`ArmTokenAcquisitionFailed`. A record counts when that id ends, ordinal, with `,Initialize-OERAuth`:
+never a search of a message, and never the records the inner calls of a SUCCESSFUL sign-in wrote, which
+carry another writer. A WRITTEN error under `-ErrorAction Ignore` (or `$ErrorActionPreference = 'Ignore'`)
+reaches no `-ErrorVariable`, so only `Ignore` is pinned to `SilentlyContinue` for that one call; the cost
+is that under Ignore the refusal's record lands in `$Error`, as under SilentlyContinue. Cost if wrong: a
+document read after a refusal names the earlier session's tenant again (the case Ruling R10 below
+recorded); one expression in the command's `begin`.
+
 **Known limits.**
 
 - A document without `tenantId` -- written by hand, from a template, or exported from a session
@@ -5876,7 +5892,10 @@ rule.
   unread sections, which create nothing and give `-Prune`, which acts only on the child collections a
   document declares, nothing to remove; applied anywhere else it is refused. Read in the code, not
   tested. The capture stays in `begin` (R7, and the reason under "The export"). If wrong: the
-  exported `tenantId` can name the previous session's tenant for an empty bundle.
+  exported `tenantId` can name the previous session's tenant for an empty bundle. SUPERSEDED: since
+  Sprint 11 step 10 `Export-OERInventory` does not capture after a refused sign-in (it reads nothing and
+  writes no bundle), and since Sprint 11 step 13 neither does `Get-OERInventory` (BL-157, below), so
+  this limit no longer applies to either command.
 - Nothing machine-checks who calls `Get-OERInventoryTenantId`; gate 10 holds only the comparison.
   Since Sprint 10 step 10 (BL-101) `tests/Unit/Public/DirectoryRoleInventory.RoundTrip.Tests.ps1`
   runs with a session, so its export names the session's tenant and its apply compares it, and an
@@ -6593,7 +6612,12 @@ one.
   interactive sign-in -- a renewal without `-Force` opened a new interactive sign-in, which confirms
   Ruling R1. So a long interactive run asks the operator to sign in about once an hour, and the
   account picker offers other accounts of the same tenant, as whom the command then carries on.
-  A17 does not change this type.
+  A17 does not change this type. Since Sprint 11 step 13 (A22, BL-115) a renewal first tries a silent
+  request that AzAuth 2.11.0 may answer from the credential it holds, and opens the browser as above
+  only when that does not work: see
+  [The silent renewal of an interactive session](#the-silent-renewal-of-an-interactive-session),
+  which also records what it cannot promise. The measurement above is of the interactive request
+  itself, and still describes it.
 - **Device code.** Since A17 every renewal, like every device code request, carries `Force` and
   prints a new code ([Every device code sign-in is forced](#every-device-code-sign-in-is-forced),
   above). Before A17 the forced refresh after a rejected token printed a code, and a renewal at a
@@ -6612,7 +6636,9 @@ one.
 of `Connect-OER`'s description (Sprint 10 step 4b) say this per sign-in type, with the advice that
 follows from it: `Connect-OER -Force` with the session's own sign-in before a long run, someone at
 the keyboard unless the sign-in is a managed identity, and for an app-only run a `Connect-OER -Force`
-before each command. None of them calls an interactive renewal silent. The device code known
+before each command. None of them calls an interactive renewal silent: since Sprint 11 step 13 they
+describe a silent attempt that may not work, say it is read from source and not measured, and still
+ask for someone at the keyboard. The device code known
 limitation under `### Switching tenants` and `SWITCHING TENANTS` says that every device code
 sign-in, every renewal included, asks for a new code.
 
@@ -6627,6 +6653,153 @@ none of its parts -- a renewal before each request, a private renewal switch on
 `Initialize-OERAuth`, a shared renewal threshold, a split of the 401 path by the token's expiry --
 exists in the module. A delegated renewal that asks nothing of the operator needs a new design
 (BL-115), for example a change in AzAuth itself (PalmEmanuel/AzAuth issue 233). Nothing is promised.
+Sprint 11 step 13 built that design in a different form, on AzAuth 2.11.0, and still promises nothing:
+[The silent renewal of an interactive session](#the-silent-renewal-of-an-interactive-session).
+
+### The silent renewal of an interactive session
+
+**The finding (BL-115, decision A22, Sprint 11 step 13).** Until this step an interactive renewal
+opened the browser every time: Ruling R1 of [How a long run renews its token](#how-a-long-run-renews-its-token)
+(decompiled from AzAuth 2.10.0, measured by Philip on 2026-10-09). That section ends with "a delegated
+renewal that asks nothing of the operator needs a new design (BL-115), for example a change in AzAuth
+itself (PalmEmanuel/AzAuth issue 233)". AzAuth 2.11.0 carries such a change, and this step uses it.
+
+**M1: what AzAuth 2.11.0 does (READ in its source, 2026-10-21; not measured against a tenant).** Pull
+request 236 (merge `3caedf1`, release commit `aed8163`):
+
+- `TokenManager.NonInteractive.cs:71` inserts the stored credential FIRST in the chain when it is an
+  `InteractiveBrowserCredential` and the request is for the same tenant as the LAST token call
+  (`sameTenant = tenantId == previousTenantId`, `TokenManager.cs:37`). `:77-81` wraps it in a
+  `ChainedTokenCredential` that later non-interactive calls of the same tenant and precedence reuse.
+- `TokenManager.Interactive.cs:43` still builds a NEW `InteractiveBrowserCredential` on every
+  `-Interactive` call, with only `ClientId` set. So the credential AzAuth holds is whichever interactive
+  call came last, and a silent request can only answer from that one.
+- `GetAzToken.cs:203-216`: the NonInteractive parameter set refuses `-ClientId`. `:109-112`:
+  `-CredentialPrecedence` takes only `ManagedIdentity`, `Environment`, `AzurePowerShell`, `AzureCLI`,
+  `AzureDeveloperCli` and `VisualStudio`. `:173-176`: `-Force` clears the stored credential.
+
+**M2: what Azure.Identity 1.21.0 does when that credential cannot answer (READ in AzAuth's package
+reference; not measured).** `InteractiveBrowserCredential.cs:218-269`: with an `AuthenticationRecord` it
+tries `AcquireTokenSilentAsync` first. On `MsalUiRequiredException`, and when the credential was not built
+chained by options (AzAuth sets neither `IsChainedCredential` nor `DisableAutomaticAuthentication`), it
+opens the BROWSER from that very call, with no timeout the module can bound. `ChainedTokenCredential.cs:109-129`:
+only a `CredentialUnavailableException` moves a chain to its next source; any other failure ends it.
+So "non-interactive" means "no prompt when MSAL can answer", never "no prompt".
+
+**The decision and the design.** `Initialize-OERAuth` tries, before the interactive request of an
+interactive session that is renewing, a `Get-AzToken` call that is the interactive splat without
+`-Interactive` and without `-ClientId`, with `-CredentialPrecedence Environment` (the one allowed source
+that sends nothing unless the `AZURE_*` variables are set). `Invoke-SilentRenewal`, local to
+`Initialize-OERAuth`, sends it through `Invoke-AzTokenCall` and judges the answer: the token is accepted
+only when its object id (`Get-OERTokenObjectId`, the `oid` claim) equals the state's `SignedInObjectId`
+and its tenant equals `TokenTenantId`; a throw (scrubbed first, the verbose line names only the exception
+type, no message, no record) or another identity is discarded and the interactive request runs exactly
+once, as before. The identity check exists because the chain's other source, `Environment`, answers when
+`AZURE_CLIENT_ID` and its siblings are set, and a browser opened from the call could be answered by
+another account; either would otherwise become the session's token under the session's label. An
+accepted token takes every check an interactive token takes (`TenantMismatch`, the state rebuild, the
+ARM carry).
+
+The attempt is made only when every one of these holds, each on its own line in the function and
+independently deletable (so each is mutation-provable): the effective method is `Interactive`; the state
+exists and is an interactive session; `$ArmIdentityUnchanged` (the session's own tenant label, client and
+cloud); no `-ReclaimGraphSession` (so never `Connect-OER`); no claims challenge; no `Force` on the call
+(`-ForceRefresh`, a cloud switch); the tracker names the client id and the tenant the interactive request
+would pass, compared ordinally; the state's `SignedInObjectId` and `TokenTenantId` are GUIDs. It is
+evaluated directly before each of the two requests, the ARM one after the Graph one, because the Graph
+request moves the tracker.
+
+**The tracker.** `$script:_OERInteractiveCredential` is this module's own record of the interactive
+credential AzAuth holds: a hashtable of the client id and the tenant the interactive call passed, never a
+token. `Initialize-OERAuth` is its only owner. It is cleared directly before every token request but the
+silent one (any other call replaces or rebuilds AzAuth's credential), and set again only after an
+interactive request returned a token; a request that throws leaves it cleared, so the next renewal is
+interactive. It is only this module's view: a `Get-AzToken` call made outside the module, or a reload of
+the module, is invisible to it. The object id and tenant check on the silent token and the single
+interactive fallback keep that safe. Never add `-TokenCache` (gate 7 of
+[#static-source-gates](#static-source-gates) holds it), a broker or a token on disk to make the renewal
+more reliable: each reaches a different credential store than the one this design is read against.
+
+**Known limits.**
+
+- **(a) With `-IncludeARM`, when both tokens need renewing in one call, the second resource still
+  prompts.** AzAuth holds one credential, the last one used. The silent Graph request leaves the tracker
+  naming the Graph client id; the ARM interactive request passes no client id, so the tracker does not
+  match it and the ARM token is requested interactively. Read in the code and the sources, not measured.
+- **(b) A renewal whose refresh fails can open the browser inside AzAuth (M2).** Read from AzAuth 2.11.0
+  and Azure.Identity 1.21.0, not measured live: if the refresh inside the stored credential fails with
+  "UI required", Azure.Identity opens the browser from the non-interactive call, with no timeout the
+  module can bound. The module cannot tell that from a failure: a token the call then returns for another
+  account is discarded and a second, interactive request opens a second browser. So the renewal narrows
+  the prompts to those AzAuth cannot avoid; the texts promise fewer, never none, and keep "stay at the
+  keyboard".
+- **(c) Not for any other sign-in type or caller.** Device code, managed identity, client secret and
+  client certificate sign-ins never take the path (Ruling C1 and A17 of the sections above stand);
+  `Connect-OER` signs in as the operator's explicit instruction and never renews silently; a claims
+  challenge needs the user to answer it.
+- **(d) The AzAuth floor.** The manifest's AzAuth `ModuleVersion` rises from 2.9.0 to 2.11.0, the release
+  that carries M1; see [#dependencies](#dependencies).
+
+**If wrong.** Remove the two `Invoke-SilentRenewal` branches: the interactive request alone is exactly
+the behaviour before this step, and the tracker is then written for nothing. The tests of
+`tests/Unit/Private/Initialize-OERAuth.Tests.ps1` drive the attempt through the real `Get-OERTokenObjectId`
+with JWT-shaped tokens and count each attempt from the function's own verbose lines, so a combination
+`Get-AzToken`'s parameter sets refuse (never reaching the mock) is still seen.
+
+### An interactive sign-in is refused in a non-interactive host
+
+**The finding (BL-100).** An interactive (browser) sign-in in a host that cannot show a browser either
+hangs until AzAuth's timeout or fails far from its cause, and AzAuth opens the browser from the token
+request regardless. The silent renewal above makes it matter more: a renewal near a token's expiry could
+reach the browser in a console nobody is sitting at.
+
+**M3: how the question is answered (MEASURED against the PowerShell 7.2.0 and 7.6.0 sources and in this
+repository's tool host, 2026-10-21).** `ConsoleHostUserInterface._throwOnReadAndPrompt` is a private
+field; PowerShell has the `ThrowOnReadAndPrompt` setter and no getter. The field is `$true` under
+`pwsh -NonInteractive`, `-noni` and `-NonI`; `$false` under plain `-File` and `-Command`, and `$false`
+when `-NonInteractive` is only an argument of the script; a runspace made without a PSHost is the
+`Default Host` and answers `$false`. The path: `$Host` -> its NonPublic `ExternalHost` property -> the
+public `UI` -> the NonPublic instance field `_throwOnReadAndPrompt`.
+
+**The decision.** `Test-OERHostNonInteractive` is the single owner of the host question: `$true` only
+for `$Host.Name -eq 'ConsoleHost'` with that field `$true`; `$false` for every other host and when any
+step of the reflection fails (it never throws and never writes an error record). `Initialize-OERAuth`
+asks it once, `if ($EffectiveMethod -eq 'Interactive' -and (Test-OERHostNonInteractive))`, and raises a
+terminating `InteractiveSignInUnavailable` (`AuthenticationError`, target the effective tenant). The
+placement is the point: after the cached return (a session that needs no token is answered), after the
+credential checks and the app-only check, and BEFORE the tenant lookup and every token call, so nothing
+is requested, the silent renewal included. The command stays latched and the session-uncertain marker
+stays set, like every refusal above it. A cached Graph session that needs a new ARM token, and a
+`-ForceRefresh` of a cached interactive session, are refused the same way.
+
+**Known limits.** Only the console host started with `-NonInteractive` is detected. An editor's
+integrated console, a runspace of another application, and a service or scheduled task that runs `pwsh`
+without `-NonInteractive` are not: a false answer means "not known to be non-interactive", never "can
+show a browser". The check reads a private field of PowerShell, so a build without it answers `$false`
+and the sign-in proceeds as before. Every unit test that reaches the real `Initialize-OERAuth` with an
+interactive sign-in mocks `Test-OERHostNonInteractive`, since the tool host itself is `-NonInteractive`.
+If wrong: the one condition in `Initialize-OERAuth` and the helper; a host that answers falsely is then
+left to AzAuth as before.
+
+### A sign-in failure reaches the caller once
+
+**The question (BL-20).** Whether a token failure reaches a caller twice, as the sign-in's own error and
+again through the transports. MEASURED on 2026-10-21 (M4), in a runspace with no `try` and the token
+calls stubbed to fail: an Azure Resource Manager token failure for `Get-OERSubscription` gives
+`ArmTokenAcquisitionFailed,Initialize-OERAuth` and then `SignInRefused,Get-OERSubscription`; a Microsoft
+Graph token failure for `Get-OERGroup` gives `GraphTokenAcquisitionFailed,Initialize-OERAuth` and then
+`SignInRefused,Get-OERGroup`; `Connect-OER` with either failure gives exactly one record. There is no
+warning anywhere and no duplicate of the same error. So a caller sees the sign-in's own error once, then
+the refusal of the request the latch stopped, which are two different facts.
+
+**What was done.** No code change. The Describe `Initialize-OERAuth token failures reach a public
+command's caller exactly once (BL-20)` in `tests/Unit/Private/Initialize-OERAuth.Tests.ps1` pins the
+sequence in a no-try runspace, so a change that doubled a record or added a warning turns red. The related
+change of the step is `New-OERGroup`: a group lookup the module refused (`SignInRefused` or
+`SignInSuperseded`) is still published as `GroupResolveFailed`, but its message names the refusal and the
+command it names, and the inner exception carries the refusal's record, so a caller reads the id from the
+record rather than from the text. The id is the first comma segment of the record's
+`FullyQualifiedErrorId`, compared whole and ordinally; any other failure is worded as before.
 
 ### CLAUDE.md text for auth-state
 
@@ -6828,6 +7001,36 @@ Profile schema -- `TenantId` is required, everything else optional:
 }
 ```
 
+### The profile file is written escaped
+
+**The finding (Sprint 11 step 13).** `Export-OERConfiguration` doubled only the straight apostrophe
+(U+0027) in the keys, list items and scalars it wrote. PowerShell's tokenizer reads five characters as a
+single quote: U+0027, U+2018, U+2019, U+201A and U+201B. A value or key carrying one of the other four
+(a curly apostrophe pasted from a document, say) ended its string early, and the rest of it became PSD1
+text: an injected key, or a profile `Import-PowerShellDataFile` can no longer parse, leaving the alias
+unreadable.
+
+**The decision.** Every key, list item and scalar goes through
+`[System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent`, which doubles each of the five
+characters, so the value reads back unchanged and can never end its string early. The helper stays the
+single owner of profile serialization (the rule under Tenant Profile Config in CLAUDE.md). The copy-paste
+example commands that error and warning messages show (role name, group, definition, scope, profile alias,
+policy id, catalog) use the same escaper inline, once where the example stands in the message and twice
+where the command sits inside the message's own single-quoted literal; each site's test extracts the
+example from the real message and parses it with the PowerShell parser back to the value, for U+0027 and
+U+2019.
+
+### A TenantId of only invisible characters is refused at binding
+
+`-TenantId` of `New-OERConfiguration` and `Set-OERConfiguration` is refused at binding when it consists
+only of white space and Unicode format characters (category Cf: U+200B, U+FEFF, U+2060 and the like),
+which .NET does not count as white space and which print as nothing. The check removes `\p{Cf}` before
+the white space test (BL-111, on top of the BL-96 white space refusal); a value with a real character beside a format character is still
+accepted and stored as given, and a stored value is read as before. KNOWN LIMIT, not fixed: a format
+character outside the Basic Multilingual Plane is a surrogate pair of two UTF-16 code units, each of
+category Cs, so the expression does not strip it and a value of only those is accepted. The message names
+the invisible formatting characters.
+
 ### CLAUDE.md text for profile-path
 
 What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
@@ -6882,11 +7085,21 @@ writing a version number into `RequiredModules.psd1`, and do not reconcile them 
 CI now tests the combination a NEW consumer gets -- newest AzAuth, newest
 Microsoft.Graph.Authentication, newest everything -- which is the combination most consumers will
 actually run, and which nothing tested before. In exchange, **the declared floors are no longer
-exercised by anything.** A consumer sitting at exactly `AzAuth 2.9.0` or
+exercised by anything.** A consumer sitting at exactly `AzAuth 2.11.0` or
 `Microsoft.Graph.Authentication 2.36.0` is running a combination no test in this repository has ever
 executed. The floors are now a claim, not a tested claim. Raising a floor to whatever CI last proved
 green would make the claim true again at the cost of forcing an upgrade on those consumers; that
 trade has not been made, and making it is a decision, not a cleanup.
+
+**The one floor that was raised on purpose (Sprint 11 step 13, A22, BL-115).** The AzAuth floor moved
+from 2.9.0 to 2.11.0. The silent renewal of an interactive session
+([#the-silent-renewal-of-an-interactive-session](#the-silent-renewal-of-an-interactive-session))
+depends on AzAuth's non-interactive `Get-AzToken` answering from the stored interactive credential
+(pull request 236, merge `3caedf1`, in the release whose commit is `aed8163`; READ in the source, not
+measured live). Raising the floor here is a requirement of a feature, not a refresh to whatever CI last
+saw, so the trade named above was not made for the other floors. INFERRED, not tested: on an older
+AzAuth the same request would not reuse the credential, and the module would only ever fall through to
+its interactive request; the floor says what the feature needs instead. `Microsoft.Graph.Authentication` stays at 2.36.0.
 
 **Drift has to stay visible for "repair it when it breaks" to be cheap.** With `latest` everywhere,
 a red build is only quick to diagnose if the run says which module moved, so

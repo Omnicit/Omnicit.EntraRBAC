@@ -32,6 +32,12 @@ next link already requested and a walk past 100000 pages, with `GraphPagingIncom
 `ArmPagingIncomplete`, and an Azure body that is not JSON, with `ArmResponseUnreadable`. Under
 `-ErrorAction SilentlyContinue` such a read returns nothing.
 
+AzAuth 2.11.0 or later is now required. An expired interactive session is renewed without a prompt
+where AzAuth can answer from its stored credential, for the same account and tenant only. In a
+`pwsh -NonInteractive` host an interactive sign-in is refused with `InteractiveSignInUnavailable`.
+Tenant profile files now escape every kind of single quote PowerShell reads, so a curly one no
+longer corrupts a profile.
+
 ## [1.3.0] - 2026-10-19
 
 A PIM for Groups activation is no longer written or applied as a standing membership. Inventories
