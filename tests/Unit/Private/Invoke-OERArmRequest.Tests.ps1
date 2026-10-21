@@ -836,7 +836,7 @@ Describe 'Invoke-OERArmRequest throttling' {
                 $script:Call++
                 # Odd calls: a page that succeeds and points at the next. Even calls: a throttle.
                 if ($script:Call % 2 -eq 1) {
-                    [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"p"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skip=1"}'; Headers = @{} }
+                    [PSCustomObject]@{ StatusCode = 200; Content = ('{"value":[{"id":"p"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skip=' + $script:Call + '"}'); Headers = @{} }
                 } else {
                     [PSCustomObject]@{ StatusCode = 429; Content = '{"error":{"code":"TooManyRequests"}}'; Headers = @{ 'Retry-After' = @('120') } }
                 }
@@ -855,7 +855,7 @@ Describe 'Invoke-OERArmRequest throttling' {
             Mock Invoke-WebRequest {
                 $script:Call++
                 if ($script:Call % 2 -eq 1) {
-                    [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"p"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skip=1"}'; Headers = @{} }
+                    [PSCustomObject]@{ StatusCode = 200; Content = ('{"value":[{"id":"p"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skip=' + $script:Call + '"}'); Headers = @{} }
                 } else {
                     [PSCustomObject]@{ StatusCode = 429; Content = '{"error":{"code":"TooManyRequests"}}'; Headers = @{ 'Retry-After' = @('120') } }
                 }
@@ -1621,6 +1621,430 @@ foreach ($Record in $Records) { 'ERROR: {0}' -f $Record }
     }
 }
 
+Describe 'Invoke-OERArmRequest -All never returns a partial walk and never loops (BL-71, BL-73, BL-24)' {
+    # A -All walk that cannot be completed FAILS with ArmPagingIncomplete and carries what it had read
+    # (PartialValue, NextLink, PageNumber) on the EXCEPTION; a 2xx body that cannot be parsed fails with
+    # ArmResponseUnreadable; no page is requested twice. Mirror of the Graph wrapper's suite.
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC {
+            $script:_OERAuthState = @{
+                AuthMethod     = 'Interactive'
+                TenantId       = 'organizations'
+                ArmToken       = (ConvertTo-SecureString 'fake-arm-token' -AsPlainText -Force)
+                ArmResourceUrl = 'https://management.azure.com/'
+            }
+        }
+    }
+
+    Context 'a 2xx body that cannot be read as JSON (BL-73)' {
+        It 'refuses an unparsable single response with ArmResponseUnreadable, naming the path and never the body' {
+            InModuleScope Omnicit.EntraRBAC {
+                Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = 'SECRET-BODY-TEXT <html> not json' } }
+                $Err = $null
+                try { $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' } catch { $Err = $PSItem }
+                $Err.FullyQualifiedErrorId | Should -Be 'ArmResponseUnreadable'
+                $Err.CategoryInfo.Category | Should -Be 'InvalidData'
+                $Err.TargetObject | Should -Be '/subscriptions?api-version=2022-12-01'
+                $Err.Exception.Message | Should -Match ([regex]::Escape('/subscriptions?api-version=2022-12-01'))
+                $Err.Exception.Message | Should -Not -Match 'SECRET-BODY-TEXT'
+                # A single request carries no walk facts.
+                $Err.Exception.PSObject.Properties['PartialValue'] | Should -BeNullOrEmpty
+                Should -Invoke Invoke-WebRequest -Times 1 -Exactly
+            }
+        }
+
+        It 'refuses an unparsable first page under -All and attaches the three facts (nothing aggregated, the -Path, page 1)' {
+            InModuleScope Omnicit.EntraRBAC {
+                Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[' } }
+                $Err = $null
+                try { $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -All } catch { $Err = $PSItem }
+                $Err.FullyQualifiedErrorId | Should -Be 'ArmResponseUnreadable'
+                $Err.CategoryInfo.Category | Should -Be 'InvalidData'
+                @($Err.Exception.PartialValue).Count | Should -Be 0
+                $Err.Exception.PartialValue -is [object[]] | Should -BeTrue
+                $Err.Exception.NextLink | Should -Be '/subscriptions?api-version=2022-12-01'
+                $Err.Exception.PageNumber | Should -Be 1
+                Should -Invoke Invoke-WebRequest -Times 1 -Exactly
+            }
+        }
+
+        It 'refuses an unparsable later page with the items read so far, the path of that page and its number' {
+            InModuleScope Omnicit.EntraRBAC {
+                $script:Call = 0
+                Mock Invoke-WebRequest {
+                    $script:Call++
+                    if ($script:Call -eq 1) {
+                        [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"a"},{"id":"b"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=p2"}' }
+                    } else {
+                        [PSCustomObject]@{ StatusCode = 200; Content = 'SECRET-BODY-TEXT not json' }
+                    }
+                }
+                $Err = $null
+                try { $null = Invoke-OERArmRequest -Path '/subs?api-version=2022-12-01' -All } catch { $Err = $PSItem }
+                $Err.FullyQualifiedErrorId | Should -Be 'ArmResponseUnreadable'
+                $Err.CategoryInfo.Category | Should -Be 'InvalidData'
+                $Err.TargetObject | Should -Be '/subs?api-version=2022-12-01&$skiptoken=p2'
+                $Err.Exception.Message | Should -Not -Match 'SECRET-BODY-TEXT'
+                @($Err.Exception.PartialValue.id) | Should -Be @('a', 'b')
+                $Err.Exception.NextLink | Should -Be '/subs?api-version=2022-12-01&$skiptoken=p2'
+                $Err.Exception.PageNumber | Should -Be 2
+                Should -Invoke Invoke-WebRequest -Times 2 -Exactly
+            }
+        }
+    }
+
+    Context 'a later page that is not a page of the collection (BL-71)' {
+        It 'refuses a later page with an empty body with ArmPagingIncomplete and never requests it again' {
+            InModuleScope Omnicit.EntraRBAC {
+                $script:Call = 0
+                Mock Invoke-WebRequest {
+                    $script:Call++
+                    if ($script:Call -eq 1) {
+                        [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=p2"}' }
+                    } else {
+                        [PSCustomObject]@{ StatusCode = 200; Content = '' }
+                    }
+                }
+                $Err = $null
+                try { $null = Invoke-OERArmRequest -Path '/subs?api-version=2022-12-01' -All } catch { $Err = $PSItem }
+                $Err.FullyQualifiedErrorId | Should -Be 'ArmPagingIncomplete'
+                $Err.CategoryInfo.Category | Should -Be 'InvalidResult'
+                $Err.Exception.Message | Should -Match 'empty body'
+                @($Err.Exception.PartialValue.id) | Should -Be @('a')
+                $Err.Exception.NextLink | Should -Be 'https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=p2'
+                $Err.Exception.PageNumber | Should -Be 2
+                Should -Invoke Invoke-WebRequest -Times 2 -Exactly
+            }
+        }
+
+        It 'refuses a later page whose body is JSON null' {
+            InModuleScope Omnicit.EntraRBAC {
+                $script:Call = 0
+                Mock Invoke-WebRequest {
+                    $script:Call++
+                    if ($script:Call -eq 1) {
+                        [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=p2"}' }
+                    } else {
+                        [PSCustomObject]@{ StatusCode = 200; Content = 'null' }
+                    }
+                }
+                $Err = $null
+                try { $null = Invoke-OERArmRequest -Path '/subs?api-version=2022-12-01' -All } catch { $Err = $PSItem }
+                $Err.FullyQualifiedErrorId | Should -Be 'ArmPagingIncomplete'
+                $Err.Exception.Message | Should -Match 'JSON null'
+                @($Err.Exception.PartialValue.id) | Should -Be @('a')
+                $Err.Exception.PageNumber | Should -Be 2
+                Should -Invoke Invoke-WebRequest -Times 2 -Exactly
+            }
+        }
+
+        It 'refuses a later page that has no value member' {
+            InModuleScope Omnicit.EntraRBAC {
+                $script:Call = 0
+                Mock Invoke-WebRequest {
+                    $script:Call++
+                    if ($script:Call -eq 1) {
+                        [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=p2"}' }
+                    } else {
+                        [PSCustomObject]@{ StatusCode = 200; Content = '{"count":0}' }
+                    }
+                }
+                $Err = $null
+                try { $null = Invoke-OERArmRequest -Path '/subs?api-version=2022-12-01' -All } catch { $Err = $PSItem }
+                $Err.FullyQualifiedErrorId | Should -Be 'ArmPagingIncomplete'
+                @($Err.Exception.PartialValue.id) | Should -Be @('a')
+                $Err.Exception.PageNumber | Should -Be 2
+                Should -Invoke Invoke-WebRequest -Times 2 -Exactly
+            }
+        }
+
+        It 'treats a later page whose value is an empty array as a normal page and aggregates the page after it' {
+            InModuleScope Omnicit.EntraRBAC {
+                $script:Call = 0
+                Mock Invoke-WebRequest {
+                    $script:Call++
+                    switch ($script:Call) {
+                        1 { [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=p2"}' } }
+                        2 { [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=p3"}' } }
+                        default { [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"b"}]}' } }
+                    }
+                }
+                $Result = Invoke-OERArmRequest -Path '/subs?api-version=2022-12-01' -All
+                @($Result.value.id) | Should -Be @('a', 'b')
+                Should -Invoke Invoke-WebRequest -Times 3 -Exactly
+            }
+        }
+    }
+
+    Context 'a walk that would request a page twice, or never end' {
+        It 'refuses a next link that repeats the page just read, requesting each page exactly once' {
+            InModuleScope Omnicit.EntraRBAC {
+                $script:Call = 0
+                Mock Invoke-WebRequest {
+                    $script:Call++
+                    if ($script:Call -eq 1) {
+                        [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=p2"}' }
+                    } else {
+                        [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"b"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=p2"}' }
+                    }
+                }
+                $Err = $null
+                try { $null = Invoke-OERArmRequest -Path '/subs?api-version=2022-12-01' -All } catch { $Err = $PSItem }
+                $Err.FullyQualifiedErrorId | Should -Be 'ArmPagingIncomplete'
+                $Err.CategoryInfo.Category | Should -Be 'InvalidResult'
+                @($Err.Exception.PartialValue.id) | Should -Be @('a', 'b')
+                $Err.Exception.PageNumber | Should -Be 3
+                Should -Invoke Invoke-WebRequest -Times 2 -Exactly
+                Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq 'https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=p2' }
+            }
+        }
+
+        It 'counts the path of the FIRST request: a next link that names it is refused, not requested' {
+            InModuleScope Omnicit.EntraRBAC {
+                $script:Call = 0
+                Mock Invoke-WebRequest {
+                    $script:Call++
+                    if ($script:Call -eq 1) {
+                        [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01"}' }
+                    } else {
+                        [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"unexpected"}]}' }
+                    }
+                }
+                $Err = $null
+                try { $null = Invoke-OERArmRequest -Path '/subs?api-version=2022-12-01' -All } catch { $Err = $PSItem }
+                $Err.FullyQualifiedErrorId | Should -Be 'ArmPagingIncomplete'
+                @($Err.Exception.PartialValue.id) | Should -Be @('a')
+                $Err.Exception.PageNumber | Should -Be 2
+                Should -Invoke Invoke-WebRequest -Times 1 -Exactly
+            }
+        }
+
+        It 'compares requested paths ordinally: a next link differing only in case is a different page' {
+            InModuleScope Omnicit.EntraRBAC {
+                $script:Call = 0
+                Mock Invoke-WebRequest {
+                    $script:Call++
+                    switch ($script:Call) {
+                        1 { [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=AbC"}' } }
+                        2 { [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"b"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=abc"}' } }
+                        default { [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"c"}]}' } }
+                    }
+                }
+                $Result = Invoke-OERArmRequest -Path '/subs?api-version=2022-12-01' -All
+                @($Result.value.id) | Should -Be @('a', 'b', 'c')
+            }
+        }
+
+        It 'refuses a walk past the page limit (the owner mocked at 3), reading the limit once and requesting no page past it' {
+            InModuleScope Omnicit.EntraRBAC {
+                Mock Get-OERPageWalkLimit { 3 }
+                $script:Call = 0
+                Mock Invoke-WebRequest {
+                    $script:Call++
+                    [PSCustomObject]@{ StatusCode = 200; Content = ('{"value":[{"id":"p' + $script:Call + '"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=t' + $script:Call + '"}') }
+                }
+                $Err = $null
+                try { $null = Invoke-OERArmRequest -Path '/subs?api-version=2022-12-01' -All } catch { $Err = $PSItem }
+                $Err.FullyQualifiedErrorId | Should -Be 'ArmPagingIncomplete'
+                $Err.CategoryInfo.Category | Should -Be 'InvalidResult'
+                @($Err.Exception.PartialValue.id) | Should -Be @('p1', 'p2', 'p3')
+                $Err.Exception.PageNumber | Should -Be 4
+                $Err.Exception.NextLink | Should -Be 'https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=t3'
+                Should -Invoke Invoke-WebRequest -Times 3 -Exactly
+                Should -Invoke Get-OERPageWalkLimit -Times 1 -Exactly
+            }
+        }
+
+        It 'lets a walk of exactly the page limit complete' {
+            InModuleScope Omnicit.EntraRBAC {
+                Mock Get-OERPageWalkLimit { 3 }
+                $script:Call = 0
+                Mock Invoke-WebRequest {
+                    $script:Call++
+                    if ($script:Call -lt 3) {
+                        [PSCustomObject]@{ StatusCode = 200; Content = ('{"value":[{"id":"p' + $script:Call + '"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=t' + $script:Call + '"}') }
+                    } else {
+                        [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"p3"}]}' }
+                    }
+                }
+                $Result = Invoke-OERArmRequest -Path '/subs?api-version=2022-12-01' -All
+                @($Result.value.id) | Should -Be @('p1', 'p2', 'p3')
+            }
+        }
+
+        It 'refuses a next link that is not an absolute http or https URI, requesting nothing from it: <Name>' -ForEach @(
+            @{ Name = 'a path with no host'; Link = 'subs?api-version=2022-12-01&$skiptoken=p2' }
+            @{ Name = 'a rooted path with no host'; Link = '/subs?api-version=2022-12-01&$skiptoken=p2' }
+            @{ Name = 'a file URI'; Link = 'file:///subs?api-version=2022-12-01&$skiptoken=p2' }
+        ) {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Link = $Link } {
+                param($Link)
+                $script:LinkUnderTest = $Link
+                Mock Invoke-WebRequest {
+                    [PSCustomObject]@{ StatusCode = 200; Content = ('{"value":[{"id":"a"}],"nextLink":"' + $script:LinkUnderTest + '"}') }
+                }
+                $Err = $null
+                try { $null = Invoke-OERArmRequest -Path '/subs?api-version=2022-12-01' -All } catch { $Err = $PSItem }
+                $Err.FullyQualifiedErrorId | Should -Be 'ArmPagingIncomplete'
+                $Err.CategoryInfo.Category | Should -Be 'InvalidResult'
+                @($Err.Exception.PartialValue.id) | Should -Be @('a')
+                $Err.Exception.NextLink | Should -Be $Link
+                $Err.Exception.PageNumber | Should -Be 2
+                Should -Invoke Invoke-WebRequest -Times 1 -Exactly
+            }
+        }
+    }
+
+    Context 'a failed page carries what was read (BL-24)' {
+        It 'attaches the three facts to a non-2xx later page and still throws the ARM error' {
+            InModuleScope Omnicit.EntraRBAC {
+                $script:Call = 0
+                Mock Invoke-WebRequest {
+                    $script:Call++
+                    if ($script:Call -eq 1) {
+                        [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"a"},{"id":"b"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=p2"}' }
+                    } else {
+                        [PSCustomObject]@{ StatusCode = 500; Content = '{"error":{"code":"InternalServerError","message":"boom"}}' }
+                    }
+                }
+                $Err = $null
+                try { $null = Invoke-OERArmRequest -Path '/subs?api-version=2022-12-01' -All } catch { $Err = $PSItem }
+                $Err.FullyQualifiedErrorId | Should -Be 'InternalServerError'
+                @($Err.Exception.PartialValue.id) | Should -Be @('a', 'b')
+                $Err.Exception.NextLink | Should -Be 'https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=p2'
+                $Err.Exception.PageNumber | Should -Be 2
+            }
+        }
+
+        It 'attaches the three facts to a transport failure on a later page' {
+            InModuleScope Omnicit.EntraRBAC {
+                $script:Call = 0
+                Mock Invoke-WebRequest {
+                    $script:Call++
+                    if ($script:Call -eq 1) {
+                        [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=p2"}' }
+                    } else {
+                        throw [System.Exception]::new('The response ended prematurely.')
+                    }
+                }
+                $Err = $null
+                try { $null = Invoke-OERArmRequest -Path '/subs?api-version=2022-12-01' -All } catch { $Err = $PSItem }
+                $Err.FullyQualifiedErrorId | Should -Be 'ArmTransportError'
+                @($Err.Exception.PartialValue.id) | Should -Be @('a')
+                $Err.Exception.NextLink | Should -Be 'https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=p2'
+                $Err.Exception.PageNumber | Should -Be 2
+            }
+        }
+
+        It 'attaches the facts of the first page (nothing aggregated, the -Path, page 1) to a non-2xx first page under -All' {
+            InModuleScope Omnicit.EntraRBAC {
+                Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 403; Content = '{"error":{"code":"AuthorizationFailed","message":"denied"}}' } }
+                $Err = $null
+                try { $null = Invoke-OERArmRequest -Path '/subs?api-version=2022-12-01' -All } catch { $Err = $PSItem }
+                $Err.FullyQualifiedErrorId | Should -Be 'AuthorizationFailed'
+                @($Err.Exception.PartialValue).Count | Should -Be 0
+                $Err.Exception.PartialValue -is [object[]] | Should -BeTrue
+                $Err.Exception.NextLink | Should -Be '/subs?api-version=2022-12-01'
+                $Err.Exception.PageNumber | Should -Be 1
+            }
+        }
+
+        It 'attaches the facts of the first page to a transport failure on the first request under -All' {
+            InModuleScope Omnicit.EntraRBAC {
+                Mock Invoke-WebRequest { throw [System.Exception]::new('No such host is known.') }
+                $Err = $null
+                try { $null = Invoke-OERArmRequest -Path '/subs?api-version=2022-12-01' -All } catch { $Err = $PSItem }
+                $Err.FullyQualifiedErrorId | Should -Be 'ArmTransportError'
+                @($Err.Exception.PartialValue).Count | Should -Be 0
+                $Err.Exception.NextLink | Should -Be '/subs?api-version=2022-12-01'
+                $Err.Exception.PageNumber | Should -Be 1
+            }
+        }
+
+        It 'attaches no facts to a failed single request' {
+            InModuleScope Omnicit.EntraRBAC {
+                $script:Call = 0
+                Mock Invoke-WebRequest {
+                    $script:Call++
+                    if ($script:Call -eq 1) {
+                        [PSCustomObject]@{ StatusCode = 403; Content = '{"error":{"code":"AuthorizationFailed","message":"denied"}}' }
+                    } else {
+                        throw [System.Exception]::new('No such host is known.')
+                    }
+                }
+                $Err = $null
+                try { $null = Invoke-OERArmRequest -Path '/subs?api-version=2022-12-01' } catch { $Err = $PSItem }
+                $Err.FullyQualifiedErrorId | Should -Be 'AuthorizationFailed'
+                $Err.Exception.PSObject.Properties['PartialValue'] | Should -BeNullOrEmpty
+                $Err.Exception.PSObject.Properties['NextLink'] | Should -BeNullOrEmpty
+                $Err.Exception.PSObject.Properties['PageNumber'] | Should -BeNullOrEmpty
+
+                $Err = $null
+                try { $null = Invoke-OERArmRequest -Path '/subs?api-version=2022-12-01' } catch { $Err = $PSItem }
+                $Err.FullyQualifiedErrorId | Should -Be 'ArmTransportError'
+                $Err.Exception.PSObject.Properties['PartialValue'] | Should -BeNullOrEmpty
+            }
+        }
+    }
+
+    Context 'unchanged on purpose' {
+        It 'still returns $null for an empty first body, single and -All (204)' {
+            InModuleScope Omnicit.EntraRBAC {
+                Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 204; Content = '' } }
+                Invoke-OERArmRequest -Method DELETE -Path '/x?api-version=2022-04-01' | Should -BeNullOrEmpty
+                Invoke-OERArmRequest -Path '/x?api-version=2022-04-01' -All | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'returns $null for a first page whose body is JSON null or white space, under -All as for the empty body' -ForEach @(
+            @{ Body = 'null' }
+            @{ Body = '   ' }
+        ) {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Body = $Body } {
+                $script:FirstBody = $Body
+                Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = $script:FirstBody } }
+                $Err = $null
+                $Out = @(Invoke-OERArmRequest -Path '/x?api-version=2022-04-01' -All -ErrorAction SilentlyContinue -ErrorVariable Err)
+                @($Err).Count | Should -Be 0
+                $Out.Count | Should -Be 1
+                $Out[0] | Should -BeNullOrEmpty
+                Should -Invoke Invoke-WebRequest -Times 1 -Exactly
+            }
+        }
+    }
+
+    Context 'every page carries the call''s own method and body (BL-120 point 2)' {
+        It 'sends a POST -All with a body as a POST with the same body on page 2' {
+            InModuleScope Omnicit.EntraRBAC {
+                $script:Call = 0
+                $script:SentMethods = [System.Collections.Generic.List[string]]::new()
+                $script:SentBodies = [System.Collections.Generic.List[string]]::new()
+                $script:SentContentTypes = [System.Collections.Generic.List[string]]::new()
+                Mock Invoke-WebRequest {
+                    $script:Call++
+                    $script:SentMethods.Add([string]$Method)
+                    $script:SentBodies.Add([string]$Body)
+                    $script:SentContentTypes.Add([string]$ContentType)
+                    if ($script:Call -eq 1) {
+                        [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/providers/x/list?api-version=2022-12-01&$skiptoken=p2"}' }
+                    } else {
+                        [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"b"}]}' }
+                    }
+                }
+                $Result = Invoke-OERArmRequest -Method POST -Path '/providers/x/list?api-version=2022-12-01' -Body @{ query = 'resources' } -All
+                @($Result.value.id) | Should -Be @('a', 'b')
+                $script:SentMethods.Count | Should -Be 2
+                @($script:SentMethods | Select-Object -Unique) | Should -Be @('POST')
+                $script:SentBodies.Count | Should -Be 2
+                $script:SentBodies[0] | Should -Not -BeNullOrEmpty
+                ($script:SentBodies[0] | ConvertFrom-Json).query | Should -Be 'resources'
+                $script:SentBodies[1] | Should -BeExactly $script:SentBodies[0]
+                @($script:SentContentTypes | Select-Object -Unique) | Should -Be @('application/json')
+            }
+        }
+    }
+}
+
 Describe 'Invoke-OERArmRequest stops at each of its own throws, outside any try (F3)' {
     # Under -ErrorAction SilentlyContinue or Ignore, with no try up the call stack, a function carries
     # on past its own throw to its next statement, and a throw inside a CATCH block resumes after the
@@ -1799,6 +2223,199 @@ foreach ($Id in $Ids) { 'ERROR ID: {0}' -f $Id }
         $R.Output | Should -Contain 'RESULT COUNT: 0'
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
     }
+    It 'S6: a later page with an empty body ends the paged read with ArmPagingIncomplete: no further request, nothing returned' {
+        # Before BL-71 an empty later page left the previous page in $Page and the walk requested its
+        # next link again, for ever (the probe's hang guard exits past five requests).
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-ArmStopProbe -AuthMethod Interactive -Respond {
+            if ($global:OERStopArmCalls -eq 1) {
+                return [pscustomobject]@{
+                    StatusCode = 200; Headers = @{}
+                    Content    = '{"value":["a","b"],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=p2"}'
+                }
+            }
+            [pscustomobject]@{ StatusCode = 200; Content = ''; Headers = @{} }
+        } -Call {
+            Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -All -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('ArmPagingIncomplete')
+        $R.Output | Should -Contain 'ARM CALLS: 2'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S7: an unparsable later page ends the paged read with ArmResponseUnreadable: no further request, nothing returned' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-ArmStopProbe -AuthMethod Interactive -Respond {
+            if ($global:OERStopArmCalls -eq 1) {
+                return [pscustomobject]@{
+                    StatusCode = 200; Headers = @{}
+                    Content    = '{"value":["a","b"],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=p2"}'
+                }
+            }
+            [pscustomobject]@{ StatusCode = 200; Content = '{"value":['; Headers = @{} }
+        } -Call {
+            Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -All -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('ArmResponseUnreadable')
+        $R.Output | Should -Contain 'ARM CALLS: 2'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S8: an unparsable single response leaves ArmResponseUnreadable as the only record, and nothing returned' {
+        # Unparsed, the body was handed on as $null or as an empty collection.
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-ArmStopProbe -AuthMethod Interactive -Respond {
+            [pscustomobject]@{ StatusCode = 200; Content = '{"value":['; Headers = @{} }
+        } -Call {
+            Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('ArmResponseUnreadable')
+        $R.Output | Should -Contain 'ARM CALLS: 1'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S9: a repeated next link ends the paged read with ArmPagingIncomplete: the page is not requested again, nothing returned' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-ArmStopProbe -AuthMethod Interactive -Respond {
+            [pscustomobject]@{
+                StatusCode = 200; Headers = @{}
+                Content    = '{"value":["a"],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=p2"}'
+            }
+        } -Call {
+            Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -All -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('ArmPagingIncomplete')
+        # The first request, and the one page its next link names; that page's own next link is the same.
+        $R.Output | Should -Contain 'ARM CALLS: 2'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S10: a transport failure on the THIRD page ends the paged read: no earlier page is read again, nothing returned' {
+        # From page three on, the variable holding the previous response still holds a response; carrying
+        # on past the failed fetch would aggregate that page a second time.
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-ArmStopProbe -AuthMethod Interactive -Respond {
+            if ($global:OERStopArmCalls -eq 1) {
+                return [pscustomobject]@{
+                    StatusCode = 200; Headers = @{}
+                    Content    = '{"value":["a"],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=p2"}'
+                }
+            }
+            if ($global:OERStopArmCalls -eq 2) {
+                return [pscustomobject]@{
+                    StatusCode = 200; Headers = @{}
+                    Content    = '{"value":["b"],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=p3"}'
+                }
+            }
+            throw [System.Exception]::new('The response ended prematurely.')
+        } -Call {
+            Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -All -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('ArmTransportError')
+        $R.Output | Should -Contain 'ARM CALLS: 3'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S11: a transport failure on the first request of a -All walk leaves ArmTransportError as the only record, and nothing returned' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-ArmStopProbe -AuthMethod Interactive -Respond {
+            throw [System.Exception]::new('No such host is known.')
+        } -Call {
+            Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -All -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('ArmTransportError')
+        $R.Output | Should -Contain 'ARM CALLS: 1'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S12: <Name> ends the paged read with ArmPagingIncomplete: no further request, nothing returned' -ForEach @(
+        @{ Name = 'a later page whose body is JSON null'; Link = 'https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=p2'; Page2 = 'null'; Prelude = ''; Calls = 2 }
+        @{ Name = 'a later page with no value member'; Link = 'https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=p2'; Page2 = '{"count":0}'; Prelude = ''; Calls = 2 }
+        @{ Name = 'a next link with no host'; Link = '/subscriptions?api-version=2022-12-01&$skiptoken=p2'; Page2 = '{"value":["x"]}'; Prelude = ''; Calls = 1 }
+        @{ Name = 'a walk past the page limit'; Link = 'https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=p2'
+            Page2 = '{"value":["c"],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=p3"}'
+            Prelude = 'function script:Get-OERPageWalkLimit { 2 }'; Calls = 2 }
+    ) {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $RespondText = @'
+if ($global:OERStopArmCalls -eq 1) {
+    return [pscustomobject]@{ StatusCode = 200; Headers = @{}; Content = '{"value":["a","b"],"nextLink":"__LINK__"}' }
+}
+[pscustomobject]@{ StatusCode = 200; Headers = @{}; Content = '__PAGE2__' }
+'@.Replace('__LINK__', $Link).Replace('__PAGE2__', $Page2)
+        # The limit is read from the module scope, so a stub of its owner is defined there (the probe's
+        # runspace is discarded with it).
+        $CallText = "& (Get-Module Omnicit.EntraRBAC) { $Prelude }`n" +
+            "Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -All -ErrorAction SilentlyContinue"
+        $R = Invoke-ArmStopProbe -AuthMethod Interactive -Respond ([scriptblock]::Create($RespondText)) -Call ([scriptblock]::Create($CallText))
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('ArmPagingIncomplete')
+        $R.Output | Should -Contain "ARM CALLS: $Calls"
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S13: a failed first request of a -All walk ends the call even when an earlier $Response stands in the caller''s scope: that response is never read as the answer' {
+        # The probe's call runs in a module-scope script block that holds a stale 200 response under
+        # the wrapper's own variable name $Response. If a failed first request left the wrapper's
+        # $Response unassigned, reading it would find that stale response by dynamic scoping and the
+        # walk would hand back its value as the answer. MEASURED (PowerShell 7.6, 2026-10-21): it does
+        # not -- a failed assignment leaves the target $null, so the null check after the first-page
+        # try ends the call as well, and deleting the `if ($FirstFailed) { return }` guard turns
+        # nothing red (an equivalent mutant: the guard states the intent, the null check backs it).
+        # This case holds the observable result either way: the stale value is never read.
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-ArmStopProbe -AuthMethod Interactive -Respond {
+            throw [System.Exception]::new('No such host is known.')
+        } -Call {
+            $Response = [pscustomobject]@{ StatusCode = 200; Content = '{"value":["stale"]}'; Headers = @{} }
+            Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -All -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('ArmTransportError')
+        $R.Output | Should -Contain 'ARM CALLS: 1'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S14: a first page of JSON null under -All is an empty answer: one request, no record, the walk does not read a next link from nothing' {
+        # Reading the next link of a $null first page threw "Cannot index into a null array"; with no
+        # try up the stack the call then handed back an empty collection after a runtime error.
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-ArmStopProbe -AuthMethod Interactive -Respond {
+            [pscustomobject]@{ StatusCode = 200; Content = 'null'; Headers = @{} }
+        } -Call {
+            Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -All -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        @(Get-StopProbeErrorId -Probe $R).Count | Should -Be 0
+        $R.Output | Should -Contain 'ARM CALLS: 1'
+        # The empty first body returns $null, which counts as one item.
+        $R.Output | Should -Contain 'RESULT COUNT: 1'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
 }
 
 Describe 'Invoke-OERArmRequest sends nothing without an ARM token (BL-65, BL-96)' {

@@ -10021,6 +10021,81 @@ Describe 'Get-OERInventory groups section, read through the real Get-OERGroup' {
     }
 }
 
+Describe 'Get-OERInventory groups section, a members listing whose later page comes back empty (Sprint 11 step 12, BL-72)' {
+    # A SEPARATE top-level Describe for the reason the one above gives: the real Get-OERGroup, the real
+    # Get-OERGroupRelation and the REAL Invoke-OERGraphRequest run, and only Invoke-MgGraphRequest (the
+    # transport) is answered. Page 1 of the group's members carries items AND a next link; the page that
+    # link names comes back with an empty body. Before this step the wrapper ended the walk there and
+    # handed page 1 back as the whole list, which the export wrote as the group's members: an apply of
+    # that document would have removed every member past page 1. Now the walk fails, and the export's
+    # existing contract for a collection it could not read holds: members is an explicit null (the
+    # apply engine's hands-off signal) and InventoryPartial names the collection.
+    BeforeAll {
+        $script:moduleName = 'Omnicit.EntraRBAC'
+        Import-Module $script:moduleName -Force
+        Mock -ModuleName $script:moduleName Read-OERGroupPimAssignment {
+            [PSCustomObject]@{ Read = $true; Value = @(); Message = $null; Exception = $null }
+        }
+    }
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+        Mock -ModuleName $script:moduleName Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $false; Reason = 'x'; Manageable = $true } }
+        # Default arm: anything the fixture does not name answers an empty page.
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest { @{ value = @() } }
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest {
+            @{ value = @(@{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'role_sec_team'; securityEnabled = $true
+                        isAssignableToRole = $false; groupTypes = @(); description = $null; mailNickname = $null }) }
+        } -ParameterFilter { $Uri -eq 'v1.0/groups?$filter=securityEnabled%20eq%20true' }
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest {
+            @{ value = @(@{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'role_sec_team' }) }
+        } -ParameterFilter { $Uri -eq 'v1.0/groups?$select=id,displayName&$top=999' }
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest {
+            @{ value = @(
+                    @{ '@odata.type' = '#microsoft.graph.group'; id = 'g-a'; displayName = 'a' }
+                    @{ '@odata.type' = '#microsoft.graph.group'; id = 'g-b'; displayName = 'b' }
+                ); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups/22222222-2222-2222-2222-222222222222/members?$skiptoken=P2' }
+        } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members' }
+    }
+
+    It 'exports members as an explicit null and names the collection as unread when page 2 answers an empty body' {
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest { $null } -ParameterFilter { $Uri -eq 'https://graph.microsoft.com/v1.0/groups/22222222-2222-2222-2222-222222222222/members?$skiptoken=P2' }
+
+        $Err = $null
+        $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue
+
+        # Non-vacuity first: the group was exported and the members walk reached page 2.
+        $Groups = @($Inv.groups)
+        $Groups.Count | Should -Be 1
+        $Groups[0].displayName | Should -Be 'role_sec_team'
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq 'https://graph.microsoft.com/v1.0/groups/22222222-2222-2222-2222-222222222222/members?$skiptoken=P2' }
+        # Present as a key, with the value null: page 1's members are never written as the list.
+        $Groups[0].PSObject.Properties.Name -contains 'members' | Should -BeTrue
+        $null -eq $Groups[0].members | Should -BeTrue
+        @($Groups[0].members) -contains 'g-a' | Should -BeFalse
+
+        $Partial = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+        $Partial.Count | Should -Be 1
+        $Partial[0].Exception.Message | Should -BeLike '*Unread: groups/role_sec_team/members. A section*'
+    }
+
+    It 'control: the same walk with a normal last page 2 writes the full members list' {
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest {
+            @{ value = @(@{ '@odata.type' = '#microsoft.graph.group'; id = 'g-c'; displayName = 'c' }) }
+        } -ParameterFilter { $Uri -eq 'https://graph.microsoft.com/v1.0/groups/22222222-2222-2222-2222-222222222222/members?$skiptoken=P2' }
+
+        $Err = $null
+        $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue
+
+        $Groups = @($Inv.groups)
+        $Groups.Count | Should -Be 1
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq 'https://graph.microsoft.com/v1.0/groups/22222222-2222-2222-2222-222222222222/members?$skiptoken=P2' }
+        (@($Groups[0].members) -join ',') | Should -Be 'g-a,g-b,g-c'
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+    }
+}
+
 Describe 'Get-OERInventory tenantId (BL-88, A14)' {
     # The export names the tenant the session's Graph token was issued for (TokenTenantId, through
     # Get-OERInventoryTenantId), never the tenant as the caller named it. The mocked sign-in below

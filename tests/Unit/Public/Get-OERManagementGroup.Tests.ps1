@@ -269,7 +269,7 @@ Describe 'Get-OERManagementGroup' {
             }
         }
 
-        It 'names only the group the Entities - List answer lacks, with the returned-no-parent reason and no inner exception' {
+        It 'names only the group the Entities - List answer lacks, with the entity-listing reason and no inner exception' {
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -ParameterFilter {
                 $Path -like '*/getEntities?*' -and $Method -eq 'POST' -and $All
             } { [PSCustomObject]@{ value = @($RootEntity, $EntityA, $EntityB) } }
@@ -285,7 +285,7 @@ Describe 'Get-OERManagementGroup' {
             @($Err).Count | Should -Be 1
             $Err[0].FullyQualifiedErrorId | Should -BeExactly 'ManagementGroupParentReadFailed,Get-OERManagementGroup'
             @($Err[0].TargetObject) | Should -Be @('mg-c')
-            $Err[0].Exception.Message | Should -BeExactly ("Could not read the parent of 1 management group(s): 'mg-c' -- the entity listing (Entities - List) returned no parent for them. $UnreadTail")
+            $Err[0].Exception.Message | Should -BeExactly ("Could not read the parent of 1 management group(s): 'mg-c' -- the entity listing (Entities - List) returned no usable parent for them. $UnreadTail")
             $Err[0].Exception.InnerException | Should -Be $null
         }
 

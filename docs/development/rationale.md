@@ -1225,6 +1225,41 @@ wrapped in an `ErrorRecord`), never on the `ErrorRecord` itself. The obvious for
 out. Worth carrying forward past this one change: it is the shape any future "attach diagnostics to
 the error" work in this module would get wrong without re-deriving the same measurement.
 
+**A `-All` walk that cannot complete is refused, never returned short (Sprint 11 step 12,
+2026-10-21; BL-72, BL-63, decision A27).** Until then four shapes let a walk go wrong, two by ending
+it as though it were whole and two by never ending it. A later page that was `$null` (an empty body)
+ended the walk (`break`), and one with no `value` member aggregated nothing and named no next link,
+so it ended it too: both handed back the pages before them as the collection. A next link that
+repeated a page already requested was followed again for ever, and so was a service that never ended
+its next links (the old comment "deliberately no page-count cap" is gone: a silent cap would truncate,
+and a refusal does not). Each is now refused with
+`GraphPagingIncomplete` (category `InvalidResult`, the one new Graph id), carrying the three facts of
+issue #73 on the exception (`PartialValue`, `NextLink`, `PageNumber`; F1 above); the page after the
+cause is never requested. Links are compared as the text that was requested, so an absolute link
+back to page 1, which was requested as the relative `-Uri`, is requested once more before the repeat
+is refused (bounded, and the walk still fails). `Get-OERPageWalkLimit` (100000 pages) is the single owner of the limit, read
+once per `-All` call before the loop; the loop refuses the page after it. The limit is a backstop
+against a link chain that never ends, not a page size: it bounds a never-throttled walk by FAILING
+it, never by truncating it, which is the defect class `-All` exists to prevent. Unchanged on
+purpose: a `$null` FIRST page is still an empty collection (`@{ value = @() }`), and a later page
+whose `value` is an empty array is a normal page. A caller that asks for silence
+(`-ErrorAction SilentlyContinue`, with no `try` up the call stack) gets NOTHING on the success channel
+from a failed walk, the first page included (BL-63: a failed first page once came back as
+`@{ value = @() }`, which reads as an empty tenant; the fix was made earlier and this step adds the
+Graph test that holds it), and the record is kept in `$Error` and in its `-ErrorVariable`; the help of
+the wrapper says a caller that asks for silence must read it, never "no output" as an empty
+collection. Under `-ErrorAction Ignore` the walk also returns nothing and leaves no record at all, not
+in `$Error`, not in `-ErrorVariable` and not in the error stream (the reason `Export-OERInventory`
+pins `Ignore` to `SilentlyContinue`).
+**Proofs** (`tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1`): the Describe "stops at each of its
+own throws, outside any try (F3)" runs the wrapper in a runspace with no `try` under
+`-ErrorAction SilentlyContinue` and holds, for a null later page (S8), a later page without `value`
+(S9), a repeated next link (S10), a walk past a limit of 2 (S11) and a failed first page (S13), the
+transport's own id as the only record, `RESULT COUNT: 0` and no request after the cause; S10 and S11
+hold that the repeated and the over-limit page are never requested. The claims step-up needs a sign-in
+state to build from: without one the original Graph error is thrown after one request
+(BL-124 O1, S12).
+
 ### CLAUDE.md text for graph-wrapper
 
 What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
@@ -1278,7 +1313,8 @@ Behaviour that follows from this design:
   what `CallDeadlineSeconds` bounds, and the source comment used to overstate it: since the deadline
   is only ever consulted at a decision to wait, it caps a THROTTLED call and nothing else -- a
   never-throttled `-All` walk follows `nextLink` for as long as ARM keeps handing out pages and
-  never reads the number at all. Bounding that is a separate, still-open gap. What the deadline does
+  never reads the number at all. (Since Sprint 11 step 12 the page limit bounds such a walk, by
+  FAILING it, never by truncating it: see the `-All` bullet below.) What the deadline does
   cover on a throttled call is real time, not only sleeping: `Get-ArmCallElapsed` returns the LARGER
   of wall-clock and seconds slept, so it binds on the single-request path too -- one slow request can
   cross 900 s with nothing slept. The comment claiming it "never binds" there was false and is gone
@@ -1298,9 +1334,45 @@ Behaviour that follows from this design:
   wrong in two places, so a correction to one is a correction to both.
 - `-All` follows `nextLink`/`@nextLink` paging, converting absolute next-page URLs back to paths via
   `Uri.PathAndQuery`. Every page is requested with the call's own method and body, so the
-  Entities - List POST pages as a GET list does. That is read from the code (the paging loop passes
-  `$Method` and `$Body` on to every page): no unit test sends a POST across pages, and no live
-  Entities - List answer has had a second page.
+  Entities - List POST pages as a GET list does. A unit test holds it since Sprint 11 step 12
+  (BL-120 point 2): a POST `-All` sends every page with `POST` and no body, as the first request
+  did, and aggregates both pages. Still unmeasured live: no live Entities - List answer has had a
+  second page.
+- **A `-All` walk that cannot complete is refused, never returned short (Sprint 11 step 12,
+  2026-10-21; BL-71, BL-73, BL-24, BL-63, decision A27).** The mirror of the Graph wrapper's change
+  ([#graph-wrapper](#graph-wrapper)), written separately, not shared. Before it, a later page with an
+  empty body parsed to `$null` (measured on 7.6.6: `'' | ConvertFrom-Json` gives `$null`), so reading
+  its next link threw, `$NextLink` kept the old link and, with no `try` up the call stack, the loop
+  requested the same page again for ever (with a `try` the walk failed on that read); a JSON `null`
+  later page did the same; only a page with neither a `value` nor a next link member ended the walk,
+  as though complete; a repeated path and a link chain that never ends were followed again for ever;
+  a body that was not JSON raised the parser's own error; and a page failure carried none of the facts the Graph wrapper attaches. Now an
+  empty, JSON `null` or `value`-less later page, a path already requested in this walk, a walk past
+  `Get-OERPageWalkLimit` (100000 pages, read once before the loop) and a next link that is not an
+  absolute URI (its `PathAndQuery` cannot be read) are refused with `ArmPagingIncomplete` (category
+  `InvalidResult`), and a 2xx body that `ConvertFrom-Json` cannot parse, on a single request or on any
+  page, with `ArmResponseUnreadable` (category `InvalidData`; the message names the request path, never
+  the body). The first request's path counts as requested, so a next link naming it is refused, not
+  sent. Every failure of a page under `-All`, a refusal, a non-2xx answer or a transport failure,
+  carries `PartialValue`, `NextLink` and `PageNumber` on the EXCEPTION (F1 under
+  [#graph-wrapper](#graph-wrapper)); for the first page `PartialValue` is `@()`, `NextLink` the
+  `-Path` and `PageNumber` 1. One exception to the link: `ArmResponseUnreadable` on a LATER page
+  carries the failing page's path (`PathAndQuery`, from `Get-ArmUnreadableBodyRecord -AtPath`), not the
+  absolute link every other later-page failure carries. Unchanged on purpose: a single request with an
+  empty body (204) and a FIRST page under `-All` with an empty body or a body of JSON `null` still return
+  `$null` (a JSON `null` first page once threw "Cannot index into a null array" while reading its next
+  link and, with no `try`, came back as `@{ value = @() }`; S14 holds it), and a later page whose
+  `value` is an empty array is a normal page. Under `-ErrorAction SilentlyContinue` with no `try` up
+  the call stack a failed call returns nothing and keeps its record in `$Error` and `-ErrorVariable`;
+  under `Ignore` it returns nothing and leaves no record at all, as in the Graph wrapper. **Proofs**
+  (`tests/Unit/Private/Invoke-OERArmRequest.Tests.ps1`): the Describe "stops at each of its own throws,
+  outside any try (F3)" holds, for a failed first request (S11; S13 with a stale response in the caller's scope) and for each
+  refusal cause (S12: JSON
+  null, no `value`, a next link with no host, a limit of 2), the transport's own id as the only
+  record, `RESULT COUNT: 0` and no request after the cause; S14 holds a JSON `null` first page to one
+  request, no record and an empty answer. The first call under `-All` stands in a
+  `try` to attach the facts, which makes a throw in a nested function terminating even under
+  silence; a single request stays outside it and is unchanged.
 - Pinned api-versions: managementGroups `2020-05-01` (its list paging property is `@nextLink`, not
   `nextLink`), Entities - List `2020-05-01` (a POST to `/providers/Microsoft.Management/getEntities`
   with `$view=GroupsOnly`, see [#management-group-parents](#management-group-parents)),
@@ -1489,7 +1561,7 @@ the unread groups' names as a `[string[]]`. Its message, when the answer had no 
 groups:
 
 ```text
-Could not read the parent of 2 management group(s): 'mg-a', 'mg-b' -- the entity listing (Entities - List) returned no parent for them. Their ParentId, ParentName and ParentDisplayName are empty, which here does not mean that they have no parent.
+Could not read the parent of 2 management group(s): 'mg-a', 'mg-b' -- the entity listing (Entities - List) returned no usable parent for them. Their ParentId, ParentName and ParentDisplayName are empty, which here does not mean that they have no parent.
 ```
 
 When the call itself failed, the reason reads `the entity listing failed: ` followed by that call's
@@ -1525,13 +1597,16 @@ make an export partial or add to its `SkippedScopes`, and the bundle needs no pa
 `-ManagementGroup` branch still calls `Get-OERManagementGroup -Name ... -ErrorAction Stop`, which
 reads one group by name and sends no Entities - List call.
 
-**`Get-OERManagementGroupList` is not the single owner of the list call.** `Resolve-OERScope`'s
-display-name fallback, which the RBAC and PIM cmdlets reach through `-ManagementGroup`, still sends
-its own Management Groups - List call; moving it was outside this step. So the CLAUDE.md rule names
-an owner only for the Entities - List call, and says only that the inventory walk lists through
-`Get-OERManagementGroupList`. Nothing holds the two list calls together beyond the api-version
-documentation gate in `tests/QA/sourcehygiene.tests.ps1`, which checks that each version is
-documented, not that the two calls agree.
+**`Get-OERManagementGroupList` is the single owner of the Management Groups - List call (Sprint 11
+step 12, BL-120 point 1).** In Sprint 10 step 7 it was not: `Resolve-OERScope`'s display-name
+fallback, which the RBAC and PIM cmdlets reach through `-ManagementGroup`, sent its own list call, and
+nothing held the two together beyond the api-version documentation gate in
+`tests/QA/sourcehygiene.tests.ps1`, which checks that each version is documented, not that the two
+calls agree. The fallback now reads the list through `Get-OERManagementGroupList` and matches
+`properties.displayName` on the raw items it returns, as before; a failed listing throws from the
+helper as the wrapper did there, and never reads as "not found". The helper has three callers:
+`Get-OERManagementGroup`, `Resolve-OERInventoryScopeTree` and `Resolve-OERScope`. The Entities - List
+call keeps its own owner, `Get-OERManagementGroupParent`.
 
 **`-Expand` and `-Recurse` need `-Name`, refused at binding.** The parameters sit in two parameter
 sets: `List`, the default, and `ByName`, to which `-Expand` and `-Recurse` belong and in which
@@ -1578,6 +1653,9 @@ converts them itself and never calls `Get-OERManagementGroup` without `-Name`, s
 can never add a failure mode to an export. `Get-OERManagementGroupList` is NOT the single owner of
 the list call -- `Resolve-OERScope` still sends its own -- so never describe it as one.
 `Why: docs/development/rationale.md#management-group-parents`
+
+(Superseded by Sprint 11 step 12: `Get-OERManagementGroupList` IS now the single owner of the
+Management Groups - List call and `Resolve-OERScope` calls it; see above.)
 
 ## lighthouse-delegations
 
@@ -4176,7 +4254,8 @@ Re-importing the module empties the cache (INFERRED from module scoping, not tes
 not seen until the module is re-imported.
 
 **The cost.** One unauthenticated request per domain and cloud per process, before the first token
-request for that domain, and up to the 30-second bound when the authority does not answer. A tenant
+request for that domain, and up to the 30-second bound when the authority does not answer (a body that
+stalls after its headers is not bounded: see the known limits). A tenant
 named by GUID, and `organizations`, cost nothing, and so does a cached return, which makes no lookup.
 
 **`TenantResolutionFailed`, the one new error id.** A lookup that fails -- a refused request, whose
@@ -4209,8 +4288,27 @@ tenant (A13), both under [Requested tenant vs granted tenant](#requested-tenant-
 
 - PowerShell 7.4 and later bind `-TimeoutSec` to `ConnectionTimeoutSeconds` (MEASURED on 7.6.6 for
   the lookup helper's commit: the cmdlet resolves the name to that parameter), so there the 30-second
-  bound covers establishing the connection. Whether a response that stalls after the connection is
-  bounded is NOT measured.
+  bound covers establishing the connection.
+- **A response whose body stalls after the headers is NOT bounded (BL-93, MEASURED 2026-10-21, decision
+  A28: a documented known limit, accepted as known; no bound, no new parameter).** pwsh 7.6.6 on Windows, the call
+  exactly as written (`-Uri`, `-Method Get`, `-TimeoutSec 30`, `-ErrorAction Stop`), each case in its
+  own process, no tenant, a local listener or an unroutable address standing in for the authority:
+  a listener that accepts the connection and never answers ends after 30.4 s with a
+  `TaskCanceledException` (the `HttpClient.Timeout` of 30 seconds); an address that never answers
+  (10.255.255.1) ends after 21.4 s with an `HttpRequestException` (the operating system's connect
+  timeout, below the 30 s); response headers (`Content-Length` 1000) and one body byte, then nothing,
+  was still running at 130 s, when the harness stopped it; headers, then one body byte every 2 s, was
+  still running at 130 s. The same four outcomes were measured independently the evening before on the
+  same pwsh (30.3 s, 21.4 s, unbounded at 160 s, unbounded). So the 30 seconds bound the wait for the
+  connection and for the response headers and do not bound the reading of the body: an authority that
+  sends its headers and then stalls leaves the sign-in waiting, with no `TenantResolutionFailed`,
+  until the operator interrupts it. Bounding the body needs `-OperationTimeoutSeconds` on the call, a
+  parameter of PowerShell 7.4 and later, while the module supports 7.2, and the rule above allows no
+  other parameter on that call. That parameter alone does not suffice (measured earlier with a
+  30-second value): it ends a stalled body after about 30.4 s but not a body that trickles in a byte
+  at a time, so issue #66 is not to be planned on the assumption that it alone closes the limit. The limit is accepted as known; its future handling, together with a
+  raise of the PowerShell floor to 7.6 LTS, is tracked in GitHub issue #66
+  (https://github.com/Omnicit/Omnicit.EntraRBAC/issues/66).
 - A token without a `tid` claim is compared neither for a GUID nor for a domain (DECOMPILED, under
   [Requested tenant vs granted tenant](#requested-tenant-vs-granted-tenant)).
 - A domain named under the wrong cloud is looked up at that cloud's authority. Whether the commercial

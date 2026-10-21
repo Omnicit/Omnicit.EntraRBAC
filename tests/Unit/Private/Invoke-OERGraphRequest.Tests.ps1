@@ -219,6 +219,58 @@ Describe 'Invoke-OERGraphRequest' {
         Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
     }
 
+    It 'does not step up a 401 claims challenge when the module holds no sign-in state (BL-124 O1)' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            # No ValidateSet on AuthMethod in the mock: a step-up that carried on with no state would
+            # bind a null AuthMethod, and the count below, not a binding error, must be what fails.
+            Mock Initialize-OERAuth -RemoveParameterValidation AuthMethod { }
+            Mock Invoke-MgGraphRequest {
+                throw [System.Exception]::new('HTTP 401. WWW-Authenticate: Bearer error="insufficient_claims", claims="eyJhY2Nlc3MiOnt9fQ"')
+            }
+
+            { Invoke-OERGraphRequest -Uri 'v1.0/groups' } | Should -Throw -ExpectedMessage '*insufficient_claims*'
+            Should -Invoke Initialize-OERAuth -Times 0 -Exactly
+            Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly
+        }
+    }
+
+    It 'does not step up a PIM 400 claims body when the module holds no sign-in state (BL-124 O1)' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            # No ValidateSet on AuthMethod in the mock: a step-up that carried on with no state would
+            # bind a null AuthMethod, and the count below, not a binding error, must be what fails.
+            Mock Initialize-OERAuth -RemoveParameterValidation AuthMethod { }
+            # The PIM shape: a 400 whose body carries the claims URL-encoded.
+            Mock Invoke-MgGraphRequest {
+                throw [System.Exception]::new('{"error":{"code":"RoleAssignmentRequestAcrsValidationFailed","message":"Authentication context required. claims=%7B%22access_token%22%3A%7B%22acrs%22%3A%7B%22essential%22%3Atrue%2C%22value%22%3A%22c1%22%7D%7D%7D"}}')
+            }
+
+            { Invoke-OERGraphRequest -Uri 'v1.0/groups' } | Should -Throw -ErrorId 'RoleAssignmentRequestAcrsValidationFailed*'
+            Should -Invoke Initialize-OERAuth -Times 0 -Exactly
+            Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly
+        }
+    }
+
+    It 'still steps up a PIM 400 claims body when the module holds a sign-in state (control)' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = @{ TenantId = 'contoso'; AuthMethod = 'Interactive'; ClientId = $null }
+            Mock Initialize-OERAuth { }
+            $script:Attempt = 0
+            Mock Invoke-MgGraphRequest {
+                $script:Attempt++
+                if ($script:Attempt -eq 1) {
+                    throw [System.Exception]::new('{"error":{"code":"RoleAssignmentRequestAcrsValidationFailed","message":"Authentication context required. claims=%7B%22access_token%22%3A%7B%22acrs%22%3A%7B%22essential%22%3Atrue%2C%22value%22%3A%22c1%22%7D%7D%7D"}}')
+                }
+                @{ value = @('after-stepup') }
+            }
+
+            (Invoke-OERGraphRequest -Uri 'v1.0/groups').value | Should -Be 'after-stepup'
+            Should -Invoke Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $ClaimsChallenge -like '{*acrs*' }
+            Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly
+        }
+    }
+
     It 'short-circuits an app-only 401 with no claims as AppOnlyTokenRefreshUnsatisfiable' {
         InModuleScope $script:moduleName {
             $script:_OERAuthState = @{ TenantId = 'contoso'; AuthMethod = 'ClientSecret'; ClientId = 'cid' }
@@ -981,7 +1033,7 @@ Describe 'Invoke-OERGraphRequest -All paging' {
                 }
                 $script:AttemptInPage = 0
                 $script:PageNum++
-                @{ value = @("page$($script:PageNum)"); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=X' }
+                @{ value = @("page$($script:PageNum)"); '@odata.nextLink' = "https://graph.microsoft.com/v1.0/groups?`$skiptoken=P$($script:PageNum + 1)" }
             }
 
             { Invoke-OERGraphRequest -Uri 'v1.0/groups' -All } | Should -Throw -ErrorId 'TooManyRequests'
@@ -1014,7 +1066,7 @@ Describe 'Invoke-OERGraphRequest -All paging' {
                 }
                 $script:AttemptInPage = 0
                 $script:PageNum++
-                @{ value = @("page$($script:PageNum)"); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=X' }
+                @{ value = @("page$($script:PageNum)"); '@odata.nextLink' = "https://graph.microsoft.com/v1.0/groups?`$skiptoken=P$($script:PageNum + 1)" }
             }
             # Collected into a List rather than captured from a parenthesised subexpression: this
             # call is EXPECTED to end in a terminating TooManyRequests, and a parenthesised
@@ -1041,16 +1093,13 @@ Describe 'Invoke-OERGraphRequest -All paging' {
         $Text | Should -Match 's of per-REQUEST and \d+ s of per-CALL budget remain\.'
     }
 
-    It 'treats a null page (empty GET body) as the end of the collection instead of throwing' {
-        # A -All GET can come back with an empty body once paging is underway (the reachable
-        # production shape: page 1 carries a real nextLink, a later page has nothing left to return).
-        # Without the guard, indexing into that $null page with the bracket operator the loop uses
-        # for '@odata.nextLink' raises a non-terminating InvalidOperation ("Cannot index into a null
-        # array") that becomes TERMINATING under a caller's -ErrorAction Stop.
-        # NOTE: `{ } | Should -Not -Throw` opens a NEW scope and silently drops -ErrorVariable, so
-        # this uses try/catch plus an explicit $global:Error check instead of that idiom.
-        $global:Error.Clear()
+    It 'refuses a null page after the first (empty GET body) instead of ending the walk as complete (BL-72)' {
+        # Page 1 carried a next link, so an empty answer to the request it names is a read that did
+        # not complete. The old guard ended the walk there and returned pages 1..N-1 as the whole
+        # collection. The call fails; what was read rides on the EXCEPTION (F1), never the record.
+        # NOTE: `{ } | Should -Throw` opens a NEW scope, so this uses try/catch plus explicit checks.
         InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
             $script:Page = 0
             Mock Invoke-MgGraphRequest {
                 $script:Page++
@@ -1069,10 +1118,255 @@ Describe 'Invoke-OERGraphRequest -All paging' {
                 $Caught = $PSItem
             }
 
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.FullyQualifiedErrorId | Should -Be 'GraphPagingIncomplete'
+            $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidResult)
+            @($Caught.Exception.PartialValue) | Should -Be @('a', 'b')
+            $Caught.Exception.NextLink | Should -Be 'https://graph.microsoft.com/v1.0/groups?$skiptoken=X'
+            $Caught.Exception.PageNumber | Should -Be 2
+            # The message names the page and the count, never the next link (it can carry a skiptoken).
+            $Caught.Exception.Message | Should -Match 'page 2'
+            $Caught.Exception.Message | Should -Match '2 item\(s\)'
+            $Caught.Exception.Message | Should -Not -Match 'skiptoken'
+            $Result | Should -BeNullOrEmpty
+            Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly
+        }
+    }
+
+    It 'still treats a null FIRST page (empty GET body) as an empty collection, with no error' {
+        $global:Error.Clear()
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            Mock Invoke-MgGraphRequest { $null }
+
+            $Caught = $null
+            $Result = $null
+            try {
+                $Result = Invoke-OERGraphRequest -Uri 'v1.0/groups' -All
+            } catch {
+                $Caught = $PSItem
+            }
+
+            $Caught | Should -BeNullOrEmpty
+            @($Result.value).Count | Should -Be 0
+            Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly
+            $global:Error.Count | Should -Be 0
+        }
+    }
+
+    It 'refuses a later page that has no value member' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:Page = 0
+            Mock Invoke-MgGraphRequest {
+                $script:Page++
+                if ($script:Page -eq 1) {
+                    @{ value = @('a', 'b'); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=X' }
+                } else {
+                    @{ '@odata.context' = 'https://graph.microsoft.com/v1.0/$metadata#groups' }
+                }
+            }
+
+            $Caught = $null
+            $Result = $null
+            try {
+                $Result = Invoke-OERGraphRequest -Uri 'v1.0/groups' -All
+            } catch {
+                $Caught = $PSItem
+            }
+
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.FullyQualifiedErrorId | Should -Be 'GraphPagingIncomplete'
+            @($Caught.Exception.PartialValue) | Should -Be @('a', 'b')
+            $Caught.Exception.NextLink | Should -Be 'https://graph.microsoft.com/v1.0/groups?$skiptoken=X'
+            $Caught.Exception.PageNumber | Should -Be 2
+            $Result | Should -BeNullOrEmpty
+            Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly
+        }
+    }
+
+    It 'refuses a later page that is an object without a value property' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:Page = 0
+            Mock Invoke-MgGraphRequest {
+                $script:Page++
+                if ($script:Page -eq 1) {
+                    @{ value = @('a'); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=X' }
+                } else {
+                    [PSCustomObject]@{ Other = 1 }
+                }
+            }
+
+            $Caught = $null
+            try { $null = Invoke-OERGraphRequest -Uri 'v1.0/groups' -All } catch { $Caught = $PSItem }
+
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.FullyQualifiedErrorId | Should -Be 'GraphPagingIncomplete'
+            @($Caught.Exception.PartialValue) | Should -Be @('a')
+            $Caught.Exception.PageNumber | Should -Be 2
+        }
+    }
+
+    It 'treats a later page whose value is an empty array as a normal page and keeps walking' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:Page = 0
+            Mock Invoke-MgGraphRequest {
+                $script:Page++
+                switch ($script:Page) {
+                    1 { @{ value = @('a'); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=P2' } }
+                    2 { @{ value = @(); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=P3' } }
+                    default { @{ value = @('b') } }
+                }
+            }
+
+            $Caught = $null
+            $Result = $null
+            try {
+                $Result = Invoke-OERGraphRequest -Uri 'v1.0/groups' -All
+            } catch {
+                $Caught = $PSItem
+            }
+
             $Caught | Should -BeNullOrEmpty
             @($Result.value) | Should -Be @('a', 'b')
-            Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly
-            $global:Error.Count | Should -Be 0
+            Should -Invoke Invoke-MgGraphRequest -Times 3 -Exactly
+        }
+    }
+
+    It 'refuses a next link already requested in this walk, and never requests that page again' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:Page = 0
+            Mock Invoke-MgGraphRequest {
+                $script:Page++
+                switch ($script:Page) {
+                    1 { @{ value = @('a'); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=P2' } }
+                    2 { @{ value = @('b'); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=P3' } }
+                    3 { @{ value = @('c'); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=P2' } }
+                    default { @{ value = @('never') } }
+                }
+            }
+
+            $Caught = $null
+            $Result = $null
+            try {
+                $Result = Invoke-OERGraphRequest -Uri 'v1.0/groups' -All
+            } catch {
+                $Caught = $PSItem
+            }
+
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.FullyQualifiedErrorId | Should -Be 'GraphPagingIncomplete'
+            @($Caught.Exception.PartialValue) | Should -Be @('a', 'b', 'c')
+            $Caught.Exception.NextLink | Should -Be 'https://graph.microsoft.com/v1.0/groups?$skiptoken=P2'
+            $Caught.Exception.PageNumber | Should -Be 4
+            $Caught.Exception.Message | Should -Not -Match 'skiptoken'
+            $Result | Should -BeNullOrEmpty
+            # Pages 1-3 only: the repeated page is refused before it is requested.
+            Should -Invoke Invoke-MgGraphRequest -Times 3 -Exactly
+        }
+    }
+
+    It 'refuses a next link equal to the original -Uri (page 1 counts as requested)' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:Page = 0
+            Mock Invoke-MgGraphRequest {
+                $script:Page++
+                # Hang guard, not part of the scenario: a walk that requests the repeat ends here.
+                if ($script:Page -gt 10) { return @{ value = @("overrun$($script:Page)") } }
+                @{ value = @("p$($script:Page)"); '@odata.nextLink' = 'v1.0/groups' }
+            }
+
+            $Caught = $null
+            try { $null = Invoke-OERGraphRequest -Uri 'v1.0/groups' -All } catch { $Caught = $PSItem }
+
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.FullyQualifiedErrorId | Should -Be 'GraphPagingIncomplete'
+            @($Caught.Exception.PartialValue) | Should -Be @('p1')
+            $Caught.Exception.PageNumber | Should -Be 2
+            Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly
+        }
+    }
+
+    It 'compares next links ordinally: links differing only in case are different pages' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:Page = 0
+            Mock Invoke-MgGraphRequest {
+                $script:Page++
+                switch ($script:Page) {
+                    1 { @{ value = @('a'); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=AbC' } }
+                    2 { @{ value = @('b'); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=abc' } }
+                    default { @{ value = @('c') } }
+                }
+            }
+
+            $Result = Invoke-OERGraphRequest -Uri 'v1.0/groups' -All
+
+            @($Result.value) | Should -Be @('a', 'b', 'c')
+            Should -Invoke Invoke-MgGraphRequest -Times 3 -Exactly
+        }
+    }
+
+    It 'refuses a walk past the page limit before requesting the page after it (limit mocked to 3)' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            Mock Get-OERPageWalkLimit { 3 }
+            $script:Page = 0
+            Mock Invoke-MgGraphRequest {
+                $script:Page++
+                $N = $script:Page
+                # A hang guard, not part of the scenario: a walk that ignores the limit ends here
+                # instead of paging for ever, and then fails the assertions below.
+                if ($N -gt 10) { return @{ value = @("overrun$N") } }
+                @{ value = @("item$N"); '@odata.nextLink' = "https://graph.microsoft.com/v1.0/groups?`$skiptoken=P$($N + 1)" }
+            }
+
+            $Caught = $null
+            $Result = $null
+            try {
+                $Result = Invoke-OERGraphRequest -Uri 'v1.0/groups' -All
+            } catch {
+                $Caught = $PSItem
+            }
+
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.FullyQualifiedErrorId | Should -Be 'GraphPagingIncomplete'
+            $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidResult)
+            @($Caught.Exception.PartialValue) | Should -Be @('item1', 'item2', 'item3')
+            $Caught.Exception.NextLink | Should -Be 'https://graph.microsoft.com/v1.0/groups?$skiptoken=P4'
+            $Caught.Exception.PageNumber | Should -Be 4
+            $Caught.Exception.Message | Should -Match 'limit of 3 page'
+            $Caught.Exception.Message | Should -Not -Match 'skiptoken'
+            $Result | Should -BeNullOrEmpty
+            Should -Invoke Invoke-MgGraphRequest -Times 3 -Exactly
+            # Read once per call, before the loop.
+            Should -Invoke Get-OERPageWalkLimit -Times 1 -Exactly
+        }
+    }
+
+    It 'lets a walk of exactly the page limit complete' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            Mock Get-OERPageWalkLimit { 3 }
+            $script:Page = 0
+            Mock Invoke-MgGraphRequest {
+                $script:Page++
+                $N = $script:Page
+                if ($N -lt 3) {
+                    @{ value = @("item$N"); '@odata.nextLink' = "https://graph.microsoft.com/v1.0/groups?`$skiptoken=P$($N + 1)" }
+                } else {
+                    @{ value = @("item$N") }
+                }
+            }
+
+            $Result = Invoke-OERGraphRequest -Uri 'v1.0/groups' -All
+
+            @($Result.value) | Should -Be @('item1', 'item2', 'item3')
+            Should -Invoke Invoke-MgGraphRequest -Times 3 -Exactly
         }
     }
 }
@@ -6591,6 +6885,116 @@ foreach ($Id in $Ids) { 'ERROR ID: {0}' -f $Id }
         Get-StopProbeErrorId -Probe $R | Should -Be @('GraphExpectedCodeOnLaterPage')
         $R.Output | Should -Contain 'GRAPH CALLS: 2'
         # Nothing on the success channel: three items must never read as the whole collection.
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S8: a null page after the first ends the paged read without the partial collection' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-GraphStopProbe -AuthMethod Interactive -Respond {
+            if ($global:OERStopGraphCalls -eq 1) {
+                return @{ value = @('a', 'b'); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=p2' }
+            }
+            return $null
+        } -Call {
+            Invoke-OERGraphRequest -Uri 'v1.0/groups' -All -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('GraphPagingIncomplete')
+        # No third request, and nothing on the success channel.
+        $R.Output | Should -Contain 'GRAPH CALLS: 2'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S9: a later page without a value member ends the paged read without the partial collection' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-GraphStopProbe -AuthMethod Interactive -Respond {
+            if ($global:OERStopGraphCalls -eq 1) {
+                return @{ value = @('a', 'b'); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=p2' }
+            }
+            return @{ '@odata.context' = 'https://graph.microsoft.com/v1.0/$metadata#groups' }
+        } -Call {
+            Invoke-OERGraphRequest -Uri 'v1.0/groups' -All -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('GraphPagingIncomplete')
+        $R.Output | Should -Contain 'GRAPH CALLS: 2'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S10: a repeated next link ends the paged read before the repeated page is requested' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-GraphStopProbe -AuthMethod Interactive -Respond {
+            # Every page names the same next link, so the second page's link repeats the first's.
+            return @{ value = @("item$($global:OERStopGraphCalls)"); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=p2' }
+        } -Call {
+            Invoke-OERGraphRequest -Uri 'v1.0/groups' -All -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('GraphPagingIncomplete')
+        # Page 1 and page 2 (the first time its link is named); the repeat is never requested.
+        $R.Output | Should -Contain 'GRAPH CALLS: 2'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S11: a walk past the page limit ends the paged read before the page after it is requested' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-GraphStopProbe -AuthMethod Interactive -Respond {
+            return @{ value = @("item$($global:OERStopGraphCalls)"); '@odata.nextLink' = "https://graph.microsoft.com/v1.0/groups?`$skiptoken=p$($global:OERStopGraphCalls + 1)" }
+        } -Call {
+            # A module-scope stand-in for the single owner of the limit: this call is the first in the
+            # module's script scope, so the wrapper reads 2 instead of 100000.
+            function script:Get-OERPageWalkLimit { 2 }
+            Invoke-OERGraphRequest -Uri 'v1.0/groups' -All -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('GraphPagingIncomplete')
+        # Pages 1 and 2 only; page 3 is refused before it is requested.
+        $R.Output | Should -Contain 'GRAPH CALLS: 2'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S12: a claims challenge with no sign-in state ends the call: one request, no step-up, the Graph error is the one record (BL-124 O1)' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-GraphStopProbe -AuthMethod Interactive -Respond {
+            if ($global:OERStopGraphCalls -eq 1) { throw [System.Exception]::new('{"error":{"code":"StepUpDenied","message":"Continuous access evaluation: claims=eyJhY2Nlc3MiOnt9fQ"}}') }
+            @{ value = @('after-step-up') }
+        } -Call {
+            # The module holds no sign-in state: nothing to build a step-up from. Carrying on past
+            # the skipped step-up must not call Initialize-OERAuth or send a second request.
+            $script:_OERAuthState = $null
+            Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('StepUpDenied')
+        $R.Output | Should -Contain 'INIT CALLS: 0'
+        $R.Output | Should -Contain 'GRAPH CALLS: 1'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S13: a failed FIRST page of a -All walk leaves the Graph error as the only record, and nothing returned (BL-63)' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-GraphStopProbe -AuthMethod Interactive -Respond {
+            throw [System.Exception]::new('{"error":{"code":"InternalServerError","message":"boom"}}')
+        } -Call {
+            # The caller asked for silence: no collection at all, never @{ value = @() }, which would
+            # read as an empty tenant. The record is in the error stream (and $Error) for whoever asks.
+            Invoke-OERGraphRequest -Uri 'v1.0/groups' -All -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('InternalServerError')
+        $R.Output | Should -Contain 'GRAPH CALLS: 1'
         $R.Output | Should -Contain 'RESULT COUNT: 0'
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
     }

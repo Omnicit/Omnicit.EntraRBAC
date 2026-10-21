@@ -369,3 +369,112 @@ Describe 'Resolve-OERScope with an ambiguous display name' {
         }
     }
 }
+
+Describe 'Resolve-OERScope reads the management group list through Get-OERManagementGroupList (BL-120)' {
+    # The display-name fallback no longer sends its own Management Groups - List call: the list comes
+    # from the helper that owns it, whose items are the raw ARM items. The verbatim probe is still
+    # Resolve-OERScope's own single GET.
+
+    It 'matches the display name over the helper''s items and sends no list call of its own' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-OERArmRequest { throw "unexpected ARM call: $Path" }
+            Mock Invoke-OERArmRequest {
+                throw (Convert-ArmHttpException -Response ([PSCustomObject]@{ StatusCode = 404; Content = '' }))
+            } -ParameterFilter { $Path -like '/providers/Microsoft.Management/managementGroups/Platform?*' }
+            Mock Get-OERManagementGroupList {
+                [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-team'; name = 'mg-team'; properties = [PSCustomObject]@{ displayName = 'Platform Team' } }
+                [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-platform'; name = 'mg-platform'; properties = [PSCustomObject]@{ displayName = 'Platform' } }
+            }
+
+            Resolve-OERScope -ManagementGroup 'Platform' |
+                Should -Be '/providers/Microsoft.Management/managementGroups/mg-platform'
+
+            Should -Invoke Get-OERManagementGroupList -Times 1 -Exactly
+            Should -Invoke Invoke-OERArmRequest -Times 1 -Exactly
+            Should -Invoke Invoke-OERArmRequest -Times 0 -Exactly -ParameterFilter { $Path -eq '/providers/Microsoft.Management/managementGroups?api-version=2020-05-01' }
+        }
+    }
+
+    It 'refuses an ambiguous display name over the helper''s items, naming every candidate' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-OERArmRequest {
+                throw (Convert-ArmHttpException -Response ([PSCustomObject]@{ StatusCode = 403; Content = '{"error":{"code":"AuthorizationFailed","message":"...or the scope is invalid."}}' }))
+            }
+            Mock Get-OERManagementGroupList {
+                [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-a'; name = 'mg-a'; properties = [PSCustomObject]@{ displayName = 'Platform' } }
+                [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-b'; name = 'mg-b'; properties = [PSCustomObject]@{ displayName = 'Platform' } }
+            }
+
+            $Err = try { Resolve-OERScope -ManagementGroup 'Platform' } catch { $PSItem }
+
+            Should -Invoke Get-OERManagementGroupList -Times 1 -Exactly
+            $Err.FullyQualifiedErrorId | Should -BeExactly 'AmbiguousName'
+            $Err.TargetObject | Should -BeExactly 'Platform'
+            $Err.Exception.Message | Should -BeLike "Management group display name 'Platform' matches 2 management groups (mg-a, mg-b). *"
+        }
+    }
+
+    It 'keeps the plain not-found error when the helper lists nothing' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-OERArmRequest {
+                throw (Convert-ArmHttpException -Response ([PSCustomObject]@{ StatusCode = 404; Content = '' }))
+            }
+            Mock Get-OERManagementGroupList { }
+
+            $Err = try { Resolve-OERScope -ManagementGroup 'Nope' } catch { $PSItem }
+
+            Should -Invoke Get-OERManagementGroupList -Times 1 -Exactly
+            $Err.Exception.Message | Should -BeExactly "Management group 'Nope' was not found, or you do not have access to it."
+        }
+    }
+
+    It 'keeps the plain not-found error when no listed management group carries the name' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-OERArmRequest {
+                throw (Convert-ArmHttpException -Response ([PSCustomObject]@{ StatusCode = 404; Content = '' }))
+            }
+            Mock Get-OERManagementGroupList {
+                [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-x'; name = 'mg-x'; properties = [PSCustomObject]@{ displayName = 'Other' } }
+            }
+
+            $Err = try { Resolve-OERScope -ManagementGroup 'Nope' } catch { $PSItem }
+
+            Should -Invoke Get-OERManagementGroupList -Times 1 -Exactly
+            $Err.Exception.Message | Should -BeExactly "Management group 'Nope' was not found, or you do not have access to it."
+        }
+    }
+
+    It 'surfaces a failed list read as itself, never as not found' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-OERArmRequest {
+                throw (Convert-ArmHttpException -Response ([PSCustomObject]@{ StatusCode = 404; Content = '' }))
+            }
+            # Get-OERManagementGroupList catches nothing: a refused listing throws to its caller.
+            Mock Get-OERManagementGroupList {
+                throw (Convert-ArmHttpException -Response ([PSCustomObject]@{ StatusCode = 429; Content = '{"error":{"code":"TooManyRequests","message":"throttled"}}' }))
+            }
+
+            $Err = try { Resolve-OERScope -ManagementGroup 'Platform' } catch { $PSItem }
+
+            Should -Invoke Get-OERManagementGroupList -Times 1 -Exactly
+            $Err.FullyQualifiedErrorId | Should -BeLike 'TooManyRequests*'
+            $Err.Exception.Message | Should -Not -BeLike '*was not found*'
+        }
+    }
+
+    It 'surfaces a refused list through the real helper as itself, and sends the list call once with -All' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-OERArmRequest {
+                throw (Convert-ArmHttpException -Response ([PSCustomObject]@{ StatusCode = 404; Content = '' }))
+            } -ParameterFilter { $Path -like '/providers/Microsoft.Management/managementGroups/Platform?*' }
+            Mock Invoke-OERArmRequest {
+                throw (Convert-ArmHttpException -Response ([PSCustomObject]@{ StatusCode = 403; Content = '{"error":{"code":"AuthorizationFailed","message":"The client has no access."}}' }))
+            } -ParameterFilter { $Path -eq '/providers/Microsoft.Management/managementGroups?api-version=2020-05-01' -and $All }
+
+            $Err = try { Resolve-OERScope -ManagementGroup 'Platform' } catch { $PSItem }
+
+            $Err.FullyQualifiedErrorId | Should -BeLike 'AuthorizationFailed*'
+            Should -Invoke Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Path -eq '/providers/Microsoft.Management/managementGroups?api-version=2020-05-01' -and $All }
+        }
+    }
+}

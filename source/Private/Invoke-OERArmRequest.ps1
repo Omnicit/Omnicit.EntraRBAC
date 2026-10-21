@@ -37,6 +37,28 @@ function Invoke-OERArmRequest {
     method and body, so a POST that returns a list, such as Entities - List (getEntities), is paged
     the same way as a GET list.
 
+    A -All walk that cannot be completed FAILS; it never returns the pages read so far as though they
+    were the whole collection. A page after the first with an empty body, a JSON null body or no value
+    member, a next link that is not an absolute http or https URI, a next link naming a path already
+    requested in this walk, and a walk past the page limit (Get-OERPageWalkLimit) are all refused with
+    ArmPagingIncomplete, and no page is ever requested twice. A page after the first whose value is an
+    empty array is a normal page. A 2xx body that cannot be read as JSON, on a single request or on any
+    page, is refused with ArmResponseUnreadable; the message names the request path and never the
+    body. Under -All every failure of a page (a refusal above, a non-2xx answer, a transport failure)
+    carries PartialValue (the items aggregated before it, an empty array for the first page), NextLink
+    (the link, or the -Path for the first page; for ArmResponseUnreadable on a later page, the path of
+    the failing page, not the absolute link) and PageNumber (1-based) as note properties on the
+    thrown error's EXCEPTION, never on the ErrorRecord, the way Invoke-OERGraphRequest does. A single
+    request carries none of them. A single request whose 2xx body is empty (204) still returns $null,
+    and so does a FIRST page of a -All walk with an empty body or a body of JSON null.
+    Get-OERPageWalkLimit owns the page limit (100000 pages).
+
+    Under -ErrorAction SilentlyContinue, with no try up the call stack, a failed call returns
+    NOTHING (no partial list, and not $null as an answer) and the record is kept in $Error and in the
+    caller's -ErrorVariable: a caller that asks for silence must read it and never read "no output" as
+    an empty collection. Under -ErrorAction Ignore the call also returns nothing and leaves no record
+    at all.
+
     A 429, and a 503 that carries a Retry-After header, are retried with a bounded backoff: the
     Retry-After value is honoured in either RFC 9110 form (delta-seconds or an HTTP-date), with an
     exponential fallback when the header is absent or unparseable, each single wait clamped to
@@ -65,7 +87,10 @@ function Invoke-OERArmRequest {
     .PARAMETER All
     Follow nextLink/@nextLink paging on list responses and return a single object whose value
     property contains all aggregated items. Every page is requested with the call's own -Method and
-    -Body, so a POST list (Entities - List) is paged as well as a GET list.
+    -Body, so a POST list (Entities - List) is paged as well as a GET list. A walk that cannot
+    complete (a later page that is empty, JSON null or without a value member, a repeated path, a next
+    link that is not an absolute URI, a walk past the page limit) fails with ArmPagingIncomplete, and
+    an unreadable 2xx body with ArmResponseUnreadable; neither returns a partial list.
 
     .EXAMPLE
     $Subs = (Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -All).value
@@ -429,10 +454,10 @@ function Invoke-OERArmRequest {
     #     than sleeps. Size it as "how long may this command keep BACKING OFF", NOT as "how long may
     #     this whole command run" -- the second overstates what this number bounds, and this comment
     #     used to say it. The deadline is only ever CONSULTED at a decision to WAIT, so it caps a
-    #     THROTTLED call and nothing else: an -All walk that is never throttled follows nextLink for
-    #     as long as ARM keeps handing out pages and never reads this number at all. Bounding THAT is
-    #     a separate, pre-existing gap, deliberately not closed here -- closing it would mean ending
-    #     a paging loop mid-enumeration, which the paragraph below rules out for a stronger reason.
+    #     THROTTLED call and nothing else: an -All walk that is never throttled never reads this
+    #     number at all. What bounds THAT walk is the page limit (Get-OERPageWalkLimit), which FAILS
+    #     the walk with ArmPagingIncomplete rather than ending it mid-enumeration, which the
+    #     paragraph below rules out for a stronger reason.
     #     What it DOES bound has a deliberate consequence worth knowing: a long, legitimately slow
     #     -All enumeration that has already run past 900 s will refuse ANY further throttle backoff,
     #     turning a recoverable 429 on its last pages into a hard failure. Elapsed REQUEST time
@@ -512,6 +537,62 @@ function Invoke-OERArmRequest {
         }
     }
 
+    # -- Helper: the ONE record for a -All walk that cannot be completed (BL-71, P0 family) --
+    # Mirror of Invoke-OERGraphRequest's Get-GraphPagingIncompleteRecord. Six causes, one record: a
+    # later page with an empty body, a later page whose body is JSON null, a later page with no value
+    # member, a next link that is not an absolute URI, a next link naming a path already requested in
+    # this walk, and a walk past the page limit. The helper only BUILDS the record; each throw stands
+    # in the loop with its own return (see the rule above the first-response checks). The facts ride
+    # on the EXCEPTION, never on the ErrorRecord (F1, docs/development/rationale.md#graph-wrapper).
+    function Get-ArmPagingIncompleteRecord ([string]$Cause, [int]$AtPage, [string]$AtLink, [object[]]$Aggregated) {
+        $Count = @($Aggregated).Count
+        $IncompleteException = [System.Exception]::new(
+            ("Azure Resource Manager page $AtPage of this enumeration cannot be read as part of a complete walk: $Cause. " +
+            "$Count item(s) had already been aggregated from earlier pages; the partial collection is " +
+            "refused rather than returned as though it were complete."))
+        $IncompleteException | Add-Member -NotePropertyName PartialValue -NotePropertyValue @($Aggregated) -Force
+        $IncompleteException | Add-Member -NotePropertyName NextLink -NotePropertyValue $AtLink -Force
+        $IncompleteException | Add-Member -NotePropertyName PageNumber -NotePropertyValue $AtPage -Force
+        # SECURITY: page number and item COUNT only; the next link can carry a $skiptoken.
+        Write-Verbose ("[Invoke-OERArmRequest] Page $AtPage cannot complete the walk ($Cause) with $Count " +
+            "item(s) already aggregated from earlier pages. PartialValue, NextLink and PageNumber are " +
+            "attached to the thrown error's Exception for a caller that opts in; the call still fails.")
+        return [System.Management.Automation.ErrorRecord]::new(
+            $IncompleteException,
+            'ArmPagingIncomplete',
+            [System.Management.Automation.ErrorCategory]::InvalidResult,
+            $AtLink)
+    }
+
+    # -- Helper: the ONE record for a 2xx body that cannot be read as JSON (BL-73) --
+    # The message names the request path and says the body was unreadable; it never carries the body
+    # or ConvertFrom-Json's own message, which quotes a fragment of the text it could not parse. With
+    # -WithFacts (a -All walk) the three facts ride on the exception, as for any failed page.
+    function Get-ArmUnreadableBodyRecord ([string]$AtPath, [int]$AtPage, [object[]]$Aggregated, [switch]$WithFacts) {
+        $UnreadableException = [System.Exception]::new(
+            "The body of the 2xx answer from Azure Resource Manager to $AtPath could not be read as JSON.")
+        if ($WithFacts) {
+            $UnreadableException | Add-Member -NotePropertyName PartialValue -NotePropertyValue @($Aggregated) -Force
+            $UnreadableException | Add-Member -NotePropertyName NextLink -NotePropertyValue $AtPath -Force
+            $UnreadableException | Add-Member -NotePropertyName PageNumber -NotePropertyValue $AtPage -Force
+        }
+        return [System.Management.Automation.ErrorRecord]::new(
+            $UnreadableException,
+            'ArmResponseUnreadable',
+            [System.Management.Automation.ErrorCategory]::InvalidData,
+            $AtPath)
+    }
+
+    # -- Helper: attach the three failure facts to an exception (BL-24) --
+    # F1, MEASURED (docs/development/rationale.md#graph-wrapper): a note property on an ErrorRecord does
+    # not survive a throw, one on the EXCEPTION does. Used on the record a non-2xx page converts to and
+    # in the catch of a page fetch.
+    function Add-ArmPageFailureFact ([System.Exception]$FailedException, [object[]]$Aggregated, [string]$AtLink, [int]$AtPage) {
+        $FailedException | Add-Member -NotePropertyName PartialValue -NotePropertyValue @($Aggregated) -Force
+        $FailedException | Add-Member -NotePropertyName NextLink -NotePropertyValue $AtLink -Force
+        $FailedException | Add-Member -NotePropertyName PageNumber -NotePropertyValue $AtPage -Force
+    }
+
     # -- Per-CALL deadline state, shared by every page of a -All enumeration --
     # A hashtable rather than two scalars so the nested function mutates THIS state by reference; a
     # value type would give each page its own copy and the per-call bound would never bind. The
@@ -526,14 +607,43 @@ function Invoke-OERArmRequest {
     # the ceiling that sleeps alone would respect.
     $CallBudget = @{ StartUtc = [DateTime]::UtcNow; WaitSpent = 0 }
 
-    $Response = Invoke-ArmCallWithBackoff -CallPath $Path -CallMethod $Method -CallBody $Body `
-        -BaseUrl $ArmBaseUrl -RefreshBudget $RefreshBudget -CallBudget $CallBudget
+    # The first request. Under -All it stands in a try, so a failure of it carries the three facts
+    # too (PartialValue @(), NextLink the -Path, PageNumber 1), like any later page (BL-24). With a try
+    # up the call stack a throw in a nested function is terminating even under -ErrorAction
+    # SilentlyContinue, so after a refused sign-in that terminates the walk's 401 retry is not
+    # attempted. ArmTokenAcquisitionFailed is the exception: Initialize-OERAuth writes it without
+    # terminating, so the 401 retry goes on and the latch gate refuses it; nothing is sent after the
+    # refusal either way. A SINGLE request stays outside the try on purpose and is unchanged: without
+    # one the nested throw does not stop the caller, the 401 retry is still attempted and the latch
+    # gate refuses it. The catch scrubs first, like every catch
+    # that can see a transport failure, and rethrows the record it caught.
+    $FirstFailed = $false
+    if ($All) {
+        try {
+            $Response = Invoke-ArmCallWithBackoff -CallPath $Path -CallMethod $Method -CallBody $Body `
+                -BaseUrl $ArmBaseUrl -RefreshBudget $RefreshBudget -CallBudget $CallBudget
+        } catch {
+            Remove-OERErrorRecord -Record $PSItem
+            # Read straight after this try statement; see the check there.
+            $FirstFailed = $true
+            Add-ArmPageFailureFact -FailedException $PSItem.Exception -Aggregated @() -AtLink $Path -AtPage 1
+            throw
+        }
+    } else {
+        $Response = Invoke-ArmCallWithBackoff -CallPath $Path -CallMethod $Method -CallBody $Body `
+            -BaseUrl $ArmBaseUrl -RefreshBudget $RefreshBudget -CallBudget $CallBudget
+    }
 
     # EVERY THROW IN THIS FUNCTION IS FOLLOWED BY A RETURN (one inside a catch, by a flag read straight
     # after its try), and none of them is tidiness. Measured 2026-10-05 in PowerShell 7: under
-    # -ErrorAction SilentlyContinue or Ignore, with no try up the call stack, a function carries on past
-    # its OWN throw to its next statement -- and so does every caller of a nested function that threw,
-    # since a return there ends only that nested function.
+    # -ErrorAction SilentlyContinue or Ignore, with no try up the call stack, a function carries on
+    # past its OWN throw to its next statement -- and so does every caller of a nested function that threw,
+    # since a return there ends only that nested function. A throw inside a CATCH resumes after the
+    # whole try statement, so the return that follows it is a flag set in the catch and read here.
+    if ($FirstFailed) { return }
+    # (Measured on PowerShell 7.6: the failed assignment above leaves $Response $null rather than
+    # unassigned, so the null check below would end the call too; the flag states the intent and a
+    # stale $Response in a caller's scope is never read. The F3 case S13 holds the result.)
     #
     # No response object at all means a nested function already raised and returned: the latch gate,
     # the supersession gate, the missing-token refusal or the transport failure in Invoke-ArmCall, or
@@ -542,15 +652,33 @@ function Invoke-OERArmRequest {
     # record of its own, since Convert-ArmHttpException requires one.
     if ($null -eq $Response) { return }
     if ([int]$Response.StatusCode -lt 200 -or [int]$Response.StatusCode -gt 299) {
-        throw (Convert-ArmHttpException -Response $Response -Path $Path)
+        $Err = Convert-ArmHttpException -Response $Response -Path $Path
+        if ($All) { Add-ArmPageFailureFact -FailedException $Err.Exception -Aggregated @() -AtLink $Path -AtPage 1 }
+        throw $Err
         # Carrying on parsed the error body and returned it as data.
         return
     }
 
+    # An empty FIRST body is an empty answer (204), under -All and for a single request alike.
     if (-not $Response.Content) { return $null }
-    $Parsed = $Response.Content | ConvertFrom-Json -ErrorAction Stop
+    # BL-73: a 2xx body that cannot be parsed is neither $null nor an empty collection. It is refused
+    # as itself, on a single request and on page one of a walk alike.
+    $ParseFailed = $false
+    try {
+        $Parsed = $Response.Content | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        Remove-OERErrorRecord -Record $PSItem
+        $ParseFailed = $true
+        throw (Get-ArmUnreadableBodyRecord -AtPath $Path -AtPage 1 -Aggregated @() -WithFacts:$All)
+    }
+    if ($ParseFailed) { return }
 
     if (-not $All) { return $Parsed }
+
+    # A first page whose body is JSON null (or parses to nothing) is an empty answer, like the empty
+    # first body above: $null. Reading its next link from $null would throw "Cannot index into a null
+    # array", and with no try up the stack the call would then return { value = @() }.
+    if ($null -eq $Parsed) { return $null }
 
     # -- Paging: aggregate value arrays across nextLink / @nextLink --
     $AllValues = [System.Collections.Generic.List[object]]::new()
@@ -559,29 +687,119 @@ function Invoke-OERArmRequest {
     elseif ($Parsed.PSObject.Properties['@nextLink']) { $Parsed.'@nextLink' }
     else { $null }
 
+    # A -ALL WALK THAT CANNOT BE COMPLETED FAILS; IT NEVER HANDS BACK WHAT IT HAS (BL-71, P0 family).
+    # Mirror of Invoke-OERGraphRequest's loop. Read ONCE per call, before the loop: Get-OERPageWalkLimit
+    # owns the number. $RequestedPaths holds every path this walk has requested, the first request's
+    # -Path included. Ordinal: a skiptoken is case-sensitive.
+    [int]$PageLimit = Get-OERPageWalkLimit
+    $RequestedPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    $null = $RequestedPaths.Add($Path)
+    [int]$PageNumber = 1
+
     while ($NextLink) {
+        $PageNumber++
+        # The bound fails the walk; it never truncates it. A legitimate enumeration is far below it.
+        if ($PageNumber -gt $PageLimit) {
+            throw (Get-ArmPagingIncompleteRecord -Cause "the walk reached its limit of $PageLimit page(s) and the page after it was not requested" `
+                -AtPage $PageNumber -AtLink ([string]$NextLink) -Aggregated $AllValues.ToArray())
+            # Outside any catch, a throw can be suppressed (-ErrorAction SilentlyContinue/Ignore with no
+            # try up the stack) and the loop would carry on: return, never break.
+            return
+        }
         # nextLink is an absolute URL; convert it back to a path so sovereign-cloud hosts keep working.
-        $NextPath = ([System.Uri]$NextLink).PathAndQuery
+        # One that is not absolute has no PathAndQuery to read. On Linux and macOS a rooted path such as
+        # '/subscriptions?...' also parses as an absolute (file) URI, so the scheme must be http or https.
+        $NextUri = $null
+        if (-not [System.Uri]::TryCreate([string]$NextLink, [System.UriKind]::Absolute, [ref]$NextUri) -or
+            $NextUri.Scheme -notin 'http', 'https') {
+            throw (Get-ArmPagingIncompleteRecord -Cause 'its next link is not an absolute http or https URI, so no path could be requested from it' `
+                -AtPage $PageNumber -AtLink ([string]$NextLink) -Aggregated $AllValues.ToArray())
+            return
+        }
+        $NextPath = $NextUri.PathAndQuery
+        # Never request the same page twice: a next link that names a path already requested would loop.
+        if (-not $RequestedPaths.Add($NextPath)) {
+            throw (Get-ArmPagingIncompleteRecord -Cause 'its next link repeats a page already requested in this walk, so it was not requested again' `
+                -AtPage $PageNumber -AtLink ([string]$NextLink) -Aggregated $AllValues.ToArray())
+            return
+        }
         # Each page gets its own per-REQUEST wait budget and shares the per-CALL deadline. A long
         # inventory walk is the most likely place to be throttled in the first place, so the paging
         # path must back off exactly like the single-request path -- it is not the exception.
-        $PageResponse = Invoke-ArmCallWithBackoff -CallPath $NextPath -CallMethod $Method -CallBody $Body `
-            -BaseUrl $ArmBaseUrl -RefreshBudget $RefreshBudget -CallBudget $CallBudget
-        # The same two checks as for the first page above. return, never break: break would hand back
-        # the pages so far as though they were the whole collection.
+        $PageFailed = $false
+        try {
+            $PageResponse = Invoke-ArmCallWithBackoff -CallPath $NextPath -CallMethod $Method -CallBody $Body `
+                -BaseUrl $ArmBaseUrl -RefreshBudget $RefreshBudget -CallBudget $CallBudget
+        } catch {
+            # Security: scrub first, in this separate catch clause (the gate counts it per catch).
+            Remove-OERErrorRecord -Record $PSItem
+            # Read straight after this try statement; see the check there.
+            $PageFailed = $true
+            # BL-24, F1 as in Invoke-OERGraphRequest: the facts go on the EXCEPTION, which survives a
+            # throw; the call still fails. SECURITY: the next link can carry a skiptoken, so verbose
+            # output names the page number and the item count only.
+            Add-ArmPageFailureFact -FailedException $PSItem.Exception -Aggregated $AllValues.ToArray() -AtLink ([string]$NextLink) -AtPage $PageNumber
+            Write-Verbose ("[Invoke-OERArmRequest] Page $PageNumber failed with $($AllValues.Count) item(s) " +
+                "already aggregated from earlier pages. PartialValue, NextLink and PageNumber are attached " +
+                "to the thrown error's Exception for a caller that opts in; the call still fails.")
+            throw
+        }
+        # A throw in a catch resumes after the whole try statement: this is the return that ends the
+        # walk. return, never break: break would hand back the pages so far as though they were the
+        # whole collection.
+        if ($PageFailed) { return }
+        # The same two checks as for the first page above.
         if ($null -eq $PageResponse) { return }
         if ([int]$PageResponse.StatusCode -lt 200 -or [int]$PageResponse.StatusCode -gt 299) {
-            throw (Convert-ArmHttpException -Response $PageResponse -Path $NextPath)
+            $Err = Convert-ArmHttpException -Response $PageResponse -Path $NextPath
+            Add-ArmPageFailureFact -FailedException $Err.Exception -Aggregated $AllValues.ToArray() -AtLink ([string]$NextLink) -AtPage $PageNumber
+            throw $Err
             # Carrying on read the error body as a page with no next link, so the walk ended and
             # returned the pages before it as the whole collection.
             return
         }
-        $Page = $PageResponse.Content | ConvertFrom-Json -ErrorAction Stop
+        # A LATER page is not the first: page one carried a next link, so the answer to the request
+        # that link names is "there is more". An empty body in reply is a read that did not complete,
+        # and ending the walk there would hand back the pages before it as though they were the whole
+        # collection (BL-71: an empty body parses to $null, reading its next link from $null threw,
+        # $NextLink kept the old link, and with no try up the stack the loop requested the same page
+        # again for ever, while with a try the walk failed on that read; a JSON null page did the
+        # same, and only a page with no value and no next link member ended the walk, as though complete).
+        if (-not $PageResponse.Content) {
+            throw (Get-ArmPagingIncompleteRecord -Cause 'it answered with an empty body although the page before it carried a next link' `
+                -AtPage $PageNumber -AtLink ([string]$NextLink) -Aggregated $AllValues.ToArray())
+            return
+        }
+        $ParseFailed = $false
+        try {
+            $Page = $PageResponse.Content | ConvertFrom-Json -ErrorAction Stop
+        } catch {
+            Remove-OERErrorRecord -Record $PSItem
+            $ParseFailed = $true
+            throw (Get-ArmUnreadableBodyRecord -AtPath $NextPath -AtPage $PageNumber -Aggregated $AllValues.ToArray() -WithFacts)
+        }
+        if ($ParseFailed) { return }
+        # JSON null parses to nothing; a page with no value member is not a page of the collection (a
+        # page whose value is an empty array IS one, and falls through).
+        if ($null -eq $Page) {
+            throw (Get-ArmPagingIncompleteRecord -Cause 'its body is JSON null' `
+                -AtPage $PageNumber -AtLink ([string]$NextLink) -Aggregated $AllValues.ToArray())
+            return
+        }
+        if ($null -eq $Page.PSObject.Properties['value']) {
+            throw (Get-ArmPagingIncompleteRecord -Cause 'it has no value member' `
+                -AtPage $PageNumber -AtLink ([string]$NextLink) -Aggregated $AllValues.ToArray())
+            return
+        }
         if ($null -ne $Page.value) { foreach ($Item in $Page.value) { $AllValues.Add($Item) } }
         $NextLink = if ($Page.PSObject.Properties['nextLink']) { $Page.nextLink }
         elseif ($Page.PSObject.Properties['@nextLink']) { $Page.'@nextLink' }
         else { $null }
     }
 
+    # The walk is bounded, and the bound FAILS it rather than truncating it: the page limit above
+    # (Get-OERPageWalkLimit) refuses the page after it with ArmPagingIncomplete, and a next link that
+    # repeats a page already requested is refused the same way. A silent cap would hand back a prefix
+    # as the whole collection, the defect class -All exists to prevent.
     return [PSCustomObject]@{ value = $AllValues.ToArray() }
 }
