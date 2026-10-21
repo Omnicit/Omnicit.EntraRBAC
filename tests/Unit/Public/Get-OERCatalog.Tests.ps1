@@ -91,7 +91,7 @@ Describe 'Get-OERCatalog' {
         $Result | Should -BeNullOrEmpty
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,Get-OERCatalog' }).Count |
             Should -Be 1
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 
     It 'surfaces a Graph failure as a non-terminating error for the list path and emits nothing' {
@@ -108,7 +108,7 @@ Describe 'Get-OERCatalog' {
         $Result | Should -BeNullOrEmpty
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'TooManyRequests,Get-OERCatalog' }).Count |
             Should -Be 1
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 
     It 'passes -All to the list read (closes rt-graph-list-reads-first-page-only)' {
@@ -274,11 +274,6 @@ namespace OERCatalogBearerFixture {
             $Request.Headers.Contains('Authorization') | Should -BeFalse
             Test-RequestHasAuthorization -Request $Request | Should -BeFalse
         }
-
-        # The counts a live run is compared with (shown in the run output).
-        Write-Host ('BEARER-WALK EV records: {0}; types: {1}; $global:Error records: {2}; distinct requests: {3}' -f $Run.EV.Count,
-            (($Run.EV | ForEach-Object { if ($_.Exception) { '{0}/{1}' -f $_.GetType().Name, $_.Exception.GetType().Name } else { $_.GetType().Name } } | Group-Object | ForEach-Object { '{0}x{1}' -f $_.Name, $_.Count }) -join ', '),
-            @($global:Error).Count, $Requests.Count)
     }
 
     It 'control: with the scrub mocked to a no-op, the same walk finds the header' {
@@ -286,7 +281,7 @@ namespace OERCatalogBearerFixture {
 
         $Run = Invoke-CatalogNotFoundRead
         $Run.Result | Should -BeNullOrEmpty
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 2 -Exactly # the wrapper catch and the cmdlet catch
 
         $Requests = @((Get-ReachedRequestInstance -Record @(@($Run.EV) + @($global:Error)))[0])
         $Requests.Count | Should -BeGreaterOrEqual 1 -Because 'the control must reach the request to prove anything'

@@ -222,7 +222,9 @@ Describe 'Invoke-OERGraphRequest' {
     It 'does not step up a 401 claims challenge when the module holds no sign-in state (BL-124 O1)' {
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
-            Mock Initialize-OERAuth { }
+            # No ValidateSet on AuthMethod in the mock: a step-up that carried on with no state would
+            # bind a null AuthMethod, and the count below, not a binding error, must be what fails.
+            Mock Initialize-OERAuth -RemoveParameterValidation AuthMethod { }
             Mock Invoke-MgGraphRequest {
                 throw [System.Exception]::new('HTTP 401. WWW-Authenticate: Bearer error="insufficient_claims", claims="eyJhY2Nlc3MiOnt9fQ"')
             }
@@ -236,7 +238,9 @@ Describe 'Invoke-OERGraphRequest' {
     It 'does not step up a PIM 400 claims body when the module holds no sign-in state (BL-124 O1)' {
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
-            Mock Initialize-OERAuth { }
+            # No ValidateSet on AuthMethod in the mock: a step-up that carried on with no state would
+            # bind a null AuthMethod, and the count below, not a binding error, must be what fails.
+            Mock Initialize-OERAuth -RemoveParameterValidation AuthMethod { }
             # The PIM shape: a 400 whose body carries the claims URL-encoded.
             Mock Invoke-MgGraphRequest {
                 throw [System.Exception]::new('{"error":{"code":"RoleAssignmentRequestAcrsValidationFailed","message":"Authentication context required. claims=%7B%22access_token%22%3A%7B%22acrs%22%3A%7B%22essential%22%3Atrue%2C%22value%22%3A%22c1%22%7D%7D%7D"}}')
@@ -6973,6 +6977,23 @@ foreach ($Id in $Ids) { 'ERROR ID: {0}' -f $Id }
         $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
         Get-StopProbeErrorId -Probe $R | Should -Be @('StepUpDenied')
         $R.Output | Should -Contain 'INIT CALLS: 0'
+        $R.Output | Should -Contain 'GRAPH CALLS: 1'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S13: a failed FIRST page of a -All walk leaves the Graph error as the only record, and nothing returned (BL-63)' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-GraphStopProbe -AuthMethod Interactive -Respond {
+            throw [System.Exception]::new('{"error":{"code":"InternalServerError","message":"boom"}}')
+        } -Call {
+            # The caller asked for silence: no collection at all, never @{ value = @() }, which would
+            # read as an empty tenant. The record is in the error stream (and $Error) for whoever asks.
+            Invoke-OERGraphRequest -Uri 'v1.0/groups' -All -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('InternalServerError')
         $R.Output | Should -Contain 'GRAPH CALLS: 1'
         $R.Output | Should -Contain 'RESULT COUNT: 0'
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
