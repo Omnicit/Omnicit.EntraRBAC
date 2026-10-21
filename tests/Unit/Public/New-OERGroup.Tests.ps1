@@ -176,6 +176,135 @@ Describe 'New-OERGroup' {
             Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
         }
 
+        # BL-78: a lookup the module refused is still GroupResolveFailed, but the message names the refusal
+        # and the command it names, and the inner exception carries the refusal's record. The records are
+        # built by the module's own builders, so the ids and texts are the ones the transports raise.
+        It 'names <Id> and the refused command in GroupResolveFailed, keeps the refusal as the inner exception, and does NOT create' -ForEach @(
+            @{ Id = 'SignInRefused'; Builder = 'New-OERSignInRefusedError' }
+            @{ Id = 'SignInSuperseded'; Builder = 'New-OERSignInSupersededError' }
+        ) {
+            $Refusal = InModuleScope $script:moduleName -Parameters @{ Builder = $Builder } {
+                param($Builder)
+                $script:_OERAuthState = [pscustomobject]@{ TenantId = 'contoso.onmicrosoft.com' }
+                & $Builder -Command 'New-OERGroup'
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERGroupId -MockWith ({ throw $Refusal }.GetNewClosure())
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest -ParameterFilter { $Method -eq 'POST' } -MockWith { }
+
+            New-OERGroup -DisplayName 'RoleSec-Test' -MailNickname 'rolesectest' -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err
+
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERGroupId -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -ParameterFilter { $Method -eq 'POST' } -Times 0
+            $Mine = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'GroupResolveFailed,New-OERGroup' })
+            $Mine.Count | Should -Be 1
+            $Mine[0].CategoryInfo.Category | Should -Be 'NotSpecified'
+            $Mine[0].TargetObject | Should -BeExactly 'RoleSec-Test'
+            $Mine[0].Exception.Message | Should -BeExactly (
+                "Failed to look up group 'RoleSec-Test': the module refused the lookup with $Id for command 'New-OERGroup'. $($Refusal.Exception.Message)")
+            # The inner exception holds the refusal's record, so its id is read from the record, not from text.
+            $Inner = $Mine[0].Exception.InnerException
+            $Inner | Should -BeOfType ([System.Management.Automation.IContainsErrorRecord])
+            $Inner.ErrorRecord.FullyQualifiedErrorId | Should -BeExactly $Id
+            $Inner.ErrorRecord.TargetObject | Should -BeExactly 'New-OERGroup'
+            $Inner.ErrorRecord.CategoryInfo.Category | Should -Be 'AuthenticationError'
+            $Inner.ErrorRecord.Exception.Message | Should -BeExactly $Refusal.Exception.Message
+            $Inner.InnerException.Message | Should -BeExactly $Refusal.Exception.Message
+        }
+
+        It 'finds the refusal in the record a caught exception carries, and names it the same way' {
+            $Refusal = InModuleScope $script:moduleName {
+                $script:_OERAuthState = [pscustomobject]@{ TenantId = 'contoso.onmicrosoft.com' }
+                New-OERSignInRefusedError -Command 'Get-OERGroup'
+            }
+            # The caught record itself is not the refusal: its id is another one and its exception only CARRIES
+            # the refusal's record, as a nested ThrowTerminatingError is surfaced.
+            $Wrapper = [System.Management.Automation.RuntimeException]::new('wrapper text', $null, $Refusal)
+            $Outer = [System.Management.Automation.ErrorRecord]::new($Wrapper, 'CmdletInvocationException', [System.Management.Automation.ErrorCategory]::NotSpecified, $null)
+            Mock -ModuleName $script:moduleName Resolve-OERGroupId -MockWith ({ throw $Outer }.GetNewClosure())
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest -ParameterFilter { $Method -eq 'POST' } -MockWith { }
+
+            New-OERGroup -DisplayName 'RoleSec-Test' -MailNickname 'rolesectest' -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err
+
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -ParameterFilter { $Method -eq 'POST' } -Times 0
+            $Mine = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'GroupResolveFailed,New-OERGroup' })
+            $Mine.Count | Should -Be 1
+            $Mine[0].Exception.Message | Should -BeLike "Failed to look up group 'RoleSec-Test': the module refused the lookup with SignInRefused for command 'Get-OERGroup'. *"
+            $Mine[0].Exception.InnerException.ErrorRecord.FullyQualifiedErrorId | Should -BeExactly 'SignInRefused'
+        }
+
+        It 'reports every other pre-check failure exactly as before, the id compared whole and by ordinal' -ForEach @(
+            @{ Label = 'a plain string'; Throw = { throw 'Graph returned 429 TooManyRequests' }; Text = 'Graph returned 429 TooManyRequests' }
+            @{ Label = 'another record id'; Throw = { throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('throttled'), 'TooManyRequests', [System.Management.Automation.ErrorCategory]::LimitsExceeded, 'x') }; Text = 'throttled' }
+            @{ Label = 'an id that only starts with SignInRefused'; Throw = { throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('lookalike'), 'SignInRefusedElsewhere', [System.Management.Automation.ErrorCategory]::AuthenticationError, 'x') }; Text = 'lookalike' }
+            @{ Label = 'an id that differs in letter case'; Throw = { throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('lowercase'), 'signinrefused', [System.Management.Automation.ErrorCategory]::AuthenticationError, 'x') }; Text = 'lowercase' }
+        ) {
+            Mock -ModuleName $script:moduleName Resolve-OERGroupId -MockWith $Throw
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest -ParameterFilter { $Method -eq 'POST' } -MockWith { }
+
+            New-OERGroup -DisplayName 'RoleSec-Test' -MailNickname 'rolesectest' -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err
+
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -ParameterFilter { $Method -eq 'POST' } -Times 0
+            $Mine = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'GroupResolveFailed,New-OERGroup' })
+            $Mine.Count | Should -Be 1
+            $Mine[0].Exception.Message | Should -BeExactly "Failed to look up group 'RoleSec-Test': $Text"
+            $Mine[0].Exception.Message | Should -Not -BeLike '*refused the lookup*'
+            $Mine[0].Exception.InnerException.Message | Should -BeExactly $Text
+        }
+
+        Context 'in a script with no try above it' {
+            BeforeAll {
+                # The cmdlet runs in a runspace with no try anywhere above it, as at a prompt. The script installs
+                # its own fakes in ITS copy of the module scope: the transport refuses with the module's own
+                # builder, and the real Resolve-OERGroupId reaches it. A refused lookup must be written once,
+                # leave the script running to its end, and send no create.
+                function script:New-GrNoTryScenario {
+                    param([string]$Log, [string]$Builder)
+                    [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    $script:_OERAuthState = [pscustomobject]@{ TenantId = 'contoso.onmicrosoft.com' }
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Uri, [string]$Method)
+        [System.IO.File]::AppendAllText('#LOG#', "GRAPH $Method $Uri`n")
+        throw (#BUILDER# -Command 'New-OERGroup')
+    }
+}
+$Made = New-OERGroup -DisplayName 'RoleSec-Test' -MailNickname 'rolesectest' -ErrorVariable E
+# -ErrorVariable also holds the inner layers' records, so the cmdlet's own are counted by their suffix.
+$Own = @($E | Where-Object { $_.FullyQualifiedErrorId -like '*,New-OERGroup' })
+"COUNT:$($Own.Count)"
+$X = $Own[0]
+"FQID:$($X.FullyQualifiedErrorId)"
+"INNERID:$($X.Exception.InnerException.ErrorRecord.FullyQualifiedErrorId)"
+"MADE:$($null -ne $Made)"
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#BUILDER#', $Builder))
+                }
+            }
+
+            It 'writes GroupResolveFailed once for <Id>, sends no create, and the script carries on to its end' -ForEach @(
+                @{ Id = 'SignInRefused'; Builder = 'New-OERSignInRefusedError' }
+                @{ Id = 'SignInSuperseded'; Builder = 'New-OERSignInSupersededError' }
+            ) {
+                $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+                $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-GrNoTryScenario -Log $Log -Builder $Builder)
+
+                $Run.Output[-1] | Should -BeExactly 'END'
+                @($Run.Output | Where-Object { $_ -like 'COUNT:*' -or $_ -like 'FQID:*' -or $_ -like 'INNERID:*' -or $_ -like 'MADE:*' }) |
+                    Should -Be @('COUNT:1', 'FQID:GroupResolveFailed,New-OERGroup', "INNERID:$Id", 'MADE:False')
+                # One lookup went out and nothing else: no create.
+                @(Get-Content -LiteralPath $Log).Count | Should -Be 1
+                @(Get-Content -LiteralPath $Log)[0] | Should -BeLike 'GRAPH  v1.0/groups?*'
+                @($Run.Errors).Count | Should -Be 1
+                $Run.Errors[0] | Should -BeLike "Failed to look up group 'RoleSec-Test': the module refused the lookup with $Id for command 'New-OERGroup'. *"
+                @($Run.Warnings).Count | Should -Be 0
+            }
+        }
+
         It 'still creates when the pre-check genuinely finds nothing' {
             Mock -ModuleName $script:moduleName Resolve-OERGroupId { $null }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {

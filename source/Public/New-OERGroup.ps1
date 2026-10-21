@@ -178,6 +178,39 @@ function New-OERGroup {
             Resolve-OERGroupId -DisplayName $ResolvedName
         } catch {
             Remove-OERErrorRecord -Record $PSItem
+            # BL-78: a lookup the module refused (SignInRefused, SignInSuperseded) is still published as
+            # GroupResolveFailed, but the message names the refusal and the command it names, and the
+            # inner exception carries the refusal's record (a RuntimeException holding it, itself
+            # holding the refusal's exception), so a caller reads the id from the record instead of
+            # from text. The refusal is the caught record or the record the caught exception carries.
+            # The id is the first comma segment of its FullyQualifiedErrorId, compared whole and
+            # ordinally. Any other failure is reported exactly as before.
+            $Refusal = $null
+            $Candidates = @($PSItem)
+            if ($PSItem.Exception -is [System.Management.Automation.IContainsErrorRecord]) {
+                $Candidates += $PSItem.Exception.ErrorRecord
+            }
+            foreach ($Candidate in $Candidates) {
+                if ($null -eq $Candidate) { continue }
+                $CandidateId = ([string]$Candidate.FullyQualifiedErrorId).Split(',')[0]
+                if ([string]::Equals($CandidateId, 'SignInRefused', [System.StringComparison]::Ordinal) -or
+                    [string]::Equals($CandidateId, 'SignInSuperseded', [System.StringComparison]::Ordinal)) {
+                    $Refusal = $Candidate
+                    break
+                }
+            }
+            if ($null -ne $Refusal) {
+                $RefusalId = ([string]$Refusal.FullyQualifiedErrorId).Split(',')[0]
+                Write-CmdletError `
+                    -Message ([System.Exception]::new(
+                        "Failed to look up group '$ResolvedName': the module refused the lookup with $RefusalId for command '$($Refusal.TargetObject)'. $($Refusal.Exception.Message)")) `
+                    -InnerException ([System.Management.Automation.RuntimeException]::new($Refusal.Exception.Message, $Refusal.Exception, $Refusal)) `
+                    -ErrorId 'GroupResolveFailed' `
+                    -Category NotSpecified `
+                    -TargetObject $ResolvedName `
+                    -Cmdlet $PSCmdlet
+                return
+            }
             Write-CmdletError `
                 -Message ([System.Exception]::new(
                     "Failed to look up group '$ResolvedName': $($PSItem.Exception.Message)")) `
