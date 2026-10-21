@@ -26,10 +26,11 @@ thread job `Invoke-OERStructure` needs `-Confirm:$false` or `-WhatIf` (`Confirma
 `-RequestorScope`. Validation refuses an unresolvable group template and, before PowerShell 7.5, a
 timestamp with seconds.
 
-A paged read that cannot finish is now an error, never a shorter list. Graph and Azure reads refuse a
-later page that is empty or has no `value`, a next link already requested and a walk past 100000
-pages, with `GraphPagingIncomplete` or `ArmPagingIncomplete`, and an Azure body that is not JSON with
-`ArmResponseUnreadable`. Under `-ErrorAction SilentlyContinue` such a read returns nothing.
+The module's Microsoft Graph and Azure Resource Manager transports now refuse a paged read that
+cannot finish instead of returning a shorter list: a later page that is empty or has no `value`, a
+next link already requested and a walk past 100000 pages, with `GraphPagingIncomplete` or
+`ArmPagingIncomplete`, and an Azure body that is not JSON, with `ArmResponseUnreadable`. Under
+`-ErrorAction SilentlyContinue` such a read returns nothing.
 
 ## [1.3.0] - 2026-10-19
 

@@ -1226,7 +1226,7 @@ out. Worth carrying forward past this one change: it is the shape any future "at
 the error" work in this module would get wrong without re-deriving the same measurement.
 
 **A `-All` walk that cannot complete is refused, never returned short (Sprint 11 step 12,
-2026-10-21; BL-72, BL-63, decision A26).** Until then four shapes let a walk go wrong, two by ending
+2026-10-21; BL-72, BL-63, decision A27).** Until then four shapes let a walk go wrong, two by ending
 it as though it were whole and two by never ending it. A later page that was `$null` (an empty body)
 ended the walk (`break`), and one with no `value` member aggregated nothing and named no next link,
 so it ended it too: both handed back the pages before them as the collection. A next link that
@@ -1235,7 +1235,9 @@ its next links (the old comment "deliberately no page-count cap" is gone: a sile
 and a refusal does not). Each is now refused with
 `GraphPagingIncomplete` (category `InvalidResult`, the one new Graph id), carrying the three facts of
 issue #73 on the exception (`PartialValue`, `NextLink`, `PageNumber`; F1 above); the page after the
-cause is never requested. `Get-OERPageWalkLimit` (100000 pages) is the single owner of the limit, read
+cause is never requested. Links are compared as the text that was requested, so an absolute link
+back to page 1, which was requested as the relative `-Uri`, is requested once more before the repeat
+is refused (bounded, and the walk still fails). `Get-OERPageWalkLimit` (100000 pages) is the single owner of the limit, read
 once per `-All` call before the loop; the loop refuses the page after it. The limit is a backstop
 against a link chain that never ends, not a page size: it bounds a never-throttled walk by FAILING
 it, never by truncating it, which is the defect class `-All` exists to prevent. Unchanged on
@@ -1337,12 +1339,14 @@ Behaviour that follows from this design:
   did, and aggregates both pages. Still unmeasured live: no live Entities - List answer has had a
   second page.
 - **A `-All` walk that cannot complete is refused, never returned short (Sprint 11 step 12,
-  2026-10-21; BL-71, BL-73, BL-24, BL-63, decision A26).** The mirror of the Graph wrapper's change
+  2026-10-21; BL-71, BL-73, BL-24, BL-63, decision A27).** The mirror of the Graph wrapper's change
   ([#graph-wrapper](#graph-wrapper)), written separately, not shared. Before it, a later page with an
-  empty body left the previous page in `$Page`, so the loop appended it again and read its next link
-  again, for ever; a repeated path and a link chain that never ends did the same; a body that was not
-  JSON raised the parser's own error and a JSON `null` or a page without `value` ended the
-  walk as complete; and a page failure carried none of the facts the Graph wrapper attaches. Now an
+  empty body parsed to `$null` (measured on 7.6.6: `'' | ConvertFrom-Json` gives `$null`), so reading
+  its next link threw, `$NextLink` kept the old link and, with no `try` up the call stack, the loop
+  requested the same page again for ever (with a `try` the walk failed on that read); a JSON `null`
+  later page did the same; only a page with neither a `value` nor a next link member ended the walk,
+  as though complete; a repeated path and a link chain that never ends were followed again for ever;
+  a body that was not JSON raised the parser's own error; and a page failure carried none of the facts the Graph wrapper attaches. Now an
   empty, JSON `null` or `value`-less later page, a path already requested in this walk, a walk past
   `Get-OERPageWalkLimit` (100000 pages, read once before the loop) and a next link that is not an
   absolute URI (its `PathAndQuery` cannot be read) are refused with `ArmPagingIncomplete` (category
@@ -1355,14 +1359,18 @@ Behaviour that follows from this design:
   `-Path` and `PageNumber` 1. One exception to the link: `ArmResponseUnreadable` on a LATER page
   carries the failing page's path (`PathAndQuery`, from `Get-ArmUnreadableBodyRecord -AtPath`), not the
   absolute link every other later-page failure carries. Unchanged on purpose: a single request with an
-  empty body (204) and a FIRST page with an empty body still return `$null`, and a later page whose
+  empty body (204) and a FIRST page under `-All` with an empty body or a body of JSON `null` still return
+  `$null` (a JSON `null` first page once threw "Cannot index into a null array" while reading its next
+  link and, with no `try`, came back as `@{ value = @() }`; S14 holds it), and a later page whose
   `value` is an empty array is a normal page. Under `-ErrorAction SilentlyContinue` with no `try` up
   the call stack a failed call returns nothing and keeps its record in `$Error` and `-ErrorVariable`;
   under `Ignore` it returns nothing and leaves no record at all, as in the Graph wrapper. **Proofs**
   (`tests/Unit/Private/Invoke-OERArmRequest.Tests.ps1`): the Describe "stops at each of its own throws,
-  outside any try (F3)" holds, for a failed first request (S11) and for each refusal cause (S12: JSON
+  outside any try (F3)" holds, for a failed first request (S11; S13 with a stale response in the caller's scope) and for each
+  refusal cause (S12: JSON
   null, no `value`, a next link with no host, a limit of 2), the transport's own id as the only
-  record, `RESULT COUNT: 0` and no request after the cause. The first call under `-All` stands in a
+  record, `RESULT COUNT: 0` and no request after the cause; S14 holds a JSON `null` first page to one
+  request, no record and an empty answer. The first call under `-All` stands in a
   `try` to attach the facts, which makes a throw in a nested function terminating even under
   silence; a single request stays outside it and is unchanged.
 - Pinned api-versions: managementGroups `2020-05-01` (its list paging property is `@nextLink`, not
@@ -4296,7 +4304,9 @@ tenant (A13), both under [Requested tenant vs granted tenant](#requested-tenant-
   sends its headers and then stalls leaves the sign-in waiting, with no `TenantResolutionFailed`,
   until the operator interrupts it. Bounding the body needs `-OperationTimeoutSeconds` on the call, a
   parameter of PowerShell 7.4 and later, while the module supports 7.2, and the rule above allows no
-  other parameter on that call. The limit is accepted as known; its future handling, together with a
+  other parameter on that call. That parameter alone does not suffice (measured earlier with a
+  30-second value): it ends a stalled body after about 30.4 s but not a body that trickles in a byte
+  at a time, so issue #66 is not to be planned on the assumption that it alone closes the limit. The limit is accepted as known; its future handling, together with a
   raise of the PowerShell floor to 7.6 LTS, is tracked in GitHub issue #66
   (https://github.com/Omnicit/Omnicit.EntraRBAC/issues/66).
 - A token without a `tid` claim is compared neither for a GUID nor for a domain (DECOMPILED, under

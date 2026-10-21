@@ -269,7 +269,7 @@ Describe 'Get-OERManagementGroup' {
             }
         }
 
-        It 'names only the group the Entities - List answer lacks, with the returned-no-parent reason and no inner exception' {
+        It 'names only the group the Entities - List answer lacks, with the entity-listing reason and no inner exception' {
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -ParameterFilter {
                 $Path -like '*/getEntities?*' -and $Method -eq 'POST' -and $All
             } { [PSCustomObject]@{ value = @($RootEntity, $EntityA, $EntityB) } }

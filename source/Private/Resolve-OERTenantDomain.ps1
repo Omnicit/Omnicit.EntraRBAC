@@ -29,7 +29,9 @@ function Resolve-OERTenantDomain {
     sends its headers and then stalls leaves the call waiting, with no TenantResolutionFailed, until
     the operator interrupts it. It is documented, not bounded: bounding the body needs
     -OperationTimeoutSeconds, a parameter of PowerShell 7.4 and later, and the call allows no other
-    parameter. The limit is accepted as known and tracked in GitHub issue #66.
+    parameter. That parameter alone does not suffice: measured with a 30-second value, it ends a
+    stalled body (about 30.4 s) but not a body that trickles in a byte at a time. The limit is
+    accepted as known and tracked in GitHub issue #66.
 
     .PARAMETER Domain
     The tenant as the caller named it: a verified domain such as contoso.onmicrosoft.com.
