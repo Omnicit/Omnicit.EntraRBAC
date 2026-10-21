@@ -133,3 +133,77 @@ Describe 'Get-OERRoleDefinition' {
         Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
     }
 }
+
+Describe 'Get-OERRoleDefinition: the example in the RoleDefinitionNotFound message (BL-113)' {
+    BeforeAll {
+        # BL-113: a command shown in a message must parse as typed and give the value back. Zero parse
+        # errors is not enough on its own -- an unbalanced string can parse into the wrong tokens -- so
+        # the argument must also come back, as a string constant, exactly as the value was typed.
+        function Get-BL113Segment ([string]$Message, [string]$After, [string]$Before) {
+            $Start = $Message.IndexOf($After, [System.StringComparison]::Ordinal)
+            $Start | Should -BeGreaterOrEqual 0 -Because "the message holds '$After'"
+            $Start += $After.Length
+            $End = $Message.IndexOf($Before, $Start, [System.StringComparison]::Ordinal)
+            $End | Should -BeGreaterThan $Start -Because "the message holds '$Before' after '$After'"
+            $Message.Substring($Start, $End - $Start)
+        }
+        function Read-BL113Argument ([string]$Text, [string]$Command, [string]$Parameter) {
+            $ParseErrors = $null
+            $Ast = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$null, [ref]$ParseErrors)
+            $Found = $Ast.Find({
+                    param($Node)
+                    $Node -is [System.Management.Automation.Language.CommandAst] -and $Node.GetCommandName() -eq $Command
+                }, $true)
+            $IsConstant = $false
+            $Value = $null
+            if ($Found) {
+                $Elements = @($Found.CommandElements)
+                for ($I = 0; $I -lt $Elements.Count - 1; $I++) {
+                    if ($Elements[$I] -is [System.Management.Automation.Language.CommandParameterAst] -and $Elements[$I].ParameterName -eq $Parameter) {
+                        $IsConstant = $Elements[$I + 1] -is [System.Management.Automation.Language.StringConstantExpressionAst]
+                        if ($IsConstant) { $Value = $Elements[$I + 1].Value }
+                    }
+                }
+            }
+            [PSCustomObject]@{ ParseErrorCount = @($ParseErrors).Count; Found = [bool]$Found; IsConstant = $IsConstant; Value = $Value }
+        }
+        # The nested form: the command sits inside ONE single-quoted literal of the message. Read that
+        # literal first (one literal and the end of the input), then the command it holds, up to $CutAt.
+        function Read-BL113NestedArgument ([string]$Literal, [string]$CutAt, [string]$Command, [string]$Parameter) {
+            $Tokens = $null
+            $ParseErrors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseInput($Literal, [ref]$Tokens, [ref]$ParseErrors)
+            @($ParseErrors).Count | Should -Be 0 -Because "the literal in the message ($Literal) parses"
+            @($Tokens).Count | Should -Be 2 -Because "the text in the message ($Literal) is one string literal"
+            $Tokens[0].Kind | Should -Be ([System.Management.Automation.Language.TokenKind]::StringLiteral)
+            $Inner = [string]$Tokens[0].Value
+            if ($CutAt -and $Inner.Contains($CutAt)) { $Inner = $Inner.Substring(0, $Inner.IndexOf($CutAt, [System.StringComparison]::Ordinal)) }
+            Read-BL113Argument -Text $Inner -Command $Command -Parameter $Parameter
+        }
+    }
+
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { [PSCustomObject]@{ value = @() } }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERScope { $script:BL113Scope }
+    }
+
+    It 'shows the Get-OERRoleDefinition example in RoleDefinitionNotFound so it parses and gives the scope back for a scope holding <Label>' -ForEach @(
+        @{ Label = 'a straight apostrophe (U+0027)'; Scope = "/subscriptions/s1/resourceGroups/rg's"; Escaped = "/subscriptions/s1/resourceGroups/rg''s" }
+        @{ Label = 'a right single quotation mark (U+2019)'; Scope = ('/subscriptions/s1/resourceGroups/rg' + [char]0x2019 + 's'); Escaped = ('/subscriptions/s1/resourceGroups/rg' + [char]0x2019 + [char]0x2019 + 's') }
+    ) {
+        $script:BL113Scope = $Scope
+        $Err = $null
+        $null = Get-OERRoleDefinition -Role 'Reeder' -Subscription 'aaaa1111-0000-0000-0000-000000000000' `
+            -ErrorAction SilentlyContinue -ErrorVariable Err
+        $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -ceq 'RoleDefinitionNotFound,Get-OERRoleDefinition' })
+        $Own.Count | Should -Be 1
+        $Example = Get-BL113Segment -Message $Own[0].Exception.Message -After '. Run ' -Before ' without -Role'
+        $Example | Should -BeExactly "Get-OERRoleDefinition -Scope '$Escaped'"
+        $Read = Read-BL113Argument -Text $Example -Command 'Get-OERRoleDefinition' -Parameter 'Scope'
+        $Read.ParseErrorCount | Should -Be 0
+        $Read.IsConstant | Should -BeTrue
+        $Read.Value | Should -BeExactly $Scope
+    }
+}

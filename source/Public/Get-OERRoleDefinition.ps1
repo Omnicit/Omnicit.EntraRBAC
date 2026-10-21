@@ -146,8 +146,11 @@ function Get-OERRoleDefinition {
 
         $Items = @($Response.value)
         if ($Role -and $Items.Count -eq 0) {
+            # The scope in the example is quoted with every single-quote character doubled
+            # (CodeGeneration.EscapeSingleQuotedStringContent: the straight one and the curly ones the
+            # PowerShell tokenizer also reads as quotes), so the example stays valid as typed.
             Write-CmdletError `
-                -Message ([System.Exception]::new("Role definition '$Role' was not found$(if ($TargetScope) { " at scope '$TargetScope'" }). Run Get-OERRoleDefinition$(if ($TargetScope) { " -Scope '$TargetScope'" }) without -Role to list the roles available there, or supply the role definition GUID or its full ARM id.")) `
+                -Message ([System.Exception]::new("Role definition '$Role' was not found$(if ($TargetScope) { " at scope '$TargetScope'" }). Run Get-OERRoleDefinition$(if ($TargetScope) { " -Scope '$([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$TargetScope))'" }) without -Role to list the roles available there, or supply the role definition GUID or its full ARM id.")) `
                 -ErrorId 'RoleDefinitionNotFound' -Category ObjectNotFound -TargetObject $Role -Cmdlet $PSCmdlet
             return
         }

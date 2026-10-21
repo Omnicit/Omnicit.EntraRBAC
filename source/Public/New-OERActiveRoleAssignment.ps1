@@ -310,7 +310,12 @@ function New-OERActiveRoleAssignment {
                 }
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                Write-CmdletError -Message ([System.Exception]::new("Could not open the role management policy to allow permanent active assignment: $($PSItem.Exception.Message) Run 'Set-OERRoleManagementPolicy -Role ''$Role'' <scope> -AllowPermanentActiveAssignment `$true' with Microsoft.Authorization/roleManagementPolicies/write permission, or grant a time-bound assignment with -DurationDays.")) -ErrorId 'PolicyOpenFailed' -Category PermissionDenied -TargetObject $PendingPolicyId -Cmdlet $PSCmdlet
+                # The messages of this file show a command inside a single-quoted literal, so a value in
+                # it is escaped twice (CodeGeneration.EscapeSingleQuotedStringContent: the straight
+                # single quote and the curly ones the PowerShell tokenizer also reads as quotes): once
+                # for the command's own literal, once for the outer one. The outer literal parses to the
+                # command, and the command's literal parses to the value, as typed.
+                Write-CmdletError -Message ([System.Exception]::new("Could not open the role management policy to allow permanent active assignment: $($PSItem.Exception.Message) Run 'Set-OERRoleManagementPolicy -Role ''$([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$Role)))'' <scope> -AllowPermanentActiveAssignment `$true' with Microsoft.Authorization/roleManagementPolicies/write permission, or grant a time-bound assignment with -DurationDays.")) -ErrorId 'PolicyOpenFailed' -Category PermissionDenied -TargetObject $PendingPolicyId -Cmdlet $PSCmdlet
                 return
             }
         }
@@ -369,9 +374,9 @@ function New-OERActiveRoleAssignment {
                 if ($Reverted) {
                     'It was rolled back to disallow permanent assignments.'
                 } elseif ($AnsweredNoChange) {
-                    "The rollback read it as already disallowing permanent assignments and changed nothing, but that read may not reflect the open yet. Confirm with 'Get-OERRoleManagementPolicy -PolicyId ''$OpenedPolicyId''' and, if AllowPermanentActiveAssignment is True, run 'Set-OERRoleManagementPolicy -PolicyId ''$OpenedPolicyId'' -AllowPermanentActiveAssignment `$false' to close it."
+                    "The rollback read it as already disallowing permanent assignments and changed nothing, but that read may not reflect the open yet. Confirm with 'Get-OERRoleManagementPolicy -PolicyId ''$([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$OpenedPolicyId)))''' and, if AllowPermanentActiveAssignment is True, run 'Set-OERRoleManagementPolicy -PolicyId ''$([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$OpenedPolicyId)))'' -AllowPermanentActiveAssignment `$false' to close it."
                 } else {
-                    "The rollback ALSO failed, so the policy is still open. Run 'Set-OERRoleManagementPolicy -PolicyId ''$OpenedPolicyId'' -AllowPermanentActiveAssignment `$false' to close it."
+                    "The rollback ALSO failed, so the policy is still open. Run 'Set-OERRoleManagementPolicy -PolicyId ''$([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$OpenedPolicyId)))'' -AllowPermanentActiveAssignment `$false' to close it."
                 }
             }
             $Name = [guid]::NewGuid().ToString()

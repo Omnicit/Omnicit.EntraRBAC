@@ -570,7 +570,10 @@ function Set-OERDirectoryRoleManagementPolicy {
                         'Run the same command again, or run Set-OERDirectoryRoleManagementPolicy with ' +
                         '-RequireMfaOnActivation or -AuthenticationContextId set to the protection this role needs.'
                 }
-                $Message += " Run Get-OERDirectoryRoleManagementPolicy -PolicyId '$ResolvedPolicyId' to read the resulting state."
+                # The policy id in the example is quoted with every single-quote character doubled
+                # (CodeGeneration.EscapeSingleQuotedStringContent: the straight one and the curly ones the
+                # PowerShell tokenizer also reads as quotes), so the example stays valid as typed.
+                $Message += " Run Get-OERDirectoryRoleManagementPolicy -PolicyId '$([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$ResolvedPolicyId))' to read the resulting state."
                 Write-CmdletError -Message ([System.Exception]::new($Message)) `
                     -ErrorId 'PolicyRulesRejected' -Category WriteError -TargetObject $ResolvedPolicyId -Cmdlet $PSCmdlet
             }

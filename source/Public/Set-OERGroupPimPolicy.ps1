@@ -554,6 +554,8 @@ function Set-OERGroupPimPolicy {
         }
 
         if ($Resolution -and $Resolution.Action -eq 'Conflict') {
+            # No escape in the example's -AuthenticationContextId value: [ValidatePattern('^c\d+$|^$')]
+            # on the parameter admits no quote character of any kind, so the example is valid as typed.
             Write-CmdletError `
                 -Message ([System.Exception]::new(
                     "$($Resolution.Reason) Pass -AuthenticationContextId '$AuthenticationContextId' without MultiFactorAuthentication in -ActivationEnabledRules, or drop the authentication context.")) `
@@ -931,7 +933,9 @@ function Set-OERGroupPimPolicy {
                     'multi-factor authentication nor an authentication context. Run the same command again, or run ' +
                     'Set-OERGroupPimPolicy with -ActivationEnabledRules or -AuthenticationContextId set to the protection this group needs.'
             }
-            $Message += " Run Get-OERGroupPimPolicy -Group '$Group' -AccessType $AccessType to read the resulting state."
+            # The group in the example is quoted with every single-quote character doubled
+            # (CodeGeneration.EscapeSingleQuotedStringContent), so the example stays valid as typed.
+            $Message += " Run Get-OERGroupPimPolicy -Group '$([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$Group))' -AccessType $AccessType to read the resulting state."
             Write-CmdletError `
                 -Message ([System.Exception]::new($Message)) `
                 -ErrorId 'PolicyRulesRejected' `

@@ -264,7 +264,10 @@ function New-OEREligibleDirectoryRoleAssignment {
                 Write-CmdletError -Message ([System.Exception]::new(
                         "The PIM policy of Microsoft Entra directory role '$Role' does not allow permanent eligible " +
                         'assignments, so Microsoft Graph would refuse this one, and Omnicit.EntraRBAC never changes a ' +
-                        "policy implicitly. Nothing was changed. Allow it first with Set-OERDirectoryRoleManagementPolicy -Role '$Role' " +
+                        # The role name in this example is quoted with every single-quote character doubled
+                        # (CodeGeneration.EscapeSingleQuotedStringContent: the straight one and the curly ones
+                        # the PowerShell tokenizer also reads as quotes), so the example stays valid as typed.
+                        "policy implicitly. Nothing was changed. Allow it first with Set-OERDirectoryRoleManagementPolicy -Role '$([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($Role))' " +
                         "-AllowPermanentEligibility `$true, or declare allowPermanentEligibility: true for the role under " +
                         'directoryRoleManagementPolicies in the same apply document (that section runs first), or pass ' +
                         '-DurationDays for a time-bound assignment.')) `
