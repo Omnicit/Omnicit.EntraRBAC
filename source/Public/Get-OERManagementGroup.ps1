@@ -176,7 +176,7 @@ function Get-OERManagementGroup {
                 # An ARM message ends with a full stop, and the sentence below adds its own.
                 "the entity listing failed: $($ParentReadError.Exception.Message.TrimEnd('.'))"
             } else {
-                'the entity listing (Entities - List) returned no parent for them'
+                'the entity listing (Entities - List) returned no usable parent for them'
             }
             $ErrorParams = @{
                 Message      = [System.Exception]::new("Could not read the parent of $($Unread.Count) management group(s): $Names -- $Reason. Their ParentId, ParentName and ParentDisplayName are empty, which here does not mean that they have no parent.")

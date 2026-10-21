@@ -285,7 +285,7 @@ Describe 'Get-OERManagementGroup' {
             @($Err).Count | Should -Be 1
             $Err[0].FullyQualifiedErrorId | Should -BeExactly 'ManagementGroupParentReadFailed,Get-OERManagementGroup'
             @($Err[0].TargetObject) | Should -Be @('mg-c')
-            $Err[0].Exception.Message | Should -BeExactly ("Could not read the parent of 1 management group(s): 'mg-c' -- the entity listing (Entities - List) returned no parent for them. $UnreadTail")
+            $Err[0].Exception.Message | Should -BeExactly ("Could not read the parent of 1 management group(s): 'mg-c' -- the entity listing (Entities - List) returned no usable parent for them. $UnreadTail")
             $Err[0].Exception.InnerException | Should -Be $null
         }
 

@@ -969,7 +969,12 @@ function Invoke-OERGraphRequest {
         # request; and raised the first attempt's error again after a failed refresh retry's own.
         # This matters on the single-request path only: under -All the paging loop calls this
         # function inside a try, so each of these throws propagates to the paging catch.
-        if ($ClaimsJson) {
+        # A step-up needs the module's own sign-in state: it is built from the state's tenant, sign-in
+        # type and client id, and there is no session to step up without one (a Graph call made before
+        # any sign-in, a caller that cleared the state). Without it the original Graph error goes on
+        # to the final throw below, Initialize-OERAuth is never called and exactly one request is
+        # sent -- the same condition the 401 refresh below and the ARM wrapper's refresh test.
+        if ($ClaimsJson -and $script:_OERAuthState) {
             # App-only sessions (ClientSecret/ClientCertificate) cannot perform an interactive ACRS
             # step-up, and the module deliberately does not cache the secret/certificate material to
             # replay it (SECURITY: never store a plain-text secret). Surface a clear, actionable

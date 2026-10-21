@@ -147,11 +147,14 @@ function Resolve-OERScope {
     }
     if ($Verbatim) { return [string]$Verbatim.id }
 
-    $List = Invoke-OERArmRequest -Path '/providers/Microsoft.Management/managementGroups?api-version=2020-05-01' -All
+    # The list is read through Get-OERManagementGroupList, the module's one owner of the Management
+    # Groups - List call; its items are the raw ARM items, so displayName is read as before. A failed
+    # listing throws from the helper exactly as the wrapper did here, and never reads as not found.
+    $List = @(Get-OERManagementGroupList)
     # Management group display names are not unique either, so the list fallback refuses more than
     # one match instead of taking the first. A management group's name IS its id segment, so the
     # names listed are the values to re-run with.
-    $MgMatches = @(@($List.value) | Where-Object { $PSItem.properties.displayName -eq $ManagementGroup })
+    $MgMatches = @($List | Where-Object { $PSItem.properties.displayName -eq $ManagementGroup })
     if ($MgMatches.Count -gt 1) {
         $MgNames = ($MgMatches | ForEach-Object { [string]$PSItem.name }) -join ', '
         throw [System.Management.Automation.ErrorRecord]::new(

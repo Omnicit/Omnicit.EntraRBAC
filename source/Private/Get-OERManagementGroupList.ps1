@@ -10,11 +10,11 @@ function Get-OERManagementGroupList {
     with its id, name, type and properties (displayName, tenantId). The list carries no parent of
     any group.
 
-    It has two callers, which therefore walk the same list. Get-OERManagementGroup converts the
+    It has three callers, which therefore walk the same list. Get-OERManagementGroup converts the
     items and adds the parent of each listed group, which it reads separately through
     Get-OERManagementGroupParent. Resolve-OERInventoryScopeTree converts the items itself and reads
-    no parent, so the inventory walk gains no failure mode from the parent read. (Resolve-OERScope's
-    display-name lookup still sends the same list call on its own.)
+    no parent, so the inventory walk gains no failure mode from the parent read. Resolve-OERScope
+    matches the items' displayName for a management group named by its display name.
 
     Nothing is caught here: a refused or failed listing throws to the caller, whose catch scrubs the
     record with Remove-OERErrorRecord and reports it. A caller that can read no management group is

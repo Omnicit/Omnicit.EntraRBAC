@@ -1489,7 +1489,7 @@ the unread groups' names as a `[string[]]`. Its message, when the answer had no 
 groups:
 
 ```text
-Could not read the parent of 2 management group(s): 'mg-a', 'mg-b' -- the entity listing (Entities - List) returned no parent for them. Their ParentId, ParentName and ParentDisplayName are empty, which here does not mean that they have no parent.
+Could not read the parent of 2 management group(s): 'mg-a', 'mg-b' -- the entity listing (Entities - List) returned no usable parent for them. Their ParentId, ParentName and ParentDisplayName are empty, which here does not mean that they have no parent.
 ```
 
 When the call itself failed, the reason reads `the entity listing failed: ` followed by that call's

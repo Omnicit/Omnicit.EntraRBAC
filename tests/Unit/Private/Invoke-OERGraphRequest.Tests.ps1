@@ -219,6 +219,54 @@ Describe 'Invoke-OERGraphRequest' {
         Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
     }
 
+    It 'does not step up a 401 claims challenge when the module holds no sign-in state (BL-124 O1)' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            Mock Initialize-OERAuth { }
+            Mock Invoke-MgGraphRequest {
+                throw [System.Exception]::new('HTTP 401. WWW-Authenticate: Bearer error="insufficient_claims", claims="eyJhY2Nlc3MiOnt9fQ"')
+            }
+
+            { Invoke-OERGraphRequest -Uri 'v1.0/groups' } | Should -Throw -ExpectedMessage '*insufficient_claims*'
+            Should -Invoke Initialize-OERAuth -Times 0 -Exactly
+            Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly
+        }
+    }
+
+    It 'does not step up a PIM 400 claims body when the module holds no sign-in state (BL-124 O1)' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            Mock Initialize-OERAuth { }
+            # The PIM shape: a 400 whose body carries the claims URL-encoded.
+            Mock Invoke-MgGraphRequest {
+                throw [System.Exception]::new('{"error":{"code":"RoleAssignmentRequestAcrsValidationFailed","message":"Authentication context required. claims=%7B%22access_token%22%3A%7B%22acrs%22%3A%7B%22essential%22%3Atrue%2C%22value%22%3A%22c1%22%7D%7D%7D"}}')
+            }
+
+            { Invoke-OERGraphRequest -Uri 'v1.0/groups' } | Should -Throw -ErrorId 'RoleAssignmentRequestAcrsValidationFailed*'
+            Should -Invoke Initialize-OERAuth -Times 0 -Exactly
+            Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly
+        }
+    }
+
+    It 'still steps up a PIM 400 claims body when the module holds a sign-in state (control)' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = @{ TenantId = 'contoso'; AuthMethod = 'Interactive'; ClientId = $null }
+            Mock Initialize-OERAuth { }
+            $script:Attempt = 0
+            Mock Invoke-MgGraphRequest {
+                $script:Attempt++
+                if ($script:Attempt -eq 1) {
+                    throw [System.Exception]::new('{"error":{"code":"RoleAssignmentRequestAcrsValidationFailed","message":"Authentication context required. claims=%7B%22access_token%22%3A%7B%22acrs%22%3A%7B%22essential%22%3Atrue%2C%22value%22%3A%22c1%22%7D%7D%7D"}}')
+                }
+                @{ value = @('after-stepup') }
+            }
+
+            (Invoke-OERGraphRequest -Uri 'v1.0/groups').value | Should -Be 'after-stepup'
+            Should -Invoke Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $ClaimsChallenge -like '{*acrs*' }
+            Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly
+        }
+    }
+
     It 'short-circuits an app-only 401 with no claims as AppOnlyTokenRefreshUnsatisfiable' {
         InModuleScope $script:moduleName {
             $script:_OERAuthState = @{ TenantId = 'contoso'; AuthMethod = 'ClientSecret'; ClientId = 'cid' }
@@ -6906,6 +6954,26 @@ foreach ($Id in $Ids) { 'ERROR ID: {0}' -f $Id }
         Get-StopProbeErrorId -Probe $R | Should -Be @('GraphPagingIncomplete')
         # Pages 1 and 2 only; page 3 is refused before it is requested.
         $R.Output | Should -Contain 'GRAPH CALLS: 2'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S12: a claims challenge with no sign-in state ends the call: one request, no step-up, the Graph error is the one record (BL-124 O1)' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-GraphStopProbe -AuthMethod Interactive -Respond {
+            if ($global:OERStopGraphCalls -eq 1) { throw [System.Exception]::new('{"error":{"code":"StepUpDenied","message":"Continuous access evaluation: claims=eyJhY2Nlc3MiOnt9fQ"}}') }
+            @{ value = @('after-step-up') }
+        } -Call {
+            # The module holds no sign-in state: nothing to build a step-up from. Carrying on past
+            # the skipped step-up must not call Initialize-OERAuth or send a second request.
+            $script:_OERAuthState = $null
+            Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('StepUpDenied')
+        $R.Output | Should -Contain 'INIT CALLS: 0'
+        $R.Output | Should -Contain 'GRAPH CALLS: 1'
         $R.Output | Should -Contain 'RESULT COUNT: 0'
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
     }
