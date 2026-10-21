@@ -181,7 +181,7 @@ function ConvertTo-S1112Canonical {
         return '{' + ($Parts -join ',') + '}'
     }
     if ($Value -is [System.Collections.IList]) {
-        $Items = @(foreach ($I in $Value) { ConvertTo-S1112Canonical $I })
+        [string[]]$Items = @(foreach ($I in $Value) { [string](ConvertTo-S1112Canonical $I) })
         [System.Array]::Sort($Items, [System.StringComparer]::Ordinal)
         return '[' + ($Items -join ',') + ']'
     }
@@ -268,7 +268,7 @@ function Get-S1112Requests {
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched. #type/subtask
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched. #type/subtask
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -287,13 +287,13 @@ worktree on this branch with 0 tracked changes; `True` on every mark.
 **Failure looks like:** `False` on the first line -- `OER_LIVE_REPO` is unset or names the main clone; a `False`
 mark -- build the worktree first (`./build.ps1 -Tasks build`), never while the gate runs.
 
-Result:
+Result: run 2026-10-21 between 08:49 and 09:05 UTC as oer-live-cc against the test tenant, from the checklist as committed with its two fixes (1.2 adds a walk ARM pages; H.1 sorts typed strings). PASS. The module loads from the step worktree's build (1.3.1); the main clone is on main, never switched; the worktree on this branch with 0 tracked changes; the four build marks (GraphPagingIncomplete, ArmPagingIncomplete, ArmResponseUnreadable, Get-OERPageWalkLimit) are present.
 
 ## 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build. #type/subtask
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -306,11 +306,11 @@ Disconnect-OerLive
 **Expect:** every identity line `True`, `identity check passed`, `The module is the worktree's build: True`.
 **Failure looks like:** "application is disabled" (STOP: the identity is disabled), or `False`.
 
-Result:
+Result: run 2026-10-21 between 08:49 and 09:05 UTC as oer-live-cc against the test tenant, from the checklist as committed with its two fixes (1.2 adds a walk ARM pages; H.1 sorts typed strings). PASS. Identity check passed as oer-live-cc (every line True); the module is the worktree's build, version 1.3.1.
 
 ### 0.2. The prerequisite objects
 
-- [ ] **0.2** `Initialize-OerS1112Prereq.ps1 -Unattended` writes the baseline and creates `oer-s1112-grp` and `oer-s1112-rg`. #type/subtask
+- [x] **0.2** `Initialize-OerS1112Prereq.ps1 -Unattended` writes the baseline and creates `oer-s1112-grp` and `oer-s1112-rg`. #type/subtask
 
 ```powershell
 & pwsh -NoProfile -NonInteractive -File (Join-Path $VaultDir 'Initialize-OerS1112Prereq.ps1') -Unattended
@@ -321,11 +321,11 @@ Write-OerLiveStep "The prerequisite script ended with exit code $LASTEXITCODE."
 back, exit code 0.
 **Failure looks like:** a STOP for an object with the prefix that existed before, a refusal, or exit code 1.
 
-Result:
+Result: run 2026-10-21 between 08:49 and 09:05 UTC as oer-live-cc against the test tenant, from the checklist as committed with its two fixes (1.2 adds a walk ARM pages; H.1 sorts typed strings). PASS. Baseline written (0 prefixed objects, no resource group); oer-s1112-grp created (read back by its id after two 404 replication retries) and oer-s1112-rg created (Succeeded); exit code 0.
 
 ### 0.3. Read back what the prerequisite script created
 
-- [ ] **0.3** The group and the resource group are there, by their recorded id and path. #type/subtask
+- [x] **0.3** The group and the resource group are there, by their recorded id and path. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -342,13 +342,13 @@ Disconnect-OerLive
 named `oer-s1112-rg`, `Succeeded`.
 **Failure looks like:** a read that is not 200, another name, or a member.
 
-Result:
+Result: run 2026-10-21 between 08:49 and 09:05 UTC as oer-live-cc against the test tenant, from the checklist as committed with its two fixes (1.2 adds a walk ARM pages; H.1 sorts typed strings). PASS. The group reads 200, named oer-s1112-grp, security True, 0 members; the resource group named oer-s1112-rg, Succeeded.
 
 ## 1. Walks across several pages, in both transports
 
 ### 1.1. A Microsoft Graph walk of ten groups a page returns the same groups as one page of 999
 
-- [ ] **1.1** `Invoke-OERGraphRequest -All` over `v1.0/groups` with `$top=10` reads every page, sends no request twice, and returns the same group ids as one request with `$top=999`; no new error id. #type/subtask
+- [x] **1.1** `Invoke-OERGraphRequest -All` over `v1.0/groups` with `$top=10` reads every page, sends no request twice, and returns the same group ids as one request with `$top=999`; no new error id. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -381,11 +381,11 @@ none twice; the large page has no next link; no record.
 **Failure looks like:** fewer ids in the small walk (a page lost), an id twice (a page read twice), a record with a
 new id (a real page the walk refused), or a write.
 
-Result:
+Result: run 2026-10-21 between 08:49 and 09:05 UTC as oer-live-cc against the test tenant, from the checklist as committed with its two fixes (1.2 adds a walk ARM pages; H.1 sorts typed strings). PASS. 12 Microsoft Graph requests (11 pages of the ten-a-page walk, 10 of them later pages, and the one page of 999), 0 writes, 0 token requests; no request sent twice; 100 groups both ways with the same ids; the page of 999 has no next link; no record. Graph handed a next link on page 10 and answered page 11 with an empty value, which the walk read as a normal last page.
 
 ### 1.2. An Azure Resource Manager walk of one resource group a page returns the same resource groups as one read
 
-- [ ] **1.2** `Invoke-OERArmRequest -All` over the test subscription's resource groups with `$top=1` reads every page and returns the same resource groups as one read without `$top`; no new error id. #type/subtask
+- [x] **1.2** `Invoke-OERArmRequest -All` over the test subscription's resource groups with `$top=1` reads every page and returns the same resource groups as one read without `$top`, and a walk of the subscription's policy definitions 100 a page returns the same definitions as the default pages; no new error id. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -410,20 +410,44 @@ $AllIds = @($Out.All | ForEach-Object { ([string]$_.id).ToLowerInvariant() } | S
 Write-OerLiveStep "Requests: $Sent"
 Write-OerLiveStep "Resource groups: one a page $($SmallIds.Count); one read $($AllIds.Count); the same ids: $((Compare-Object $SmallIds $AllIds -SyncWindow 0).Count -eq 0 -and $SmallIds.Count -eq @($SmallIds | Sort-Object -Unique).Count); $Rg among them: $(@($Out.Small | Where-Object { [string]$_.name -eq $Rg }).Count -eq 1)"
 Write-OerLiveStep "Records: [$(Get-S1112IdCounts $Out.Errors)]; new ids: $(@(Get-S1112FirstId $Out.Errors | Where-Object { $NewIds -contains $_ }).Count)"
+# The resource group list may answer every row on one page whatever $top says. The policy definitions of the
+# subscription (built-in included) page by default (500 a page) and honour $top: a walk of 100 a page against the
+# default walk, both across several pages. Reads only.
+Start-S1112Count
+$Pol = & $Module {
+    param($Sub)
+    $E = $null
+    $Small = @((Invoke-OERArmRequest -Path "/subscriptions/$Sub/providers/Microsoft.Authorization/policyDefinitions?api-version=2021-06-01&`$top=100" -All -ErrorAction SilentlyContinue -ErrorVariable E).value)
+    $E1 = @($E)
+    $E = $null
+    $Default = @((Invoke-OERArmRequest -Path "/subscriptions/$Sub/providers/Microsoft.Authorization/policyDefinitions?api-version=2021-06-01" -All -ErrorAction SilentlyContinue -ErrorVariable E).value)
+    [PSCustomObject]@{ Small = $Small; Default = $Default; Errors = @($E1) + @($E) }
+} $Cfg.SubscriptionId
+$Sent = Get-S1112Sent
+$RawArm = @($global:S1112ArmRaw)
+Stop-S1112Count
+$SmallIds = @($Pol.Small | ForEach-Object { ([string]$_.id).ToLowerInvariant() } | Sort-Object)
+$DefaultIds = @($Pol.Default | ForEach-Object { ([string]$_.id).ToLowerInvariant() } | Sort-Object)
+Write-OerLiveStep "Policy definitions, requests: $Sent; no request sent twice: $(@($RawArm | Sort-Object -Unique -CaseSensitive).Count -eq $RawArm.Count)"
+Write-OerLiveStep "Policy definitions: 100 a page $($SmallIds.Count); the default pages $($DefaultIds.Count); the same ids: $((Compare-Object $SmallIds $DefaultIds -SyncWindow 0).Count -eq 0 -and $SmallIds.Count -eq @($SmallIds | Sort-Object -Unique).Count)"
+Write-OerLiveStep "Policy definitions, records: [$(Get-S1112IdCounts $Pol.Errors)]; new ids: $(@(Get-S1112FirstId $Pol.Errors | Where-Object { $NewIds -contains $_ }).Count)"
 Disconnect-OerLive
 ```
 
-**Expect:** 0 writes, 0 token requests; at least 2 resource groups (`oer-s1112-rg` among them); later pages in the
+**Expect (policy definitions):** 0 writes, 0 token requests; both walks across several pages (later pages above 0
+in each: the request count minus 2); no request sent twice; the same ids in both walks, none twice; no record.
+
+**Expect (resource groups):** 0 writes, 0 token requests; at least 2 resource groups (`oer-s1112-rg` among them); later pages in the
 small walk equal to the resource group count minus 1, no request sent twice (if ARM honours `$top` here; if it answers every row on one
-page, write that down -- the walk is then not shown across pages and 1.1 alone carries this check); the same ids
+page, write that down -- the policy definitions walk above then carries the walk across pages); the same ids
 in both reads, none twice; no record.
 **Failure looks like:** fewer ids in the small walk, an id twice, a record with a new id, or a write.
 
-Result:
+Result: run 2026-10-21 between 08:49 and 09:05 UTC as oer-live-cc against the test tenant, from the checklist as committed with its two fixes (1.2 adds a walk ARM pages; H.1 sorts typed strings). PASS after one fix to the check. Resource groups: ARM answers every row on one page whatever $top says (2 requests, 0 later pages; 2 groups, the same ids, oer-s1112-rg among them; no record), so the check was extended with the policy definitions walk. Policy definitions: 46 ARM requests, 44 of them later pages (38 pages of 100 and 8 default pages), 0 writes, 0 token requests, no request sent twice; 3715 definitions both ways with the same ids; no record.
 
 ### 1.3. An export of the test tenant on this branch reads and writes the same as on `main`
 
-- [ ] **1.3** `Export-OERInventory` (the default sections, Entra ID and Azure) on this branch's build and on `main`'s source write the same files with the same facts, send no write, and this branch's export raises no new error id. #type/subtask
+- [x] **1.3** `Export-OERInventory` (the default sections, Entra ID and Azure) on this branch's build and on `main`'s source write the same files with the same facts, send no write, and this branch's export raises no new error id. #type/subtask
 
 Run the two halves in two processes, each after H.1. First this branch's build:
 
@@ -475,13 +499,13 @@ a new id, and the same records, IncompleteReads and warning counts as `main`.
 new id in the branch export (a walk this branch refuses that `main` read as whole -- STOP and record the request
 shape).
 
-Result:
+Result: run 2026-10-21 between 08:49 and 09:05 UTC as oer-live-cc against the test tenant, from the checklist as committed with its two fixes (1.2 adds a walk ARM pages; H.1 sorts typed strings). PASS. Both exports 0 writes and 0 token requests, 332 Microsoft Graph and 12 Azure Resource Manager requests each, the same request shapes and counts, 0 later pages (every list of the test tenant fits one page; 1.1 and 1.2 carry the walk across pages); the same 17 file names; 0 differing key paths in each of the 15 JSON files (no time stamp differed); the same records (AuthorizationFailed x2, the identity's known management group refusal, and InventoryPartial x1), IncompleteReads 0 and 4 warnings on both; 0 records with a new id. The first comparison threw in the canonical sort on schema.json; H.1 now sorts typed strings, and the rerun is the result.
 
 ## 2. What a failed Get-OERCatalog -Id leaves in -ErrorVariable (BL-157, BL-109 F4)
 
 ### 2.1. No copy of the request keeps the Authorization header
 
-- [ ] **2.1** After `Get-OERCatalog -Id` of a catalog that does not exist, the records in the caller's `-ErrorVariable` and in `$Error` are counted by type, every distinct request instance they reach is found, and none of them carries an `Authorization` header. #type/subtask
+- [x] **2.1** After `Get-OERCatalog -Id` of a catalog that does not exist, the records in the caller's `-ErrorVariable` and in `$Error` are counted by type, every distinct request instance they reach is found, and none of them carries an `Authorization` header. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -505,13 +529,13 @@ then holds no request, and the unit test (Task 4) is the proof.
 **Failure looks like:** any instance with an `Authorization` header -- STOP: a bearer in a caller's
 `-ErrorVariable` is a security finding; record the record type and the path to the request, never the value.
 
-Result:
+Result: run 2026-10-21 between 08:49 and 09:05 UTC as oer-live-cc against the test tenant, from the checklist as committed with its two fixes (1.2 adds a walk ARM pages; H.1 sorts typed strings). PASS. 0 objects; 9 records in -ErrorVariable (CmdletInvocationException 1, ErrorRecord/Exception 5, ErrorRecord/HttpResponseException 2, RuntimeException 1), first ids CatalogNotFound x5 and InvokeGraphHttpResponseException x2; 1 distinct request instance reached from -ErrorVariable and $Error; 0 with an Authorization header.
 
 ## 3. A plan through both transports writes nothing
 
 ### 3.1. Invoke-OERStructure -WhatIf of a group and a role assignment, twice
 
-- [ ] **3.1** A document declaring `oer-s1112-grp` and a Reader role assignment for it at `oer-s1112-rg`, run twice with `-WhatIf` under the write fence, sends no write, reads through both transports, and plans the same rows both times. #type/subtask
+- [x] **3.1** A document declaring `oer-s1112-grp` and a Reader role assignment for it at `oer-s1112-rg`, run twice with `-WhatIf` under the write fence, sends no write, reads through both transports, and plans the same rows both times. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -544,13 +568,13 @@ the two plans the same (G8).
 **Failure looks like:** a write (the fence refuses it and the row is `Failed`), a row naming an object without the
 prefix, a record, or two different plans.
 
-Result:
+Result: run 2026-10-21 between 08:49 and 09:05 UTC as oer-live-cc against the test tenant, from the checklist as committed with its two fixes (1.2 adds a walk ARM pages; H.1 sorts typed strings). PASS. Each run 0 writes and 0 token requests, 6 Microsoft Graph and 4 Azure Resource Manager requests; rows: groups Unchanged oer-s1112-grp, roleAssignments Skipped (would create Reader for oer-s1112-grp at oer-s1112-rg); no record; the two plans the same.
 
 ## 4. Measurement
 
 ### 4.1. BL-93: what `-TimeoutSec 30` bounds in the tenant lookup
 
-- [ ] **4.1** The call `Resolve-OERTenantDomain` sends, exactly as written (`Invoke-RestMethod -Uri ... -Method Get -TimeoutSec 30 -ErrorAction Stop`), against a local listener and an address that never answers, each in its own process, no tenant and no module. #type/subtask
+- [x] **4.1** The call `Resolve-OERTenantDomain` sends, exactly as written (`Invoke-RestMethod -Uri ... -Method Get -TimeoutSec 30 -ErrorAction Stop`), against a local listener and an address that never answers, each in its own process, no tenant and no module. #type/subtask
 
 ```powershell
 $Out = Join-Path $Raw 'bl93'
@@ -599,7 +623,7 @@ function's help and `rationale.md` state the limit, which the operator accepted 
 **Failure looks like:** nothing fails here; a C or D that ends would mean the runtime bounds the body, and is
 recorded as such.
 
-Result:
+Result: run 2026-10-21 between 08:49 and 09:05 UTC as oer-live-cc against the test tenant, from the checklist as committed with its two fixes (1.2 adds a walk ARM pages; H.1 sorts typed strings). MEASURED. A silent connection 30.3 s (TaskCanceledException); B an address that never answers 21.3 s (HttpRequestException); C headers then a stalled body NOT BOUNDED at 130 s; D headers then a trickled body NOT BOUNDED at 130 s; PowerShell 7.6.6. The limit stands as documented and accepted (A28, P-19), tracked in issue #66.
 
 ## B. Proved offline (class B)
 
@@ -632,7 +656,7 @@ Result:
 
 ### T.1. The prerequisite objects are removed
 
-- [ ] **T.1** `Initialize-OerS1112Prereq.ps1 -Teardown -Unattended` removes the resource group and the group, purges the group from the deleted items, and the sweep lists no `oer-s1112-` object. #type/subtask
+- [x] **T.1** `Initialize-OerS1112Prereq.ps1 -Teardown -Unattended` removes the resource group and the group, purges the group from the deleted items, and the sweep lists no `oer-s1112-` object. #type/subtask
 
 ```powershell
 & pwsh -NoProfile -NonInteractive -File (Join-Path $VaultDir 'Initialize-OerS1112Prereq.ps1') -Teardown -Unattended
@@ -643,11 +667,11 @@ Write-OerLiveStep "The teardown ended with exit code $LASTEXITCODE."
 the sweep 0 objects with the prefix; exit code 0.
 **Failure looks like:** a role assignment of another principal (STOP), a residue row, or a prefixed object left.
 
-Result:
+Result: run 2026-10-21 between 08:49 and 09:05 UTC as oer-live-cc against the test tenant, from the checklist as committed with its two fixes (1.2 adds a walk ARM pages; H.1 sorts typed strings). PASS. 0 role assignments at oer-s1112-rg; the resource group deleted and reading 404; the group deleted (204), listed among the deleted items after 30 s and purged (204); removed 1, residue 0; the sweep 0 prefixed objects; exit code 0.
 
 ### T.2. Nothing is left, and the step's raw folder is gone
 
-- [ ] **T.2** A read-back lists no `oer-s1112-` object, no residue row of this prefix and no resource group `oer-s1112-rg`, and the step's raw folder is deleted. The redaction map is deleted with `Clear-OerLiveRedactionMap` once every result is written up, after this check. #type/subtask
+- [x] **T.2** A read-back lists no `oer-s1112-` object, no residue row of this prefix and no resource group `oer-s1112-rg`, and the step's raw folder is deleted. The redaction map is deleted with `Clear-OerLiveRedactionMap` once every result is written up, after this check. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -663,4 +687,4 @@ Write-OerLiveStep "The step's raw folder exists: $(Test-Path -LiteralPath $Raw)"
 **Expect:** 0 prefixed objects, 0 residue rows of this prefix, the resource group 404; the raw folder gone.
 **Failure looks like:** a prefixed object, a residue row of this prefix, or the resource group still there.
 
-Result:
+Result: run 2026-10-21 between 08:49 and 09:05 UTC as oer-live-cc against the test tenant, from the checklist as committed with its two fixes (1.2 adds a walk ARM pages; H.1 sorts typed strings). PASS. 0 prefixed objects, 0 residue rows of this prefix, the resource group reads 404; the step's raw folder deleted.
