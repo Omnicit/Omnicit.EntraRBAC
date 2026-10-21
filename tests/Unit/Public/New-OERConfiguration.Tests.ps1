@@ -214,4 +214,65 @@ Describe 'New-OERConfiguration' {
         Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
         Should -Invoke -ModuleName Omnicit.EntraRBAC Export-OERConfiguration -Times 0
     }
+
+    Context 'a value carrying a character PowerShell reads as a single quote (BL-113)' {
+        # PowerShell's tokenizer reads U+0027, U+2018, U+2019, U+201A and U+201B as single quotes. The file
+        # is built with the real writer into $TestDrive; the characters are built from code points so this
+        # test file stays ASCII.
+        It 'writes <Label> in TenantId, a key, a list item and a scalar and reads it back unchanged' -ForEach @(
+            @{ Label = 'U+0027'; Code = 0x27 }
+            @{ Label = 'U+2018'; Code = 0x2018 }
+            @{ Label = 'U+2019'; Code = 0x2019 }
+            @{ Label = 'U+201A'; Code = 0x201A }
+            @{ Label = 'U+201B'; Code = 0x201B }
+        ) {
+            $Q = [string][char]$Code
+            $Base = Join-Path $TestDrive "QuoteNew$Code"
+            $Tid = "ten${Q}ant"
+            $null = New-OERConfiguration -TenantAlias q -TenantId $Tid -BasePath $Base `
+                -Naming @{ "Key${Q}One" = "Val${Q}ue" } `
+                -Defaults @{ "Def${Q}Key" = "x${Q}y"; "List${Q}" = @("a${Q}b", $Q, 'plain') } `
+                -ErrorAction Stop
+            $Read = Get-OERConfiguration -TenantAlias q -BasePath $Base -ErrorAction Stop
+            $Read.TenantId -ceq $Tid | Should -BeTrue
+            @($Read.Naming.Keys) | Should -HaveCount 1
+            @($Read.Naming.Keys)[0] -ceq "Key${Q}One" | Should -BeTrue
+            $Read.Naming["Key${Q}One"] -ceq "Val${Q}ue" | Should -BeTrue
+            @($Read.Defaults.Keys | Sort-Object) | Should -HaveCount 2
+            $Read.Defaults["Def${Q}Key"] -ceq "x${Q}y" | Should -BeTrue
+            $List = @($Read.Defaults["List${Q}"])
+            $List | Should -HaveCount 3
+            $List[0] -ceq "a${Q}b" | Should -BeTrue
+            $List[1] -ceq $Q | Should -BeTrue
+            $List[2] -ceq 'plain' | Should -BeTrue
+        }
+
+        It 'never adds a key when <Label> is followed by PSD1 text in TenantId, a key, a list item or a scalar' -ForEach @(
+            @{ Label = 'U+0027'; Code = 0x27 }
+            @{ Label = 'U+2018'; Code = 0x2018 }
+            @{ Label = 'U+2019'; Code = 0x2019 }
+            @{ Label = 'U+201A'; Code = 0x201A }
+            @{ Label = 'U+201B'; Code = 0x201B }
+        ) {
+            $Q = [string][char]$Code
+            $Inject = "x${Q}; Environment = ${Q}China"
+            $Base = Join-Path $TestDrive "QuoteInject$Code"
+            $null = New-OERConfiguration -TenantAlias inj -TenantId $Inject -BasePath $Base `
+                -Naming @{ $Inject = 'n' } `
+                -Defaults @{ Scalar = $Inject; Items = @($Inject, 'b') } `
+                -ErrorAction Stop
+            $File = Join-Path $Base 'inj.psd1'
+            $Data = Import-PowerShellDataFile -Path $File -ErrorAction Stop
+            @($Data.Keys | Sort-Object) -join ',' | Should -Be 'Defaults,Naming,TenantId'
+            $Data.ContainsKey('Environment') | Should -BeFalse
+            @($Data.Defaults.Keys | Sort-Object) -join ',' | Should -Be 'Items,Scalar'
+            @($Data.Naming.Keys) | Should -HaveCount 1
+            $Read = Get-OERConfiguration -TenantAlias inj -BasePath $Base -ErrorAction Stop
+            $Read.Environment | Should -BeNullOrEmpty
+            $Read.TenantId -ceq $Inject | Should -BeTrue
+            $Read.Defaults.Scalar -ceq $Inject | Should -BeTrue
+            @($Read.Defaults.Items)[0] -ceq $Inject | Should -BeTrue
+            @($Read.Naming.Keys)[0] -ceq $Inject | Should -BeTrue
+        }
+    }
 }

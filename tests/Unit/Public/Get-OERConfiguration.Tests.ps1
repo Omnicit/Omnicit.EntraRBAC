@@ -271,4 +271,35 @@ Describe 'Get-OERConfiguration' {
             $Path -like '*Omnicit.EntraRBAC*Profiles'
         }
     }
+
+    It 'reads back a profile written with <Label> in every position and lists it without an Environment (BL-113)' -ForEach @(
+        @{ Label = 'U+0027'; Code = 0x27 }
+        @{ Label = 'U+2018'; Code = 0x2018 }
+        @{ Label = 'U+2019'; Code = 0x2019 }
+        @{ Label = 'U+201A'; Code = 0x201A }
+        @{ Label = 'U+201B'; Code = 0x201B }
+    ) {
+        # The file is written by the module's own writer into $TestDrive (never the real profile folder);
+        # the characters are built from code points so this test file stays ASCII.
+        $Q = [string][char]$Code
+        $Inject = "x${Q}; Environment = ${Q}China"
+        $Base = Join-Path $TestDrive "QuoteGet$Code"
+        $Path = Join-Path $Base 'q.psd1'
+        InModuleScope $script:moduleName -Parameters @{ Path = $Path; Inject = $Inject; Q = $Q } {
+            param($Path, $Inject, $Q)
+            Export-OERConfiguration -Path $Path -Configuration @{
+                TenantId = $Inject
+                Naming   = @{ "Key${Q}One" = $Inject }
+                Defaults = @{ Scalar = $Inject; Items = @("a${Q}b", $Inject) }
+            }
+        }
+        $All = @(Get-OERConfiguration -BasePath $Base -ErrorAction Stop)
+        $All | Should -HaveCount 1
+        $All[0].Environment | Should -BeNullOrEmpty
+        $All[0].TenantId -ceq $Inject | Should -BeTrue
+        $All[0].Naming["Key${Q}One"] -ceq $Inject | Should -BeTrue
+        $All[0].Defaults.Scalar -ceq $Inject | Should -BeTrue
+        @($All[0].Defaults.Items)[0] -ceq "a${Q}b" | Should -BeTrue
+        @($All[0].Defaults.Items)[1] -ceq $Inject | Should -BeTrue
+    }
 }

@@ -487,4 +487,73 @@ Describe 'Set-OERConfiguration' {
         $Result.Naming.Group | Should -Be 'role_{area}'
         $Result.Defaults.ActivationMaxHours | Should -Be '8'
     }
+
+    Context 'a value carrying a character PowerShell reads as a single quote (BL-113)' {
+        # PowerShell's tokenizer reads U+0027, U+2018, U+2019, U+201A and U+201B as single quotes. The files
+        # are written by the real writer into $TestDrive; the characters are built from code points so this
+        # test file stays ASCII.
+        It 'updates TenantId, a key, a list item and a scalar carrying <Label> and reads them back unchanged' -ForEach @(
+            @{ Label = 'U+0027'; Code = 0x27 }
+            @{ Label = 'U+2018'; Code = 0x2018 }
+            @{ Label = 'U+2019'; Code = 0x2019 }
+            @{ Label = 'U+201A'; Code = 0x201A }
+            @{ Label = 'U+201B'; Code = 0x201B }
+        ) {
+            $Q = [string][char]$Code
+            $Base = Join-Path $TestDrive "QuoteSet$Code"
+            $null = New-OERConfiguration -TenantAlias q -TenantId 'plain-tenant' -BasePath $Base -ErrorAction Stop
+            $Tid = "ten${Q}ant"
+            $null = Set-OERConfiguration -TenantAlias q -TenantId $Tid -BasePath $Base `
+                -Naming @{ "Key${Q}One" = "Val${Q}ue" } `
+                -Defaults @{ "Def${Q}Key" = "x${Q}y"; "List${Q}" = @("a${Q}b", $Q, 'plain') } `
+                -ErrorAction Stop
+            $Read = Get-OERConfiguration -TenantAlias q -BasePath $Base -ErrorAction Stop
+            $Read.TenantId -ceq $Tid | Should -BeTrue
+            @($Read.Naming.Keys) | Should -HaveCount 1
+            $Read.Naming["Key${Q}One"] -ceq "Val${Q}ue" | Should -BeTrue
+            $Read.Defaults["Def${Q}Key"] -ceq "x${Q}y" | Should -BeTrue
+            $List = @($Read.Defaults["List${Q}"])
+            $List | Should -HaveCount 3
+            $List[0] -ceq "a${Q}b" | Should -BeTrue
+            $List[1] -ceq $Q | Should -BeTrue
+            $List[2] -ceq 'plain' | Should -BeTrue
+
+            # A later update that names none of them re-writes them from the file just read; they must survive.
+            $null = Set-OERConfiguration -TenantAlias q -Environment USGov -BasePath $Base -ErrorAction Stop
+            $Again = Get-OERConfiguration -TenantAlias q -BasePath $Base -ErrorAction Stop
+            $Again.Environment | Should -Be 'USGov'
+            $Again.TenantId -ceq $Tid | Should -BeTrue
+            $Again.Naming["Key${Q}One"] -ceq "Val${Q}ue" | Should -BeTrue
+            $Again.Defaults["Def${Q}Key"] -ceq "x${Q}y" | Should -BeTrue
+            @($Again.Defaults["List${Q}"])[0] -ceq "a${Q}b" | Should -BeTrue
+        }
+
+        It 'never adds a key when <Label> is followed by PSD1 text in TenantId, a key, a list item or a scalar' -ForEach @(
+            @{ Label = 'U+0027'; Code = 0x27 }
+            @{ Label = 'U+2018'; Code = 0x2018 }
+            @{ Label = 'U+2019'; Code = 0x2019 }
+            @{ Label = 'U+201A'; Code = 0x201A }
+            @{ Label = 'U+201B'; Code = 0x201B }
+        ) {
+            $Q = [string][char]$Code
+            $Inject = "x${Q}; Environment = ${Q}China"
+            $Base = Join-Path $TestDrive "QuoteSetInject$Code"
+            $null = New-OERConfiguration -TenantAlias inj -TenantId 'plain-tenant' -BasePath $Base -ErrorAction Stop
+            $null = Set-OERConfiguration -TenantAlias inj -TenantId $Inject -BasePath $Base `
+                -Naming @{ $Inject = 'n' } `
+                -Defaults @{ Scalar = $Inject; Items = @($Inject, 'b') } `
+                -ErrorAction Stop
+            $Data = Import-PowerShellDataFile -Path (Join-Path $Base 'inj.psd1') -ErrorAction Stop
+            @($Data.Keys | Sort-Object) -join ',' | Should -Be 'Defaults,Naming,TenantId'
+            $Data.ContainsKey('Environment') | Should -BeFalse
+            @($Data.Defaults.Keys | Sort-Object) -join ',' | Should -Be 'Items,Scalar'
+            @($Data.Naming.Keys) | Should -HaveCount 1
+            $Read = Get-OERConfiguration -TenantAlias inj -BasePath $Base -ErrorAction Stop
+            $Read.Environment | Should -BeNullOrEmpty
+            $Read.TenantId -ceq $Inject | Should -BeTrue
+            $Read.Defaults.Scalar -ceq $Inject | Should -BeTrue
+            @($Read.Defaults.Items)[0] -ceq $Inject | Should -BeTrue
+            @($Read.Naming.Keys)[0] -ceq $Inject | Should -BeTrue
+        }
+    }
 }
