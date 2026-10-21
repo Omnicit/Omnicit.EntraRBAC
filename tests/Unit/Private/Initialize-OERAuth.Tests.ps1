@@ -5868,19 +5868,34 @@ Describe 'Initialize-OERAuth renews an interactive session silently (A22, BL-115
             }
         }
 
+        # Calls Initialize-OERAuth with -Verbose and keeps the verbose lines in $script:A22Verbose, where
+        # Assert-A22Calls counts the silent attempts the function itself reports: a request that never
+        # reaches the mocked Get-AzToken (the real command's parameter sets refuse a combination before
+        # the mock runs) is still an attempt, and only this line shows it. Returns the other records
+        # (warnings, written errors); a terminating error propagates as it does without the redirection.
         function script:Invoke-A22SignIn {
             param([hashtable]$Parameters = @{})
-            InModuleScope $script:moduleName -Parameters @{ P = $Parameters } {
+            $Records = InModuleScope $script:moduleName -Parameters @{ P = $Parameters } {
                 param($P)
-                Initialize-OERAuth @P
+                Initialize-OERAuth @P -Verbose *>&1
+            }
+            Save-A22Verbose $Records
+            @($Records | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })
+        }
+
+        function script:Save-A22Verbose {
+            param($Records)
+            foreach ($Record in @($Records)) {
+                if ($Record -is [System.Management.Automation.VerboseRecord]) { $script:A22Verbose.Add([string]$Record.Message) }
             }
         }
 
         # The first sign-in of a test, with its token requests forgotten afterwards.
         function script:Start-A22Session {
             param([hashtable]$Parameters = @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive' })
-            Invoke-A22SignIn $Parameters
+            $null = Invoke-A22SignIn $Parameters
             $script:A22Calls.Clear()
+            $script:A22Verbose.Clear()
         }
 
         function script:Set-A22Expiry {
@@ -5923,7 +5938,13 @@ Describe 'Initialize-OERAuth renews an interactive session silently (A22, BL-115
         # Exactly this many silent and other token requests per resource and no others. The counts come
         # first, resource by resource, so a failure names what it is about.
         function script:Assert-A22Calls {
-            param([int]$GraphSilent = 0, [int]$GraphOther = 0, [int]$ArmSilent = 0, [int]$ArmOther = 0)
+            param([int]$GraphSilent = 0, [int]$GraphOther = 0, [int]$ArmSilent = 0, [int]$ArmOther = 0, [switch]$SkipAttemptCheck)
+            if (-not $SkipAttemptCheck) {
+                # One verbose line per silent attempt, whatever came of it (renewed, no token, another
+                # identity, failed) -- the attempts the function reports equal the ones the mock saw.
+                @($script:A22Verbose | Where-Object { $_ -match 'The silent renewal|Renewed the interactive session silently' }).Count |
+                    Should -Be ($GraphSilent + $ArmSilent) -Because 'every silent attempt reaches the mocked Get-AzToken and is reported once'
+            }
             @(Get-A22Call -Kind Graph -Silent $true).Count | Should -Be $GraphSilent -Because 'the silent Microsoft Graph requests are counted exactly'
             @(Get-A22Call -Kind Graph -Silent $false).Count | Should -Be $GraphOther -Because 'the other Microsoft Graph requests are counted exactly'
             @(Get-A22Call -Kind Arm -Silent $true).Count | Should -Be $ArmSilent -Because 'the silent Azure Resource Manager requests are counted exactly'
@@ -5941,6 +5962,7 @@ Describe 'Initialize-OERAuth renews an interactive session silently (A22, BL-115
             $script:_OERInteractiveCredential = $null
         }
         $script:A22Calls = [System.Collections.Generic.List[object]]::new()
+        $script:A22Verbose = [System.Collections.Generic.List[string]]::new()
         $script:A22SilentMode = 'ok'
         $script:A22InteractiveMode = 'ok'
         $script:A22ThrowFor = $null
@@ -6035,11 +6057,12 @@ Describe 'Initialize-OERAuth renews an interactive session silently (A22, BL-115
         It 'a second renewal is silent again' {
             Start-A22Session
             Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
-            Invoke-A22SignIn
+            $null = Invoke-A22SignIn
             Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
             $script:A22Calls.Clear()
+            $script:A22Verbose.Clear()
 
-            Invoke-A22SignIn
+            $null = Invoke-A22SignIn
 
             Assert-A22Calls -GraphSilent 1 -GraphOther 0
         }
@@ -6077,19 +6100,13 @@ Describe 'Initialize-OERAuth renews an interactive session silently (A22, BL-115
             Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
             $script:A22SilentMode = 'throw'
 
-            $R = InModuleScope $script:moduleName {
-                # The streams, not -ErrorVariable: that collects the exception the silent mock throws
-                # as it unwinds, caught or not, which is not a record written to anyone.
-                $Streams = @(Initialize-OERAuth *>&1)
-                [pscustomobject]@{
-                    Warnings = @($Streams | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
-                    Errors   = @($Streams | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
-                }
-            }
+            # The streams, not -ErrorVariable: that collects the exception the silent mock throws as it
+            # unwinds, caught or not, which is not a record written to anyone.
+            $Streams = Invoke-A22SignIn
 
             Assert-A22Calls -GraphSilent 1 -GraphOther 1
-            @($R.Warnings).Count | Should -Be 0
-            @($R.Errors).Count | Should -Be 0
+            @($Streams | Where-Object { $_ -is [System.Management.Automation.WarningRecord] }).Count | Should -Be 0
+            @($Streams | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
             $Interactive = @(Get-A22Call -Kind Graph -Silent $false)[0]
             $Interactive.Keys | Should -Contain 'Interactive'
             $Interactive.ClientId | Should -BeExactly $script:A22GraphClient
@@ -6114,13 +6131,12 @@ Describe 'Initialize-OERAuth renews an interactive session silently (A22, BL-115
             $script:A22SilentMode = 'throw'
             Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
 
-            $Streams = InModuleScope $script:moduleName { @(Initialize-OERAuth -Verbose *>&1) }
+            $null = Invoke-A22SignIn
 
             Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
                 $Record.Exception.Message -like '*silent request failed*'
             }
-            $Verbose = (@($Streams | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } |
-                ForEach-Object { $_.Message })) -join "`n"
+            $Verbose = $script:A22Verbose -join "`n"
             $Verbose | Should -Match 'The silent renewal failed \(\w+\)'
             $Verbose | Should -Not -Match 'NOT-A-REAL-TOKEN'
         }
@@ -6130,14 +6146,13 @@ Describe 'Initialize-OERAuth renews an interactive session silently (A22, BL-115
             Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
             $script:A22SilentMode = 'none'
 
-            $Streams = InModuleScope $script:moduleName { @(Initialize-OERAuth -Verbose *>&1) }
+            $null = Invoke-A22SignIn
 
             Assert-A22Calls -GraphSilent 1 -GraphOther 1
             (Get-A22State).Account | Should -BeExactly 'interactive@contoso.com'
             # The no-token guard answers by itself; without it the empty answer would fail further down
             # and be reported as a failed request.
-            $Verbose = (@($Streams | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } |
-                ForEach-Object { $_.Message })) -join "`n"
+            $Verbose = $script:A22Verbose -join "`n"
             $Verbose | Should -Match 'The silent renewal returned no token'
             $Verbose | Should -Not -Match 'The silent renewal failed'
         }
@@ -6190,7 +6205,8 @@ Describe 'Initialize-OERAuth renews an interactive session silently (A22, BL-115
             }
 
             $Caught.FullyQualifiedErrorId | Should -BeLike 'GraphTokenAcquisitionFailed*'
-            Assert-A22Calls -GraphSilent 1 -GraphOther 1
+            # The verbose lines of a call that ends in a terminating error are lost to the catch above.
+            Assert-A22Calls -GraphSilent 1 -GraphOther 1 -SkipAttemptCheck
             Get-A22Tracker | Should -BeNullOrEmpty
         }
 
@@ -6205,7 +6221,7 @@ Describe 'Initialize-OERAuth renews an interactive session silently (A22, BL-115
             }
 
             $Caught.FullyQualifiedErrorId | Should -BeLike 'TenantMismatch*'
-            Assert-A22Calls -GraphSilent 1 -GraphOther 1
+            Assert-A22Calls -GraphSilent 1 -GraphOther 1 -SkipAttemptCheck
         }
     }
 
@@ -6264,9 +6280,7 @@ Describe 'Initialize-OERAuth renews an interactive session silently (A22, BL-115
             $script:A22InteractiveMode = 'throw'
             $script:A22ThrowFor = '*management*'
 
-            $null = InModuleScope $script:moduleName {
-                Initialize-OERAuth -IncludeARM -ErrorAction SilentlyContinue
-            }
+            $null = Invoke-A22SignIn @{ IncludeARM = $true; ErrorAction = 'SilentlyContinue' }
 
             # The Graph token was cached, so the Azure Resource Manager request was the only one made.
             Assert-A22Calls -ArmSilent 0 -ArmOther 1
@@ -6350,7 +6364,7 @@ Describe 'Initialize-OERAuth renews an interactive session silently (A22, BL-115
             Start-A22Session
             Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
 
-            $null = Connect-OER -TenantId $script:A22Tenant -Interactive
+            Save-A22Verbose (Connect-OER -TenantId $script:A22Tenant -Interactive -Verbose *>&1)
 
             Assert-A22Calls -GraphSilent 0 -GraphOther 1
         }
