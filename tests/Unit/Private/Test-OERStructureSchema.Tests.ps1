@@ -6293,6 +6293,24 @@ Describe 'Test-OERStructureSchema tenantId (BL-88, A14)' {
         $Message | Should -BeLike '*Omit the key*'
     }
 
+    It 'shows <Label> in the message escaped, on one line (BL-113)' -ForEach @(
+        @{ Label = 'a line feed'; Fragment = '"44444444-4444-4444-4444-444444444444\n"'; Shown = '44444444-4444-4444-4444-444444444444\n' }
+        @{ Label = 'a carriage return and a tab'; Fragment = '"\r\t44444444-4444-4444-4444-444444444444"'; Shown = '\r\t44444444-4444-4444-4444-444444444444' }
+        @{ Label = 'a zero width space and a NUL'; Fragment = '"4444' + '\u200b' + '4444-4444-4444-4444-444444444444\u0000"'; Shown = '4444' + '\u200b' + '4444-4444-4444-4444-444444444444\u0000' }
+        @{ Label = 'a line separator'; Fragment = '"44444444-4444-4444-4444-444444444444' + '\u2028"'; Shown = '44444444-4444-4444-4444-444444444444' + '\u2028' }
+    ) {
+        $V = Invoke-TenantIdValidation -Json ('{ "version": "1.0", "tenantId": ' + $Fragment + ' }')
+        $Finding = @($V.Errors | Where-Object Path -eq 'tenantId')
+        $Finding.Count | Should -Be 1 -Because 'the rule must have been reached for the message to be read'
+        $Finding[0].Message | Should -BeLike "*found '$([System.Management.Automation.WildcardPattern]::Escape($Shown))'*"
+        $Finding[0].Message | Should -Not -Match '[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]'
+    }
+
+    It 'quotes a plain invalid value as it is (BL-113)' {
+        $V = Invoke-TenantIdValidation -Json '{ "version": "1.0", "tenantId": "contoso.onmicrosoft.com" }'
+        @($V.Errors | Where-Object Path -eq 'tenantId')[0].Message | Should -BeLike "*found 'contoso.onmicrosoft.com'*"
+    }
+
     It 'says a one-GUID array is not a string (BL-101)' {
         $V = Invoke-TenantIdValidation -Json '{ "version": "1.0", "tenantId": ["44444444-4444-4444-4444-444444444444"] }'
         $Finding = @($V.Errors | Where-Object Path -eq 'tenantId')

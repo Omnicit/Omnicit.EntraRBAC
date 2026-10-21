@@ -6954,3 +6954,94 @@ foreach ($E in $All) { "ERR:$($E.FullyQualifiedErrorId)" }
         }
     }
 }
+
+Describe 'Initialize-OERAuth token failures reach a public command''s caller exactly once (BL-20)' {
+    # BL-20 pins what was measured on 2026-10-21 (no code change): a token that cannot be acquired reaches the
+    # caller of a public command, with no try above it, as ONE record of Initialize-OERAuth's (the sign-in's
+    # own id) followed by ONE SignInRefused of the command itself (its own Graph or ARM call, refused by the
+    # latch before anything is sent), and no warning. The real Initialize-OERAuth and the real public command
+    # run in a runspace; only what could leave the process is replaced, in that runspace's copy of the module,
+    # by functions that log a line. The host question is faked to $false there for certainty: a runspace is the
+    # 'Default Host', where the real Test-OERHostNonInteractive answers $false anyway (the interactive sign-in
+    # below is therefore not refused as InteractiveSignInUnavailable).
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        function script:New-TfNoTryScenario {
+            param([string]$Log, [string]$Mode, [string]$Call)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    $script:_OERAuthState = $null
+    $script:_OERSessionUncertain = $null
+    $script:_OERInteractiveCredential = $null
+    Set-Item -Path function:script:Test-OERHostNonInteractive -Value { $false }
+    # The Graph token is acquired; the Azure Resource Manager one is not (Mode Arm), or no token at all is (Graph).
+    Set-Item -Path function:script:Get-AzToken -Value {
+        param($ClientId, $Resource, $Tenant, $Scope, $Interactive, $Force, $CredentialPrecedence, $ErrorAction, $WarningAction)
+        [System.IO.File]::AppendAllText('#LOG#', "TOKEN $Resource`n")
+        if ('#MODE#' -eq 'Graph' -or ([string]$Resource -match 'management')) { throw 'NOT-A-REAL-TOKEN the token request failed' }
+        [pscustomobject]@{
+            Token     = 'NOT-A-REAL-TOKEN-tf'
+            ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+            Identity  = 'admin@contoso.com'
+            TenantId  = '66666666-6666-6666-6666-666666666666'
+        }
+    }
+    Set-Item -Path function:script:Get-OERTokenObjectId -Value { '88888888-8888-8888-8888-888888888888' }
+    Set-Item -Path function:script:Connect-MgGraph -Value { [System.IO.File]::AppendAllText('#LOG#', "CONNECT`n") }
+    Set-Item -Path function:script:Get-MgContext -Value {
+        [pscustomobject]@{ AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '11111111-1111-1111-1111-111111111111'; TenantId = '66666666-6666-6666-6666-666666666666'
+            Account = 'admin@contoso.com'; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All') }
+    }
+    Set-Item -Path function:script:Invoke-MgGraphRequest -Value { [System.IO.File]::AppendAllText('#LOG#', "GRAPH`n") }
+    Set-Item -Path function:script:Invoke-WebRequest -Value { [System.IO.File]::AppendAllText('#LOG#', "ARM`n") }
+    Set-Item -Path function:script:Resolve-OERTenantDomain -Value { [System.IO.File]::AppendAllText('#LOG#', "LOOKUP`n"); '66666666-6666-6666-6666-666666666666' }
+}
+$All = @(#CALL# 2>&1)
+foreach ($E in $All) { "ERR:$($E.FullyQualifiedErrorId)" }
+# The four stubs of a transport name above shadow the tripwire's replacements in this runspace's copy of the
+# module, and the tripwire check after the scenario reads that scope: removed here (the nearest definition,
+# which is the stub), so the check sees the replacements again.
+& (Get-Module Omnicit.EntraRBAC) {
+    foreach ($Name in 'Get-AzToken', 'Connect-MgGraph', 'Invoke-MgGraphRequest', 'Invoke-WebRequest') {
+        Remove-Item -Path ('function:' + $Name) -ErrorAction SilentlyContinue
+    }
+}
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#MODE#', $Mode).Replace('#CALL#', $Call))
+        }
+    }
+
+    It 'an Azure Resource Manager token failure reaches Get-OERSubscription''s caller as one ArmTokenAcquisitionFailed and one SignInRefused, with no warning and nothing sent' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-TfNoTryScenario -Log $Log -Mode 'Arm' -Call "Get-OERSubscription -TenantId '66666666-6666-6666-6666-666666666666' -ErrorAction Continue")
+
+        $Run.Output[-1] | Should -BeExactly 'END'
+        @($Run.Output | Where-Object { $_ -like 'ERR:*' }) | Should -Be @(
+            'ERR:ArmTokenAcquisitionFailed,Initialize-OERAuth'
+            'ERR:SignInRefused,Get-OERSubscription'
+        )
+        $Run.Warnings | Should -BeNullOrEmpty
+        # Reach proof: the Graph token was acquired and connected, and the ARM token request is what failed;
+        # no Graph or ARM request left the command.
+        @(Get-Content -LiteralPath $Log | Where-Object { $_ -like 'TOKEN*' -or $_ -eq 'CONNECT' }) |
+            Should -Be @('TOKEN https://graph.microsoft.com/', 'CONNECT', 'TOKEN https://management.azure.com/')
+        @(Get-Content -LiteralPath $Log | Where-Object { $_ -eq 'GRAPH' -or $_ -eq 'ARM' }).Count | Should -Be 0
+    }
+
+    It 'a Microsoft Graph token failure reaches Get-OERGroup''s caller as one GraphTokenAcquisitionFailed and one SignInRefused, with no warning and nothing sent' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-TfNoTryScenario -Log $Log -Mode 'Graph' -Call "Get-OERGroup -Group 'g1' -TenantId '66666666-6666-6666-6666-666666666666' -ErrorAction Continue")
+
+        $Run.Output[-1] | Should -BeExactly 'END'
+        @($Run.Output | Where-Object { $_ -like 'ERR:*' }) | Should -Be @(
+            'ERR:GraphTokenAcquisitionFailed,Initialize-OERAuth'
+            'ERR:SignInRefused,Get-OERGroup'
+        )
+        $Run.Warnings | Should -BeNullOrEmpty
+        @(Get-Content -LiteralPath $Log | Where-Object { $_ -like 'TOKEN*' -or $_ -eq 'CONNECT' }) |
+            Should -Be @('TOKEN https://graph.microsoft.com/')
+        @(Get-Content -LiteralPath $Log | Where-Object { $_ -eq 'GRAPH' -or $_ -eq 'ARM' }).Count | Should -Be 0
+    }
+}
