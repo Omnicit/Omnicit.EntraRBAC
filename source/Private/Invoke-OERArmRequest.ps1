@@ -46,16 +46,18 @@ function Invoke-OERArmRequest {
     page, is refused with ArmResponseUnreadable; the message names the request path and never the
     body. Under -All every failure of a page (a refusal above, a non-2xx answer, a transport failure)
     carries PartialValue (the items aggregated before it, an empty array for the first page), NextLink
-    (the link, or the -Path for the first page) and PageNumber (1-based) as note properties on the
+    (the link, or the -Path for the first page; for ArmResponseUnreadable on a later page, the path of
+    the failing page, not the absolute link) and PageNumber (1-based) as note properties on the
     thrown error's EXCEPTION, never on the ErrorRecord, the way Invoke-OERGraphRequest does. A single
     request carries none of them. A single request whose 2xx body is empty (204) still returns $null,
     and so does a FIRST page of a -All walk with an empty body. Get-OERPageWalkLimit owns the page
     limit (100000 pages).
 
-    Under -ErrorAction SilentlyContinue or Ignore, with no try up the call stack, a failed call
-    returns NOTHING (no partial list, and not $null as an answer) and the record goes to the error
-    stream: a caller that asks for silence must read its -ErrorVariable and never read "no output" as
-    an empty collection.
+    Under -ErrorAction SilentlyContinue, with no try up the call stack, a failed call returns
+    NOTHING (no partial list, and not $null as an answer) and the record is kept in $Error and in the
+    caller's -ErrorVariable: a caller that asks for silence must read it and never read "no output" as
+    an empty collection. Under -ErrorAction Ignore the call also returns nothing and leaves no record
+    at all.
 
     A 429, and a 503 that carries a Retry-After header, are retried with a bounded backoff: the
     Retry-After value is honoured in either RFC 9110 form (delta-seconds or an HTTP-date), with an

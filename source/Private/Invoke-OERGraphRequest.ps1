@@ -61,10 +61,11 @@ function Invoke-OERGraphRequest {
        GraphPagingIncomplete (category InvalidResult), carrying the same three facts, and the page
        after the cause is never requested. A page whose value is an empty array is a normal page,
        and a $null FIRST page (an empty GET body) is still an empty collection. Under
-       -ErrorAction SilentlyContinue or Ignore, with no try up the call stack, a failed walk returns
-       NOTHING (no partial list and no empty collection) and the record goes to the error stream:
-       a caller that asks for silence must read its -ErrorVariable and never read "no output" as
-       "no items".
+       -ErrorAction SilentlyContinue, with no try up the call stack, a failed walk returns NOTHING
+       (no partial list and no empty collection) and the record is kept in $Error and in the
+       caller's -ErrorVariable: a caller that asks for silence must read it and never read "no
+       output" as "no items". Under -ErrorAction Ignore the walk also returns nothing and leaves
+       no record at all.
 
     6. Expected-answer codes: -ExpectedErrorCode lets a caller declare that one or more Graph error
        codes are an ANSWER to its question rather than a failure of it. A declared code is returned
@@ -96,8 +97,9 @@ function Invoke-OERGraphRequest {
     Microsoft Graph paging guidance. A walk that cannot complete (a later page that is $null or has
     no value member, a repeated next link, a walk past the page limit) fails with
     GraphPagingIncomplete and returns no partial list; see the paging paragraph of the description.
-    Under -ErrorAction SilentlyContinue or Ignore the call then returns nothing: read -ErrorVariable,
-    never "no output" as an empty collection.
+    Under -ErrorAction SilentlyContinue the call then returns nothing and keeps the record in $Error
+    and -ErrorVariable: read it, never "no output" as an empty collection. Under -ErrorAction Ignore
+    it also returns nothing and leaves no record at all.
 
     .PARAMETER ExpectedErrorCode
     Graph error codes this caller considers an expected ANSWER rather than a failure -- for example

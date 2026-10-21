@@ -1226,12 +1226,13 @@ out. Worth carrying forward past this one change: it is the shape any future "at
 the error" work in this module would get wrong without re-deriving the same measurement.
 
 **A `-All` walk that cannot complete is refused, never returned short (Sprint 11 step 12,
-2026-10-21; BL-72, BL-63, decision A26).** Until then three shapes ended a walk as though it were
-whole. A later page that was `$null` (an empty body) ended the walk (`break`), and one with no `value`
-member aggregated nothing and named no next link, so it ended it too: both handed back the pages
-before them as the collection. A next link that repeated a page already requested was followed again
-for ever, and so was a service that never ended its next links (the old comment "deliberately no
-page-count cap" is gone: a silent cap would truncate, and a refusal does not). Each is now refused with
+2026-10-21; BL-72, BL-63, decision A26).** Until then four shapes let a walk go wrong, two by ending
+it as though it were whole and two by never ending it. A later page that was `$null` (an empty body)
+ended the walk (`break`), and one with no `value` member aggregated nothing and named no next link,
+so it ended it too: both handed back the pages before them as the collection. A next link that
+repeated a page already requested was followed again for ever, and so was a service that never ended
+its next links (the old comment "deliberately no page-count cap" is gone: a silent cap would truncate,
+and a refusal does not). Each is now refused with
 `GraphPagingIncomplete` (category `InvalidResult`, the one new Graph id), carrying the three facts of
 issue #73 on the exception (`PartialValue`, `NextLink`, `PageNumber`; F1 above); the page after the
 cause is never requested. `Get-OERPageWalkLimit` (100000 pages) is the single owner of the limit, read
@@ -1240,12 +1241,14 @@ against a link chain that never ends, not a page size: it bounds a never-throttl
 it, never by truncating it, which is the defect class `-All` exists to prevent. Unchanged on
 purpose: a `$null` FIRST page is still an empty collection (`@{ value = @() }`), and a later page
 whose `value` is an empty array is a normal page. A caller that asks for silence
-(`-ErrorAction SilentlyContinue` or `Ignore`, with no `try` up the call stack) gets NOTHING on the
-success channel from a failed walk, the first page included (BL-63: a failed first page once came
-back as `@{ value = @() }`, which reads as an empty tenant; the fix was made earlier and this step adds
-the Graph test that holds it), and the record in the error stream and `$Error`; the help of the
-wrapper says a caller that asks for silence must read its `-ErrorVariable`, never "no output" as an
-empty collection.
+(`-ErrorAction SilentlyContinue`, with no `try` up the call stack) gets NOTHING on the success channel
+from a failed walk, the first page included (BL-63: a failed first page once came back as
+`@{ value = @() }`, which reads as an empty tenant; the fix was made earlier and this step adds the
+Graph test that holds it), and the record is kept in `$Error` and in its `-ErrorVariable`; the help of
+the wrapper says a caller that asks for silence must read it, never "no output" as an empty
+collection. Under `-ErrorAction Ignore` the walk also returns nothing and leaves no record at all, not
+in `$Error`, not in `-ErrorVariable` and not in the error stream (the reason `Export-OERInventory`
+pins `Ignore` to `SilentlyContinue`).
 **Proofs** (`tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1`): the Describe "stops at each of its
 own throws, outside any try (F3)" runs the wrapper in a runspace with no `try` under
 `-ErrorAction SilentlyContinue` and holds, for a null later page (S8), a later page without `value`
@@ -1349,10 +1352,13 @@ Behaviour that follows from this design:
   sent. Every failure of a page under `-All`, a refusal, a non-2xx answer or a transport failure,
   carries `PartialValue`, `NextLink` and `PageNumber` on the EXCEPTION (F1 under
   [#graph-wrapper](#graph-wrapper)); for the first page `PartialValue` is `@()`, `NextLink` the
-  `-Path` and `PageNumber` 1. Unchanged on purpose: a single request with an empty body (204) and a
-  FIRST page with an empty body still return `$null`, and a later page whose `value` is an empty array
-  is a normal page. Under `-ErrorAction SilentlyContinue` or `Ignore` with no `try` up the call stack a
-  failed call returns nothing, as in the Graph wrapper. **Proofs**
+  `-Path` and `PageNumber` 1. One exception to the link: `ArmResponseUnreadable` on a LATER page
+  carries the failing page's path (`PathAndQuery`, from `Get-ArmUnreadableBodyRecord -AtPath`), not the
+  absolute link every other later-page failure carries. Unchanged on purpose: a single request with an
+  empty body (204) and a FIRST page with an empty body still return `$null`, and a later page whose
+  `value` is an empty array is a normal page. Under `-ErrorAction SilentlyContinue` with no `try` up
+  the call stack a failed call returns nothing and keeps its record in `$Error` and `-ErrorVariable`;
+  under `Ignore` it returns nothing and leaves no record at all, as in the Graph wrapper. **Proofs**
   (`tests/Unit/Private/Invoke-OERArmRequest.Tests.ps1`): the Describe "stops at each of its own throws,
   outside any try (F3)" holds, for a failed first request (S11) and for each refusal cause (S12: JSON
   null, no `value`, a next link with no host, a limit of 2), the transport's own id as the only
