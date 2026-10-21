@@ -10196,6 +10196,189 @@ Describe 'Get-OERInventory tenantId (BL-88, A14)' {
     }
 }
 
+Describe 'Get-OERInventory names no tenant after its own refused sign-in (BL-157)' {
+    # A refused sign-in does not stop Get-OERInventory (no try stands above it, and the transports refuse
+    # every read that follows), but the module's session then belongs to an EARLIER command, so the document
+    # must not name its tenant. The refusal is found in -ErrorVariable by the writer suffix of the record's
+    # FullyQualifiedErrorId, the terminating kind (an IContainsErrorRecord) as well as the written one.
+    BeforeAll {
+        $script:moduleName = 'Omnicit.EntraRBAC'
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:_OERInventoryRunContext = $null
+            $script:_OERAuthState = [pscustomobject]@{ TenantId = 'contoso.onmicrosoft.com'; TokenTenantId = 'eeee0000-0000-0000-0000-000000000001' }
+        }
+        Mock -ModuleName $script:moduleName Get-OERGroup { }
+    }
+
+    AfterAll {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+    }
+
+    It 'leaves tenantId out when the sign-in WRITES a refusal (<Name>)' -ForEach @(
+        @{ Name = 'SilentlyContinue'; Action = 'SilentlyContinue' }
+        @{ Name = 'Ignore'; Action = 'Ignore' }
+    ) {
+        # A record a Pester mock writes carries no ',<command>' writer suffix (measured), unlike the real
+        # command's, so the mock names it in the id; the runspace Context below uses stand-ins that write
+        # the record from a real function, where PowerShell appends the suffix itself.
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {
+            [CmdletBinding()]
+            param($TenantId, [switch]$IncludeARM)
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('The ARM token could not be acquired.'), 'ArmTokenAcquisitionFailed,Initialize-OERAuth',
+                    [System.Management.Automation.ErrorCategory]::AuthenticationError, $null))
+        }
+        $Inv = Get-OERInventory -Include Groups -WarningAction SilentlyContinue -ErrorAction $Action
+
+        # Reach proof: the sign-in ran and the section was read, so the document is the one the command emits,
+        # and the session an earlier command left is still there, naming a tenant.
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState.TokenTenantId | Should -BeExactly 'eeee0000-0000-0000-0000-000000000001'
+        }
+        $Inv.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.Inventory'
+        $Inv.PSObject.Properties.Name | Should -Not -Contain 'tenantId'
+    }
+
+    It 'names the tenant of a sign-in that wrote nothing' {
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {
+            [CmdletBinding()]
+            param($TenantId, [switch]$IncludeARM)
+        }
+        $Inv = Get-OERInventory -Include Groups -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly
+        $Inv.tenantId | Should -BeExactly 'eeee0000-0000-0000-0000-000000000001'
+    }
+
+    It 'says in its help that a refused sign-in leaves tenantId out and that Ignore keeps the record in $Error' {
+        $Help = Get-Help Get-OERInventory -Full
+        $Description = ((@($Help.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $Description | Should -Match ([regex]::Escape("The key is left out as well when the command's own sign-in was refused (the command carries on and emits what it can read)"))
+        $Description | Should -Match ([regex]::Escape('under -ErrorAction Ignore the refusal'))
+        $Description | Should -Match ([regex]::Escape('is then kept in $Error, as under SilentlyContinue.'))
+    }
+
+    Context 'in a script with no try above it' {
+        BeforeAll {
+            . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+            # The public cmdlet in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere above
+            # it. The script gives its copy of the module an earlier session that names a tenant, a stand-in for
+            # Initialize-OERAuth in the Mode asked for (it logs AUTH), and a Get-OERGroup that reads nothing.
+            function script:New-BlNoTryScenario {
+                param(
+                    [string]$Log,
+                    [string]$Mode,
+                    [string]$Pre,
+                    [string]$Call
+                )
+                [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    $script:_OERAuthState = [pscustomobject]@{ TenantId = 'contoso.onmicrosoft.com'; TokenTenantId = 'eeee0000-0000-0000-0000-000000000001' }
+    # A nested command of a sign-in that went well: writes a record whose writer is NOT Initialize-OERAuth.
+    Set-Item -Path function:script:Resolve-BlNoise -Value {
+        [CmdletBinding()]
+        param()
+        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('A nested lookup failed and was handled.'), 'NestedLookupFailed',
+                [System.Management.Automation.ErrorCategory]::ObjectNotFound, $null))
+    }
+    Set-Item -Path function:script:Initialize-OERAuth -Value {
+        [CmdletBinding()]
+        param($TenantId, [switch]$IncludeARM)
+        [System.IO.File]::AppendAllText('#LOG#', "AUTH`n")
+        switch ('#MODE#') {
+            'Terminate' {
+                $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('The Graph token could not be acquired.'), 'GraphTokenAcquisitionFailed',
+                        [System.Management.Automation.ErrorCategory]::AuthenticationError, $null))
+            }
+            'ArmWrite' {
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('The ARM token could not be acquired.'), 'ArmTokenAcquisitionFailed',
+                        [System.Management.Automation.ErrorCategory]::AuthenticationError, $null))
+                return
+            }
+            'InnerWrite' { Resolve-BlNoise }
+        }
+    }
+    Set-Item -Path function:script:Get-OERGroup -Value { [System.IO.File]::AppendAllText('#LOG#', "READ groups`n") }
+}
+#PRE#
+$Inv = #CALL#
+"INV:$($null -ne $Inv)"
+if ($null -ne $Inv) {
+    "HAS:$($Inv.PSObject.Properties.Name -contains 'tenantId')"
+    "TENANT:$($Inv.tenantId)"
+}
+foreach ($Held in @($Error)) { "HELD:$($Held.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#MODE#', $Mode).Replace('#PRE#', $Pre).Replace('#CALL#', $Call))
+            }
+        }
+
+        It 'a <Mode> sign-in refusal under <Name> emits the inventory with no tenantId, and the script reaches its end' -ForEach @(
+            @{ Mode = 'Terminate'; Name = 'the default preference'; Pre = ''; Call = 'Get-OERInventory -Include Groups' }
+            @{ Mode = 'Terminate'; Name = '-ErrorAction SilentlyContinue'; Pre = ''; Call = 'Get-OERInventory -Include Groups -ErrorAction SilentlyContinue' }
+            @{ Mode = 'Terminate'; Name = '-ErrorAction Ignore'; Pre = ''; Call = 'Get-OERInventory -Include Groups -ErrorAction Ignore' }
+            @{ Mode = 'Terminate'; Name = '$ErrorActionPreference = Ignore'; Pre = '$ErrorActionPreference = ''Ignore'''; Call = 'Get-OERInventory -Include Groups' }
+            @{ Mode = 'ArmWrite'; Name = 'the default preference'; Pre = ''; Call = 'Get-OERInventory -Include Groups' }
+            @{ Mode = 'ArmWrite'; Name = '-ErrorAction SilentlyContinue'; Pre = ''; Call = 'Get-OERInventory -Include Groups -ErrorAction SilentlyContinue' }
+            @{ Mode = 'ArmWrite'; Name = '-ErrorAction Ignore'; Pre = ''; Call = 'Get-OERInventory -Include Groups -ErrorAction Ignore' }
+            @{ Mode = 'ArmWrite'; Name = '$ErrorActionPreference = Ignore'; Pre = '$ErrorActionPreference = ''Ignore'''; Call = 'Get-OERInventory -Include Groups' }
+        ) {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-BlNoTryScenario -Log $Log -Mode $Mode -Pre $Pre -Call $Call)
+            $Run.Output[-1] | Should -BeExactly 'END'
+            # Reach proof: the sign-in ran once, the section was read once, and the document was emitted.
+            @(Get-Content -LiteralPath $Log) | Should -Be @('AUTH', 'READ groups')
+            @($Run.Output | Where-Object { $_ -like 'INV:*' -or $_ -like 'HAS:*' -or $_ -like 'TENANT:*' }) | Should -Be @('INV:True', 'HAS:False', 'TENANT:')
+        }
+
+        It 'a sign-in refusal under -ErrorAction Ignore is held in $Error once, as the pinned call collects it (<Mode>)' -ForEach @(
+            @{ Mode = 'Terminate'; Id = 'GraphTokenAcquisitionFailed,Initialize-OERAuth' }
+            @{ Mode = 'ArmWrite'; Id = 'ArmTokenAcquisitionFailed,Initialize-OERAuth' }
+        ) {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-BlNoTryScenario -Log $Log -Mode $Mode -Pre '' -Call 'Get-OERInventory -Include Groups -ErrorAction Ignore')
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @(Get-Content -LiteralPath $Log) | Should -Be @('AUTH', 'READ groups')
+            @($Run.Output | Where-Object { $_ -like 'HELD:*' }) | Should -Be @("HELD:$Id")
+        }
+
+        It 'a sign-in that went well names the tenant, also when an inner call wrote a record of another writer (<Mode>, <Name>)' -ForEach @(
+            @{ Mode = 'Ok'; Name = 'the default preference'; Call = 'Get-OERInventory -Include Groups' }
+            @{ Mode = 'Ok'; Name = '-ErrorAction Ignore'; Call = 'Get-OERInventory -Include Groups -ErrorAction Ignore' }
+            @{ Mode = 'InnerWrite'; Name = 'the default preference'; Call = 'Get-OERInventory -Include Groups' }
+            @{ Mode = 'InnerWrite'; Name = '-ErrorAction Ignore'; Call = 'Get-OERInventory -Include Groups -ErrorAction Ignore' }
+        ) {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-BlNoTryScenario -Log $Log -Mode $Mode -Pre '' -Call $Call)
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @(Get-Content -LiteralPath $Log) | Should -Be @('AUTH', 'READ groups')
+            @($Run.Output | Where-Object { $_ -like 'INV:*' -or $_ -like 'HAS:*' -or $_ -like 'TENANT:*' }) | Should -Be @('INV:True', 'HAS:True', 'TENANT:eeee0000-0000-0000-0000-000000000001')
+        }
+
+        It 'under -ErrorAction Stop a refusal of the sign-in (<Mode>) ends the command before any read, as before' -ForEach @(
+            @{ Mode = 'Terminate' }
+            @{ Mode = 'ArmWrite' }
+        ) {
+            # Stop ends the whole script outside a try, so the call stands in one here; the check stays in
+            # begin and is never reached, since the sign-in's own statement ends the command.
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Call = 'try { Get-OERInventory -Include Groups -ErrorAction Stop } catch { ''CAUGHT'' }'
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-BlNoTryScenario -Log $Log -Mode $Mode -Pre '' -Call $Call)
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @(Get-Content -LiteralPath $Log) | Should -Be @('AUTH')
+            @($Run.Output | Where-Object { $_ -like 'HAS:*' -or $_ -like 'TENANT:*' }) | Should -Be @('HAS:False', 'TENANT:')
+        }
+    }
+}
+
 Describe 'Get-OERInventory help documents the tenantId (BL-88, A14)' {
     It 'says what tenantId names, what Invoke-OERStructure does with it, and when it is left out' {
         # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.

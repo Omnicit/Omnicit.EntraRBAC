@@ -385,8 +385,11 @@ function Get-OERInventory {
     organizations, names no tenant ID). Invoke-OERStructure applies the document only in that tenant
     and refuses it anywhere else with DocumentTenantMismatch. When the token reports no tenant ID, or
     the module holds no session, the key is left out, with no warning, and the document carries no
-    tenant check. To use the inventory as a template for another tenant, change its tenantId to that
-    tenant's ID or remove the key.
+    tenant check. The key is left out as well when the command's own sign-in was refused (the command
+    carries on and emits what it can read), since a session left by an earlier command is then not the
+    tenant this inventory was read in; under -ErrorAction Ignore the refusal's error record is then
+    kept in $Error, as under SilentlyContinue. To use the inventory as a template for another tenant,
+    change its tenantId to that tenant's ID or remove the key.
 
     .PARAMETER Include
     The building-block sections to read. Defaults to Groups, AdministrativeUnits, Catalogs and
@@ -553,10 +556,42 @@ function Get-OERInventory {
         $ChecksSubscription = ($Include -contains 'RoleAssignments' -or $RolePoliciesRead) -and
             (-not [string]::IsNullOrWhiteSpace($Scope) -or -not [string]::IsNullOrWhiteSpace($Subscription))
         if ($IncludeARM -or $ChecksSubscription) { $AuthParams.IncludeARM = $true }
-        Initialize-OERAuth @AuthParams
-        # BL-88 (A14): the tenant this inventory names, captured here under the session this command
-        # signed in under, never read again where the document is assembled.
-        $DocumentTenantId = Get-OERInventoryTenantId
+        # Sprint 11 step 13 (BL-157): a sign-in this command's own Initialize-OERAuth refused names no
+        # tenant. The command still carries on (no try here, as before: a refusal ends only that statement
+        # and the reads that follow are refused by the transports), but a session an EARLIER command left
+        # in the module is not the tenant this inventory was read in, so the document's tenantId stays
+        # $null. The refusal is found as Export-OERInventory finds its own: -ErrorVariable holds the
+        # record of a terminating refusal (a CmdletInvocationException, an IContainsErrorRecord, whose
+        # ErrorRecord has the id) as well as a written one (ArmTokenAcquisitionFailed), and a record
+        # is the sign-in's own when its FullyQualifiedErrorId ends, ordinal, with the writer's suffix
+        # ',Initialize-OERAuth' -- never found by searching a message. The variable also holds what the
+        # inner calls of a SUCCESSFUL sign-in wrote, which carry another writer and so never count.
+        # Under -ErrorAction Ignore (or $ErrorActionPreference = 'Ignore') PowerShell adds a written
+        # record to NO -ErrorVariable (measured), so only Ignore is pinned away: the call runs under
+        # SilentlyContinue, which collects the record and shows nothing, as Ignore shows nothing. The
+        # cost is that under Ignore the record lands in $Error, as under SilentlyContinue.
+        $SignInErrors = $null
+        $SignInSplat = @{}
+        if ($ErrorActionPreference -eq 'Ignore') { $SignInSplat.ErrorAction = 'SilentlyContinue' }
+        Initialize-OERAuth @AuthParams @SignInSplat -ErrorVariable SignInErrors
+        $SignInRefused = $false
+        foreach ($SignInError in @($SignInErrors)) {
+            if ($null -eq $SignInError) { continue }
+            $SignInRecord = if ($SignInError -is [System.Management.Automation.ErrorRecord]) {
+                $SignInError
+            } elseif ($SignInError -is [System.Management.Automation.IContainsErrorRecord]) {
+                $SignInError.ErrorRecord
+            }
+            if ($null -ne $SignInRecord -and
+                ([string]$SignInRecord.FullyQualifiedErrorId).EndsWith(',Initialize-OERAuth', [System.StringComparison]::Ordinal)) {
+                $SignInRefused = $true
+            }
+        }
+        if (-not $SignInRefused) {
+            # BL-88 (A14): the tenant this inventory names, captured here under the session this command
+            # signed in under, never read again where the document is assembled.
+            $DocumentTenantId = Get-OERInventoryTenantId
+        }
     }
     process {
         # Per-invocation id -> name cache (Groups eligibility + AccessReviews reviewers + directory role principals).
