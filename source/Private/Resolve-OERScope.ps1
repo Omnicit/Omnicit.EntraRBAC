@@ -16,7 +16,14 @@ function Resolve-OERScope {
     message names every candidate id, and nothing further is read. The caller re-runs with the
     subscription id, or with the management group name (which is its id). A name that exactly one
     carries resolves as before, and a name nobody carries keeps the plain not-found throw. Throws on
-    caller error -- the public cmdlets catch and route the message through Write-CmdletError.
+    caller error -- the public cmdlets catch and route the message through Write-CmdletError. Every
+    throw of this function is an ErrorRecord (never a bare string) carrying an id the module already
+    publishes, with the message unchanged and the value as target: a refused argument combination or
+    a scope not starting with '/' is 'InvalidScope' (InvalidArgument); a subscription nobody
+    carries is 'SubscriptionNotFound', a resource nobody carries 'ResourceNotFound' and a management
+    group nobody carries 'ManagementGroupNotFound' (ObjectNotFound); an ambiguous subscription,
+    resource or management group name is 'AmbiguousName' (InvalidArgument). A caller that wraps the
+    message under its own id keeps publishing that id.
 
     .PARAMETER Scope
     A raw ARM scope string such as '/subscriptions/{id}/resourceGroups/{rg}'. Must start with '/'.
@@ -55,29 +62,36 @@ function Resolve-OERScope {
         [string]$ResourceName
     )
 
+    # Every refusal below is raised through this one builder: a typed ErrorRecord with an id the
+    # module already publishes, the message exactly as it was, and the value as target.
+    function Get-ScopeRefusal ([string]$ErrorId, [System.Management.Automation.ErrorCategory]$Category, [string]$Message, $Target) {
+        [System.Management.Automation.ErrorRecord]::new([System.Exception]::new($Message), $ErrorId, $Category, $Target)
+    }
+
     $Supplied = @()
     if ($Scope) { $Supplied += '-Scope' }
     if ($Subscription) { $Supplied += '-Subscription' }
     if ($ManagementGroup) { $Supplied += '-ManagementGroup' }
     if ($Supplied.Count -gt 1) {
-        throw "Supply only one of -Scope, -Subscription or -ManagementGroup (got: $($Supplied -join ', '))."
+        $SuppliedValues = (@($Scope, $Subscription, $ManagementGroup) | Where-Object { $PSItem }) -join ', '
+        throw (Get-ScopeRefusal -ErrorId 'InvalidScope' -Category InvalidArgument -Message "Supply only one of -Scope, -Subscription or -ManagementGroup (got: $($Supplied -join ', '))." -Target $SuppliedValues)
     }
     if ($ResourceGroup -and -not $Subscription) {
-        throw '-ResourceGroup requires -Subscription.'
+        throw (Get-ScopeRefusal -ErrorId 'InvalidScope' -Category InvalidArgument -Message '-ResourceGroup requires -Subscription.' -Target $ResourceGroup)
     }
     if ($ResourceType -and -not $ResourceName) {
-        throw '-ResourceType requires -ResourceName.'
+        throw (Get-ScopeRefusal -ErrorId 'InvalidScope' -Category InvalidArgument -Message '-ResourceType requires -ResourceName.' -Target $ResourceType)
     }
     if ($ResourceName -and -not ($Subscription -and $ResourceGroup)) {
-        throw '-ResourceName requires -Subscription and -ResourceGroup.'
+        throw (Get-ScopeRefusal -ErrorId 'InvalidScope' -Category InvalidArgument -Message '-ResourceName requires -Subscription and -ResourceGroup.' -Target $ResourceName)
     }
     if ($Supplied.Count -eq 0) {
-        throw 'A scope is required: supply -Scope, -Subscription (optionally with -ResourceGroup) or -ManagementGroup.'
+        throw (Get-ScopeRefusal -ErrorId 'InvalidScope' -Category InvalidArgument -Message 'A scope is required: supply -Scope, -Subscription (optionally with -ResourceGroup) or -ManagementGroup.' -Target $null)
     }
 
     if ($Scope) {
         if ($Scope -notlike '/*') {
-            throw "Scope '$Scope' is not a valid ARM resource id: it must start with '/'."
+            throw (Get-ScopeRefusal -ErrorId 'InvalidScope' -Category InvalidArgument -Message "Scope '$Scope' is not a valid ARM resource id: it must start with '/'." -Target $Scope)
         }
         return $Scope
     }
@@ -104,7 +118,7 @@ function Resolve-OERScope {
                     $Subscription)
             }
             if ($SubMatches.Count -eq 0) {
-                throw "Subscription '$Subscription' was not found or you do not have access to it."
+                throw (Get-ScopeRefusal -ErrorId 'SubscriptionNotFound' -Category ObjectNotFound -Message "Subscription '$Subscription' was not found or you do not have access to it." -Target $Subscription)
             }
             [string]$SubMatches[0].subscriptionId
         }
@@ -118,10 +132,10 @@ function Resolve-OERScope {
             $ResourceMatches = @($ResourceMatches)
             if ($ResourceMatches.Count -eq 0) {
                 $TypeHint = if ($ResourceType) { " of type '$ResourceType'" } else { '' }
-                throw "Resource '$ResourceName'$TypeHint was not found in resource group '$ResourceGroup'."
+                throw (Get-ScopeRefusal -ErrorId 'ResourceNotFound' -Category ObjectNotFound -Message "Resource '$ResourceName'$TypeHint was not found in resource group '$ResourceGroup'." -Target $ResourceName)
             }
             if ($ResourceMatches.Count -gt 1) {
-                throw "Resource '$ResourceName' is ambiguous in resource group '$ResourceGroup' (more than one type matches); specify -ResourceType."
+                throw (Get-ScopeRefusal -ErrorId 'AmbiguousName' -Category InvalidArgument -Message "Resource '$ResourceName' is ambiguous in resource group '$ResourceGroup' (more than one type matches); specify -ResourceType." -Target $ResourceName)
             }
             return [string]$ResourceMatches[0].id
         }
@@ -167,7 +181,7 @@ function Resolve-OERScope {
             $ManagementGroup)
     }
     if ($MgMatches.Count -eq 0) {
-        throw "Management group '$ManagementGroup' was not found, or you do not have access to it."
+        throw (Get-ScopeRefusal -ErrorId 'ManagementGroupNotFound' -Category ObjectNotFound -Message "Management group '$ManagementGroup' was not found, or you do not have access to it." -Target $ManagementGroup)
     }
     return [string]$MgMatches[0].id
 }
