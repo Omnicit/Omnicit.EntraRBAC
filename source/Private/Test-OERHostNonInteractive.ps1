@@ -5,8 +5,10 @@ function Test-OERHostNonInteractive {
 
     .DESCRIPTION
     Initialize-OERAuth asks this before an interactive (browser) sign-in: a host started with
-    pwsh -NonInteractive cannot complete one, and AzAuth would still open the browser from the token
-    request. This function is the single place that decides it.
+    pwsh -NonInteractive declares that nobody can answer a prompt, so the module does not start an
+    interactive sign-in there (a policy; whether a browser could be completed in such a host is not
+    measured), and AzAuth would still open the browser from the token request. This function is the
+    single place that decides it.
 
     It returns $true only when $Host.Name is 'ConsoleHost' and the console's user interface has its
     ThrowOnReadAndPrompt switch set. PowerShell exposes that switch as a setter only, so it is read by

@@ -620,8 +620,10 @@ session's own object id and tenant, and otherwise runs exactly one interactive r
 `Connect-OER`, `-ForceRefresh`, a claims challenge, a cloud switch or another sign-in type. The tracker
 has one owner, `Initialize-OERAuth`; never add `-TokenCache`, a broker or a token on disk. It is READ
 from AzAuth 2.11.0 and Azure.Identity 1.21.0, not measured live: write "fewer prompts", never "no
-prompt" -- a failed refresh can open the browser inside AzAuth, and with `-IncludeARM` the second token
-still prompts. `Why: docs/development/rationale.md#the-silent-renewal-of-an-interactive-session`
+prompt" -- a failed refresh can open the browser inside AzAuth, and the tracker names ONE credential,
+so a renewal is silent only for the resource whose interactive request came last: every `-IncludeARM`
+sign-in requests ARM last, so a session using both resources gets no silent renewal (ruling R-3; the
+silent renewal helps a Graph-only or ARM-only session). `Why: docs/development/rationale.md#the-silent-renewal-of-an-interactive-session`
 
 **An interactive sign-in in a host started with `pwsh -NonInteractive` is refused** with the terminating
 `InteractiveSignInUnavailable`, silent renewal included, after the cached return and before any tenant

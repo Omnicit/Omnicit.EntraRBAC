@@ -43,13 +43,18 @@ function Connect-OER {
     90 minutes), so a longer run has to renew it. Where the sign-in type allows it, the module
     renews a token when a command starts within five minutes of the token's expiry, and in the
     middle of a command when Microsoft Graph or Azure Resource Manager rejects it with 401, after
-    which the rejected request is sent once more. A renewal signs in again. An interactive session first
-    asks AzAuth (2.11.0 and later) to renew from the interactive credential it already holds, with
-    no prompt, in the same tenant: the token is accepted only for the account the session signed in
-    with, and otherwise the browser opens once, as before. That is read from AzAuth's source, not
+    which the rejected request is sent once more. A renewal signs in again. An interactive session,
+    when a command starts near the token's expiry, first asks AzAuth (2.11.0 and later) to renew
+    from the interactive credential it already holds, with no prompt, in the same tenant: the token
+    is accepted only for the account the session signed in with, and otherwise the browser opens
+    once, as before. The renewal after a 401 always signs in interactively. AzAuth holds one
+    interactive credential, the one the last interactive request built, and a renewal is silent
+    only for the resource whose interactive request came last; -IncludeARM sign-ins request Azure
+    Resource Manager last, so a session that uses both resources alternates that credential
+    between the two and still prompts for each renewal. That is read from AzAuth's source, not
     measured against a tenant, and it promises fewer prompts, not none: if AzAuth cannot renew from
     its stored credential it can still open the browser itself, with no timeout the module can
-    bound, and with -IncludeARM a second token renewed in the same call can still prompt. So an
+    bound. So an
     interactive long run can still ask you to sign in (choose the account the session signed in
     with; the account picker also offers other accounts of the same tenant, and the command then
     carries on as the one you pick), and a device code session prints a new code to enter.

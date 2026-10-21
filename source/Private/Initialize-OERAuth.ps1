@@ -36,7 +36,8 @@ function Initialize-OERAuth {
     that renewal prompts depends on the sign-in type; see about_Omnicit.EntraRBAC, LONG RUNS.
 
     An interactive session is renewed without a prompt where AzAuth can answer from the interactive
-    credential it already holds (A22, BL-115). Get-AzToken (AzAuth 2.11.0 and later) accepts a
+    credential it already holds (A22, BL-115). As READ from the AzAuth 2.11.0 and Azure.Identity 1.21.0
+    sources, not measured against a tenant, Get-AzToken (AzAuth 2.11.0 and later) accepts a
     non-interactive request that tries that credential first when the request is for the tenant of the
     last token call: the renewal is sent without -Interactive and without -ClientId, with
     -CredentialPrecedence Environment, so AzAuth's chain holds the stored interactive credential and the
@@ -55,8 +56,10 @@ function Initialize-OERAuth {
     identity, client secret and client certificate sign-ins never take this path.
 
     An interactive (browser) sign-in in a console host that was started with pwsh -NonInteractive is
-    refused with a terminating InteractiveSignInUnavailable error (BL-100): such a host cannot complete
-    a browser sign-in, so the silent renewal above is refused with it, and nothing is requested. The
+    refused with a terminating InteractiveSignInUnavailable error (BL-100): -NonInteractive declares
+    that nobody can answer a prompt, so the module does not start an interactive sign-in there (a policy;
+    whether a browser could be completed in such a host is not measured). The silent renewal above is
+    refused with it, and nothing is requested. The
     refusal stands after the cached return and the credential checks and before the tenant lookup and
     every token call; the command stays latched, like every other refusal. Test-OERHostNonInteractive
     decides it, and does not detect a service or scheduled task that runs without -NonInteractive, or a
@@ -724,8 +727,9 @@ function Initialize-OERAuth {
         }
     }
 
-    # BL-100 point 2: an interactive (browser) sign-in in a host started with -NonInteractive cannot be
-    # completed, and AzAuth would still open the browser from the token request. Refused here, once, for
+    # BL-100 point 2: -NonInteractive declares that nobody can answer a prompt, so an interactive (browser)
+    # sign-in is not started in such a host (policy; whether a browser could be completed there is not
+    # measured), and AzAuth would still open the browser from the token request. Refused here, once, for
     # every interactive token request below (Graph, ARM and the silent renewal alike): placed after the
     # cached return (a session that needs no token is answered), after the credential checks and the
     # app-only check, and BEFORE the tenant lookup and every token call, so nothing is requested. The
@@ -734,8 +738,9 @@ function Initialize-OERAuth {
     if ($EffectiveMethod -eq 'Interactive' -and (Test-OERHostNonInteractive)) {
         Write-CmdletError `
             -Message ([System.Exception]::new(
-                "This PowerShell host was started with -NonInteractive and cannot complete a browser sign-in, " +
-                "so no token was requested for tenant '$EffectiveTenant'. Use Connect-OER with a certificate " +
+                "This PowerShell host was started with -NonInteractive, which declares that nobody can answer a " +
+                "prompt, so Omnicit.EntraRBAC does not start a browser sign-in here and no token was requested " +
+                "for tenant '$EffectiveTenant'. Use Connect-OER with a certificate " +
                 "(-ClientId and -Certificate or -CertificatePath), a client secret (-ClientId and -ClientSecret), " +
                 "a managed identity (-ManagedIdentity) or -DeviceCode instead.")) `
             -ErrorId 'InteractiveSignInUnavailable' `

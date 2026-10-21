@@ -3938,7 +3938,8 @@ described the retired warning are kept as history and labelled HISTORY.
 
 **Which AzAuth version each measurement describes, and the re-check against 2.10.0.** The spike ran
 against AzAuth 2.9.0 / Azure.Identity 1.19.0. Of the live run, sections 1-4 and 6 of the checklist
-ran on AzAuth 2.9.0 and section 5 on AzAuth 2.10.0. The manifest pins 2.9.0 as a MINIMUM, so a user
+ran on AzAuth 2.9.0 and section 5 on AzAuth 2.10.0. The manifest pinned 2.9.0 as a MINIMUM when this
+was written (the floor is now 2.11.0, see [#dependencies](#dependencies)), so a user
 gets whatever newer binary is on `PSModulePath`, and three load-bearing AzAuth claims -- the
 `-Force` condition and the credential-reuse predicate recorded here, and the `-TokenCache`
 hardcoded authority recorded as [#sovereign-clouds](#sovereign-clouds) item 6 -- were therefore
@@ -3948,7 +3949,11 @@ diffing the result against 2.9.0's. All three hold. DECOMPILED: `AzAuth.Core.dll
 the complete user-string heap and the complete MemberRef table all diff clean -- so 2.10.0 is a
 dependency bump and every claim measured against 2.9.0's binaries carries over unchanged. That is a
 metadata and IL comparison, not a runtime measurement; the corroborating MEASURED half is checklist
-section 5, which ran the module against 2.10.0 and behaved as this section records. One trap comes
+section 5, which ran the module against 2.10.0 and behaved as this section records. For 2.11.0 only
+the change of pull request 236 was read (see [#the-silent-renewal-of-an-interactive-session](#the-silent-renewal-of-an-interactive-session),
+M1); the other AzAuth claims decompiled above (credential reuse for a client secret, the `-Force`
+condition as recorded for the earlier releases, the device code queue) were not re-checked
+against 2.11.0's binaries, and the step's live checklist is what measures them. One trap comes
 with the newer package and is recorded under [#sovereign-clouds](#sovereign-clouds): from
 Azure.Identity 1.21.0 the implementation lives in `Azure.Core.dll`, and `Azure.Identity.dll` itself
 is an empty forwarding facade.
@@ -6717,19 +6722,32 @@ interactive request returned a token; a request that throws leaves it cleared, s
 interactive. It is only this module's view: a `Get-AzToken` call made outside the module, or a reload of
 the module, is invisible to it. The object id and tenant check on the silent token and the single
 interactive fallback keep that safe. Never add `-TokenCache` (gate 7 of
-[#static-source-gates](#static-source-gates) holds it), a broker or a token on disk to make the renewal
+[#static-source-gates](#static-source-gates) holds it at the `Get-AzToken` call site only; both call
+sites splat, so a `TokenCache` key in the splat is held by review alone), a broker or a token on disk to make the renewal
 more reliable: each reaches a different credential store than the one this design is read against.
 
 **Known limits.**
 
-- **(a) With `-IncludeARM`, when both tokens need renewing in one call, the second resource still
-  prompts.** AzAuth holds one credential, the last one used. The silent Graph request leaves the tracker
-  naming the Graph client id; the ARM interactive request passes no client id, so the tracker does not
-  match it and the ARM token is requested interactively. Read in the code and the sources, not measured.
+- **(a) A session that uses Azure Resource Manager as well (`-IncludeARM`) gets no silent renewal.**
+  AzAuth holds one interactive credential, the one the last interactive request built, and the tracker
+  names that one credential. A renewal is silent only for the resource whose interactive request came
+  LAST. Every `-IncludeARM` sign-in requests ARM last, so afterwards the tracker names the ARM
+  credential (client id empty). When both tokens are due, the Graph renewal finds the tracker naming ARM
+  and is interactive, which moves the tracker to Graph; the ARM renewal then finds the tracker naming
+  Graph and is interactive too, which moves it back to ARM; the next hour repeats, and the same
+  alternation happens when the two expire in different commands. So the silent renewal helps a session
+  that uses only Microsoft Graph (or only Azure Resource Manager); a session using both prompts as often
+  as before this step. Ruling R-3 accepted that cost; a design that avoids it (one client id for both
+  requests, or a Graph-first ordering) is a backlog question, not decided. Read in the code and the
+  sources, not measured.
 - **(b) A renewal whose refresh fails can open the browser inside AzAuth (M2).** Read from AzAuth 2.11.0
   and Azure.Identity 1.21.0, not measured live: if the refresh inside the stored credential fails with
-  "UI required", Azure.Identity opens the browser from the non-interactive call, with no timeout the
-  module can bound. The module cannot tell that from a failure: a token the call then returns for another
+  "UI required", Azure.Identity opens the browser from the non-interactive call. Nothing bounds that
+  wait: `GetAzToken.cs:218-233` passes `-TimeoutSeconds` in the non-interactive parameter set only as
+  the `NetworkTimeout` of the credentials it builds (`TokenManager.NonInteractive.cs:31-62`), the
+  stored interactive credential gets no such bound, and the call's only cancellation is the cmdlet's
+  StopProcessing token, so neither the module nor `-TimeoutSeconds` ends the wait and Ctrl+C does
+  (read from the AzAuth 2.11.0 release commit `aed8163`, not measured). The module cannot tell that from a failure: a token the call then returns for another
   account is discarded and a second, interactive request opens a second browser. So the renewal narrows
   the prompts to those AzAuth cannot avoid; the texts promise fewer, never none, and keep "stay at the
   keyboard".
@@ -6742,16 +6760,23 @@ more reliable: each reaches a different credential store than the one this desig
 
 **If wrong.** Remove the two `Invoke-SilentRenewal` branches: the interactive request alone is exactly
 the behaviour before this step, and the tracker is then written for nothing. The tests of
-`tests/Unit/Private/Initialize-OERAuth.Tests.ps1` drive the attempt through the real `Get-OERTokenObjectId`
-with JWT-shaped tokens and count each attempt from the function's own verbose lines, so a combination
-`Get-AzToken`'s parameter sets refuse (never reaching the mock) is still seen.
+`tests/Unit/Private/Initialize-OERAuth.Tests.ps1` count each attempt from the function's own verbose
+lines, so a combination `Get-AzToken`'s parameter sets refuse (never reaching the mock) is still seen;
+most of them read the object id through a fake reader, and one Context drives the attempt through the
+real `Get-OERTokenObjectId` with JWT-shaped tokens.
 
 ### An interactive sign-in is refused in a non-interactive host
 
-**The finding (BL-100).** An interactive (browser) sign-in in a host that cannot show a browser either
-hangs until AzAuth's timeout or fails far from its cause, and AzAuth opens the browser from the token
-request regardless. The silent renewal above makes it matter more: a renewal near a token's expiry could
-reach the browser in a console nobody is sitting at.
+**The finding (BL-100).** `pwsh -NonInteractive` declares that nobody can answer a prompt, so the module
+does not start an interactive (browser) sign-in in such a host: the refusal is a POLICY, not a measured
+inability. What was measured (M3 below) is only that the host carries the flag. Whether a browser sign-in
+could be completed in a `-NonInteractive` console (an agent's tool host or a scheduled task that runs only
+when the user is logged on, on a desktop session, say) is NOT MEASURED: an Azure.Identity browser sign-in
+does not read the console, it starts the system browser and waits on a loopback listener, so it may well
+work there. The policy stands because such a host is where nobody is expected to answer, AzAuth opens the
+browser from the token request regardless, and an answer nobody gives could leave it waiting until a
+timeout (not measured either). The silent renewal above makes it matter more: a renewal near a token's expiry could reach the
+browser in a console nobody is sitting at.
 
 **M3: how the question is answered (MEASURED against the PowerShell 7.2.0 and 7.6.0 sources and in this
 repository's tool host, 2026-10-21).** `ConsoleHostUserInterface._throwOnReadAndPrompt` is a private

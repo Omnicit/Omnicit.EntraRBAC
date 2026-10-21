@@ -32,11 +32,11 @@ next link already requested and a walk past 100000 pages, with `GraphPagingIncom
 `ArmPagingIncomplete`, and an Azure body that is not JSON, with `ArmResponseUnreadable`. Under
 `-ErrorAction SilentlyContinue` such a read returns nothing.
 
-AzAuth 2.11.0 or later is now required. An expired interactive session is renewed without a prompt
-where AzAuth can answer from its stored credential, for the same account and tenant only. In a
-`pwsh -NonInteractive` host an interactive sign-in is refused with `InteractiveSignInUnavailable`.
-Tenant profile files now escape every kind of single quote PowerShell reads, so a curly one no
-longer corrupts a profile.
+AzAuth 2.11.0 or later is required. An interactive session near expiry first tries to renew without
+a prompt (same account and tenant only; no help for a session also using Azure Resource Manager). A
+`pwsh -NonInteractive` host refuses an interactive sign-in (`InteractiveSignInUnavailable`). Profile
+files escape every single quote. An unresolvable scope or subscription reports its own error id, and
+`Get-OERInventory` names no `tenantId` after its own refused sign-in.
 
 ## [1.3.0] - 2026-10-19
 

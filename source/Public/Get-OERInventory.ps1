@@ -386,7 +386,8 @@ function Get-OERInventory {
     and refuses it anywhere else with DocumentTenantMismatch. When the token reports no tenant ID, or
     the module holds no session, the key is left out, with no warning, and the document carries no
     tenant check. The key is left out as well when the command's own sign-in was refused (the command
-    carries on and emits what it can read), since a session left by an earlier command is then not the
+    carries on, every read it attempts is refused and nothing is sent, and it emits the document
+    without tenantId), since a session left by an earlier command is then not the
     tenant this inventory was read in; under -ErrorAction Ignore the refusal's error record is then
     kept in $Error, as under SilentlyContinue. To use the inventory as a template for another tenant,
     change its tenantId to that tenant's ID or remove the key.
@@ -575,6 +576,10 @@ function Get-OERInventory {
         if ($ErrorActionPreference -eq 'Ignore') { $SignInSplat.ErrorAction = 'SilentlyContinue' }
         Initialize-OERAuth @AuthParams @SignInSplat -ErrorVariable SignInErrors
         $SignInRefused = $false
+        # Initialised here, never left to the conditional below: a variable of the same name in a calling
+        # command (Export-OERInventory has one) is visible through dynamic scoping and would otherwise be
+        # read after a refused sign-in.
+        $DocumentTenantId = $null
         foreach ($SignInError in @($SignInErrors)) {
             if ($null -eq $SignInError) { continue }
             $SignInRecord = if ($SignInError -is [System.Management.Automation.ErrorRecord]) {

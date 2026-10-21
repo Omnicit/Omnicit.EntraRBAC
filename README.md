@@ -159,8 +159,9 @@ Connect-OER -TenantAlias contoso
 Calling `Connect-OER` explicitly is optional -- all OER cmdlets call `Initialize-OERAuth`
 automatically on first use.
 
-An interactive (browser) sign-in needs a console that can show a browser. In a PowerShell started
-with `pwsh -NonInteractive` the module refuses it with `InteractiveSignInUnavailable`, before any
+A PowerShell started with `pwsh -NonInteractive` declares that nobody can answer a prompt, so the
+module does not start an interactive (browser) sign-in there: it refuses it with
+`InteractiveSignInUnavailable`, before any
 tenant lookup or token request, and so it refuses the silent renewal of an interactive session
 (see [Long runs](#long-runs)); a session already held and still valid is answered from the cache.
 Use a certificate, a client secret, a managed identity or `-DeviceCode` there. The module detects
@@ -314,7 +315,7 @@ depends on the sign-in type:
 
 | Sign-in type | Renewal of the token |
 |---|---|
-| Interactive | First tries to renew without a prompt, from the interactive credential AzAuth already holds (see below); when that is not possible the browser opens to sign in again, so a long run can still ask you to sign in. The account picker lets you choose another account of the same tenant, and the command then carries on as that account: choose the account the session signed in with |
+| Interactive | When a command starts near the token's expiry, first tries to renew without a prompt, from the interactive credential AzAuth already holds (see below); when that is not possible, and always for the renewal after a 401, the browser opens to sign in again, so a long run can still ask you to sign in. The account picker lets you choose another account of the same tenant, and the command then carries on as that account: choose the account the session signed in with |
 | Device code | Every renewal prints a new code to enter, about once an hour, as every device code sign-in does: see the known limitation under [Switching tenants](#switching-tenants) |
 | Managed identity | Renews with no prompt |
 | Client secret and certificate | Not renewed, since the module never keeps the secret or certificate: once the token has expired a request is refused with `AppOnlyTokenRefreshUnsatisfiable`, and a command that starts within five minutes of its expiry, or later, fails to sign in with `AppOnlySessionCredentialUnavailable`, until you run `Connect-OER` with the secret or certificate again |
@@ -324,10 +325,13 @@ renew an interactive session without `-Interactive`, so AzAuth answers from the 
 credential it already holds. It does so only for the tenant, client and cloud the session signed in
 with, and accepts the token only when it belongs to the account and tenant the session already has;
 any other outcome is discarded and the browser opens once, as before. It is not used for
-`Connect-OER` itself, for `-Force`, for a claims challenge, for a cloud switch or for any sign-in
-type but interactive. Two limits. With `-IncludeARM`, when both the Microsoft Graph and the Azure
-Resource Manager token need renewing in one call, the second one still prompts: AzAuth holds one
-credential, the last one used. And this is read from the sources of AzAuth 2.11.0 and Azure.Identity
+`Connect-OER` itself, for the renewal after a request was rejected with 401 (which always signs in
+interactively), for a claims challenge, for a cloud switch or for any sign-in type but interactive.
+Two limits. AzAuth holds one interactive credential, the one the last interactive request built. A
+renewal is silent only for the resource whose interactive request came last, and `-IncludeARM`
+sign-ins request Azure Resource Manager last, so a session that uses both resources alternates that
+credential between the two and still prompts for each renewal; the silent renewal helps a session
+that uses only Microsoft Graph (or only Azure Resource Manager). And this is read from the sources of AzAuth 2.11.0 and Azure.Identity
 1.21.0, not measured against a tenant: if the refresh inside the stored credential fails because
 it needs the user, Azure.Identity opens the browser from that non-interactive request, with no
 timeout the module can bound, and the module then signs in interactively, which can be a second

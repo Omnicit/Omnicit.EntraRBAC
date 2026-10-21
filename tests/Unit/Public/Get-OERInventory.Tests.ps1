@@ -10227,6 +10227,12 @@ Describe 'Get-OERInventory names no tenant after its own refused sign-in (BL-157
         Mock -ModuleName $script:moduleName Initialize-OERAuth {
             [CmdletBinding()]
             param($TenantId, [switch]$IncludeARM)
+            # The mock body lives in the test's session state, so its WriteError reads the GLOBAL
+            # preference (Stop in the gate), while the real Initialize-OERAuth is a child scope of
+            # Get-OERInventory in the module and inherits the preference the call runs under: the
+            # SilentlyContinue of the first row, and the SilentlyContinue the pin gives the Ignore row.
+            # Write under that preference, as the real function would.
+            $ErrorActionPreference = 'SilentlyContinue'
             $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
                     [System.Exception]::new('The ARM token could not be acquired.'), 'ArmTokenAcquisitionFailed,Initialize-OERAuth',
                     [System.Management.Automation.ErrorCategory]::AuthenticationError, $null))
@@ -10244,6 +10250,29 @@ Describe 'Get-OERInventory names no tenant after its own refused sign-in (BL-157
         $Inv.PSObject.Properties.Name | Should -Not -Contain 'tenantId'
     }
 
+    It 'leaves tenantId out when a calling command has a $DocumentTenantId of its own (dynamic scope)' {
+        # Export-OERInventory sets a variable of this name before it calls Get-OERInventory, and a variable of
+        # the caller is visible to the called command. After a refused sign-in the command must not read it.
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {
+            [CmdletBinding()]
+            param($TenantId, [switch]$IncludeARM)
+            $ErrorActionPreference = 'SilentlyContinue'
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('The ARM token could not be acquired.'), 'ArmTokenAcquisitionFailed,Initialize-OERAuth',
+                    [System.Management.Automation.ErrorCategory]::AuthenticationError, $null))
+        }
+        $Inv = InModuleScope $script:moduleName {
+            $DocumentTenantId = 'dddd0000-0000-0000-0000-000000000004'
+            Get-OERInventory -Include Groups -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        }
+
+        # Reach proof: the sign-in ran and the section was read, so the document is the one the command emits.
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly
+        $Inv.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.Inventory'
+        $Inv.PSObject.Properties.Name | Should -Not -Contain 'tenantId'
+    }
+
     It 'names the tenant of a sign-in that wrote nothing' {
         Mock -ModuleName $script:moduleName Initialize-OERAuth {
             [CmdletBinding()]
@@ -10257,7 +10286,7 @@ Describe 'Get-OERInventory names no tenant after its own refused sign-in (BL-157
     It 'says in its help that a refused sign-in leaves tenantId out and that Ignore keeps the record in $Error' {
         $Help = Get-Help Get-OERInventory -Full
         $Description = ((@($Help.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
-        $Description | Should -Match ([regex]::Escape("The key is left out as well when the command's own sign-in was refused (the command carries on and emits what it can read)"))
+        $Description | Should -Match ([regex]::Escape("The key is left out as well when the command's own sign-in was refused (the command carries on, every read it attempts is refused and nothing is sent, and it emits the document without tenantId)"))
         $Description | Should -Match ([regex]::Escape('under -ErrorAction Ignore the refusal'))
         $Description | Should -Match ([regex]::Escape('is then kept in $Error, as under SilentlyContinue.'))
     }

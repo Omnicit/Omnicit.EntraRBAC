@@ -69,7 +69,8 @@ function Resolve-OERScope {
     )
 
     # Every refusal below is raised through this one builder: a typed ErrorRecord with an id the
-    # module already publishes, the message exactly as it was, and the value as target.
+    # module already publishes, the message exactly as it was, and the target the message names (see
+    # the .DESCRIPTION: the supplied values joined for "Supply only one of", $null when no scope was supplied).
     function Get-ScopeRefusal ([string]$ErrorId, [System.Management.Automation.ErrorCategory]$Category, [string]$Message, $Target) {
         [System.Management.Automation.ErrorRecord]::new([System.Exception]::new($Message), $ErrorId, $Category, $Target)
     }

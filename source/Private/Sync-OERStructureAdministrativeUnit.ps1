@@ -222,7 +222,8 @@ function Sync-OERStructureAdministrativeUnit {
     and never duplicated by an add, while the document declares a role by name for that principal
     that no live role matches: the declared entry gets one Skipped record instead. A live member
     that is a group the groups section created into this unit in the same run, or found already
-    existing in place of creating it, is not removed by that run: with this switch it is reported Skipped ("prune withheld:"), without it Extra.
+    existing in place of creating it, is not removed by that run: with this switch it is reported
+    Skipped ("prune withheld:"), without it Extra.
 
     .PARAMETER TenantAlias
     Optional Tenant Profile alias forwarded for context. Currently unused by this handler but
@@ -240,7 +241,8 @@ function Sync-OERStructureAdministrativeUnit {
     .PARAMETER CreatedUnitMembership
     The run-scoped list Invoke-OERStructure creates once per document and passes to this handler and
     to Sync-OERStructureGroup, which adds one record (AdministrativeUnit, GroupId, Label) for every
-    group it creates into an administrative unit, or finds already existing in place of creating it. The member Extra/prune pass withholds a recorded
+    group it creates into an administrative unit, or finds already existing in place of creating it.
+    The member Extra/prune pass withholds a recorded
     group's membership of this unit under -Prune; see the BL-07 paragraph above. A record naming the
     unit by its display name matches the name the unit carries in the document and, when this run
     renames the unit through previousDisplayName, the previous name it is renamed from. Optional:

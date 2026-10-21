@@ -6086,8 +6086,11 @@ Describe 'Initialize-OERAuth renews an interactive session silently (A22, BL-115
 
         It 'keeps the cached Azure Resource Manager token over a silent Graph renewal' {
             Start-A22Session @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive'; IncludeARM = $true }
-            # The Azure Resource Manager request came last, so AzAuth holds that credential; Graph renews
-            # silently only when the tracker names the Graph one.
+            # AzAuth holds ONE interactive credential, the one the last interactive request built. Every
+            # -IncludeARM sign-in requests Azure Resource Manager last, so in a session using both
+            # resources the tracker names ARM and the Graph renewal is not silent (ruling R-3 accepted
+            # that cost). This test forces the tracker to Graph to prove what the Graph request does
+            # when the tracker names the Graph credential.
             Set-A22Tracker -ClientId $script:A22GraphClient -Tenant $script:A22Tenant
             Set-A22Expiry -GraphMinutes 2 -ArmMinutes 60
 
@@ -6231,7 +6234,7 @@ Describe 'Initialize-OERAuth renews an interactive session silently (A22, BL-115
         }
     }
 
-    Context 'the identity check reads a real token (Get-OERTokenObjectId is not mocked)' {
+    Context 'the identity check reads a real token (a delegating mock wraps the real Get-OERTokenObjectId)' {
         BeforeAll {
             # The real reader's body, taken before any test of this Context mocks the name; a script block of
             # a module function stays bound to the module, so its private helpers resolve when it is called.
@@ -6769,8 +6772,9 @@ Describe 'Initialize-OERAuth renews an interactive session silently (A22, BL-115
 }
 
 Describe 'Initialize-OERAuth refuses an interactive sign-in in a host started with -NonInteractive (BL-100)' {
-    # A host started with pwsh -NonInteractive cannot complete a browser sign-in, and AzAuth would still open
-    # the browser from the token request. Initialize-OERAuth refuses it with InteractiveSignInUnavailable,
+    # A host started with pwsh -NonInteractive declares that nobody can answer a prompt (a policy; whether a
+    # browser could be completed there is not measured), and AzAuth would still open the browser from the
+    # token request. Initialize-OERAuth refuses it with InteractiveSignInUnavailable,
     # after the cached return and the credential checks and before the tenant lookup and every token request
     # (the silent renewal included). Test-OERHostNonInteractive is the single owner of the host question;
     # here it is mocked, so the answer is the test's choice and not the host this file happens to run in.
