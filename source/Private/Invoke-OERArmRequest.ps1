@@ -50,8 +50,8 @@ function Invoke-OERArmRequest {
     the failing page, not the absolute link) and PageNumber (1-based) as note properties on the
     thrown error's EXCEPTION, never on the ErrorRecord, the way Invoke-OERGraphRequest does. A single
     request carries none of them. A single request whose 2xx body is empty (204) still returns $null,
-    and so does a FIRST page of a -All walk with an empty body. Get-OERPageWalkLimit owns the page
-    limit (100000 pages).
+    and so does a FIRST page of a -All walk with an empty body or a body of JSON null.
+    Get-OERPageWalkLimit owns the page limit (100000 pages).
 
     Under -ErrorAction SilentlyContinue, with no try up the call stack, a failed call returns
     NOTHING (no partial list, and not $null as an answer) and the record is kept in $Error and in the
@@ -454,10 +454,10 @@ function Invoke-OERArmRequest {
     #     than sleeps. Size it as "how long may this command keep BACKING OFF", NOT as "how long may
     #     this whole command run" -- the second overstates what this number bounds, and this comment
     #     used to say it. The deadline is only ever CONSULTED at a decision to WAIT, so it caps a
-    #     THROTTLED call and nothing else: an -All walk that is never throttled follows nextLink for
-    #     as long as ARM keeps handing out pages and never reads this number at all. Bounding THAT is
-    #     a separate, pre-existing gap, deliberately not closed here -- closing it would mean ending
-    #     a paging loop mid-enumeration, which the paragraph below rules out for a stronger reason.
+    #     THROTTLED call and nothing else: an -All walk that is never throttled never reads this
+    #     number at all. What bounds THAT walk is the page limit (Get-OERPageWalkLimit), which FAILS
+    #     the walk with ArmPagingIncomplete rather than ending it mid-enumeration, which the
+    #     paragraph below rules out for a stronger reason.
     #     What it DOES bound has a deliberate consequence worth knowing: a long, legitimately slow
     #     -All enumeration that has already run past 900 s will refuse ANY further throttle backoff,
     #     turning a recoverable 429 on its last pages into a hard failure. Elapsed REQUEST time
@@ -610,10 +610,12 @@ function Invoke-OERArmRequest {
     # The first request. Under -All it stands in a try, so a failure of it carries the three facts
     # too (PartialValue @(), NextLink the -Path, PageNumber 1), like any later page (BL-24). With a try
     # up the call stack a throw in a nested function is terminating even under -ErrorAction
-    # SilentlyContinue, so after a refused sign-in the walk's 401 retry is not attempted and nothing is
-    # sent after the refusal: the latch gate never has to refuse it. A SINGLE request stays outside the
-    # try on purpose and is unchanged: without one the nested throw does not stop the caller, the 401
-    # retry is still attempted and the latch gate refuses it. The catch scrubs first, like every catch
+    # SilentlyContinue, so after a refused sign-in that terminates the walk's 401 retry is not
+    # attempted. ArmTokenAcquisitionFailed is the exception: Initialize-OERAuth writes it without
+    # terminating, so the 401 retry goes on and the latch gate refuses it; nothing is sent after the
+    # refusal either way. A SINGLE request stays outside the try on purpose and is unchanged: without
+    # one the nested throw does not stop the caller, the 401 retry is still attempted and the latch
+    # gate refuses it. The catch scrubs first, like every catch
     # that can see a transport failure, and rethrows the record it caught.
     $FirstFailed = $false
     if ($All) {
@@ -639,6 +641,9 @@ function Invoke-OERArmRequest {
     # since a return there ends only that nested function. A throw inside a CATCH resumes after the
     # whole try statement, so the return that follows it is a flag set in the catch and read here.
     if ($FirstFailed) { return }
+    # (Measured on PowerShell 7.6: the failed assignment above leaves $Response $null rather than
+    # unassigned, so the null check below would end the call too; the flag states the intent and a
+    # stale $Response in a caller's scope is never read. The F3 case S13 holds the result.)
     #
     # No response object at all means a nested function already raised and returned: the latch gate,
     # the supersession gate, the missing-token refusal or the transport failure in Invoke-ArmCall, or
@@ -669,6 +674,11 @@ function Invoke-OERArmRequest {
     if ($ParseFailed) { return }
 
     if (-not $All) { return $Parsed }
+
+    # A first page whose body is JSON null (or parses to nothing) is an empty answer, like the empty
+    # first body above: $null. Reading its next link from $null would throw "Cannot index into a null
+    # array", and with no try up the stack the call would then return { value = @() }.
+    if ($null -eq $Parsed) { return $null }
 
     # -- Paging: aggregate value arrays across nextLink / @nextLink --
     $AllValues = [System.Collections.Generic.List[object]]::new()
@@ -751,8 +761,10 @@ function Invoke-OERArmRequest {
         # A LATER page is not the first: page one carried a next link, so the answer to the request
         # that link names is "there is more". An empty body in reply is a read that did not complete,
         # and ending the walk there would hand back the pages before it as though they were the whole
-        # collection (BL-71: an empty body left the previous page in $Page, and the walk requested
-        # its next link again for ever).
+        # collection (BL-71: an empty body parses to $null, reading its next link from $null threw,
+        # $NextLink kept the old link, and with no try up the stack the loop requested the same page
+        # again for ever, while with a try the walk failed on that read; a JSON null page did the
+        # same, and only a page with no value and no next link member ended the walk, as though complete).
         if (-not $PageResponse.Content) {
             throw (Get-ArmPagingIncompleteRecord -Cause 'it answered with an empty body although the page before it carried a next link' `
                 -AtPage $PageNumber -AtLink ([string]$NextLink) -Aggregated $AllValues.ToArray())

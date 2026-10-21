@@ -13,12 +13,15 @@ function Invoke-OERGraphRequest {
        immediately in every catch block.
 
     2. ACRS claims-challenge retry: when Microsoft Graph returns a 401 response whose
-       WWW-Authenticate header contains a claims="<base64url>" challenge, this function:
+       WWW-Authenticate header contains a claims="<base64url>" challenge, and the module holds a
+       sign-in state to step up from, this function:
          a. Base64url-decodes the challenge to a JSON string.
          b. Calls Initialize-OERAuth -ClaimsChallenge to perform a one-time interactive
             step-up authentication.
          c. Retries the original request exactly once.
-       A second 401 (after a successful step-up) is surfaced as a normal error.
+       A second 401 (after a successful step-up) is surfaced as a normal error. Without a sign-in
+       state there is nothing to step up from: the original Graph error is thrown after the one
+       request and no step-up is attempted.
 
     3. Error conversion: non-claims errors are run through Convert-GraphHttpException to
        produce structured ErrorRecord objects with the Graph error.code as the
@@ -59,8 +62,10 @@ function Invoke-OERGraphRequest {
        first that is $null or has no value member, a next link already requested in this walk, and a
        walk past the page limit (Get-OERPageWalkLimit owns the number, 100000 pages) are refused with
        GraphPagingIncomplete (category InvalidResult), carrying the same three facts, and the page
-       after the cause is never requested. A page whose value is an empty array is a normal page,
-       and a $null FIRST page (an empty GET body) is still an empty collection. Under
+       after the cause is never requested. Links are compared as the text that was requested, so
+       an absolute link back to page 1, which was requested as the relative -Uri, is requested once
+       more before the repeat is refused (bounded, and the walk still fails). A page whose value
+       is an empty array is a normal page, and a $null FIRST page (an empty GET body) is still an empty collection. Under
        -ErrorAction SilentlyContinue, with no try up the call stack, a failed walk returns NOTHING
        (no partial list and no empty collection) and the record is kept in $Error and in the
        caller's -ErrorVariable: a caller that asks for silence must read it and never read "no
@@ -802,12 +807,11 @@ function Invoke-OERGraphRequest {
         #     command keep BACKING OFF", NOT as "how long may this whole command run" -- the second
         #     overstates what this number bounds, and this comment used to say it. The deadline is
         #     only ever CONSULTED at a decision to WAIT, so it caps a THROTTLED call and nothing
-        #     else: an -All walk that is never throttled follows @odata.nextLink for as long as Graph
-        #     keeps handing out pages and never reads this number at all. Bounding THAT is a
-        #     separate, pre-existing gap, deliberately not closed here -- closing it would mean
-        #     ending a paging loop mid-enumeration, which the paragraph below rules out for a
-        #     stronger reason. Invoke-OERArmRequest carries the same correction, worded the same way;
-        #     keep the mirrored pair in step.
+        #     else: an -All walk that is never throttled never reads this number at all. What
+        #     bounds THAT walk is the page limit (Get-OERPageWalkLimit), which FAILS the walk with
+        #     GraphPagingIncomplete rather than ending it mid-enumeration, which the paragraph below
+        #     rules out for a stronger reason. Invoke-OERArmRequest carries the same correction,
+        #     worded the same way; keep the mirrored pair in step.
         #     What it DOES bound has a deliberate consequence worth knowing: a long, legitimately
         #     slow -All enumeration that has already run past 900 s will refuse ANY further throttle
         #     backoff, turning a recoverable 429 into a hard failure. That is the intended trade --

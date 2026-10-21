@@ -1995,6 +1995,22 @@ Describe 'Invoke-OERArmRequest -All never returns a partial walk and never loops
                 Invoke-OERArmRequest -Path '/x?api-version=2022-04-01' -All | Should -BeNullOrEmpty
             }
         }
+
+        It 'returns $null for a first page whose body is JSON null or white space, under -All as for the empty body' -ForEach @(
+            @{ Body = 'null' }
+            @{ Body = '   ' }
+        ) {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Body = $Body } {
+                $script:FirstBody = $Body
+                Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = $script:FirstBody } }
+                $Err = $null
+                $Out = @(Invoke-OERArmRequest -Path '/x?api-version=2022-04-01' -All -ErrorAction SilentlyContinue -ErrorVariable Err)
+                @($Err).Count | Should -Be 0
+                $Out.Count | Should -Be 1
+                $Out[0] | Should -BeNullOrEmpty
+                Should -Invoke Invoke-WebRequest -Times 1 -Exactly
+            }
+        }
     }
 
     Context 'every page carries the call''s own method and body (BL-120 point 2)' {
@@ -2355,6 +2371,48 @@ if ($global:OERStopArmCalls -eq 1) {
         Get-StopProbeErrorId -Probe $R | Should -Be @('ArmPagingIncomplete')
         $R.Output | Should -Contain "ARM CALLS: $Calls"
         $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S13: a failed first request of a -All walk ends the call even when an earlier $Response stands in the caller''s scope: that response is never read as the answer' {
+        # The probe's call runs in a module-scope script block that holds a stale 200 response under
+        # the wrapper's own variable name $Response. If a failed first request left the wrapper's
+        # $Response unassigned, reading it would find that stale response by dynamic scoping and the
+        # walk would hand back its value as the answer. MEASURED (PowerShell 7.6, 2026-10-21): it does
+        # not -- a failed assignment leaves the target $null, so the null check after the first-page
+        # try ends the call as well, and deleting the `if ($FirstFailed) { return }` guard turns
+        # nothing red (an equivalent mutant: the guard states the intent, the null check backs it).
+        # This case holds the observable result either way: the stale value is never read.
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-ArmStopProbe -AuthMethod Interactive -Respond {
+            throw [System.Exception]::new('No such host is known.')
+        } -Call {
+            $Response = [pscustomobject]@{ StatusCode = 200; Content = '{"value":["stale"]}'; Headers = @{} }
+            Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -All -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('ArmTransportError')
+        $R.Output | Should -Contain 'ARM CALLS: 1'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S14: a first page of JSON null under -All is an empty answer: one request, no record, the walk does not read a next link from nothing' {
+        # Reading the next link of a $null first page threw "Cannot index into a null array"; with no
+        # try up the stack the call then handed back an empty collection after a runtime error.
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-ArmStopProbe -AuthMethod Interactive -Respond {
+            [pscustomobject]@{ StatusCode = 200; Content = 'null'; Headers = @{} }
+        } -Call {
+            Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -All -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        @(Get-StopProbeErrorId -Probe $R).Count | Should -Be 0
+        $R.Output | Should -Contain 'ARM CALLS: 1'
+        # The empty first body returns $null, which counts as one item.
+        $R.Output | Should -Contain 'RESULT COUNT: 1'
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
     }
 
