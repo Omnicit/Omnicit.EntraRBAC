@@ -268,10 +268,10 @@ different application, method, cloud or account in that tenant still refuses it.
 names another tenant than the session is for makes the command sign in itself, as the identity it
 asks for, and it is not refused. `New-OERAccessPackageApprovalStage`,
 `New-OERAccessPackageRequestorScope` and `New-OERAccessReviewStage` do the same before they resolve
-the approvers, targets or reviewers they are given. Called inside a script block or a function in a pipeline, such as
-`ForEach-Object { Invoke-OERStructure ... }`, each of these commands begins only when that block
-runs, after every other command in the pipeline has begun and so after most of their sign-ins, and
-it takes the session they left for its own. A document exported by `Get-OERInventory` or
+the approvers, targets or reviewers they are given. Called inside a script block or a function
+in a pipeline, such as `ForEach-Object { Invoke-OERStructure ... }`, each of these commands begins
+only when that block runs, after every other command in the pipeline has begun and so after most of
+their sign-ins, and it takes the session they left for its own. A document exported by `Get-OERInventory` or
 `Export-OERInventory` names its tenant (`tenantId`, when it carries one), and `Invoke-OERStructure`
 refuses it in any other tenant with `DocumentTenantMismatch`, reading and writing nothing for it,
 whichever session it began with. A document without `tenantId`, and the three cmdlets above, still
@@ -331,11 +331,14 @@ a renewed Microsoft Graph token belongs to with the account of the session it re
 differ -- you picked another account in the picker -- the command that asked for the renewal is
 refused with `SignInSuperseded`, and so are the commands that began before it, which send nothing
 more. The session is then the account you picked, left uncertain: a command that names no tenant is
-refused until you run `Connect-OER` as the account you mean (`Connect-OER` itself may sign in as
-another account), while a command that names its tenant with `-TenantId` runs as that account. A
-renewed Azure Resource Manager token for another account is refused for the command that asked for
-it and is not kept; the session stays as it was. A token that carries no object id never causes a
-refusal, and neither does a first sign-in or `Connect-OER`: this guards the renewal only.
+refused until you run `Connect-OER -Force`, which signs in again and opens the account picker so you
+choose the account you mean (a bare `Connect-OER` would keep the account you picked), while a
+command that names its tenant with `-TenantId` runs as that account. A renewed Azure Resource
+Manager token for another account is refused for the command that asked for it and is not kept; the
+session stays as it was, but is left uncertain too: the next command that names no tenant is
+refused with `SignInRefused` until `Connect-OER`, or a command that names its tenant, signs in. A
+token that carries no object id never causes a refusal, and neither does a first sign-in or
+`Connect-OER`: this guards the renewal only.
 
 **The silent renewal of an interactive session.** From AzAuth 2.11.0 the module asks `Get-AzToken` to
 renew an interactive session without `-Interactive`, so AzAuth answers from the interactive
