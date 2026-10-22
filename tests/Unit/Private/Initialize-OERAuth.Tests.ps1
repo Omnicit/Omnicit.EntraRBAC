@@ -1196,6 +1196,73 @@ Describe 'Initialize-OERAuth session inheritance' {
         $script:CapturedOtherAppKeys | Should -Contain 'Interactive'
         Should -Invoke -ModuleName $script:moduleName Get-AzToken -Exactly -Times 1
     }
+
+    # BL-90: the tenant term of $SessionUsable is Test-OERSessionUsable's, and -TenantId binds the tenant,
+    # not the identity: a sign-in naming the session's own tenant takes the session's identity (here the
+    # cached return, no token request), one naming ANOTHER tenant takes none of it and signs in itself.
+    It 'inherits the session identity when -TenantId names the session''s own tenant and -AuthMethod is omitted (BL-90)' {
+        Mock -ModuleName $script:moduleName Get-AzToken {
+            [pscustomobject]@{ Token = 'fake'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'sp' }
+        }
+        Mock -ModuleName $script:moduleName Connect-MgGraph { }
+
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = @{
+                TenantId         = 'tenant-a'
+                AuthMethod       = 'ClientSecret'
+                ClientId         = 'app-c'
+                Environment      = 'Global'
+                Account          = 'sp'
+                GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                ArmToken         = $null
+                ArmTokenExpiry   = $null
+                ArmResourceUrl   = $null
+                ClaimsSatisfied  = $false
+            }
+
+            Initialize-OERAuth -TenantId 'tenant-a'
+
+            $script:_OERAuthState.AuthMethod | Should -Be 'ClientSecret'
+            $script:_OERAuthState.ClientId   | Should -Be 'app-c'
+        }
+
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Exactly -Times 0
+    }
+
+    It 'does NOT inherit the session identity when -TenantId names ANOTHER tenant and -AuthMethod is omitted (BL-90)' {
+        Mock -ModuleName $script:moduleName Get-AzToken {
+            param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $Interactive,
+                  $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                  $Scope, $Force, $Claim)
+            $script:CapturedOtherTenantKeys = $PSBoundParameters.Keys
+            [pscustomobject]@{ Token = 'fake'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'user@contoso' }
+        }
+        Mock -ModuleName $script:moduleName Connect-MgGraph { }
+
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = @{
+                TenantId         = 'tenant-a'
+                AuthMethod       = 'ClientSecret'
+                ClientId         = 'app-c'
+                Environment      = 'Global'
+                Account          = 'sp'
+                GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                ArmToken         = $null
+                ArmTokenExpiry   = $null
+                ArmResourceUrl   = $null
+                ClaimsSatisfied  = $false
+            }
+
+            Initialize-OERAuth -TenantId 'tenant-b'
+
+            $script:_OERAuthState.AuthMethod | Should -Be 'Interactive'
+            $script:_OERAuthState.TenantId   | Should -Be 'tenant-b'
+        }
+
+        $script:CapturedOtherTenantKeys | Should -Contain 'Interactive'
+        $script:CapturedOtherTenantKeys | Should -Not -Contain 'ClientSecret'
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Exactly -Times 1 -ParameterFilter { $Tenant -eq 'tenant-b' }
+    }
 }
 
 # -------------------------------------------------------------------------------------------------

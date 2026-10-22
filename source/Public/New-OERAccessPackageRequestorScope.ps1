@@ -60,7 +60,11 @@ function New-OERAccessPackageRequestorScope {
     in the same pipeline signed in to a different tenant or identity, or disconnected, after this
     command began, a SpecificDirectoryUsers scope with -User or -Group is refused with
     SignInSuperseded before any target is looked up and nothing is sent, even when every target is an
-    object id; a scope with no -User or -Group looks nothing up and is never refused.
+    object id; a scope with no -User or -Group looks nothing up and is never refused. With it the same
+    refusal applies when the lookup's sign-in would take the session's identity for that tenant --
+    the session is for exactly the tenant named, as it was named, and carries another identity than
+    the one the command began with, also when the module held no session as the command began; a
+    command naming a tenant the session is not for signs in to that tenant itself and is not refused.
 
     .EXAMPLE
     New-OERAccessPackageRequestorScope -Scope AllMemberUsers
@@ -181,12 +185,16 @@ function New-OERAccessPackageRequestorScope {
             else {
                 $AuthParams = @{}
                 if ($TenantId) { $AuthParams.TenantId = $TenantId }
-                # SEC (BL-81): without -TenantId, look a name up only under the session this command
-                # began with; a changed identity refuses with SignInSuperseded and nothing is sent. The
+                # SEC (BL-81, BL-90): look a name up only under the session this command began with; a
+                # changed identity refuses with SignInSuperseded and nothing is sent. With -TenantId only
+                # when that lookup's sign-in would take the session's identity for the tenant it names
+                # (Checkpoint-OERSignIn -TenantId); a session for another tenant is not taken. The
                 # builder takes no pipeline input, so its process block runs once and the snapshot is
                 # never taken again. Inside this branch on purpose: a scope with no targets looks
-                # nothing up and is never refused.
-                if (-not $TenantId -and (Checkpoint-OERSignIn -ChangedSince $SignInSnapshot)) {
+                # nothing up and is never refused. The -TenantId is passed on only when it is set.
+                $CompareParams = @{ ChangedSince = $SignInSnapshot }
+                if ($TenantId) { $CompareParams.TenantId = $TenantId }
+                if (Checkpoint-OERSignIn @CompareParams) {
                     $PSCmdlet.WriteError((New-OERSignInSupersededError -Command $PSCmdlet.MyInvocation.MyCommand.Name))
                     return
                 }

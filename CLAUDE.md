@@ -485,15 +485,18 @@ call stack remembers another identity than the state now carries.
 `Invoke-OERStructure` and the three builders that sign in only to look up a name --
 `New-OERAccessPackageApprovalStage`, `New-OERAccessPackageRequestorScope` (through
 `Resolve-OERTargetList`), `New-OERAccessReviewStage` (through `Resolve-OERReviewerScope`) -- take a
-snapshot of the session in `begin` and, without `-TenantId`, compare it in `process` directly before
-that sign-in or lookup (`Invoke-OERStructure` after the document is read and validated, the builders
-after their argument checks), refusing with `SignInSuperseded` and sending nothing when the identity
-changed, or when the module held no session and now holds one.
+snapshot of the session in `begin` and compare it in `process` directly before that sign-in or lookup
+-- with `-TenantId` only when that sign-in would inherit the session's identity
+(`Checkpoint-OERSignIn -TenantId`, through `Test-OERSessionUsable`) -- refusing with
+`SignInSuperseded` and sending nothing when the identity changed, or when the module held no session
+and now holds one (`Invoke-OERStructure` compares after the document is read and validated, the
+builders after their argument checks).
 
-`Checkpoint-OERSignIn` is the single owner of the session a command began with; it builds the
-snapshot only through `Get-OERSignInIdentity`. A new command that signs in only in `process`,
-directly or through a helper, without `-TenantId` takes the same snapshot. Never name the tenant the
-command began with as `-TenantId` in `process` in place of the snapshot.
+`Checkpoint-OERSignIn` is the single owner of the session a command began with (it builds the
+snapshot only through `Get-OERSignInIdentity`); `Test-OERSessionUsable` of whether a sign-in naming a
+tenant inherits the session. A new command that signs in only in `process`, directly or through a
+helper, takes the same snapshot. Never name the tenant the command began with as `-TenantId` in
+`process` in place of the snapshot.
 
 The snapshot is taken in the command's own `begin`: it covers a command standing in the pipeline
 itself, not one called inside a script block or function in a pipeline (known limit) --

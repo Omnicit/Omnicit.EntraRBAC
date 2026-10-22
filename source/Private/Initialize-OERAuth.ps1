@@ -413,9 +413,10 @@ function Initialize-OERAuth {
     #
     # Emptiness, not $PSBoundParameters.ContainsKey: Connect-OER passes TenantId unconditionally and
     # that value is '' when neither -TenantId nor -TenantAlias was supplied, so ContainsKey would
-    # read an absent tenant as a deliberate selection.
-    [bool]$SessionUsable = [bool]$script:_OERAuthState -and
-        (-not $TenantId -or $script:_OERAuthState.TenantId -eq $TenantId)
+    # read an absent tenant as a deliberate selection. Test-OERSessionUsable is the single owner of
+    # the term (BL-90): Checkpoint-OERSignIn asks it too, so a command's refusal of a changed session
+    # and this sign-in's inheritance of it stay one decision.
+    [bool]$SessionUsable = Test-OERSessionUsable -TenantId $TenantId
 
     # SEC: without the session term, omitting -TenantId stamped the state 'organizations' over a
     # real tenant id and called Get-AzToken with no -Tenant, so the cached label stopped describing
