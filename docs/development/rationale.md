@@ -14475,11 +14475,7 @@ its own "names every exported cmdlet" check, but both matched the whole FILE, so
 only in a Quick Start snippet passed while missing from the roster. This gate scopes the roster to
 `## Available Cmdlets` and `COMMAND COHORTS`, checks each `### Cohort (N)` count against the cmdlets
 that cohort is the FIRST to name, and requires the two documents to agree word for word on the
-tenant-switch verdict per sign-in type and on the device-code known limitation. The four rows of the
-Long runs table (what a renewal costs per sign-in type) are bound the same way, word for word once
-pipes, backticks, links and line wrapping are normalised; the one cross-reference to the SWITCHING
-TENANTS section is compared ignoring case, since the about topic names a section in capitals. A row
-missing from either document fails on its own (Sprint 11 step 15, BL-119). It also holds every
+tenant-switch verdict per sign-in type and on the device-code known limitation. It also holds every
 sentence in either whole document that says "all N cmdlets" or "all N exported cmdlets" -- README's
 introduction and `## Available Cmdlets`, the about topic's LONG DESCRIPTION -- to the count of
 `FunctionsToExport`, with a floor on the matches so a reworded sentence cannot make it vacuous; a
@@ -14538,6 +14534,18 @@ any of them as an orphan when auditing the one-test-file-per-function invariant:
   the six names, resolution from the module scope, parameter parity, mock precedence, the record
   and the refusal, a re-import, the `AfterAll` check, the answering runspace and the uninstall.
 
+### Long runs bound by docsync (Sprint 11 step 15, BL-119)
+
+The quote above is what CLAUDE.md said before step 11b and is left as it was. docsync.tests.ps1 also
+binds the four rows of the Long runs table (what a renewal costs per sign-in type) in README's
+### Long runs and the about topic's LONG RUNS, word for word. Pipes, backticks, bold, links and line
+wrapping are normalised away first. The about topic's table has two columns at fixed positions, so
+its wrapped label ("Client secret" over "and certificate") is read apart from the text column and
+joined as one label. The one cross-reference, to the SWITCHING TENANTS section, is compared ignoring
+case, since the about topic names a section in capitals and README in a heading's case; every other
+word is compared ordinally. A row missing from either document fails on its own, so two documents
+that both lost a row are not reported as agreeing. Known limit: a Markdown link is reduced to its
+text, so its anchor target is not compared.
 ## build-and-test-commands
 
 This section records the CLAUDE.md text on the build and test commands, with the measured coverage, as it stood before step 11b.
