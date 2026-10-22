@@ -303,7 +303,7 @@ Connect-OerLive -Arm
 Start-S1113bFence
 $Error.Clear()
 $Rows = @(Invoke-OERStructure -TenantId $T -Json $Doc -WhatIf -ErrorAction SilentlyContinue)
-$R.Rows = (@($Rows | Group-Object -Property Action | Sort-Object Name | ForEach-Object { '{0} x{1}' -f $_.Name, $_.Count }) -join ', ')
+$R.Rows = (@($Rows | ForEach-Object { '{0} {1}: {2} ({3})' -f $_.Section, $_.Item, $_.Action, $_.Detail }) -join '; ')
 $R.Errors = "[$(Get-S1113bIds $Error)]"
 $R.Requests = "Graph $global:Graph, writes $global:Writes, token requests $global:Tokens"
 Disconnect-OerLive
@@ -311,8 +311,8 @@ Disconnect-OerLive
 Write-S1113bResult $Res
 ```
 
-**Expect:** `END`; one planned row for the group (its action names a create under `-WhatIf`); `Errors: []`; at least
-one Graph read, 0 writes, 0 token requests.
+**Expect:** `END`; one row, `groups oer-s1113b-plan: Skipped (would create group oer-s1113b-plan)` -- the engine's
+plan of a create under `-WhatIf`; `Errors: []`; at least one Graph read, 0 writes, 0 token requests.
 **Failure looks like:** `SignInSuperseded` (a refusal of an ordinary run), a write, or a validation error of the
 document.
 
@@ -418,7 +418,7 @@ Start-S1113bFence
 $Error.Clear()
 $Rows = @(Invoke-OERStructure -TenantId $Cfg.Domain -Json $Doc -WhatIf -ErrorAction SilentlyContinue |
     ForEach-Object -Begin { $null = Connect-OER -TenantId $T -ClientId $Cfg.NoPermAppId -Certificate $Cert -ErrorAction SilentlyContinue } -Process { $_ })
-$R.Rows = $Rows.Count
+$R.Rows = (@($Rows | ForEach-Object { '{0} {1}: {2}' -f $_.Section, $_.Item, $_.Action }) -join '; ')
 $R.Errors = "[$(Get-S1113bIds $Error)]"
 $R.Superseded = Get-S1113bSuperseded $Error
 $R.Requests = "Graph $global:Graph, writes $global:Writes, token requests $global:Tokens"
@@ -427,11 +427,12 @@ Disconnect-OerLive
 Write-S1113bResult $Res
 ```
 
-**Expect:** `END`; 0 rows; no `SignInSuperseded`; `GraphTokenAcquisitionFailed x1` (the fence refused the
-interactive token request) and the refused requests' `SignInRefused`, if any; 0 Graph requests, 0 writes, 2 token
-requests (the other identity's sign-in and the refused one).
-**Failure looks like:** `SignInSuperseded` (BL-90 refusing a command that does not inherit the session), or planned
-rows.
+**Expect:** `END`; no `SignInSuperseded`; `GraphTokenAcquisitionFailed x1` (the fence refused the interactive token
+request) and `SignInRefused` for the latched command's refused read; at most one row, for the group, which is not a
+plan (`Failed`: the command carries on past its refused sign-in and sends nothing); 0 Graph requests, 0 writes, 2
+token requests (the other identity's sign-in and the refused one).
+**Failure looks like:** `SignInSuperseded` (BL-90 refusing a command that does not inherit the session), a Graph
+request, or a `Skipped (would create ...)` plan row.
 
 Result:
 
@@ -502,7 +503,7 @@ token of `oer-live-cc` is "another account" than the session's. Nothing is sent 
 
 ### 3.1. A Microsoft Graph renewal answered by another account is refused, and the session then needs Connect-OER
 
-- [ ] **3.1** With the session's object id moved and its Graph token in the renewal window, the renewal is refused with `SignInSuperseded` (the account text) after one token request; the session is then the token's account with the flag on and no ARM token; a read naming no tenant is refused (`SignInRefused`) and sends nothing; `Connect-OER` clears it and a read follows. #type/subtask
+- [ ] **3.1** With the session's object id moved and its Graph token in the renewal window, the renewal is refused with `SignInSuperseded` (the account text) after one token request; the session is then the token's account with the flag on and no ARM token; a read naming no tenant is refused (`SignInRefused`) and sends nothing; a bare `Connect-OER` answers from that session and keeps the flag, `Connect-OER -Force` signs in again and clears it, and a read follows. #type/subtask
 
 ```powershell
 $Res = Invoke-S1113bBlock -Name '3-1' -Body @'
@@ -523,9 +524,12 @@ $R.ArmTokenDropped = -not [bool]$S.ArmToken
 $Error.Clear(); $global:Graph = 0
 $Groups = @(Get-OERGroup -Filter 'securityEnabled eq true' -ErrorAction SilentlyContinue)
 $R.ReadNamingNoTenant = "$($Groups.Count) groups; errors [$(Get-S1113bIds $Error)]; Graph $global:Graph"
-$Error.Clear(); $global:Graph = 0
+$Error.Clear(); $global:Graph = 0; $global:Tokens = 0
 $null = Connect-OER -TenantId $T -ClientId $Cfg.AppId -Certificate $Cert -ErrorAction SilentlyContinue
-$R.FlagAfterConnect = [bool](Get-S1113bState).SignInAccountChanged
+$R.BareConnect = "token requests $global:Tokens; flag $([bool](Get-S1113bState).SignInAccountChanged)"
+$global:Tokens = 0
+$null = Connect-OER -TenantId $T -ClientId $Cfg.AppId -Certificate $Cert -Force -ErrorAction SilentlyContinue
+$R.ForceConnect = "token requests $global:Tokens; flag $([bool](Get-S1113bState).SignInAccountChanged)"
 $Groups = @(Get-OERGroup -Filter 'securityEnabled eq true' -ErrorAction SilentlyContinue)
 $R.ReadAfterConnect = "$($Groups.Count -gt 0); errors [$(Get-S1113bIds $Error)]"
 $R.Writes = $global:Writes
@@ -537,7 +541,9 @@ Write-S1113bResult $Res
 **Expect:** `END`; `[SignInSuperseded x1]`, `a script block (account text)` (the renewal's caller here is the
 module-scope script block); 1 token request; the session is the token's account `True`; flag `True`; ARM token
 dropped `True`; the read naming no tenant: 0 groups, `SignInRefused` (and no `SignInSuperseded`), 0 Graph requests;
-after `Connect-OER`: flag `False`, groups read, no error; 0 writes.
+a bare `Connect-OER`: 0 token requests and the flag still `True` (it answers from the session the renewal left,
+which is why the advice is `Connect-OER -Force`); `Connect-OER -Force`: 1 token request, flag `False`; groups read,
+no error; 0 writes.
 **Failure looks like:** no refusal (the renewal continued as another account), an ARM token kept, or a Graph request
 from the read naming no tenant.
 
