@@ -172,8 +172,10 @@ function Get-OERInventory {
     the apply schema does not model -- and the top-level reviewers collection Graph returns for it is
     empty by construction, which would otherwise be misreported as a configured self review. A
     live recurrence interval outside the module's cadence vocabulary (for example an
-    absoluteMonthly interval other than 1, 3, 6 or 12) is exported as the nearest coarser cadence
-    with a warning naming the true pattern, rather than silently. A live absoluteMonthly interval 6
+    absoluteMonthly interval other than 1, 3, 6 or 12) is exported as the first cadence of its
+    pattern type -- Monthly for any such absoluteMonthly interval, Weekly for a weekly interval
+    other than 1, so a bi-monthly review reads as the more frequent Monthly -- with a warning naming
+    the true pattern and the cadence written, rather than silently. A live absoluteMonthly interval 6
     is exported as SemiAnnually; an export made before 1.1.4 wrote it as Monthly, and when a
     document declares such a review Monthly, Invoke-OERStructure leaves its recurrence, start date
     and range untouched (reported as skipped, with the reason) rather than make it monthly.
@@ -245,9 +247,9 @@ function Get-OERInventory {
     on. That skip is not reported through InventoryPartial, so the section holds the policies of the
     roles that were read, which may be fewer than the curated set; only a scope that cannot be resolved,
     or a sign-in or Azure Resource Manager token the reader cannot get, is reported unread. Under a Stop
-    warning preference (-WarningAction Stop, or $WarningPreference set
-    to 'Stop') the stop at that warning is caught here as well: the section is reported unread, with the
-    warning's text in its cause, and the command carries on.
+    warning preference (-WarningAction Stop, or a global $WarningPreference set to 'Stop') the stop
+    at that warning is caught here as well: the section is reported unread, with the warning's text
+    in its cause, and the command carries on.
     A role assignment at the Azure root scope '/', above every management group and subscription in
     the tenant, is left out of the RoleAssignments section: it is elevated
     access, a finding to review rather than part of the RBAC model a document describes, and
@@ -257,8 +259,8 @@ function Get-OERInventory {
     Omnicit.EntraRBAC.RootScopeAssignment hands the caller the same rows (RoleAssignmentId, Role,
     Principal and PrincipalType) and the warning's text; under the default $InformationPreference
     the record is not displayed. Under a Stop warning preference (-WarningAction Stop, or
-    $WarningPreference set to 'Stop') the command stops at that warning, before it returns the
-    inventory. The RoleManagementPolicies projection carries activation window and enablement,
+    a global $WarningPreference set to 'Stop') the command stops at that warning, before it returns
+    the inventory. The RoleManagementPolicies projection carries activation window and enablement,
     approval and approvers, authentication context, and eligible and active permanence
     plus their day counts, so a policy round-trips instead of losing everything but permanence and
     the activation window. Notification rules are excluded from that projection: they are readable
@@ -2359,14 +2361,15 @@ function Get-OERInventory {
                     $PType = [string]$Rec.pattern.type
                     $Interval = [int]$Rec.pattern.interval
                     # New-OERAccessReviewRecurrence can only emit weekly interval 1 and absoluteMonthly
-                    # interval 1/3/6/12, so every other live interval collapses onto a coarser cadence.
+                    # interval 1/3/6/12, so every other live interval collapses onto the first cadence of its
+                    # pattern type (Weekly or Monthly), which is not the nearest one.
                     # Get-OERAccessReviewCadence owns that table, shared with Resolve-OERAccessReviewChange,
                     # and says both which cadence the pattern reads as and whether it is representable.
                     # Warn before the collapse rather than exporting a bi-monthly or n-weekly review as
                     # Monthly/Weekly with no sign anything was lost.
                     $CadenceShape = Get-OERAccessReviewCadence -PatternType $PType -Interval $Interval
                     if (-not $CadenceShape.Representable) {
-                        Write-Warning "Get-OERInventory: access review '$($Ar.DisplayName)' has a live recurrence pattern ($PType interval $Interval) that the module's cadence vocabulary cannot represent; exporting the nearest coarser cadence instead of the true interval."
+                        Write-Warning "Get-OERInventory: access review '$($Ar.DisplayName)' has a live recurrence pattern ($PType interval $Interval) that the module's cadence vocabulary cannot represent; exporting the cadence '$($CadenceShape.Cadence)' instead of the true interval."
                     }
                     $Cadence = $CadenceShape.Cadence
                 }

@@ -703,6 +703,8 @@ Describe 'Resolve-OERAccessReviewChange' {
             $Change.SetParams.ContainsKey('Recurrence') | Should -Be $false
             $Change.SetParams.ContainsKey('StartDate')  | Should -Be $false
             ($Change.NotApplied -join ' ') | Should -Match 'interval 2'
+            ($Change.NotApplied -join ' ') | Should -Match ([regex]::Escape(
+                    'the recurrence and start date were left untouched so the live pattern is not replaced by one the module can write'))
         }
     }
 
@@ -953,6 +955,8 @@ Describe 'Resolve-OERAccessReviewChange' {
             $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
             $Change.SetParams.ContainsKey('Recurrence') | Should -Be $false
             ($Change.NotApplied -join ' ') | Should -Match 'interval 2'
+            ($Change.NotApplied -join ' ') | Should -Match ([regex]::Escape(
+                    'the recurrence and start date were left untouched so the live pattern is not replaced by one the module can write'))
         }
     }
 
