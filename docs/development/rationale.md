@@ -14577,16 +14577,17 @@ any of them as an orphan when auditing the one-test-file-per-function invariant:
 
 ### Long runs bound by docsync (Sprint 11 step 15, BL-119)
 
-The quote above is what CLAUDE.md said before step 11b and is left as it was. docsync.tests.ps1 also
-binds the four rows of the Long runs table (what a renewal costs per sign-in type) in README's
-### Long runs and the about topic's LONG RUNS, word for word. Pipes, backticks, bold, links and line
-wrapping are normalised away first. The about topic's table has two columns at fixed positions, so
-its wrapped label ("Client secret" over "and certificate") is read apart from the text column and
-joined as one label. The one cross-reference, to the SWITCHING TENANTS section, is compared ignoring
-case, since the about topic names a section in capitals and README in a heading's case; every other
-word is compared ordinally. A row missing from either document fails on its own, so two documents
-that both lost a row are not reported as agreeing. Known limit: a Markdown link is reduced to its
-text, so its anchor target is not compared.
+The quote above is what CLAUDE.md said before step 11b and is left as it was.
+`docsync.tests.ps1` also binds the four rows of the Long runs table (what a renewal costs per
+sign-in type) in README's `### Long runs` and the about topic's `LONG RUNS`, word for word. Pipes,
+backticks, bold, links and line wrapping are normalised away first. The about topic's table has two columns at fixed
+positions, so its wrapped label ("Client secret" over "and certificate") is read apart from the text
+column and joined as one label. The one cross-reference, to the SWITCHING TENANTS section, is
+compared ignoring case, since the about topic names a section in capitals and README in a heading's
+case; every other word is compared ordinally. A row missing from either document fails on its own,
+so two documents that both lost a row are not reported as agreeing. Known limit: a Markdown link is
+reduced to its text, so its anchor target is not compared.
+
 ## build-and-test-commands
 
 This section records the CLAUDE.md text on the build and test commands, with the measured coverage, as it stood before step 11b.
