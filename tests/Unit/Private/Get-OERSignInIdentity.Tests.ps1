@@ -13,33 +13,36 @@ Describe 'Get-OERSignInIdentity' {
         InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
     }
 
-    It 'returns the tenant, method, client and cloud joined with a line feed, in that order' {
+    It 'returns the tenant, method, client, cloud and account joined with a line feed, in that order' {
         $R = InModuleScope Omnicit.EntraRBAC {
             $script:_OERAuthState = @{
-                TenantId    = '11111111-1111-1111-1111-111111111111'
-                AuthMethod  = 'ClientCertificate'
-                ClientId    = '33333333-3333-3333-3333-333333333333'
-                Environment = 'USGov'
+                TenantId        = '11111111-1111-1111-1111-111111111111'
+                AuthMethod      = 'ClientCertificate'
+                ClientId        = '33333333-3333-3333-3333-333333333333'
+                Environment     = 'USGov'
+                SignInAccountId = '55555555-5555-5555-5555-555555555555'
             }
             Get-OERSignInIdentity
         }
         $R | Should -BeOfType ([string])
-        $R | Should -BeExactly "11111111-1111-1111-1111-111111111111`nClientCertificate`n33333333-3333-3333-3333-333333333333`nUSGov"
+        $R | Should -BeExactly "11111111-1111-1111-1111-111111111111`nClientCertificate`n33333333-3333-3333-3333-333333333333`nUSGov`n55555555-5555-5555-5555-555555555555"
     }
 
     It 'reads a missing <Term> as an empty string' -ForEach @(
-        @{ Term = 'TenantId'; Expected = "`nInteractive`n33333333-3333-3333-3333-333333333333`nGlobal" }
-        @{ Term = 'AuthMethod'; Expected = "11111111-1111-1111-1111-111111111111`n`n33333333-3333-3333-3333-333333333333`nGlobal" }
-        @{ Term = 'ClientId'; Expected = "11111111-1111-1111-1111-111111111111`nInteractive`n`nGlobal" }
-        @{ Term = 'Environment'; Expected = "11111111-1111-1111-1111-111111111111`nInteractive`n33333333-3333-3333-3333-333333333333`n" }
+        @{ Term = 'TenantId'; Expected = "`nInteractive`n33333333-3333-3333-3333-333333333333`nGlobal`n55555555-5555-5555-5555-555555555555" }
+        @{ Term = 'AuthMethod'; Expected = "11111111-1111-1111-1111-111111111111`n`n33333333-3333-3333-3333-333333333333`nGlobal`n55555555-5555-5555-5555-555555555555" }
+        @{ Term = 'ClientId'; Expected = "11111111-1111-1111-1111-111111111111`nInteractive`n`nGlobal`n55555555-5555-5555-5555-555555555555" }
+        @{ Term = 'Environment'; Expected = "11111111-1111-1111-1111-111111111111`nInteractive`n33333333-3333-3333-3333-333333333333`n`n55555555-5555-5555-5555-555555555555" }
+        @{ Term = 'SignInAccountId'; Expected = "11111111-1111-1111-1111-111111111111`nInteractive`n33333333-3333-3333-3333-333333333333`nGlobal`n" }
     ) {
         $R = InModuleScope Omnicit.EntraRBAC -Parameters @{ Term = $Term } {
             param($Term)
             $State = @{
-                TenantId    = '11111111-1111-1111-1111-111111111111'
-                AuthMethod  = 'Interactive'
-                ClientId    = '33333333-3333-3333-3333-333333333333'
-                Environment = 'Global'
+                TenantId        = '11111111-1111-1111-1111-111111111111'
+                AuthMethod      = 'Interactive'
+                ClientId        = '33333333-3333-3333-3333-333333333333'
+                Environment     = 'Global'
+                SignInAccountId = '55555555-5555-5555-5555-555555555555'
             }
             $State.Remove($Term)
             $script:_OERAuthState = $State
@@ -59,7 +62,7 @@ Describe 'Get-OERSignInIdentity' {
         $R.Count | Should -Be 0
     }
 
-    It 'carries the four terms and nothing else of a state that holds a token, an account and a session fingerprint' {
+    It 'carries the five terms and nothing else of a state that holds a token, an account and a session fingerprint' {
         $R = InModuleScope Omnicit.EntraRBAC {
             $script:_OERAuthState = @{
                 TenantId                = '11111111-1111-1111-1111-111111111111'
@@ -69,7 +72,9 @@ Describe 'Get-OERSignInIdentity' {
                 Account                 = 'admin@contoso.com'
                 GraphTokenExpiry        = [DateTime]::UtcNow.AddHours(1)
                 TokenTenantId           = '11111111-1111-1111-1111-111111111111'
-                SignedInObjectId        = '55555555-5555-5555-5555-555555555555'
+                SignedInObjectId        = '66666666-6666-6666-6666-666666666666'
+                SignInAccountId         = '55555555-5555-5555-5555-555555555555'
+                SignInAccountChanged    = $true
                 GraphSessionFingerprint = 'fingerprint-NOT-A-REAL-TOKEN'
                 ArmToken                = [System.Net.NetworkCredential]::new('', 'fake-arm-token-NOT-A-REAL-TOKEN').SecurePassword
                 ArmTokenExpiry          = [DateTime]::UtcNow.AddHours(1)
@@ -79,10 +84,66 @@ Describe 'Get-OERSignInIdentity' {
             }
             Get-OERSignInIdentity
         }
-        $R | Should -BeExactly "11111111-1111-1111-1111-111111111111`nInteractive`n33333333-3333-3333-3333-333333333333`nGlobal"
+        $R | Should -BeExactly "11111111-1111-1111-1111-111111111111`nInteractive`n33333333-3333-3333-3333-333333333333`nGlobal`n55555555-5555-5555-5555-555555555555"
         $R | Should -Not -Match 'NOT-A-REAL-TOKEN'
         $R | Should -Not -Match 'admin@contoso\.com'
         $R | Should -Not -Match '22222222'
+        # The account term is the state's own SignInAccountId, not the oid of the last token.
+        $R | Should -Not -Match '66666666'
+        $R | Should -Not -Match 'True'
+    }
+
+    # BL-119: the fifth term is the account the session was established as. Initialize-OERAuth decides
+    # when it moves; the reader only prints the key.
+    Context 'the account term (BL-119)' {
+        It 'moves the identity when only the account differs' {
+            $Result = InModuleScope Omnicit.EntraRBAC {
+                $State = @{
+                    TenantId        = '11111111-1111-1111-1111-111111111111'
+                    AuthMethod      = 'Interactive'
+                    ClientId        = ''
+                    Environment     = 'Global'
+                    SignInAccountId = '55555555-5555-5555-5555-555555555555'
+                }
+                $script:_OERAuthState = $State
+                $First = Get-OERSignInIdentity
+                $State.SignInAccountId = '77777777-7777-7777-7777-777777777777'
+                @{ First = $First; Second = Get-OERSignInIdentity }
+            }
+            ($Result.First -eq $Result.Second) | Should -BeFalse
+        }
+
+        It 'reads a state with no account, or a $null one, as an empty last term' {
+            $Result = InModuleScope Omnicit.EntraRBAC {
+                $State = @{ TenantId = 't'; AuthMethod = 'Interactive'; ClientId = ''; Environment = 'Global' }
+                $script:_OERAuthState = $State
+                $Absent = Get-OERSignInIdentity
+                $State.SignInAccountId = $null
+                @{ Absent = $Absent; Null = Get-OERSignInIdentity }
+            }
+            $Result.Absent | Should -BeExactly "t`nInteractive`n`nGlobal`n"
+            $Result.Null | Should -BeExactly $Result.Absent
+        }
+
+        It 'is not moved by the oid of the last token (SignedInObjectId) or by the account name' {
+            $Result = InModuleScope Omnicit.EntraRBAC {
+                $State = @{
+                    TenantId         = 't'
+                    AuthMethod       = 'Interactive'
+                    ClientId         = ''
+                    Environment      = 'Global'
+                    SignInAccountId  = '55555555-5555-5555-5555-555555555555'
+                    SignedInObjectId = '66666666-6666-6666-6666-666666666666'
+                    Account          = 'first@contoso.com'
+                }
+                $script:_OERAuthState = $State
+                $First = Get-OERSignInIdentity
+                $State.SignedInObjectId = $null
+                $State.Account = 'second@contoso.com'
+                @{ First = $First; Second = Get-OERSignInIdentity }
+            }
+            $Result.Second | Should -BeExactly $Result.First
+        }
     }
 
     # BL-77: the tenant term is the tenant the Microsoft Graph token was issued for when that is a
@@ -110,7 +171,7 @@ Describe 'Get-OERSignInIdentity' {
                 TenantId      = 'contoso.onmicrosoft.com'
                 TokenTenantId = '11111111-1111-1111-1111-111111111111'
             }
-            $R | Should -BeExactly "11111111-1111-1111-1111-111111111111`nClientCertificate`n33333333-3333-3333-3333-333333333333`nUSGov"
+            $R | Should -BeExactly "11111111-1111-1111-1111-111111111111`nClientCertificate`n33333333-3333-3333-3333-333333333333`nUSGov`n"
         }
 
         It 'gives one identity to one tenant named by its domain and by its tenant ID' {
@@ -122,7 +183,7 @@ Describe 'Get-OERSignInIdentity' {
                 TenantId      = '11111111-1111-1111-1111-111111111111'
                 TokenTenantId = '11111111-1111-1111-1111-111111111111'
             }
-            $ByGuid | Should -BeExactly "11111111-1111-1111-1111-111111111111`nClientCertificate`n33333333-3333-3333-3333-333333333333`nUSGov"
+            $ByGuid | Should -BeExactly "11111111-1111-1111-1111-111111111111`nClientCertificate`n33333333-3333-3333-3333-333333333333`nUSGov`n"
             $ByDomain | Should -BeExactly $ByGuid
         }
 
@@ -144,7 +205,7 @@ Describe 'Get-OERSignInIdentity' {
                 TenantId      = 'organizations'
                 TokenTenantId = '11111111-1111-1111-1111-111111111111'
             }
-            $R | Should -BeExactly "11111111-1111-1111-1111-111111111111`nClientCertificate`n33333333-3333-3333-3333-333333333333`nUSGov"
+            $R | Should -BeExactly "11111111-1111-1111-1111-111111111111`nClientCertificate`n33333333-3333-3333-3333-333333333333`nUSGov`n"
         }
 
         It 'reads the tenant as named when the granted tenant is <Case>' -ForEach @(
@@ -160,7 +221,7 @@ Describe 'Get-OERSignInIdentity' {
                 $State.TokenTenantId = $Granted
             }
             $R = Get-IdentityOfState -State $State
-            $R | Should -BeExactly "contoso.onmicrosoft.com`nClientCertificate`n33333333-3333-3333-3333-333333333333`nUSGov"
+            $R | Should -BeExactly "contoso.onmicrosoft.com`nClientCertificate`n33333333-3333-3333-3333-333333333333`nUSGov`n"
         }
 
         It 'never reads the tenant the Azure Resource Manager token was issued for' {
@@ -168,7 +229,7 @@ Describe 'Get-OERSignInIdentity' {
                 TenantId         = 'contoso.onmicrosoft.com'
                 ArmTokenTenantId = '22222222-2222-2222-2222-222222222222'
             }
-            $R | Should -BeExactly "contoso.onmicrosoft.com`nClientCertificate`n33333333-3333-3333-3333-333333333333`nUSGov"
+            $R | Should -BeExactly "contoso.onmicrosoft.com`nClientCertificate`n33333333-3333-3333-3333-333333333333`nUSGov`n"
         }
 
         It 'keeps the identity the same whether or not an Azure Resource Manager token was acquired' {

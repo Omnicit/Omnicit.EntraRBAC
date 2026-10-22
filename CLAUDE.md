@@ -515,6 +515,15 @@ session CACHE stays keyed on the tenant as named: a command naming its tenant di
 session inherits nothing and signs in again, so README.md's "Name the tenant explicitly and
 consistently" and the about topic's equivalent under SOVEREIGN CLOUDS stand.
 
+**A renewal never continues as another account** (BL-119). The identity's fifth term is the account
+(`SignInAccountId`), carried over a renewal unless a Graph token's oid (`Get-OERTokenObjectId`) differs
+from the session's `SignedInObjectId`, both GUIDs; `Initialize-OERAuth` then refuses its caller with
+`SignInSuperseded` (`-AccountChanged`) and every frame remembering the old account is refused as
+superseded; a renewal's ARM token of another account is refused the same way and not cached.
+`Connect-OER` (`-ReclaimGraphSession`) is never refused by it; a token without oid never refuses
+anything. Never key the account on a name or the UPN.
+`Why: docs/development/rationale.md#a-renewal-never-continues-as-another-account`
+
 The order is fixed: Graph wrapper session gate, latch gate, supersession gate; ARM wrapper latch
 gate, supersession gate. A pipeline must not span tenants or identities: run the commands as
 separate statements, for example collecting into a variable first. Never call

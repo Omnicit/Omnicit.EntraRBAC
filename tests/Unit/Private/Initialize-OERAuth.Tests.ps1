@@ -7522,3 +7522,552 @@ foreach ($E in $All) { "ERR:$($E.FullyQualifiedErrorId)" }
         @(Get-Content -LiteralPath $Log | Where-Object { $_ -eq 'GRAPH' -or $_ -eq 'ARM' }).Count | Should -Be 0
     }
 }
+
+Describe 'Initialize-OERAuth never continues a renewal as another account (BL-119)' {
+    # A renewal of the module's sign-in -- a Graph token renewed near its expiry, or a transport's
+    # refresh -- can be answered in the browser by ANOTHER account of the same tenant. Every command that
+    # began under the first account would then carry on under the second one with the same identity
+    # string. The identity's fifth term is the account (SignInAccountId): carried over a renewal unless
+    # the new Graph token's oid is a GUID that differs from the session's, in which case the session
+    # becomes that account's and the caller is refused with SignInSuperseded (-AccountChanged), latched.
+    #
+    # Nothing here reaches AzAuth: Get-AzToken, Connect-MgGraph and Get-MgContext are mocked, and so is
+    # Get-OERTokenObjectId (the fake tokens are not JWTs; the oid travels after a '|' in the fake token
+    # text). The oid the mocked Get-AzToken returns for each resource is set per test.
+    BeforeAll {
+        $script:A119Tenant = '66666666-6666-6666-6666-666666666666'
+        $script:A119OidA = '88888888-8888-8888-8888-888888888888'
+        $script:A119OidB = '99999999-9999-9999-9999-999999999999'
+
+        # The mocked Get-AzToken answers each resource with the oid set for it (an empty one is a token
+        # with no oid claim), for the requested tenant when a GUID, else the tenant above.
+        $script:A119TokenMock = {
+            param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $WarningAction, $Interactive,
+                  $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                  $Scope, $Force, $Claim, $CredentialPrecedence)
+            $IsArm = [string]$Resource -like '*management*'
+            [string]$Oid = if ($IsArm) { $script:A119ArmOid } else { $script:A119GraphOid }
+            [pscustomobject]@{
+                Token     = "NOT-A-REAL-TOKEN-a119|$Oid"
+                ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+                Identity  = "account-$Oid@contoso.com"
+                TenantId  = $script:A119Tenant
+            }
+        }
+
+        # Runs Initialize-OERAuth from a command of its own (so the latch and the memory have a frame to
+        # key on, as in a public command) and returns what that command saw: the error it caught, whether
+        # it is latched, the marker, whether it remembers an identity, and the identity it remembers.
+        function script:Invoke-A119Probe {
+            param([hashtable]$Parameters = @{})
+            InModuleScope $script:moduleName -Parameters @{ P = $Parameters } {
+                param($P)
+                $Holder = @{ Caught = $null }
+                function Invoke-A119Command {
+                    [CmdletBinding()]
+                    param()
+                    try { Initialize-OERAuth @P } catch { $Holder.Caught = $PSItem }
+                    $Holder.Latched = [bool](Get-OERSignInRefusal)
+                    $Holder.Marker = $script:_OERSessionUncertain
+                    $Remembered = $null
+                    $Holder.Remembers = $script:_OERSignInIdentity.TryGetValue($MyInvocation, [ref]$Remembered)
+                    $Holder.Remembered = $Remembered
+                }
+                Invoke-A119Command
+                $Holder
+            }
+        }
+
+        function script:Get-A119Info {
+            InModuleScope $script:moduleName {
+                $S = $script:_OERAuthState
+                if ($null -eq $S) { return $null }
+                [pscustomobject]@{
+                    AccountId = $S.SignInAccountId
+                    Changed   = $S.SignInAccountChanged
+                    Oid       = $S.SignedInObjectId
+                    HasArm    = [bool]$S.ArmToken
+                    ArmTenant = $S.ArmTokenTenantId
+                    Identity  = Get-OERSignInIdentity
+                }
+            }
+        }
+
+        # The first sign-in of a test; its token requests are forgotten afterwards by the caller's
+        # Should -Invoke counts being taken relative to the totals the test states.
+        function script:Start-A119Session {
+            param([string]$Method = 'Interactive', [switch]$Arm, [string]$GraphOid = $script:A119OidA, [string]$ArmOid = $script:A119OidA)
+            $script:A119GraphOid = $GraphOid
+            $script:A119ArmOid = $ArmOid
+            $Parameters = @{ TenantId = $script:A119Tenant; AuthMethod = $Method }
+            if ($Arm) { $Parameters.IncludeARM = $true }
+            $Probe = Invoke-A119Probe $Parameters
+            $Probe.Caught | Should -BeNullOrEmpty -Because 'the first sign-in of the test succeeds'
+            $Probe.Latched | Should -BeFalse
+        }
+
+        function script:Set-A119Expiry {
+            param([int]$GraphMinutes)
+            InModuleScope $script:moduleName -Parameters @{ G = $GraphMinutes } {
+                param($G)
+                $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes($G)
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
+            $script:_OERLastAuthorityHost = $null
+            $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
+        }
+        $script:A119GraphOid = $script:A119OidA
+        $script:A119ArmOid = $script:A119OidA
+        Mock -ModuleName $script:moduleName Get-AzToken -MockWith $script:A119TokenMock
+        Mock -ModuleName $script:moduleName Connect-MgGraph { }
+        Mock -ModuleName $script:moduleName Disconnect-MgGraph { }
+        Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '66666666-6666-6666-6666-666666666666' }
+        Mock -ModuleName $script:moduleName Get-OERTokenObjectId {
+            param($Token)
+            $Plain = [System.Net.NetworkCredential]::new('', $Token).Password
+            $Parts = $Plain -split '\|'
+            if ($Parts.Count -gt 1 -and $Parts[1]) { $Parts[1] } else { $null }
+        }
+    }
+
+    Context 'a renewal answered by another account is refused' {
+        It 'refuses the caller with SignInSuperseded, leaves it latched and the session uncertain, and makes the session the new account (<Case>)' -ForEach @(
+            @{ Case = 'interactive, near expiry'; Method = 'Interactive'; Renewal = @{} }
+            @{ Case = 'device code, near expiry'; Method = 'DeviceCode'; Renewal = @{} }
+            @{ Case = 'interactive, a sign-in naming only the tenant'; Method = 'Interactive'; Renewal = @{ TenantId = '66666666-6666-6666-6666-666666666666' } }
+            @{ Case = 'interactive, a transport refresh (-ForceRefresh and the state''s -AuthMethod)'; Method = 'Interactive'; Renewal = @{ TenantId = '66666666-6666-6666-6666-666666666666'; AuthMethod = 'Interactive'; ForceRefresh = $true } }
+            @{ Case = 'device code, a transport refresh (-ForceRefresh and the state''s -AuthMethod)'; Method = 'DeviceCode'; Renewal = @{ TenantId = '66666666-6666-6666-6666-666666666666'; AuthMethod = 'DeviceCode'; ForceRefresh = $true } }
+        ) {
+            Start-A119Session -Method $Method -Arm
+            $Before = Get-A119Info
+            $Before.HasArm | Should -BeTrue
+            $Before.AccountId | Should -BeExactly $script:A119OidA
+            Set-A119Expiry -GraphMinutes 2
+            $script:A119GraphOid = $script:A119OidB
+
+            $Probe = Invoke-A119Probe $Renewal
+
+            $Probe.Caught | Should -Not -BeNullOrEmpty -Because 'the renewal was answered by another account'
+            $Probe.Caught.FullyQualifiedErrorId | Should -BeExactly 'SignInSuperseded,Initialize-OERAuth'
+            $Probe.Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
+            $Probe.Caught.TargetObject | Should -BeExactly 'Invoke-A119Command'
+            $Probe.Caught.Exception.Message | Should -BeLike "A renewal of the module's sign-in returned a token for another account than the one Invoke-A119Command began with,*Run Connect-OER to sign in as the account you mean, then run the command again."
+            $Probe.Latched | Should -BeTrue
+            $Probe.Marker | Should -BeTrue
+            $Probe.Remembers | Should -BeFalse -Because 'a refused sign-in is not remembered'
+            $After = Get-A119Info
+            $After.AccountId | Should -BeExactly $script:A119OidB
+            $After.Oid | Should -BeExactly $script:A119OidB
+            $After.Changed | Should -BeTrue
+            $After.HasArm | Should -BeFalse -Because 'the cached ARM token belongs to the old account'
+            $After.ArmTenant | Should -BeNullOrEmpty
+            ($After.Identity -eq $Before.Identity) | Should -BeFalse
+            # The session became the new account's: the Graph token was connected (the first sign-in and the renewal).
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
+        }
+
+        It 'requests no ARM token for a renewal that proved another account, although -IncludeARM is passed' {
+            Start-A119Session -Arm
+            Set-A119Expiry -GraphMinutes 2
+            $script:A119GraphOid = $script:A119OidB
+
+            $Probe = Invoke-A119Probe @{ IncludeARM = $true }
+
+            $Probe.Caught.FullyQualifiedErrorId | Should -BeExactly 'SignInSuperseded,Initialize-OERAuth'
+            (Get-A119Info).HasArm | Should -BeFalse
+            # The first sign-in asked for one ARM token; the refused renewal asked for none.
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly -ParameterFilter { [string]$Resource -like '*management*' }
+        }
+
+        It 'refuses an outer command that remembers the old account: the supersession names it, and a second nested sign-in is refused before any token request (device code)' {
+            Start-A119Session -Method DeviceCode
+            $script:A119GraphOid = $script:A119OidB
+            $Result = InModuleScope $script:moduleName -Parameters @{ T = $script:A119Tenant } {
+                param($T)
+                $Holder = @{}
+                function Invoke-A119Inner {
+                    [CmdletBinding()]
+                    param()
+                    try { Initialize-OERAuth } catch { $Holder.InnerCaught = $PSItem }
+                }
+                function Invoke-A119Inner2 {
+                    [CmdletBinding()]
+                    param()
+                    try { Initialize-OERAuth } catch { $Holder.Inner2Caught = $PSItem }
+                }
+                function Invoke-A119Outer {
+                    [CmdletBinding()]
+                    param()
+                    # The outer command signs in as account A (a cache hit of the session above): remembered.
+                    Initialize-OERAuth -TenantId $T -AuthMethod DeviceCode
+                    $Remembered = $null
+                    $Holder.OuterRemembers = $script:_OERSignInIdentity.TryGetValue($MyInvocation, [ref]$Remembered)
+                    $Holder.OuterIdentity = $Remembered
+                    $Holder.SupersededBefore = Get-OERSignInSupersession
+                    $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(2)
+                    Invoke-A119Inner
+                    $Holder.SupersededAfter = Get-OERSignInSupersession
+                    $Holder.StateIdentity = Get-OERSignInIdentity
+                    Invoke-A119Inner2
+                }
+                Invoke-A119Outer
+                $Holder
+            }
+
+            $Result.OuterRemembers | Should -BeTrue
+            $Result.SupersededBefore | Should -BeNullOrEmpty -Because 'the outer command remembers the identity the state carried'
+            $Result.InnerCaught.FullyQualifiedErrorId | Should -BeExactly 'SignInSuperseded,Initialize-OERAuth'
+            $Result.InnerCaught.TargetObject | Should -BeExactly 'Invoke-A119Inner'
+            $Result.SupersededAfter | Should -BeExactly 'Invoke-A119Outer'
+            ($Result.OuterIdentity -eq $Result.StateIdentity) | Should -BeFalse
+            # Only the fifth term differs.
+            $Result.OuterIdentity.Substring(0, $Result.OuterIdentity.LastIndexOf("`n")) |
+                Should -BeExactly $Result.StateIdentity.Substring(0, $Result.StateIdentity.LastIndexOf("`n"))
+            # BL-91: the next nested sign-in is refused, naming the outer command, with no token request.
+            $Result.Inner2Caught.FullyQualifiedErrorId | Should -BeExactly 'SignInSuperseded,Initialize-OERAuth'
+            $Result.Inner2Caught.TargetObject | Should -BeExactly 'Invoke-A119Outer'
+            $Result.Inner2Caught.Exception.Message | Should -BeLike '*another account than the one Invoke-A119Outer began with*'
+            # The first sign-in, the renewal; the refused nested sign-in requested nothing.
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
+        }
+
+        It 'refuses the transports'' requests of an outer command that remembers the old account (the supersession reads the account term)' {
+            Start-A119Session
+            Set-A119Expiry -GraphMinutes 2
+            $script:A119GraphOid = $script:A119OidB
+            $Result = InModuleScope $script:moduleName {
+                $Holder = @{}
+                function Invoke-A119Renewer {
+                    [CmdletBinding()]
+                    param()
+                    try { Initialize-OERAuth } catch { $Holder.Caught = $PSItem }
+                }
+                function Invoke-A119Outer {
+                    [CmdletBinding()]
+                    param()
+                    Register-OERSignInIdentity -Invocation $MyInvocation
+                    Invoke-A119Renewer
+                    $Holder.Superseded = Get-OERSignInSupersession
+                    $Holder.Record = New-OERSignInSupersededError -Command $Holder.Superseded
+                }
+                Invoke-A119Outer
+                $Holder
+            }
+            $Result.Caught.FullyQualifiedErrorId | Should -BeExactly 'SignInSuperseded,Initialize-OERAuth'
+            $Result.Superseded | Should -BeExactly 'Invoke-A119Outer'
+            # The transports build their refusal with no switch: the state says why.
+            $Result.Record.Exception.Message | Should -BeLike "A renewal of the module's sign-in returned a token for another account than the one Invoke-A119Outer began with,*"
+        }
+    }
+
+    Context 'a normal run is not refused' {
+        It 'renews as the same account without a refusal, keeps the account and the identity, and carries the ARM token (<Method>)' -ForEach @(
+            @{ Method = 'Interactive' }
+            @{ Method = 'DeviceCode' }
+        ) {
+            Start-A119Session -Method $Method -Arm
+            $Before = Get-A119Info
+            Set-A119Expiry -GraphMinutes 2
+
+            $Probe = Invoke-A119Probe @{}
+
+            $Probe.Caught | Should -BeNullOrEmpty
+            $Probe.Latched | Should -BeFalse
+            $Probe.Remembers | Should -BeTrue
+            $After = Get-A119Info
+            $After.Changed | Should -BeFalse
+            $After.AccountId | Should -BeExactly $script:A119OidA
+            $After.HasArm | Should -BeTrue -Because 'the same account keeps its ARM token across a renewal'
+            $After.Identity | Should -BeExactly $Before.Identity
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
+        }
+
+        It 'does not refuse a renewal whose new token carries no oid, and neither the account nor the identity moves' {
+            Start-A119Session -Method DeviceCode
+            $Before = Get-A119Info
+            Set-A119Expiry -GraphMinutes 2
+            $script:A119GraphOid = ''
+
+            $Probe = Invoke-A119Probe @{}
+
+            $Probe.Caught | Should -BeNullOrEmpty
+            $Probe.Latched | Should -BeFalse
+            $After = Get-A119Info
+            $After.Changed | Should -BeFalse
+            $After.Oid | Should -BeNullOrEmpty -Because 'SignedInObjectId stays the oid of the last token'
+            $After.AccountId | Should -BeExactly $script:A119OidA -Because 'the account is carried over a renewal'
+            $After.Identity | Should -BeExactly $Before.Identity
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
+        }
+
+        It 'does not refuse a renewal of a session whose first token carried no oid, and carries the empty account' {
+            Start-A119Session -Method DeviceCode -GraphOid ''
+            $Before = Get-A119Info
+            $Before.AccountId | Should -BeNullOrEmpty
+            Set-A119Expiry -GraphMinutes 2
+            $script:A119GraphOid = $script:A119OidB
+
+            $Probe = Invoke-A119Probe @{}
+
+            $Probe.Caught | Should -BeNullOrEmpty
+            $Probe.Latched | Should -BeFalse
+            $After = Get-A119Info
+            $After.Changed | Should -BeFalse
+            $After.Oid | Should -BeExactly $script:A119OidB
+            $After.AccountId | Should -BeNullOrEmpty -Because 'a session that had no account is not given one by a renewal'
+            $After.Identity | Should -BeExactly $Before.Identity
+        }
+
+        It 'lets Connect-OER (-ReclaimGraphSession) sign in as another account: the identity moves and nothing is refused' {
+            Start-A119Session -Method DeviceCode
+            $Before = Get-A119Info
+            Set-A119Expiry -GraphMinutes 2
+            $script:A119GraphOid = $script:A119OidB
+
+            $Probe = Invoke-A119Probe @{ TenantId = $script:A119Tenant; AuthMethod = 'DeviceCode'; ReclaimGraphSession = $true }
+
+            $Probe.Caught | Should -BeNullOrEmpty
+            $Probe.Latched | Should -BeFalse
+            $Probe.Marker | Should -BeFalse
+            $After = Get-A119Info
+            $After.Changed | Should -BeFalse
+            $After.AccountId | Should -BeExactly $script:A119OidB
+            ($After.Identity -eq $Before.Identity) | Should -BeFalse -Because 'an explicit sign-in as another account moves the identity'
+        }
+
+        It 'treats a switch of method as a new sign-in, not a renewal: another account is not refused' {
+            Start-A119Session -Method Interactive
+            $script:A119GraphOid = $script:A119OidB
+
+            $Probe = Invoke-A119Probe @{ TenantId = $script:A119Tenant; AuthMethod = 'DeviceCode' }
+
+            $Probe.Caught | Should -BeNullOrEmpty
+            $Probe.Latched | Should -BeFalse
+            (Get-A119Info).AccountId | Should -BeExactly $script:A119OidB
+            (Get-A119Info).Changed | Should -BeFalse
+        }
+
+        It 'sets the account of a first sign-in to the token''s oid when it is a GUID, else leaves it empty' {
+            Start-A119Session -Method DeviceCode
+            (Get-A119Info).AccountId | Should -BeExactly $script:A119OidA
+            (Get-A119Info).Changed | Should -BeFalse
+
+            InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+            Start-A119Session -Method DeviceCode -GraphOid ''
+            (Get-A119Info).AccountId | Should -BeNullOrEmpty
+            (Get-A119Info).Changed | Should -BeFalse
+
+            # Get-OERTokenObjectId answers a GUID or nothing; a value that is not a GUID is never taken as the account.
+            InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+            Start-A119Session -Method DeviceCode -GraphOid 'not-a-guid-NOT-AN-OID'
+            (Get-A119Info).AccountId | Should -BeNullOrEmpty
+        }
+
+        It 'does not refuse a nested sign-in under an unchanged session, and leaves the outer command unsuperseded' {
+            Start-A119Session -Method DeviceCode
+            $Result = InModuleScope $script:moduleName -Parameters @{ T = $script:A119Tenant } {
+                param($T)
+                $Holder = @{ InnerCaught = $null }
+                function Invoke-A119Inner {
+                    [CmdletBinding()]
+                    param()
+                    try { Initialize-OERAuth } catch { $Holder.InnerCaught = $PSItem }
+                }
+                function Invoke-A119Outer {
+                    [CmdletBinding()]
+                    param()
+                    Initialize-OERAuth -TenantId $T -AuthMethod DeviceCode
+                    $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(2)
+                    Invoke-A119Inner
+                    $Holder.Superseded = Get-OERSignInSupersession
+                    $Holder.Latched = [bool](Get-OERSignInRefusal)
+                }
+                Invoke-A119Outer
+                $Holder
+            }
+            $Result.InnerCaught | Should -BeNullOrEmpty
+            $Result.Superseded | Should -BeNullOrEmpty
+            $Result.Latched | Should -BeFalse
+            # The nested sign-in renewed the token (a real request), as the same account.
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly
+        }
+    }
+
+    Context 'the Azure Resource Manager token of a renewal' {
+        It 'refuses an ARM token of another account, caches nothing and leaves the state as it is' {
+            Start-A119Session
+            $Before = Get-A119Info
+            $Before.HasArm | Should -BeFalse
+            $script:A119ArmOid = $script:A119OidB
+
+            $Probe = Invoke-A119Probe @{ IncludeARM = $true }
+
+            $Probe.Caught.FullyQualifiedErrorId | Should -BeExactly 'SignInSuperseded,Initialize-OERAuth'
+            $Probe.Caught.TargetObject | Should -BeExactly 'Invoke-A119Command'
+            $Probe.Caught.Exception.Message | Should -BeLike "A renewal of the module's sign-in returned a token for another account than the one Invoke-A119Command began with,*"
+            $Probe.Latched | Should -BeTrue
+            $Probe.Marker | Should -BeTrue
+            $After = Get-A119Info
+            $After.HasArm | Should -BeFalse -Because 'a token of another account is never cached'
+            $After.ArmTenant | Should -BeNullOrEmpty
+            $After.AccountId | Should -BeExactly $script:A119OidA
+            $After.Oid | Should -BeExactly $script:A119OidA
+            $After.Changed | Should -Not -BeTrue
+            $After.Identity | Should -BeExactly $Before.Identity
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly -ParameterFilter { [string]$Resource -like '*management*' }
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+        }
+
+        It 'caches an ARM token of the same account' {
+            Start-A119Session
+
+            $Probe = Invoke-A119Probe @{ IncludeARM = $true }
+
+            $Probe.Caught | Should -BeNullOrEmpty
+            $Probe.Latched | Should -BeFalse
+            (Get-A119Info).HasArm | Should -BeTrue
+        }
+
+        It 'caches an ARM token that carries no oid' {
+            Start-A119Session
+            $script:A119ArmOid = ''
+
+            $Probe = Invoke-A119Probe @{ IncludeARM = $true }
+
+            $Probe.Caught | Should -BeNullOrEmpty
+            (Get-A119Info).HasArm | Should -BeTrue
+        }
+
+        It 'caches an ARM token of any account when the session''s own token carried no oid' {
+            Start-A119Session -GraphOid ''
+            $script:A119ArmOid = $script:A119OidB
+
+            $Probe = Invoke-A119Probe @{ IncludeARM = $true }
+
+            $Probe.Caught | Should -BeNullOrEmpty
+            (Get-A119Info).HasArm | Should -BeTrue
+        }
+
+        It 'does not hold a first sign-in to the rule (known limit): Graph as one account and ARM as another are both cached' {
+            $script:A119GraphOid = $script:A119OidA
+            $script:A119ArmOid = $script:A119OidB
+
+            $Probe = Invoke-A119Probe @{ TenantId = $script:A119Tenant; AuthMethod = 'DeviceCode'; IncludeARM = $true }
+
+            $Probe.Caught | Should -BeNullOrEmpty
+            (Get-A119Info).HasArm | Should -BeTrue
+        }
+
+        It 'does not hold Connect-OER (-ReclaimGraphSession) to the rule (known limit)' {
+            Start-A119Session -Method DeviceCode
+            $script:A119ArmOid = $script:A119OidB
+
+            $Probe = Invoke-A119Probe @{ TenantId = $script:A119Tenant; AuthMethod = 'DeviceCode'; IncludeARM = $true; ReclaimGraphSession = $true }
+
+            $Probe.Caught | Should -BeNullOrEmpty
+            $Probe.Latched | Should -BeFalse
+            (Get-A119Info).HasArm | Should -BeTrue
+        }
+    }
+
+    Context 'a public command in a script with no try above it' {
+        BeforeAll {
+            . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+            # The real Initialize-OERAuth and the real Get-OERGroup run in a runspace. An outer command signs
+            # in as account A (a real success), the Graph token is moved near its expiry, the oid the next
+            # token carries is set to account B (or left as A), and Get-OERGroup, which signs in again without
+            # -TenantId, is called with no try anywhere above it. Every token, connection and request the
+            # module could make is replaced by a function that logs a line.
+            function script:New-AccountNoTryScenario {
+                param([string]$Log, [string]$NextOid)
+                [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    $script:_OERAuthState = $null
+    $script:_OERSessionUncertain = $null
+    $script:_OERInteractiveCredential = $null
+    $script:A119Oid = '88888888-8888-8888-8888-888888888888'
+    Set-Item -Path function:script:Test-OERHostNonInteractive -Value { $false }
+    Set-Item -Path function:script:Get-AzToken -Value {
+        param($ClientId, $Resource, $Tenant, $Scope, $Interactive, $DeviceCode, $Force, $CredentialPrecedence, $ErrorAction, $WarningAction)
+        [System.IO.File]::AppendAllText('#LOG#', "TOKEN $Resource`n")
+        [pscustomobject]@{
+            Token     = 'NOT-A-REAL-TOKEN-a119'
+            ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+            Identity  = 'admin@contoso.com'
+            TenantId  = '66666666-6666-6666-6666-666666666666'
+        }
+    }
+    Set-Item -Path function:script:Get-OERTokenObjectId -Value { $script:A119Oid }
+    Set-Item -Path function:script:Connect-MgGraph -Value { [System.IO.File]::AppendAllText('#LOG#', "CONNECT`n") }
+    Set-Item -Path function:script:Get-MgContext -Value {
+        [pscustomobject]@{ AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '11111111-1111-1111-1111-111111111111'; TenantId = '66666666-6666-6666-6666-666666666666'
+            Account = 'admin@contoso.com'; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All') }
+    }
+    Set-Item -Path function:script:Invoke-MgGraphRequest -Value { [System.IO.File]::AppendAllText('#LOG#', "GRAPH`n") }
+    Set-Item -Path function:script:Invoke-WebRequest -Value { [System.IO.File]::AppendAllText('#LOG#', "ARM`n") }
+    Set-Item -Path function:script:Resolve-OERTenantDomain -Value { [System.IO.File]::AppendAllText('#LOG#', "LOOKUP`n"); '66666666-6666-6666-6666-666666666666' }
+    function script:Invoke-OuterCommand {
+        [CmdletBinding()]
+        param()
+        Initialize-OERAuth -TenantId '66666666-6666-6666-6666-666666666666' -AuthMethod 'DeviceCode'
+        [System.IO.File]::WriteAllText('#LOG#', '')
+        $script:A119Oid = '#NEXTOID#'
+        $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(2)
+        Get-OERGroup -Group 'g1' -ErrorAction Continue
+    }
+}
+$All = @(& (Get-Module Omnicit.EntraRBAC) { Invoke-OuterCommand } 2>&1)
+foreach ($E in $All) { "ERR:$($E.FullyQualifiedErrorId)" }
+# The stubs of a transport name above shadow the tripwire's replacements in this runspace's copy of the
+# module, and the tripwire check after the scenario reads that scope: removed here (the nearest definition,
+# which is the stub), so the check sees the replacements again.
+& (Get-Module Omnicit.EntraRBAC) {
+    foreach ($Name in 'Get-AzToken', 'Connect-MgGraph', 'Invoke-MgGraphRequest', 'Invoke-WebRequest') {
+        Remove-Item -Path ('function:' + $Name) -ErrorAction SilentlyContinue
+    }
+}
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#NEXTOID#', $NextOid))
+            }
+        }
+
+        It 'raises SignInSuperseded for the renewal answered by another account, refuses the command''s own request, sends no Graph or ARM request and carries on' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-AccountNoTryScenario -Log $Log -NextOid '99999999-9999-9999-9999-999999999999')
+
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Output | Where-Object { $_ -like 'ERR:*' }) | Should -Be @(
+                'ERR:SignInSuperseded,Initialize-OERAuth'
+                'ERR:SignInRefused,Get-OERGroup'
+            )
+            # Not vacuous: the renewal ran its token request and connected the session as the new account.
+            $Lines = @(Get-Content -LiteralPath $Log)
+            @($Lines | Where-Object { $_ -like 'TOKEN*' }).Count | Should -Be 1
+            @($Lines | Where-Object { $_ -eq 'CONNECT' }).Count | Should -Be 1
+            @($Lines | Where-Object { $_ -eq 'GRAPH' -or $_ -eq 'ARM' }).Count | Should -Be 0
+            $Run.Warnings | Should -BeNullOrEmpty
+        }
+
+        It 'is not raised for a renewal answered by the same account: the command sends its request' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-AccountNoTryScenario -Log $Log -NextOid '88888888-8888-8888-8888-888888888888')
+
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Output | Where-Object { $_ -like 'ERR:SignIn*' }) | Should -BeNullOrEmpty
+            $Lines = @(Get-Content -LiteralPath $Log)
+            @($Lines | Where-Object { $_ -like 'TOKEN*' }).Count | Should -Be 1
+            @($Lines | Where-Object { $_ -eq 'CONNECT' }).Count | Should -Be 1
+            @($Lines | Where-Object { $_ -eq 'GRAPH' }).Count | Should -BeGreaterThan 0
+        }
+    }
+}

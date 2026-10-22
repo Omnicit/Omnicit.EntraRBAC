@@ -48,7 +48,7 @@ Describe 'Register-OERSignInIdentity' {
         $R.Held | Should -BeTrue
         $R.Value | Should -BeOfType ([string])
         $R.Value | Should -BeExactly $R.Identity
-        $R.Value | Should -BeExactly "11111111-1111-1111-1111-111111111111`nInteractive`n33333333-3333-3333-3333-333333333333`nGlobal"
+        $R.Value | Should -BeExactly "11111111-1111-1111-1111-111111111111`nInteractive`n33333333-3333-3333-3333-333333333333`nGlobal`n"
     }
 
     It 'replaces the value a second call for the same invocation stores' {
