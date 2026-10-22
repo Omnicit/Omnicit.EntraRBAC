@@ -74,7 +74,6 @@ Describe 'Get-OERSignInIdentity' {
                 TokenTenantId           = '11111111-1111-1111-1111-111111111111'
                 SignedInObjectId        = '66666666-6666-6666-6666-666666666666'
                 SignInAccountId         = '55555555-5555-5555-5555-555555555555'
-                SignInAccountChanged    = $true
                 GraphSessionFingerprint = 'fingerprint-NOT-A-REAL-TOKEN'
                 ArmToken                = [System.Net.NetworkCredential]::new('', 'fake-arm-token-NOT-A-REAL-TOKEN').SecurePassword
                 ArmTokenExpiry          = [DateTime]::UtcNow.AddHours(1)

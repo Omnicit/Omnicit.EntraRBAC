@@ -272,19 +272,14 @@ function Invoke-OERStructure {
     command began, any such sign-in counts, even one that names no tenant. Run such commands as
     separate statements. The error says this command did not apply the document and sent nothing for
     it, and names the cause: Disconnect-OER ended the module's session, when the module holds none
-    by then; a renewal of the sign-in answered by another account than the one the command began
-    with, when the module's state records that; and another command's sign-in otherwise. A document
+    by then, and another command's sign-in otherwise. A document
     that cannot be read or does not validate reports its own error, as before. Several documents
     piped into one call are each compared with the session the last sign-in of this call left,
     whether that sign-in succeeded or was refused, or, before its first sign-in, with the session the
     call began with. So a first sign-in from no session does not refuse the next document, while a
     document refused with SignInSuperseded, or one that could not be read or did not validate, signs
-    nothing in and moves nothing: the document after it is compared with the same session. One
-    exception: a sign-in of this command that was itself refused with SignInSuperseded, because a
-    renewal was answered by another account, never becomes the session the next document is compared
-    with. The module then holds the other account, but the call keeps the session it had before that
-    sign-in, so the next document is compared with it and refused by the rules of this section; run
-    Connect-OER -Force to sign in again as the account you mean. With -TenantId the same refusal
+    nothing in and moves nothing: the document after it is compared with the same session. With
+    -TenantId the same refusal
     applies when the sign-in would take the session's identity for that tenant: the module's session
     was built for exactly the tenant -TenantId names, as it was named (a tenant ID is not its
     domain), and the identity it carries by then is not the one this command began with -- another
@@ -720,40 +715,13 @@ function Invoke-OERStructure {
             $PSCmdlet.WriteError((New-OERSignInSupersededError -Command $PSCmdlet.MyInvocation.MyCommand.Name -Document))
             return
         }
-        # The records of this call's own sign-in, found as Get-OERInventory finds its own refusal:
-        # -ErrorVariable holds a terminating refusal as well as a written one, and a record is the
-        # sign-in's own when its FullyQualifiedErrorId is exactly 'SignInSuperseded,Initialize-OERAuth'
-        # (the first comma segment and the writer, compared whole and ordinal, never a message
-        # searched). Under -ErrorAction Ignore PowerShell adds a record to NO -ErrorVariable (measured),
-        # so only Ignore is pinned away, to SilentlyContinue, as Get-OERInventory does.
-        $SignInErrors = $null
-        $SignInSplat = @{}
-        if ($ErrorActionPreference -eq 'Ignore') { $SignInSplat.ErrorAction = 'SilentlyContinue' }
-        Initialize-OERAuth @AuthParams @SignInSplat -ErrorVariable SignInErrors
-        $SignInSuperseded = $false
-        foreach ($SignInError in @($SignInErrors)) {
-            if ($null -eq $SignInError) { continue }
-            $SignInRecord = if ($SignInError -is [System.Management.Automation.ErrorRecord]) {
-                $SignInError
-            } elseif ($SignInError -is [System.Management.Automation.IContainsErrorRecord]) {
-                $SignInError.ErrorRecord
-            }
-            if ($null -ne $SignInRecord -and
-                [string]::Equals([string]$SignInRecord.FullyQualifiedErrorId, 'SignInSuperseded,Initialize-OERAuth', [System.StringComparison]::Ordinal)) {
-                $SignInSuperseded = $true
-            }
-        }
+        Initialize-OERAuth @AuthParams
         # The next piped document compares with the session this one signed in under: a first sign-in
-        # from no session must not refuse the second document. Taken again after every sign-in, refused
-        # or not, EXCEPT one Initialize-OERAuth refused with SignInSuperseded (BL-119: a renewal
-        # answered by another account): that refusal leaves the module holding the OTHER account, so
-        # taking it as the snapshot would let the next document with -TenantId compare the new account
-        # with itself, sign in on the cache and be applied as that account. The previous snapshot is
-        # kept, and the next document is refused against it. Every other refusal leaves the identity as
-        # it was, or sets the one this command itself asked for, and is taken as today.
-        if (-not $SignInSuperseded) {
-            $SignInSnapshot = Checkpoint-OERSignIn
-        }
+        # from no session must not refuse the second document. Taken after every sign-in, refused or
+        # not: a refused sign-in leaves the identity as it was (a renewal answered by another account
+        # is refused before the session is touched, BL-119), or sets the one this command itself
+        # asked for.
+        $SignInSnapshot = Checkpoint-OERSignIn
         # SEC (BL-88, A14): after the sign-in, and before anything below reads or writes -- the
         # omitted-collection warning, the administrative unit pre-pass and every section -- the session
         # the document would be applied under must be the tenant it names: the Graph token's tenant, and

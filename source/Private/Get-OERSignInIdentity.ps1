@@ -17,14 +17,14 @@ function Get-OERSignInIdentity {
     token says which tenant it is.
 
     The account term (BL-119) is the state's SignInAccountId: the object id of the account the session
-    was established as, a GUID string or empty. Initialize-OERAuth writes it so that only a PROVEN
-    change of account moves it: a renewal of the session (a Graph token renewed near its expiry, or a
-    transport's refresh) carries it over from the old state unless the new token's oid is a GUID that
-    differs from the old session's, in which case it is the new oid; any other sign-in sets it to the
-    new token's oid when that is a GUID, else leaves it empty. A token without an oid, on either side,
-    therefore never moves the identity. It is an object id, never a name, a user principal name or a
-    token, and it is read from the state's own key, not from SignedInObjectId (which keeps meaning
-    'the oid of the last token' and is read by the prune's self-protection).
+    was established as, a GUID string or empty. Initialize-OERAuth writes it so that a renewal never
+    moves it: a renewal of the session (a Graph token renewed near its expiry, or a transport's
+    refresh) carries it over from the old state, and a renewal answered by another account is refused
+    before the state is touched; any other sign-in sets it to the new token's oid when that is a
+    GUID, else leaves it empty. A token without an oid, on either side, therefore never moves the
+    identity. It is an object id, never a name, a user principal name or a token, and it is read from
+    the state's own key, not from SignedInObjectId (the oid of the signed-in identity, read by the
+    prune's self-protection).
 
     The result never carries a token, an account name or any other field of the state: only these five
     terms. Register-OERSignInIdentity remembers it for a command whose sign-in succeeded,

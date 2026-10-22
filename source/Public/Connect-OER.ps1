@@ -57,11 +57,12 @@ function Connect-OER {
     bound. So an
     interactive long run can still ask you to sign in (choose the account the session signed in
     with; the account picker also offers other accounts of the same tenant, but a renewal answered
-    by another account is refused with SignInSuperseded: the command that asked for it, and the
-    commands that began before it, send nothing more, and the session is then that account's, left
-    uncertain, so a command that names no tenant is refused until Connect-OER -Force signs in again
-    as the account you mean, while a command that names its tenant runs as that account;
-    Connect-OER itself, which signs in deliberately, may sign in as another account), and a device code
+    by another account is refused with SignInSuperseded for the command that asked for it: the
+    token is not used and the session stays the account it was, so a later command, with or without
+    -TenantId, never runs as the other account: it uses the session's token or renews again, and a
+    command that names no tenant is refused until Connect-OER or a command that names its tenant
+    signs in; run Connect-OER -Force to sign in as another account; Connect-OER itself, which signs
+    in deliberately, may sign in as another account), and a device code
     session prints a new code to enter.
     Connect-OER itself never renews silently: its own interactive sign-in opens the browser. A
     managed identity renews with no prompt and is the only sign-in that renews unattended. In a

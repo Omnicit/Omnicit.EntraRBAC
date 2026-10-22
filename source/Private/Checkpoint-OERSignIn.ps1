@@ -28,9 +28,7 @@ function Checkpoint-OERSignIn {
     and is not refused. Invoke-OERStructure compares for each document after the
     document is read and validated, directly before its sign-in, and takes the snapshot again after
     every sign-in, refused or not, so the next piped document is compared with the session that
-    sign-in left -- except a sign-in Initialize-OERAuth refused with SignInSuperseded (a renewal
-    answered by another account, BL-119), which leaves the other account in the module and so never
-    becomes the snapshot. The builders compare directly before their first lookup call (Resolve-OERTargetList
+    sign-in left. The builders compare directly before their first lookup call (Resolve-OERTargetList
     or Resolve-OERReviewerScope), after their own argument checks and whether or not a value is a
     name -- New-OERAccessPackageRequestorScope only when it has -User or -Group targets to resolve
     for SpecificDirectoryUsers -- and take no pipeline input, so they never take it again.

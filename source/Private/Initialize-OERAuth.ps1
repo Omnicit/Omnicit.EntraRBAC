@@ -115,18 +115,24 @@ function Initialize-OERAuth {
     holds -- the same tenant label, method, client and cloud, and not Connect-OER's (-ReclaimGraphSession)
     -- compares the oid of the new Microsoft Graph token (Get-OERTokenObjectId) with the session's
     SignedInObjectId, after the TenantMismatch check and before Connect-MgGraph; a token without an oid,
-    on either side, proves nothing and never refuses. When both are GUIDs and differ, the session becomes
-    the new account's as any sign-in would (Connect-MgGraph, the state rebuild with SignInAccountId the
-    new oid and SignInAccountChanged $true, the cached ARM token dropped), and the caller is then refused
-    with a terminating SignInSuperseded (New-OERSignInSupersededError -AccountChanged), before the ARM
-    step and before the release, the memory and the marker, so the caller stays latched and the session
-    stays uncertain. Every outer command that remembers the old account now differs from the state, so the
-    transports refuse its requests and the BL-91 check its nested sign-ins. SignInAccountId is the fifth
-    term of the sign-in identity (Get-OERSignInIdentity); a renewal carries it over unless the account
-    changed, and any other sign-in sets it to the new token's oid when that is a GUID. An Azure Resource
-    Manager token acquired by a renewal is held to the same rule against the session's SignedInObjectId:
-    another account's is refused the same way and is not cached, and the state is left as it is. The
-    silent renewal (A22) is unchanged; its own check of the object id still comes first.
+    on either side, proves nothing and never refuses. When both are GUIDs and differ, the caller is
+    refused with a terminating SignInSuperseded (New-OERSignInSupersededError -AccountChanged) before
+    Connect-MgGraph and before the state is rebuilt: the token is not used, and the session stays the
+    account it was -- the state, the Graph SDK session, the cached Azure Resource Manager token, the
+    sign-in identity and the sign-in memory are all left as they were. The caller stays latched and the
+    session stays uncertain, as after any refusal, so a later command that names no tenant is refused
+    (SignInRefused) until Connect-OER, or a command that names its tenant, signs in; a later command
+    that does name it either uses the session's cached token or renews again, and a renewal answered by
+    the other account again is refused again. No outer command is superseded by this refusal, since the
+    sign-in identity does not move. Only Connect-OER (-ReclaimGraphSession, never a renewal) can make the
+    session another account's. A renewal whose new token carries no oid never replaces the session's
+    SignedInObjectId: it is carried over, so the next renewal is still compared with the known account;
+    any other sign-in records its own token's oid. SignInAccountId is the fifth term of the sign-in
+    identity (Get-OERSignInIdentity); a renewal carries it over, and any other sign-in sets it to the
+    new token's oid when that is a GUID. An Azure Resource Manager token acquired by a renewal is held
+    to the same rule against the session's SignedInObjectId: another account's is refused the same way
+    and is not cached, and the state is left as it is. The silent renewal (A22) is unchanged; its own
+    check of the object id still comes first.
 
     Every other entry then latches the command that called this function (Lock-OERSignIn), and only a
     success releases it (Unlock-OERSignIn): the cached return, or a new connection that went the whole
@@ -1206,8 +1212,9 @@ function Initialize-OERAuth {
         [bool]$ArmTokenKept = $true
 
         # SEC (BL-119): whether the Graph token acquired below proves another account than the session's;
-        # decided in the Graph branch, read by the ARM carry and the refusal there. $false when the Graph
-        # token is cached, and the ARM step then compares the ARM token's own oid (R6).
+        # decided in the Graph branch, which refuses its caller at once when it is $true, so nothing
+        # below the refusal ever sees it set. $false when the Graph token is cached, and the ARM step
+        # then compares the ARM token's own oid (R6).
         [bool]$AccountChanged = $false
 
         # -- Graph token --
@@ -1423,18 +1430,29 @@ function Initialize-OERAuth {
             # transport's refresh -- could be answered in the browser by another account of the same
             # tenant, and every command that began under the first account would carry on under the
             # second one with the same identity string. Placed after the TenantMismatch check and before
-            # Connect-MgGraph. The session then BECOMES the new account, as any sign-in would (Connect-
-            # MgGraph and the rebuild below run, SignInAccountId is the new oid, SignInAccountChanged is
-            # $true): that is what makes every outer frame that remembers the old account differ from the
-            # state, so the transports refuse its requests (Get-OERSignInSupersession) and the BL-91 check
-            # refuses its nested sign-ins. Connect-OER (-ReclaimGraphSession) is the operator's own
-            # sign-in and is never refused here. Every term on its own line and independently deletable,
-            # so each stays mutation-provable.
+            # Connect-MgGraph, exactly as the ARM token of a renewal is refused below: the token is NOT
+            # used. Connect-MgGraph and the state rebuild do not run, so the session stays the account it
+            # was -- the state, the Graph SDK session, the cached ARM token, the identity and the memory
+            # are left as they were -- and no outer frame is superseded by it. Connect-OER
+            # (-ReclaimGraphSession) is the operator's own sign-in and is never refused here. Every term
+            # on its own line and independently deletable, so each stays mutation-provable.
             $NewObjectId = Get-OERTokenObjectId -Token $SecureToken
             $AccountChanged = $RenewsSession -and
                 (Test-OERGuid -Value $NewObjectId) -and
                 (Test-OERGuid -Value $script:_OERAuthState.SignedInObjectId) -and
                 $NewObjectId -ne $script:_OERAuthState.SignedInObjectId
+
+            # The refusal itself: terminating, since outside any try the caller carries on past a
+            # terminating error this function raises. The latch (left in place), the session-uncertain
+            # marker (left set) and the sign-in memory (not replaced) all stay as for every refusal. The
+            # plaintext is dropped first, as the rebuild below does after its use. The caller's name is
+            # read the way the A10 refusal reads it.
+            if ($AccountChanged) {
+                $GraphToken = $null
+                [string]$ChangedCaller = if ($SignInCaller -and $SignInCaller.MyCommand.Name) { $SignInCaller.MyCommand.Name } else { 'a script block' }
+                Write-CmdletError -ErrorRecord (New-OERSignInSupersededError -Command $ChangedCaller -AccountChanged) -Cmdlet $PSCmdlet -Terminating
+                return
+            }
 
             # 'Global' omits the key ENTIRELY rather than passing 'Global' explicitly. The two are
             # equivalent to the SDK -- its default is the global cloud -- but only an absent key lets
@@ -1481,24 +1499,18 @@ function Initialize-OERAuth {
             # must be a GUID, and the ARM token's must equal it, which makes it the same GUID -- a second
             # GUID test on the ARM side would add nothing an input could falsify. Two tenants that are
             # both absent compare equal, which is what the GUID term refuses. Every term on its own line
-            # and independently deletable, so each stays mutation-provable. SEC (BL-119): and not when the
-            # renewal proved another account ($AccountChanged): the carried ARM token belongs to the old one.
+            # and independently deletable, so each stays mutation-provable.
             $ArmTokenKept = $ArmIdentityUnchanged -and
-                -not $AccountChanged -and
                 (Test-OERGuid -Value $GrantedTenant) -and
                 $script:_OERAuthState.ArmTokenTenantId -eq $GrantedTenant
 
             # SEC (BL-119): the account the rebuilt session is established as (the identity's fifth term,
-            # Get-OERSignInIdentity). Only a PROVEN change of account moves it. A renewal carries the old
-            # state's value over, so a token without an oid -- on either side -- never moves the identity
-            # and an unchanged account never does; a renewal that proved another account sets the new oid;
-            # any other sign-in (a first one, a tenant or method switch, Connect-OER's) sets the new
-            # token's oid when it is a GUID, else $null. SignedInObjectId below stays 'the oid of the last
-            # token', as before. Every branch on its own line and independently deletable.
-            $NewAccountId = if ($AccountChanged) {
-                $NewObjectId
-            }
-            elseif ($RenewsSession) {
+            # Get-OERSignInIdentity). A renewal carries the old state's value over, so a token without an
+            # oid -- on either side -- never moves the identity and an unchanged account never does (a
+            # renewal that proved another account was refused above and never reaches here); any other
+            # sign-in (a first one, a tenant or method switch, Connect-OER's) sets the new token's oid
+            # when it is a GUID, else $null. Every branch on its own line and independently deletable.
+            $NewAccountId = if ($RenewsSession) {
                 $script:_OERAuthState.SignInAccountId
             }
             elseif (Test-OERGuid -Value $NewObjectId) {
@@ -1506,6 +1518,22 @@ function Initialize-OERAuth {
             }
             else {
                 $null
+            }
+
+            # SEC (BL-119, D2): the oid the rebuilt session records as the signed-in identity's own. The
+            # new token's oid when it is a GUID. A RENEWAL whose new token carries none (or a non-GUID)
+            # never replaces the session's value -- it is carried over, so the next renewal is still
+            # compared with the known account instead of with nothing. Any other sign-in is a new session
+            # and records its own token's oid as it is, $null included. Every branch on its own line and
+            # independently deletable.
+            $NewSignedInObjectId = if (Test-OERGuid -Value $NewObjectId) {
+                $NewObjectId
+            }
+            elseif ($RenewsSession) {
+                $script:_OERAuthState.SignedInObjectId
+            }
+            else {
+                $NewObjectId
             }
 
             $script:_OERAuthState = @{
@@ -1527,13 +1555,12 @@ function Initialize-OERAuth {
                 # The signed-in identity's own object id, from the Graph token's oid claim -- the
                 # user on a delegated sign-in, the service principal on an app-only one. Read by
                 # Get-OERSignedInObjectId so the directory-role prune never removes the caller's own
-                # assignments. The token itself is never stored.
-                SignedInObjectId = $NewObjectId
-                # SEC (BL-119): the account term of the sign-in identity and whether this session came
-                # from a renewal that proved another account; see $NewAccountId above and
-                # New-OERSignInSupersededError. Object ids and a boolean: never a name or a token.
+                # assignments. The token itself is never stored. A renewal whose token carries no oid
+                # keeps the session's value ($NewSignedInObjectId above).
+                SignedInObjectId = $NewSignedInObjectId
+                # SEC (BL-119): the account term of the sign-in identity; see $NewAccountId above. An
+                # object id: never a name or a token.
                 SignInAccountId  = $NewAccountId
-                SignInAccountChanged = $AccountChanged
                 # SEC (A18): which Microsoft Graph PowerShell SDK session this module just connected,
                 # read straight after its own Connect-MgGraph above. Get-OERGraphSessionState compares
                 # it with the session the process holds at every later entry here and before every
@@ -1557,20 +1584,6 @@ function Initialize-OERAuth {
 
             # M5: clear plaintext-bearing token variable to reduce its in-memory lifetime.
             $GraphToken = $null
-
-            # SEC (BL-119): the renewal proved another account (above), the session is now that account's
-            # and the cached ARM token was dropped with the rebuild, so the caller -- which began under the
-            # old account -- is refused, directly after the rebuild, before the ARM step, and before the
-            # release, the memory and the marker below: it stays latched and the session stays uncertain.
-            # Terminating, since outside any try the caller carries on past a terminating error this
-            # function raises; the latch and the supersession (its remembered identity now differs from
-            # the state's) refuse everything it sends. The caller's name is read the way the A10 refusal
-            # reads it.
-            if ($AccountChanged) {
-                [string]$ChangedCaller = if ($SignInCaller -and $SignInCaller.MyCommand.Name) { $SignInCaller.MyCommand.Name } else { 'a script block' }
-                Write-CmdletError -ErrorRecord (New-OERSignInSupersededError -Command $ChangedCaller -AccountChanged) -Cmdlet $PSCmdlet -Terminating
-                return
-            }
         }
 
         # -- ARM token (optional) --

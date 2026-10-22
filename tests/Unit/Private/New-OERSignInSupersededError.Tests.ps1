@@ -218,9 +218,11 @@ Describe 'New-OERSignInSupersededError' {
         }
     }
 
-    # BL-119: a renewal answered by another account. The switch is Initialize-OERAuth's own refusal; the
-    # state's SignInAccountChanged is what a transport reads while that state stands; the no-state cause
-    # wins first. The four texts above stay byte-identical (their Contexts), also when the flag is $false.
+    # BL-119: a renewal answered by another account. The switch is Initialize-OERAuth's own refusal and
+    # the only source of that cause: a refused renewal leaves the session as it was, so no transport
+    # refusal has it and the state is never read for it (a stale SignInAccountChanged key, as an older
+    # build wrote, reads the pipeline text); the no-state cause wins first. The four texts above stay
+    # byte-identical (their Contexts), also when the flag is $false.
     Context 'after a renewal returned a token for another account (BL-119)' {
         BeforeAll {
             function script:New-AccountProbe {
@@ -241,11 +243,11 @@ Describe 'New-OERSignInSupersededError' {
                 }
             }
             $script:AccountRequestText = "A renewal of the module's sign-in returned a token for another account than the one @@NAME@@ began with, " +
-                'so Omnicit.EntraRBAC sends nothing while @@NAME@@ runs: this request was not sent. Run Connect-OER -Force to sign in again as ' +
-                'the account you mean, then run the command again.'
+                'so Omnicit.EntraRBAC sends nothing while @@NAME@@ runs: this request was not sent. The token was not used and the session ' +
+                'stays the account it was: run the command again and choose that account, or run Connect-OER -Force to sign in as another account.'
             $script:AccountDocumentText = "A renewal of the module's sign-in returned a token for another account than the one @@NAME@@ began with, " +
-                'so @@NAME@@ did not apply this document and Omnicit.EntraRBAC sent nothing for it. Run Connect-OER -Force to sign in again as ' +
-                'the account you mean, then run the command again.'
+                'so @@NAME@@ did not apply this document and Omnicit.EntraRBAC sent nothing for it. The token was not used and the session ' +
+                'stays the account it was: run the command again and choose that account, or run Connect-OER -Force to sign in as another account.'
         }
 
         It 'declares -AccountChanged as an optional switch' {
@@ -263,9 +265,18 @@ Describe 'New-OERSignInSupersededError' {
             $R.Exception.Message | Should -BeExactly $script:AccountRequestText.Replace('@@NAME@@', 'New-OERGroup')
         }
 
-        It 'carries the same text, without the switch, while the state says its last renewal changed the account' {
+        It 'never reads the account text from the state: a stale SignInAccountChanged key reads the pipeline text, in every variant' {
             $R = New-AccountProbe -Command 'New-OERGroup' -Document $false -Flag $true -Switch $false
-            $R.Exception.Message | Should -BeExactly $script:AccountRequestText.Replace('@@NAME@@', 'New-OERGroup')
+            $R.Exception.Message | Should -BeExactly $script:RequestIdentityText.Replace('@@NAME@@', 'New-OERGroup')
+            $R.Exception.Message | Should -Not -Match 'another account'
+            $D = New-AccountProbe -Command 'Invoke-OERStructure' -Document $true -Flag $true -Switch $false
+            $D.Exception.Message | Should -BeExactly $script:DocumentIdentityText.Replace('@@NAME@@', 'Invoke-OERStructure')
+            $D.Exception.Message | Should -Not -Match 'another account'
+        }
+
+        It 'advises that the token was not used and the session stays the account it was' {
+            $R = New-AccountProbe -Command 'New-OERGroup' -Document $false -Flag $null -Switch $true
+            $R.Exception.Message | Should -BeLike '*The token was not used and the session stays the account it was: run the command again and choose that account, or run Connect-OER -Force to sign in as another account.'
         }
 
         It 'carries the document variant with -Document' {

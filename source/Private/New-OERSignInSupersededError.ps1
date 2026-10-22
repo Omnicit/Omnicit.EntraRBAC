@@ -32,13 +32,14 @@ function New-OERSignInSupersededError {
     with the same id, category and target. By cause: another OER command in the same pipeline signed in
     to a different tenant or identity after the command began (the module still holds a session);
     a renewal of the module's sign-in returned a token for another account than the one the command
-    began with (the state's SignInAccountChanged, or -AccountChanged), and the advice is to run
-    Connect-OER -Force as the account meant and then the command again; or Disconnect-OER ended the
+    began with (-AccountChanged, which only Initialize-OERAuth passes), and the advice is that the token
+    was not used and the session stays the account it was: run the command again and choose that
+    account, or run Connect-OER -Force to sign in as another account; or Disconnect-OER ended the
     module's session after the command began (the module holds no session), and the advice is to run
-    Disconnect-OER as a statement of its own. The function reads the cause from the module's state
-    ($null is no session, the same test Get-OERSignInIdentity makes for 'not signed in', and
-    Disconnect-OER is the only place that sets the state to $null), so the transports and the
-    builders call it with no extra argument. By effect: a request says it was not sent, and the
+    Disconnect-OER as a statement of its own. The function reads the Disconnect-OER cause from the
+    module's state ($null is no session, the same test Get-OERSignInIdentity makes for 'not signed in',
+    and Disconnect-OER is the only place that sets the state to $null), so the transports and the
+    builders call it with no extra argument; the account cause is never read from the state. By effect: a request says it was not sent, and the
     module sends nothing while the command runs; with -Document the refusal is of a whole document,
     which the command did not apply, and the text says so.
 
@@ -60,11 +61,11 @@ function New-OERSignInSupersededError {
     .PARAMETER AccountChanged
     Builds the variant for a renewal answered by another account (BL-119): the text says a renewal of the
     module's sign-in returned a token for another account than the one the command began with, and the
-    advice is to run Connect-OER -Force as the account meant and then the command again.
-    Initialize-OERAuth passes it when it refuses its caller for that reason. The function also reads
-    the module's state: while the state's SignInAccountChanged is $true (the state a refused renewal
-    left), a transport's refusal of a request reads the same text without the switch. With no state
-    at all, Disconnect-OER's text wins.
+    advice is that the token was not used and the session stays the account it was: run the command
+    again and choose that account, or run Connect-OER -Force to sign in as another account.
+    Initialize-OERAuth passes it when it refuses its caller for that reason, and nothing else does: the
+    function does not read the module's state for this cause. With no state at all, Disconnect-OER's
+    text wins.
 
     .EXAMPLE
     throw (New-OERSignInSupersededError -Command 'New-OERGroup')
@@ -96,11 +97,12 @@ function New-OERSignInSupersededError {
     # The command's name is the only value in the text. It is an argument of -f, never part of the
     # format string, so a name is written exactly as passed, whatever characters it holds.
     [bool]$SessionEnded = $null -eq $script:_OERAuthState
-    # BL-119: a renewal answered by another account. The switch is Initialize-OERAuth's own refusal; the
-    # state's SignInAccountChanged is what a transport reads while that state stands. The no-state cause
-    # wins first: with no session at all, Disconnect-OER is what ended it, which the order of the
-    # branches below holds (the state read is $null-safe on a missing state).
-    [bool]$AccountReplaced = $AccountChanged -or $script:_OERAuthState.SignInAccountChanged -eq $true
+    # BL-119: a renewal answered by another account. The switch is Initialize-OERAuth's own refusal and
+    # the ONLY source of this cause: the state is not read for it, since a refused renewal leaves the
+    # session as it was and so supersedes no outer command, and no transport refusal has this cause. The
+    # no-state cause wins first: with no session at all, Disconnect-OER is what ended it, which the
+    # order of the branches below holds.
+    [bool]$AccountReplaced = $AccountChanged
     [string]$Cause = if ($SessionEnded) {
         "Disconnect-OER ended the module's session after {0} began"
     } elseif ($AccountReplaced) {
@@ -116,7 +118,7 @@ function New-OERSignInSupersededError {
     [string]$Advice = if ($SessionEnded) {
         'Run Disconnect-OER as a statement of its own, after the commands that use the session.'
     } elseif ($AccountReplaced) {
-        'Run Connect-OER -Force to sign in again as the account you mean, then run the command again.'
+        'The token was not used and the session stays the account it was: run the command again and choose that account, or run Connect-OER -Force to sign in as another account.'
     } else {
         'Run the commands as separate statements, so that each one signs in and finishes before the next one starts.'
     }
