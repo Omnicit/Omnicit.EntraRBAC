@@ -5543,19 +5543,17 @@ session, BL-90, below):
 - `Invoke-OERStructure` for each document after the document is read and validated, directly
   before `Initialize-OERAuth`, so a document that cannot be read or does not validate still reports
   `InvalidStructureDocument` or `StructureValidationFailed`. It takes the snapshot again after every
-  sign-in, refused or not, except one that `Initialize-OERAuth` refused with `SignInSuperseded`: a
-  refused sign-in leaves the identity as it was, or sets the one this command asked for, so the
-  result is the same and nothing has to read the latch. A first sign-in from no session therefore
-  does not refuse the next piped document, while a document refused with `SignInSuperseded` moves
-  nothing, and the document after it is compared with the same session. The exception is BL-119's
-  (final review of step 13b): a renewal answered by another account is refused after the state was
-  rebuilt as that account, so taking the snapshot again would compare the new account with itself
-  and the next document with `-TenantId` would sign in on the cache and be applied as the other
-  account, `-Prune` included. The command therefore finds its own refusal in `-ErrorVariable` as
-  `Get-OERInventory` does (a `FullyQualifiedErrorId` that is exactly
-  `SignInSuperseded,Initialize-OERAuth`, compared whole and ordinal, never a message searched) and
-  keeps the previous snapshot; the next document is then refused against it. Every other refusal,
-  and a first sign-in from no session, still takes the snapshot again.
+  sign-in, refused or not: a refused sign-in leaves the identity as it was, or sets the one this
+  command asked for, so the result is the same and nothing has to read the latch. A first sign-in
+  from no session therefore does not refuse the next piped document, while a document refused with
+  `SignInSuperseded` moves nothing, and the document after it is compared with the same session.
+  There was an exception for a renewal answered by another account (step 13b's final review): that
+  refusal then came after the state was rebuilt as the other account, so the command had to keep
+  its previous snapshot, found through `-ErrorVariable`. Step 13b round 1 removed it with its cause:
+  the refusal now stands before the state is touched (see
+  [A renewal never continues as another account](#a-renewal-never-continues-as-another-account)),
+  so no `SignInSuperseded` refusal of `Initialize-OERAuth` moves the identity any more and the
+  exception had become an equivalent mutant.
 - The builders directly before their first lookup call, after their own argument checks -- a
   missing approver or reviewer still reports `NoApprover` or `NoReviewer` -- and whether or not a
   value is a name; `New-OERAccessPackageRequestorScope` only in the branch that resolves `-User` or
@@ -5772,102 +5770,114 @@ renewal, which opens the same picker.
 
 **The account term.** `Get-OERSignInIdentity` has a fifth term, the account: the state's
 `SignInAccountId`, a GUID string or `$null`, read as a string, never a name, a user principal name
-or a token. `Initialize-OERAuth` writes it so that only a PROVEN change of account moves it. A
-sign-in is a RENEWAL (`$RenewsSession`) when the module holds a state with the same tenant label,
-method, client and cloud (`$ArmIdentityUnchanged`) and the call is not `Connect-OER`'s
+or a token. A sign-in is a RENEWAL (`$RenewsSession`) when the module holds a state with the same
+tenant label, method, client and cloud (`$ArmIdentityUnchanged`) and the call is not `Connect-OER`'s
 (`-ReclaimGraphSession`). It is deliberately not `$InheritIdentity`: a transport's refresh passes the
 state's `-AuthMethod` explicitly, so `$InheritIdentity` is `$false` for it, and it is a renewal all
-the same. On a renewal the account is carried from the old state unless the account changed, in which
-case it is the new token's oid; on any other sign-in it is the new token's oid when that is a GUID,
-else `$null`. `SignedInObjectId` keeps its meaning, the oid of the last token (the prune's
-self-protection reads it), and is set as before.
+the same. A renewal carries the account over from the old state; any other sign-in sets it to the new
+token's oid when that is a GUID, else `$null`. A renewal that is accepted has, by construction, the
+same account as the session, so the term never moves on a renewal. `SignedInObjectId` keeps its
+meaning, the oid of the last token (the prune's self-protection reads it).
 
-**The refusal of the Graph token.** In the Graph branch, after `TenantMismatch` and before
+**The refusal of the Graph token (D1).** In the Graph branch, after `TenantMismatch` and before
 `Connect-MgGraph`, `Initialize-OERAuth` reads the oid of the new token once (`Get-OERTokenObjectId`)
 and decides `$AccountChanged` as a renewal whose new oid and the state's `SignedInObjectId` are both
-GUIDs and differ, each term on its own line. The session then becomes the new account as any sign-in
-would: `Connect-MgGraph`, the rebuild with `SignInAccountId` the new oid and the state flag
-`SignInAccountChanged` `$true`, and the cached ARM token NOT carried (`-not $AccountChanged` joins
-`$ArmTokenKept`; an ARM token acquired for the old account does not belong to the new one). Directly
-after the rebuild the caller is refused with a terminating `SignInSuperseded`
-(`New-OERSignInSupersededError -AccountChanged`, naming the caller), before the ARM step and before
-`Unlock-OERSignIn`, `Register-OERSignInIdentity` and the end of the call, so the caller stays latched
-and the session-uncertain marker stays set. Every outer frame that remembers the old account now
-differs from the state: the transports refuse its requests and BL-91 (b) refuses its nested
-sign-ins. `Connect-OER` (`-ReclaimGraphSession`) is never refused here, since it signs in
-deliberately and takes the session back. The silent renewal (A22) is unchanged and still comes
-first: its own check of the object id discards another account's token, and the interactive request
-that follows is the one this refusal can reach.
+GUIDs and differ, each term on its own line. It then refuses its caller with a terminating
+`SignInSuperseded` (`New-OERSignInSupersededError -AccountChanged`, naming the caller) right there:
+before `Connect-MgGraph`, before the state is rebuilt and before the ARM step. The new token is not
+used, and the session stays the account it was: the state, the Graph SDK session (no
+`Connect-MgGraph` ran), the cached ARM token, the sign-in identity and the sign-in memory are all
+left as they were. The caller stays latched and the session-uncertain marker stays set, as after
+every refusal from the latch on. `Connect-OER` (`-ReclaimGraphSession`) is never refused here, since
+it signs in deliberately and is the one sign-in that can make the session another account's. The
+silent renewal (A22) is unchanged and still comes first: its own check of the object id discards
+another account's token, and the interactive request that follows is the one this refusal can reach.
 
-**Why the session becomes the new account rather than keeping the old one.** The outer frames that
-remember the old account must be refused, and the supersession gate does that only when the state
-names another account. A refusal that left the state as it was would leave them running under a
-session that still reads as theirs, and nothing would refuse their requests. The cost, stated for
-the operator: after the refusal the session IS the account the renewal returned, marked uncertain,
-with a fresh token. A later command that names no tenant is refused (`SignInRefused`) until
-`Connect-OER -Force` signs in again as the account meant (a bare `Connect-OER` would hit the cache
-and keep the account the renewal returned; `-Force` signs in again and opens the picker), or a
-command that names its tenant signs in; a command that names the tenant runs as that account.
+**What a later command does.** The session is still the old account's, so a later command that
+names the tenant either hits the cache, when the old account's token is still valid, or renews again;
+a renewal answered by the other account again is refused again, and one answered by the session's own
+account succeeds and clears the marker. A later command that names no tenant is refused with
+`SignInRefused` by the existing marker (see
+[A refused sign-in leaves the session uncertain](#a-refused-sign-in-leaves-the-session-uncertain))
+until `Connect-OER`, or a command that names its tenant, signs in. An operator who really wants the
+other account runs `Connect-OER -Force`, which opens the picker and takes the session back as the
+account picked; the message says so. A bare `Connect-OER` would hit the cache and keep the old account.
+
+**Why the session stays the old account (D1), and what it replaced.** The first design of this step
+connected and rebuilt the state as the account the renewal returned and only then refused the caller;
+the outer commands were refused because the state named another account than they remembered. The
+review of PR #69 found (R5) that this made the refusal itself the problem: after it the SESSION was
+the other account, so a later command that named its tenant ran as that account on the cache,
+`-Prune` of `Invoke-OERStructure` included, and the engine needed an exception to keep its snapshot
+(final review of step 13b). Refusing before the session is touched closes that at the root: no
+later command can run as an account nobody chose, and no outer frame is superseded by an account
+change, since the identity does not move. The alternatives were to refuse every later command (new
+state, a new gate, and a false refusal of a command whose own renewal is answered by the session's
+own account) and to keep the first design; neither was chosen. The cost, stated for the operator: a
+renewal answered by the other account keeps opening the picker until the session's account answers or
+`Connect-OER -Force` is run. For the same reason the state key `SignInAccountChanged` is gone (no
+transport refusal has the account cause, so `New-OERSignInSupersededError` no longer reads the state
+for it, only its `-AccountChanged` switch, which only `Initialize-OERAuth` passes), and so is the
+snapshot exception of `Invoke-OERStructure` (see
+[A command acts under the session it began with](#a-command-acts-under-the-session-it-began-with)).
 
 **The ARM token of a renewal.** In the ARM step, after the two tenant checks and before the token is
 cached, a renewal whose ARM token has an oid that is a GUID differing from the state's
-`SignedInObjectId` (a GUID) is refused with the same terminating `SignInSuperseded -AccountChanged`.
-The token is not cached and the state is left as it is: this refusal refuses the caller only, and no
-identity moves, so the outer frames keep the old account, which is still the session's. This is the
-difference from the Graph refusal, where the session has already become the new account. A30 names
-the Graph token; the ARM request of a renewal opens the same account picker, so it is held to the
-same rule. The caller stays latched and the session-uncertain marker stays set, as after any refusal
-from the latch on, so the next command that names no tenant is refused (`SignInRefused`) until
-`Connect-OER`, or a command that names its tenant, signs in.
+`SignedInObjectId` (a GUID) is refused with the same terminating `SignInSuperseded -AccountChanged`,
+with the same effects: the token is not cached, the state is left as it is, the caller stays latched
+and the marker stays set. The ARM request of a renewal opens the same account picker as the Graph
+one, so it is held to the same rule. A Graph token of the session's own account that is cached before
+an ARM token of another account is refused remains the session's: the Graph half of that renewal has
+already been accepted, which is the same state any other refused ARM step leaves.
+
+**A token without an oid (D2).** A token without an oid, on either side, proves nothing and never
+refuses. On a renewal it also never replaces the session's `SignedInObjectId`: the old value is
+carried over, so the next renewal is still compared with the known account. The first design left
+`SignedInObjectId` empty after such a renewal, so a LATER renewal as another account was no longer
+refused (the second half of R5); that is closed. Any other sign-in (a first sign-in, a switch of
+tenant, method, client or cloud, `Connect-OER`) is a new session and records its own token's oid as
+before, `$null` included. Graph tokens carry an oid in practice.
 
 **The text.** `New-OERSignInSupersededError` has three causes and two effects, all with the id
-`SignInSuperseded`, the category and the command's name as the target. The account cause reads that
-a renewal of the module's sign-in returned a token for another account than the one the command
-began with, and advises running `Connect-OER -Force` to sign in again as the account meant, then the
-command again. It is chosen by `-AccountChanged` or by the state's `SignInAccountChanged` being `$true`, so a
-transport's refusal of an outer frame while that state stands reads it too; the no-state cause
-(`Disconnect-OER`) still wins first, and the other texts are byte-identical. Known cost: a transport
-refusal of an older supersession reads the account text for as long as that state stands.
+`SignInSuperseded`, the category and the command's name as the target. The account cause is chosen
+only by `-AccountChanged`: it reads that a renewal of the module's sign-in returned a token for
+another account than the one the command began with, and advises that the token was not used and the
+session stays the account it was, so the operator runs the command again and chooses that account, or
+runs `Connect-OER -Force` to sign in as another account. The no-state cause (`Disconnect-OER`) still
+wins first, and the other texts are byte-identical.
 
 **What it does not do.** Each of these is a stated limit.
 
-- A token without an oid, on either side, proves nothing and never refuses, and never moves the
-  identity. A renewal whose new token carried no oid leaves `SignedInObjectId` empty while the
-  account stays carried, so a LATER renewal as another account is then not refused (R5 and R6 compare
-  with `SignedInObjectId`, the oid of the last token, not with the carried account) until
-  `Connect-OER`. Graph tokens carry an oid in practice.
 - It guards the RENEWAL. A first sign-in, or a `Connect-OER`, whose Azure Resource Manager prompt is
-  answered by another account than its Graph prompt is not compared.
-- The refusal names the function that called `Initialize-OERAuth`. For a transport's own refresh
-  (`Invoke-GraphSingle`, `Invoke-ArmCallWithRefresh`) that is the transport's function, not the
-  public command whose request was rejected (read in the code).
-- BL-91 (a) stays a known limit (see "BL-91 (a)" under
-  [A command acts under the session it began with](#a-command-acts-under-the-session-it-began-with)):
-  an upstream command's `begin` has finished when a downstream `begin` signs in; the transports
-  refuse every request it then makes.
+  answered by another account than its Graph prompt is not compared (BL-163, open).
 - A sign-in that names the session's tenant by another label (a domain against a GUID, say) is not a
   renewal, since the session cache is keyed on the tenant as named: another account answering it is
-  not refused for its own caller. The outer frames that remember the old account are refused, since
-  the identity moves.
-- `Invoke-OERStructure` keeps its previous snapshot after its own sign-in was refused with
-  `SignInSuperseded` (see [The snapshot](#a-command-acts-under-the-session-it-began-with)), so the
-  next piped document is refused against the account the call began with. It reads the refusal from
-  `-ErrorVariable`, as `Get-OERInventory` does; a script that runs the command inside a `try`, or
-  under `-ErrorAction Stop`, never reaches the next document at all.
+  not refused, and the session becomes that account's as for any new sign-in. The outer frames that
+  remember the old account are then refused, since the identity moves.
+- The refusal names the function that called `Initialize-OERAuth`. For a transport's own refresh
+  (`Invoke-GraphSingle`, `Invoke-ArmCallWithRefresh`) that is the transport's function, not the
+  public command whose request was rejected (read in the code). A transport's forced refresh is a
+  renewal and is refused the same way.
+- A renewal that was refused is a refusal of the caller only. An upstream command whose `begin` has
+  finished when a downstream one signs in is BL-91 (a), a known limit (see "BL-91 (a)" under
+  [A command acts under the session it began with](#a-command-acts-under-the-session-it-began-with)).
 
 **The proof.** `tests/Unit/Private/Initialize-OERAuth.Tests.ps1`, Describe `Initialize-OERAuth never
 continues a renewal as another account (BL-119)`: the refusal for an interactive and a device code
-renewal, for a sign-in that names only a tenant and for a transport's forced refresh (the caller
-latched, the marker set, the state the new account's with the ARM token dropped, the ARM request not
-sent under `-IncludeARM`), an outer frame refused by the supersession and a nested sign-in refused by
-BL-91; and the controls that must NOT refuse: the same account, a token without an oid, a session
-without one, a method switch, a first sign-in, `Connect-OER` as another account and a nested sign-in
-under an unchanged session; the ARM cases; and a runspace with no `try` above a real `Get-OERGroup`.
+renewal, for a sign-in that names only a tenant and for a transport's forced refresh, each with the
+caller latched, the marker set, the state, the cached ARM token, the identity and the memory exactly
+as they were, and neither `Connect-MgGraph` nor an ARM token request made; an outer command that
+remembers the old account left unsuperseded, and the next sign-in that names the tenant refused
+again or, when the session's own account answers, succeeding; a later sign-in that names no tenant
+refused by the marker; `Connect-OER` making the session the other account's. The controls that must
+NOT refuse: the same account, a token without an oid (and the next renewal still compared with the
+known account), a session without one, a method switch, a first sign-in, and a nested sign-in under an
+unchanged session; the ARM cases; and a runspace with no `try` above a real `Get-OERGroup`, for the
+refusal, the later command and the control.
 `Get-OERSignInIdentity.Tests.ps1` pins the fifth term and `New-OERSignInSupersededError.Tests.ps1`
-the fifth text. `Invoke-OERStructure.Tests.ps1` (Context `a sign-in refused for an account change
-never becomes the snapshot`) pipes two documents with `-TenantId` in a runspace with no `try`: the first one's
-sign-in is refused for an account change and the second is refused with `SignInSuperseded`, signing
-in to and sending nothing; the controls are another refusal and a first sign-in from no session.
+the account text. `Invoke-OERStructure.Tests.ps1` (Context `a sign-in refused for an account change
+leaves the session as it was, and the next document is compared with it`) pipes two documents with
+`-TenantId` in a runspace with no `try`.
 
 ### A document names the tenant it was exported from
 

@@ -449,7 +449,7 @@ NAME `ReclaimGraphSession` to `Connect-OER.ps1` and `Initialize-OERAuth.ps1`.
 **A command whose sign-in is refused sends nothing -- no Graph and no ARM request.**
 `Initialize-OERAuth` latches its calling command (`Lock-OERSignIn`) and releases it only on success
 (`Unlock-OERSignIn`); both called only there. Every refusal, terminating error and early return
-leaves it latched (the nested-sign-in refusal below excepted), `ArmTokenAcquisitionFailed` included,
+leaves it latched (the nested-sign-in refusals of BL-74 and BL-91 below excepted), `ArmTokenAcquisitionFailed` included,
 so its Graph calls are refused although its Graph half connected. The latch is keyed weakly on the
 calling command's INVOCATION, never a module boolean.
 
@@ -516,13 +516,14 @@ session inherits nothing and signs in again, so README.md's "Name the tenant exp
 consistently" and the about topic's equivalent under SOVEREIGN CLOUDS stand.
 
 **A renewal never continues as another account** (BL-119). The identity's fifth term is the account
-(`SignInAccountId`), carried over a renewal unless a Graph token's oid (`Get-OERTokenObjectId`)
-differs from the session's `SignedInObjectId`, both GUIDs; `Initialize-OERAuth` then refuses its
-caller with `SignInSuperseded` (`-AccountChanged`) and every frame remembering the old account is
-refused as superseded; a renewal's ARM token of another account is refused with `SignInSuperseded`
-for its caller and not cached, and the session stays the old account's.
-`Connect-OER` (`-ReclaimGraphSession`) is never refused by it; a token without oid never refuses
-anything. Never key the account on a name or the UPN.
+(`SignInAccountId`). A renewal whose Microsoft Graph or Azure Resource Manager token carries an oid
+(`Get-OERTokenObjectId`) that differs from the session's `SignedInObjectId`, both GUIDs, is refused for
+its caller with `SignInSuperseded` (`-AccountChanged`) before `Connect-MgGraph` and before anything is
+cached: the session stays the old account's, so no later command, with or without `-TenantId`, runs as
+the other account; only `Connect-OER` (`-ReclaimGraphSession`, never refused by it) signs in as another
+account. This is not the session-uncertain marker. A token without oid never refuses anything, and on a
+renewal never replaces `SignedInObjectId`. Never let a renewal make the session another account's;
+never key the account on a name or the UPN.
 `Why: docs/development/rationale.md#a-renewal-never-continues-as-another-account`
 
 The order is fixed: Graph wrapper session gate, latch gate, supersession gate; ARM wrapper latch

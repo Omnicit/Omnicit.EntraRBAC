@@ -41,9 +41,10 @@ refused sign-in.
 
 A `-TenantId` no longer lets a command continue under another identity's session:
 `Invoke-OERStructure` and the access package and review stage builders refuse a call when another
-application or account replaced the tenant's session. A command whose sign-in was replaced, another
-account of the same tenant included, is refused before any prompt. A renewal answered by another
-account, Azure's too, is refused with `SignInSuperseded`; run `Connect-OER -Force`.
+application or account replaced the tenant's session, and a cmdlet that a replaced command calls is
+refused before it requests a token. A renewal answered by another account is refused with
+`SignInSuperseded` and its token is not used, so the session stays the first account until
+`Connect-OER` signs in.
 
 ## [1.3.0] - 2026-10-19
 

@@ -49,8 +49,10 @@ merges.
   (`Test-OERSessionUsable`), and refuse with `SignInSuperseded`.
 - **C. A renewal never continues as another account** ("fix: a renewal never continues as another account ...",
   BL-119): the sign-in identity carries the account (`SignInAccountId`) as a fifth term; a renewal whose Graph token
-  names another object id than the session's is refused with `SignInSuperseded` and the session becomes that account
-  (its cached ARM token dropped); a renewal's ARM token of another account is refused and not cached.
+  names another object id than the session's is refused with `SignInSuperseded` before `Connect-MgGraph` and before
+  the state is rebuilt, so the session is left as it was (the old account's, its ARM token kept), and a later command
+  naming the tenant uses its token or renews again; a renewal's ARM token of another account is refused the same way
+  and not cached; a renewal's token without an object id never replaces the session's.
 
 A live tenant is needed for what the unit tests cannot show: that the real `Connect-OER`, the real AzAuth tokens and
 the real call stack of a pipeline give the refusals and, above all, that an ordinary run in one session is NOT
@@ -62,8 +64,8 @@ refused: a sign-in and a read, a renewal as the same identity, `-IncludeARM` aft
 - **The account picker's second account (BL-119, class C, C.1).** A renewal answered by another PERSON needs an
   interactive sign-in, which these identities never make. Section 3 drives the same decision with the real token of
   `oer-live-cc` against a session whose object id is moved in module scope; the unit tests prove the rest (B.1).
-- **The outer frames refused after an account change, a token without an object id, and the order of the refusals
-  (class B, B.1-B.3)**: each is a decision on values the unit tests set exactly.
+- **The refusal's effects on outer commands, a token without an object id, and the order of the refusals (class B,
+  B.1-B.3)**: each is a decision on values the unit tests set exactly.
 
 ## Setup, once
 
@@ -91,7 +93,7 @@ if ($env:OER_LIVE_REPO) { $Cfg.Repo = [System.IO.Path]::GetFullPath($env:OER_LIV
 $Raw = & (Get-Module -Name OerLive) { $script:OerLive.RawFolder }
 $null = New-Item -ItemType Directory -Path $Raw -Force
 $Prefix = 'oer-s1113b-'
-$NewIds = 'Test-OERSessionUsable', 'SignInAccountId', 'SignInAccountChanged', 'OutsideCaller'
+$NewIds = 'Test-OERSessionUsable', 'SignInAccountId', 'OutsideCaller'
 $Prologue = @'
 param($VaultDir, $Repo, $Out)
 Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
@@ -175,7 +177,7 @@ function Write-S1113bResult {
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched. #type/subtask
+- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched. #type/subtask
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -194,15 +196,7 @@ worktree on this branch with 0 tracked changes; `True` on every mark.
 **Failure looks like:** `False` on the first line -- `OER_LIVE_REPO` is unset or names the main clone; a `False`
 mark -- build the worktree first.
 
-Result: 2026-10-22 08:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
-
-```text
-Passed.
-[oer-s1113b] The module loads from a worktree that is not the main clone: True
-[oer-s1113b] Main clone: branch main
-[oer-s1113b] Worktree: branch fix/sign-in-identity; HEAD 16f4ceb docs: add the live checklist for the identity in the sign-in, and name the snapshot test right; tracked changes: 0
-[oer-s1113b] The branch build (1.3.1): Test-OERSessionUsable: True; SignInAccountId: True; SignInAccountChanged: True; OutsideCaller: True
-```
+Result: pending (round 1).
 
 ## 0. An ordinary run in one session is not refused
 
@@ -260,7 +254,7 @@ Passed. The sign-in lines are from the child process log, through the redactor.
 
 ### 0.2. A renewal as the same identity, -IncludeARM after a Microsoft Graph sign-in, and Connect-OER switching identity
 
-- [x] **0.2** A renewal forced by moving `GraphTokenExpiry` into the five-minute window renews as oer-live-cc with one token request and no refusal, the identity unchanged and the ARM token kept; an ARM token acquired after a Graph-only `Connect-OER` is not refused; `Connect-OER` as oer-live-cc-noperm and back as oer-live-cc is not refused and moves the account term. #type/subtask
+- [ ] **0.2** A renewal forced by moving `GraphTokenExpiry` into the five-minute window renews as oer-live-cc with one token request and no refusal, the identity unchanged and the ARM token kept; an ARM token acquired after a Graph-only `Connect-OER` is not refused; `Connect-OER` as oer-live-cc-noperm and back as oer-live-cc is not refused and moves the account term. #type/subtask
 
 ```powershell
 $Res = Invoke-S1113bBlock -Name '0-2' -Body @'
@@ -278,7 +272,7 @@ $R.RenewalTokenRequests = $global:Tokens
 $R.RenewalIdentityUnchanged = ([string](Get-S1113bIdentity)) -ceq $Before
 $R.RenewalExpiryMoved = $S.GraphTokenExpiry -gt [DateTime]::UtcNow.AddMinutes(30)
 $R.RenewalArmKept = $ArmBefore -and [bool]$S.ArmToken
-$R.RenewalAccountChangedFlag = [bool]$S.SignInAccountChanged
+$R.RenewalAccountChangedKey = $S.ContainsKey('SignInAccountChanged')
 $Error.Clear()
 $Groups = @(Get-OERGroup -Filter 'securityEnabled eq true' -ErrorAction SilentlyContinue)
 $R.ReadAfterRenewal = "$($Groups.Count) groups; errors [$(Get-S1113bIds $Error)]"
@@ -302,7 +296,7 @@ $R.SwitchErrors = "[$(Get-S1113bIds $Error)]"
 $R.SwitchTokenRequests = $global:Tokens
 $R.SwitchAccountTermMoved = [bool]$NoPermAccount -and ($NoPermAccount -cne $CcAccount)
 $R.SwitchBackAccountTerm = (Get-S1113bTerm 4) -ceq $CcAccount
-$R.SwitchAccountChangedFlag = [bool](Get-S1113bState).SignInAccountChanged
+$R.SwitchAccountChangedKey = (Get-S1113bState).ContainsKey('SignInAccountChanged')
 $Error.Clear()
 $Groups = @(Get-OERGroup -Filter 'securityEnabled eq true' -ErrorAction SilentlyContinue)
 $R.ReadAfterSwitch = "$($Groups.Count) groups; errors [$(Get-S1113bIds $Error)]"
@@ -313,36 +307,13 @@ Write-S1113bResult $Res
 ```
 
 **Expect:** `END`; renewal: no error, 1 token request, identity unchanged `True`, expiry moved `True`, ARM kept
-`True`, flag `False`, then groups read with no error; `GraphOnlyHoldsArm: False`, then no error, 2 token requests
-(the `Connect-OER` and the ARM token), ARM acquired `True`, subscriptions read with no error; the switch: no error,
-2 token requests, account term moved `True`, back `True`, flag `False`, groups read with no error; 0 writes.
+`True`, `RenewalAccountChangedKey: False` (the state no longer has the key), then groups read with no error;
+`GraphOnlyHoldsArm: False`, then no error, 2 token requests (the `Connect-OER` and the ARM token), ARM acquired
+`True`, subscriptions read with no error; the switch: no error, 2 token requests, account term moved `True`, back
+`True`, `SwitchAccountChangedKey: False`, groups read with no error; 0 writes.
 **Failure looks like:** `SignInSuperseded` on any line (a refusal of an ordinary run), or an ARM token not kept.
 
-Result: 2026-10-22 08:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
-
-```text
-Passed.
-[oer-s1113b] Child process 0-2 ended with END: True
-[oer-s1113b] RenewalErrors: []
-[oer-s1113b] RenewalTokenRequests: 1
-[oer-s1113b] RenewalIdentityUnchanged: True
-[oer-s1113b] RenewalExpiryMoved: True
-[oer-s1113b] RenewalArmKept: True
-[oer-s1113b] RenewalAccountChangedFlag: False
-[oer-s1113b] ReadAfterRenewal: 93 groups; errors []
-[oer-s1113b] GraphOnlyHoldsArm: False
-[oer-s1113b] IncludeArmErrors: []
-[oer-s1113b] IncludeArmTokenRequests: 2
-[oer-s1113b] IncludeArmAcquired: True
-[oer-s1113b] ReadAfterIncludeArm: subscriptions read True; errors []
-[oer-s1113b] SwitchErrors: []
-[oer-s1113b] SwitchTokenRequests: 2
-[oer-s1113b] SwitchAccountTermMoved: True
-[oer-s1113b] SwitchBackAccountTerm: True
-[oer-s1113b] SwitchAccountChangedFlag: False
-[oer-s1113b] ReadAfterSwitch: 93 groups; errors []
-[oer-s1113b] Writes: 0
-```
+Result: pending (round 1).
 
 ## 1. -TenantId binds the tenant, not the identity (BL-90)
 
@@ -622,9 +593,9 @@ Passed.
 Both checks move the session's `SignedInObjectId` in module scope to a random GUID that names nobody, so the real
 token of `oer-live-cc` is "another account" than the session's. Nothing is sent to the tenant for it.
 
-### 3.1. A Microsoft Graph renewal answered by another account is refused, and the session then needs Connect-OER
+### 3.1. A Microsoft Graph renewal answered by another account is refused and the session stays the old account's
 
-- [x] **3.1** With the session's object id moved and its Graph token in the renewal window, the renewal is refused with `SignInSuperseded` (the account text) after one token request; the session is then the token's account with the flag on and no ARM token; a read naming no tenant is refused (`SignInRefused`) and sends nothing; a bare `Connect-OER` answers from that session and keeps the flag, `Connect-OER -Force` signs in again and clears it, and a read follows. #type/subtask
+- [ ] **3.1** With the session's object id moved and its Graph token in the renewal window, the renewal is refused with `SignInSuperseded` (the account text) after one token request, and the session is left as it was (the moved object id, the identity, the Graph SDK session and the ARM token); a later renewal naming the tenant is refused again; a public read naming the tenant sends nothing and a read naming no tenant is refused (`SignInRefused`); a bare `Connect-OER` signs in again and the session is then the token's account, and a read follows. #type/subtask
 
 ```powershell
 $Res = Invoke-S1113bBlock -Name '3-1' -Body @'
@@ -632,25 +603,35 @@ Connect-OerLive -Arm
 Start-S1113bFence
 $M = Get-Module -Name Omnicit.EntraRBAC
 $Real = [string](Get-S1113bState).SignedInObjectId
-& $M { param($F) $script:_OERAuthState.SignedInObjectId = $F; $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(2) } ([guid]::NewGuid().ToString())
-$Error.Clear()
+$Fp = [string](Get-S1113bState).GraphSessionFingerprint
+$IdBefore = [string](Get-S1113bIdentity)
+$ArmBefore = [bool](Get-S1113bState).ArmToken
+$Fake = [guid]::NewGuid().ToString()
+& $M { param($F) $script:_OERAuthState.SignedInObjectId = $F; $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(2) } $Fake
+$Error.Clear(); $global:Tokens = 0
 Invoke-S1113bRenewal -ClientId $Cfg.AppId
 $S = Get-S1113bState
 $R.RenewalErrors = "[$(Get-S1113bIds $Error)]"
 $R.RenewalSuperseded = Get-S1113bSuperseded $Error
 $R.RenewalTokenRequests = $global:Tokens
-$R.SessionIsTheTokensAccount = [bool]$Real -and ([string]$S.SignedInObjectId -ceq $Real) -and ((Get-S1113bTerm 4) -ceq $Real)
-$R.AccountChangedFlag = [bool]$S.SignInAccountChanged
-$R.ArmTokenDropped = -not [bool]$S.ArmToken
+$R.SessionLeftAsItWas = "object id still the moved one $([string]$S.SignedInObjectId -ceq $Fake); identity unchanged $(([string](Get-S1113bIdentity)) -ceq $IdBefore); Graph SDK session unchanged $([bool]$Fp -and ([string]$S.GraphSessionFingerprint -ceq $Fp)); ARM token kept $($ArmBefore -and [bool]$S.ArmToken)"
+$R.AccountChangedKey = $S.ContainsKey('SignInAccountChanged')
+$Error.Clear(); $global:Tokens = 0
+Invoke-S1113bRenewal -ClientId $Cfg.AppId
+$R.LaterRenewalErrors = "[$(Get-S1113bIds $Error)]"
+$R.LaterRenewalSuperseded = Get-S1113bSuperseded $Error
+$R.LaterRenewalTokenRequests = $global:Tokens
+$R.LaterRenewalStillMoved = ([string](Get-S1113bState).SignedInObjectId) -ceq $Fake
+$Error.Clear(); $global:Graph = 0
+$Groups = @(Get-OERGroup -TenantId $T -Filter 'securityEnabled eq true' -ErrorAction SilentlyContinue)
+$R.ReadNamingTenant = "$($Groups.Count) groups; errors [$(Get-S1113bIds $Error)]; superseded [$(Get-S1113bSuperseded $Error)]; Graph $global:Graph; session still the moved one $(([string](Get-S1113bState).SignedInObjectId) -ceq $Fake)"
 $Error.Clear(); $global:Graph = 0
 $Groups = @(Get-OERGroup -Filter 'securityEnabled eq true' -ErrorAction SilentlyContinue)
 $R.ReadNamingNoTenant = "$($Groups.Count) groups; errors [$(Get-S1113bIds $Error)]; Graph $global:Graph"
 $Error.Clear(); $global:Graph = 0; $global:Tokens = 0
 $null = Connect-OER -TenantId $T -ClientId $Cfg.AppId -Certificate $Cert -ErrorAction SilentlyContinue
-$R.BareConnect = "token requests $global:Tokens; flag $([bool](Get-S1113bState).SignInAccountChanged)"
-$global:Tokens = 0
-$null = Connect-OER -TenantId $T -ClientId $Cfg.AppId -Certificate $Cert -Force -ErrorAction SilentlyContinue
-$R.ForceConnect = "token requests $global:Tokens; flag $([bool](Get-S1113bState).SignInAccountChanged)"
+$R.BareConnect = "errors [$(Get-S1113bIds $Error)]; token requests $global:Tokens; session is the token's account $([string](Get-S1113bState).SignedInObjectId -ceq $Real)"
+$Error.Clear()
 $Groups = @(Get-OERGroup -Filter 'securityEnabled eq true' -ErrorAction SilentlyContinue)
 $R.ReadAfterConnect = "$($Groups.Count -gt 0); errors [$(Get-S1113bIds $Error)]"
 $R.Writes = $global:Writes
@@ -660,35 +641,22 @@ Write-S1113bResult $Res
 ```
 
 **Expect:** `END`; `[SignInSuperseded x1]`, `a script block (account text)` (the renewal's caller here is the
-module-scope script block); 1 token request; the session is the token's account `True`; flag `True`; ARM token
-dropped `True`; the read naming no tenant: 0 groups, `SignInRefused` (and no `SignInSuperseded`), 0 Graph requests;
-a bare `Connect-OER`: 0 token requests and the flag still `True` (it answers from the session the renewal left,
-which is why the advice is `Connect-OER -Force`); `Connect-OER -Force`: 1 token request, flag `False`; groups read,
-no error; 0 writes.
-**Failure looks like:** no refusal (the renewal continued as another account), an ARM token kept, or a Graph request
-from the read naming no tenant.
+module-scope script block); 1 token request; `SessionLeftAsItWas`: all four marks `True`; `AccountChangedKey: False`;
+the later renewal: `[SignInSuperseded x1]`, `a script block (account text)`, 1 token request, still the moved object
+id `True`; the read naming the tenant: 0 groups, no `SignInSuperseded`, 0 Graph requests, the session still the moved
+one `True` (a public command cannot renew an app-only session itself, so the read is refused at its sign-in, most
+likely with `AppOnlySessionCredentialUnavailable`; it never runs as the token's account); the read naming no tenant: 0
+groups, `SignInRefused`, 0 Graph requests; a bare `Connect-OER`: no error, 1 token request, the session is the
+token's account `True`; then a read: groups, no error; 0 writes.
+**Failure looks like:** no refusal (the renewal continued as another account), a session that is the token's account
+before the bare `Connect-OER`, a changed identity, Graph SDK session or ARM token after the refusal, or a Graph
+request in the later renewal or the two reads that follow it.
 
-Result: 2026-10-22 08:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
-
-```text
-Passed on run 2. Run 1 showed every refusal as expected; its last step expected a bare Connect-OER to clear the account flag, but a bare Connect-OER answers from the session the refused renewal left (0 token requests, flag kept), which is why the advice is Connect-OER -Force. The block now runs both.
-[oer-s1113b] Child process 3-1 ended with END: True
-[oer-s1113b] RenewalErrors: [SignInSuperseded x1]
-[oer-s1113b] RenewalSuperseded: a script block (account text)
-[oer-s1113b] RenewalTokenRequests: 1
-[oer-s1113b] SessionIsTheTokensAccount: True
-[oer-s1113b] AccountChangedFlag: True
-[oer-s1113b] ArmTokenDropped: True
-[oer-s1113b] ReadNamingNoTenant: 0 groups; errors [SignInRefused x2]; Graph 0
-[oer-s1113b] BareConnect: token requests 0; flag True
-[oer-s1113b] ForceConnect: token requests 1; flag False
-[oer-s1113b] ReadAfterConnect: True; errors []
-[oer-s1113b] Writes: 0
-```
+Result: pending (round 1).
 
 ### 3.2. A renewal's ARM token of another account is refused and not cached
 
-- [x] **3.2** After a Graph-only `Connect-OER` and with the session's object id moved, an `-IncludeARM` renewal is refused with `SignInSuperseded` (the account text) after one token request (the ARM one), no ARM token is cached, and the session's object id is left as it was. #type/subtask
+- [ ] **3.2** After a Graph-only `Connect-OER` and with the session's object id moved, an `-IncludeARM` renewal is refused with `SignInSuperseded` (the account text) after one token request (the ARM one), no ARM token is cached, and the session's object id is left as it was. #type/subtask
 
 ```powershell
 $Res = Invoke-S1113bBlock -Name '3-2' -Body @'
@@ -706,7 +674,7 @@ $R.Superseded = Get-S1113bSuperseded $Error
 $R.TokenRequests = $global:Tokens
 $R.ArmTokenCached = [bool]$S.ArmToken
 $R.ObjectIdLeftAsItWas = [string]$S.SignedInObjectId -ceq $Fake
-$R.AccountChangedFlag = [bool]$S.SignInAccountChanged
+$R.AccountChangedKey = $S.ContainsKey('SignInAccountChanged')
 $R.Writes = $global:Writes
 Disconnect-OerLive
 '@
@@ -714,31 +682,21 @@ Write-S1113bResult $Res
 ```
 
 **Expect:** `END`; `[SignInSuperseded x1]`, `a script block (account text)`; 1 token request; ARM token cached
-`False`; object id left `True`; flag `False`; 0 writes.
+`False`; object id left `True`; `AccountChangedKey: False`; 0 writes.
 **Failure looks like:** an ARM token cached (another account's token under the session's identity).
 
-Result: 2026-10-22 08:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
-
-```text
-Passed.
-[oer-s1113b] Child process 3-2 ended with END: True
-[oer-s1113b] Errors: [SignInSuperseded x1]
-[oer-s1113b] Superseded: a script block (account text)
-[oer-s1113b] TokenRequests: 1
-[oer-s1113b] ArmTokenCached: False
-[oer-s1113b] ObjectIdLeftAsItWas: True
-[oer-s1113b] AccountChangedFlag: False
-[oer-s1113b] Writes: 0
-```
+Result: pending (round 1).
 
 ## B. Proved offline (class B)
 
-- **B.1** The outer frames that remember the old account are refused after an account change (by the transports and
-  by the nested-sign-in check), the caller stays latched and the session uncertain, a transport's forced refresh is a
-  renewal, and `Connect-OER` is never refused by it: `tests/Unit/Private/Initialize-OERAuth.Tests.ps1`, the BL-119
-  Describe.
-- **B.2** A token without an object id, on either side, never refuses anything and never moves the identity's
-  account term: the same Describe, and `tests/Unit/Private/Get-OERSignInIdentity.Tests.ps1`.
+- **B.1** The refusal of a renewal answered by another account leaves the caller latched and the session uncertain,
+  and the state, the Graph SDK session, the cached ARM token, the identity and the sign-in memory exactly as they
+  were, so no outer command is superseded by an account change; a transport's forced refresh is a renewal and is
+  refused the same way, and `Connect-OER` is never refused by it:
+  `tests/Unit/Private/Initialize-OERAuth.Tests.ps1`, the BL-119 Describe.
+- **B.2** A token without an object id, on either side, never refuses anything, and on a renewal never replaces the
+  session's `SignedInObjectId` (the next renewal is still compared with the known account): the same Describe, and
+  `tests/Unit/Private/Get-OERSignInIdentity.Tests.ps1`.
 - **B.3** The order of the refusals at a sign-in's entry (BL-74 before BL-91 b), and that neither latches the caller
   nor changes the session-uncertain marker: `tests/Unit/Private/Initialize-OERAuth.Tests.ps1`, the BL-91 Context,
   and `tests/Unit/Private/Get-OERSignInSupersession.Tests.ps1`.
@@ -748,7 +706,7 @@ Passed.
 
 ## C. Manual (class C, optional, after the merge)
 
-- [ ] **C.1** The operator signs in interactively (`Connect-OER -TenantId` the test tenant), moves `GraphTokenExpiry` into the five-minute window in module scope, runs `Get-OERGroup`, and answers the account picker with ANOTHER account of the tenant: the command is refused with `SignInSuperseded` (the account text) and sends nothing; a following `Get-OERGroup` is refused (`SignInRefused`) until `Connect-OER`. #type/subtask
+- [ ] **C.1** The operator signs in interactively (`Connect-OER -TenantId` the test tenant), moves `GraphTokenExpiry` into the five-minute window in module scope, runs `Get-OERGroup`, and answers the account picker with ANOTHER account of the tenant: the command is refused with `SignInSuperseded` (the account text) and sends nothing; the next command that names the tenant opens the picker again, and the session stays the first account until `Connect-OER`. #type/subtask
 
 Result:
 
@@ -756,7 +714,7 @@ Result:
 
 ### T.1. The step's raw folder is gone, and nothing was created in the tenant
 
-- [x] **T.1** The raw folder `raw\s1113b\` (child scripts, results, logs) is deleted, and no object with the prefix exists in the tenant. #type/subtask
+- [ ] **T.1** The raw folder `raw\s1113b\` (child scripts, results, logs) is deleted, and no object with the prefix exists in the tenant. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -770,20 +728,4 @@ Write-OerLiveStep "Raw folder gone: $(-not (Test-Path -LiteralPath $Raw))"
 **Expect:** 0 groups with the prefix; `Raw folder gone: True`.
 **Failure looks like:** a prefixed object (STOP: this file creates none) or the folder still there.
 
-Result: 2026-10-22 08:19 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
-
-```text
-Passed.
-[oer-s1113b] Omnicit.EntraRBAC 1.3.1 loaded from REPO\.claude\worktrees\s11-steg13b\output\module\Omnicit.EntraRBAC\1.3.1.
-[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
-[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
-[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
-[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
-[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
-[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
-[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
-[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
-[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
-[oer-s1113b] Groups with the prefix: 0
-[oer-s1113b] Raw folder gone: True
-```
+Result: pending (round 1).
