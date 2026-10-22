@@ -5,8 +5,8 @@ branch is in flight and is then run against the operator's designated test tenan
 customer tenant. Nothing in CI ever authenticates. Claude runs a checklist only as the dedicated
 app identity whose only credential is a non-exportable certificate, only while the operator has
 enabled that identity for the run, and never with any other sign-in; otherwise Philip runs it by
-hand. The module carries Global-Admin-class privilege across customer tenants, so a live run is
-always a deliberate act the operator switches on. The checklists record what was actually executed
+hand. The module carries Global-Admin-class privilege across the tenants it manages, so a live run
+is always a deliberate act the operator switches on. The checklists record what was actually executed
 and what came back, which is what lets a later reader tell a verified claim from an assumed one.
 
 That also makes this folder the one place in the repository where live tenant console output is

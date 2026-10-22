@@ -30,10 +30,12 @@ If that fails with `Requested value 'V2' was not found` (a PSResourceGet compati
   `source/` directly, so an unbuilt change is measured stale. Build before every test run after
   changing source files.
 - **80 percent code coverage is a hard floor**, enforced by the build.
-- **CI runs the same two commands on three platforms.** Every pull request to `main` runs
-  `./build.ps1 -ResolveDependency -Tasks build` and then `./build.ps1 -Tasks test` on Linux,
-  Windows and macOS (`.github/workflows/build-and-test.yml`). Expect review once all three are
-  green.
+- **CI runs the same two commands on three platforms, and four checks are required.** Every pull
+  request to `main` runs `./build.ps1 -ResolveDependency -Tasks build` and then
+  `./build.ps1 -Tasks test` on Linux, Windows and macOS (`.github/workflows/build-and-test.yml`),
+  reported as the checks `ubuntu-latest`, `windows-latest` and `macos-latest`. Once all three
+  pass, a fourth check, `package`, verifies the tested module artefact. All four are required on
+  `main`; expect review once all four are green.
 - **PowerShell 7.2+, Core only.** Never write `$env:USERPROFILE` -- it is Windows-only and this
   module targets `CompatiblePSEditions = 'Core'`.
 
