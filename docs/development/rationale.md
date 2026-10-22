@@ -5864,8 +5864,8 @@ BL-91; and the controls that must NOT refuse: the same account, a token without 
 without one, a method switch, a first sign-in, `Connect-OER` as another account and a nested sign-in
 under an unchanged session; the ARM cases; and a runspace with no `try` above a real `Get-OERGroup`.
 `Get-OERSignInIdentity.Tests.ps1` pins the fifth term and `New-OERSignInSupersededError.Tests.ps1`
-the fifth text. `Invoke-OERStructure.Tests.ps1` (Context `a refused renewal never becomes the
-snapshot`) pipes two documents with `-TenantId` in a runspace with no `try`: the first one's
+the fifth text. `Invoke-OERStructure.Tests.ps1` (Context `a sign-in refused for an account change
+never becomes the snapshot`) pipes two documents with `-TenantId` in a runspace with no `try`: the first one's
 sign-in is refused for an account change and the second is refused with `SignInSuperseded`, signing
 in to and sending nothing; the controls are another refusal and a first sign-in from no session.
 
