@@ -311,11 +311,11 @@ function New-OERActiveRoleAssignment {
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
                 # The messages of this file show a command inside a single-quoted literal, so a value in
-                # it is escaped twice (CodeGeneration.EscapeSingleQuotedStringContent: the straight
-                # single quote and the curly ones the PowerShell tokenizer also reads as quotes): once
-                # for the command's own literal, once for the outer one. The outer literal parses to the
-                # command, and the command's literal parses to the value, as typed.
-                Write-CmdletError -Message ([System.Exception]::new("Could not open the role management policy to allow permanent active assignment: $($PSItem.Exception.Message) Run 'Set-OERRoleManagementPolicy -Role ''$([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$Role)))'' <scope> -AllowPermanentActiveAssignment `$true' with Microsoft.Authorization/roleManagementPolicies/write permission, or grant a time-bound assignment with -DurationDays.")) -ErrorId 'PolicyOpenFailed' -Category PermissionDenied -TargetObject $PendingPolicyId -Cmdlet $PSCmdlet
+                # it (the role and the scope) is escaped twice (CodeGeneration.EscapeSingleQuotedStringContent:
+                # the straight single quote and the curly ones the PowerShell tokenizer also reads as
+                # quotes): once for the command's own literal, once for the outer one. The outer literal
+                # parses to the command, and the command's literal parses to the value, as typed.
+                Write-CmdletError -Message ([System.Exception]::new("Could not open the role management policy to allow permanent active assignment: $($PSItem.Exception.Message) Run 'Set-OERRoleManagementPolicy -Role ''$([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$Role)))'' -Scope ''$([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$TargetScope)))'' -AllowPermanentActiveAssignment `$true' with Microsoft.Authorization/roleManagementPolicies/write permission, or grant a time-bound assignment with -DurationDays.")) -ErrorId 'PolicyOpenFailed' -Category PermissionDenied -TargetObject $PendingPolicyId -Cmdlet $PSCmdlet
                 return
             }
         }

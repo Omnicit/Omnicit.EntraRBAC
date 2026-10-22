@@ -1632,10 +1632,15 @@ Describe 'New-OERActiveRoleAssignment: the commands shown in messages (BL-113)' 
         $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -ceq 'PolicyOpenFailed,New-OERActiveRoleAssignment' })
         $Own.Count | Should -Be 1
         $Literal = Get-BL113Segment -Message $Own[0].Exception.Message -After 'Run ' -Before ' with Microsoft.Authorization'
-        $Read = Read-BL113NestedArgument -Literal $Literal -CutAt ' <scope>' -Command 'Set-OERRoleManagementPolicy' -Parameter 'Role'
+        $Own[0].Exception.Message | Should -Not -BeLike '*<scope>*'
+        $Read = Read-BL113NestedArgument -Literal $Literal -Command 'Set-OERRoleManagementPolicy' -Parameter 'Role'
         $Read.ParseErrorCount | Should -Be 0
         $Read.IsConstant | Should -BeTrue
         $Read.Value | Should -BeExactly $Name
+        $ScopeRead = Read-BL113NestedArgument -Literal $Literal -Command 'Set-OERRoleManagementPolicy' -Parameter 'Scope'
+        $ScopeRead.ParseErrorCount | Should -Be 0
+        $ScopeRead.IsConstant | Should -BeTrue
+        $ScopeRead.Value | Should -BeExactly '/subscriptions/s1'
     }
 
     It 'shows the rollback commands in one literal each that parse to commands giving the policy id back for an id holding <Label> (<Case>)' -ForEach @(
