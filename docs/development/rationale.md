@@ -5894,11 +5894,13 @@ before, `$null` included. Graph tokens carry an oid in practice.
 
 **The text.** `New-OERSignInSupersededError` has three causes and two effects, all with the id
 `SignInSuperseded`, the category and the command's name as the target. The account cause is chosen
-only by `-AccountChanged`: it reads that a renewal of the module's sign-in returned a token for
-another account than the one the command began with, and advises that the token was not used and the
-session stays the account it was, so the operator runs the command again and chooses that account, or
-runs `Connect-OER -Force` to sign in as another account. The no-state cause (`Disconnect-OER`) still
-wins first, and the other texts are byte-identical.
+only by `-AccountChanged`: it reads that a renewal of the module's sign-in, or a sign-in of its
+tenant named another way, returned a token for another account than the one the command began with,
+and advises that the token was not used and the session stays the account it was, so the operator
+runs the command again and chooses that account, or runs `Connect-OER -Force` to sign in as another
+account. The no-state cause (`Disconnect-OER`) still wins first, and the other texts are
+byte-identical. Until Sprint 11 step 14 (BL-163) the account cause said only "A renewal", also for a
+sign-in of the session's tenant named by another label (D4), which is not one.
 
 **What it does not do.** Each of these is a stated limit.
 

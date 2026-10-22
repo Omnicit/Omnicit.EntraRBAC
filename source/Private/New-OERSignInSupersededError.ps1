@@ -15,7 +15,8 @@ function New-OERSignInSupersededError {
     took a snapshot of the session (Checkpoint-OERSignIn), which is why the message says the other
     sign-in came after the command began, not after it signed in: a command refused there has not
     signed in at all. Initialize-OERAuth raises it too, terminating, for a sign-in nested under a
-    superseded command (BL-91) and for a renewal answered by another account (BL-119).
+    superseded command (BL-91) and for a renewal, or a sign-in of the session's tenant named another
+    way, answered by another account (BL-119).
 
     The target is that command's name, and the request it refuses is one made while that command runs,
     which is not always one the command makes itself: it can be the command's own request, a request of
@@ -31,10 +32,11 @@ function New-OERSignInSupersededError {
     The text fits its cause and its effect (BL-92, BL-119): there are three causes and two effects, all
     with the same id, category and target. By cause: another OER command in the same pipeline signed in
     to a different tenant or identity after the command began (the module still holds a session);
-    a renewal of the module's sign-in returned a token for another account than the one the command
-    began with (-AccountChanged, which only Initialize-OERAuth passes), and the advice is that the token
-    was not used and the session stays the account it was: run the command again and choose that
-    account, or run Connect-OER -Force to sign in as another account; or Disconnect-OER ended the
+    a renewal of the module's sign-in, or a sign-in of its tenant named another way, returned a token
+    for another account than the one the command began with (-AccountChanged, which only
+    Initialize-OERAuth passes), and the advice is that the token was not used and the session stays the
+    account it was: run the command again and choose that account, or run Connect-OER -Force to sign in
+    as another account; or Disconnect-OER ended the
     module's session after the command began (the module holds no session), and the advice is to run
     Disconnect-OER as a statement of its own. The function reads the Disconnect-OER cause from the
     module's state ($null is no session, the same test Get-OERSignInIdentity makes for 'not signed in',
@@ -59,10 +61,11 @@ function New-OERSignInSupersededError {
     they pass nothing and keep the wording for a request.
 
     .PARAMETER AccountChanged
-    Builds the variant for a renewal answered by another account (BL-119): the text says a renewal of the
-    module's sign-in returned a token for another account than the one the command began with, and the
-    advice is that the token was not used and the session stays the account it was: run the command
-    again and choose that account, or run Connect-OER -Force to sign in as another account.
+    Builds the variant for a renewal, or a sign-in of the session's tenant named another way, answered
+    by another account (BL-119): the text says a renewal of the module's sign-in, or a sign-in of its
+    tenant named another way, returned a token for another account than the one the command began with,
+    and the advice is that the token was not used and the session stays the account it was: run the
+    command again and choose that account, or run Connect-OER -Force to sign in as another account.
     Initialize-OERAuth passes it when it refuses its caller for that reason, and nothing else does: the
     function does not read the module's state for this cause. With no state at all, Disconnect-OER's
     text wins.
@@ -106,7 +109,7 @@ function New-OERSignInSupersededError {
     [string]$Cause = if ($SessionEnded) {
         "Disconnect-OER ended the module's session after {0} began"
     } elseif ($AccountReplaced) {
-        "A renewal of the module's sign-in returned a token for another account than the one {0} began with"
+        "A renewal of the module's sign-in, or a sign-in of its tenant named another way, returned a token for another account than the one {0} began with"
     } else {
         'Another OER command in the same pipeline signed in to a different tenant or identity after {0} began'
     }
