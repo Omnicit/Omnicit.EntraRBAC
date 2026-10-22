@@ -135,7 +135,7 @@ function Get-S1113Quotes {
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched. #type/subtask
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched. #type/subtask
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -158,13 +158,23 @@ versions.
 **Failure looks like:** `False` on the first line -- `OER_LIVE_REPO` is unset or names the main clone; a `False`
 mark -- build the worktree first; a floor of `2.9.0`.
 
-Result:
+Result: 2026-10-22 00:45 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Passed.
+[oer-s1113] The module loads from a worktree that is not the main clone: True
+[oer-s1113] Main clone: branch main
+[oer-s1113] Worktree: branch fix/sign-in-and-profile-findings; HEAD e8f107f fix: correct the renewal and refusal texts and close the final review findings; tracked changes: 0
+[oer-s1113] The branch build (1.3.1): InteractiveSignInUnavailable: True; Test-OERHostNonInteractive: True; _OERInteractiveCredential: True; EscapeSingleQuotedStringContent: True
+[oer-s1113] The build's AzAuth floor: 2.11.0
+[oer-s1113] AzAuth versions in the build's RequiredModules: 2.11.0
+```
 
 ## 0. Sign-in and a read with AzAuth 2.11.0
 
 ### 0.1. Connect-OER as oer-live-cc and a reading command, with AzAuth 2.11.0
 
-- [ ] **0.1** The module session passes the identity check with AzAuth 2.11.0 loaded, and `Get-OERSubscription` and `Get-OERGroup` read, sending no write and requesting no token without the certificate. #type/subtask
+- [x] **0.1** The module session passes the identity check with AzAuth 2.11.0 loaded, and `Get-OERSubscription` and `Get-OERGroup` read, sending no write and requesting no token without the certificate. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -174,7 +184,7 @@ Write-OerLiveStep "The module is the worktree's build: $($M.ModuleBase.StartsWit
 Write-OerLiveStep "AzAuth loaded: $(@(Get-Module -Name AzAuth | ForEach-Object { $_.Version.ToString() }) -join ',')"
 Start-S1113Count
 $Subs = @(Get-OERSubscription -ErrorAction SilentlyContinue -ErrorVariable SubErr)
-$Groups = @(Get-OERGroup -Filter "startswith(displayName,'oer-')" -All -ErrorAction SilentlyContinue -ErrorVariable GrpErr)
+$Groups = @(Get-OERGroup -Filter 'securityEnabled eq true' -ErrorAction SilentlyContinue -ErrorVariable GrpErr)
 Stop-S1113Count
 Write-OerLiveStep "Subscriptions read: $($Subs.Count -gt 0); test subscription among them: $(@($Subs | Where-Object { [string]$_.SubscriptionId -eq $Cfg.SubscriptionId }).Count -eq 1); errors: [$(Get-S1113IdCounts $SubErr)]"
 Write-OerLiveStep "Groups read: $($Groups.Count) (any number is fine); errors: [$(Get-S1113IdCounts $GrpErr)]"
@@ -188,16 +198,35 @@ transport; 0 token requests after the sign-in (the session is cached).
 **Failure looks like:** "application is disabled" (STOP: the identity is disabled), AzAuth `2.10.0`, an error id,
 or a fence refusal.
 
-Result:
+Result: 2026-10-22 00:45 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Passed on run 2. Run 1 stopped at a checklist error, not a module one: Get-OERGroup -Filter with -All is no parameter set; the block now uses -Filter alone, with a filter that matches groups (a prefix filter matching nothing answers GroupNotFound, existing behaviour).
+[oer-s1113] Omnicit.EntraRBAC 1.3.1 loaded from REPO\.claude\worktrees\s11-steg13\output\module\Omnicit.EntraRBAC\1.3.1.
+[oer-s1113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s1113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s1113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s1113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s1113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s1113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s1113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s1113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s1113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s1113] The module is the worktree's build: True; version 1.3.1
+[oer-s1113] AzAuth loaded: 2.11.0
+[oer-s1113] Subscriptions read: True; test subscription among them: True; errors: []
+[oer-s1113] Groups read: 93 (any number is fine); errors: []
+[oer-s1113] Requests: Microsoft Graph 1, Azure Resource Manager 1; token requests after the sign-in: 0
+```
 
 ## 1. A profile with every single-quote character
 
 ### 1.1. The profile is written, changed and read back unchanged, and no value adds a key
 
-- [ ] **1.1** `New-OERConfiguration` and `Set-OERConfiguration` write a profile in the step's raw folder whose Naming and Defaults carry each of the five characters in a key, a value and a list item, plus a value built to close the literal and add `Environment`; `Get-OERConfiguration` reads every value back unchanged, and the file has exactly the keys written. #type/subtask
+- [x] **1.1** `New-OERConfiguration` and `Set-OERConfiguration` write a profile in the step's raw folder whose Naming and Defaults carry each of the five characters in a key, a value and a list item, plus a value built to close the literal and add `Environment`; `Get-OERConfiguration` reads every value back unchanged, and the file has exactly the keys written. #type/subtask
 
 ```powershell
-Import-OerLiveModule
+& (Get-Module -Name OerLive) { Import-OerLiveModule }
 $ProfDir = Join-Path $Raw 'profiles'
 $null = New-Item -ItemType Directory -Path $ProfDir -Force
 $Alias = 'oer-s1113-quotes'
@@ -214,10 +243,11 @@ Set-OERConfiguration -TenantAlias $Alias -Defaults ([hashtable]$Defaults) -BaseP
 $File = Join-Path $ProfDir "$Alias.psd1"
 $Data = Import-PowerShellDataFile -LiteralPath $File
 $Read = Get-OERConfiguration -TenantAlias $Alias -BasePath $ProfDir -ErrorAction Stop
+if ($Data -isnot [hashtable] -or $null -eq $Read) { throw 'S1113: the profile was not written, did not parse or was not read back.' }
 $NamingOk = @($Naming.Keys | Where-Object { -not ($Data.Naming.ContainsKey($_) -and $Data.Naming[$_] -ceq $Naming[$_]) }).Count -eq 0
 $ListOk = @(0..4 | Where-Object { (@($Data.Defaults["list$_"]) -join '|') -cne (@($Defaults["list$_"]) -join '|') }).Count -eq 0
 $InjectOk = @(0..4 | Where-Object { $Data.Defaults["inject$_"] -cne $Defaults["inject$_"] }).Count -eq 0
-Write-OerLiveStep "The file parses: True; top-level keys: $(@($Data.Keys | Sort-Object) -join ',')"
+Write-OerLiveStep "The file parses: $($Data -is [hashtable]); top-level keys: $(@($Data.Keys | Sort-Object) -join ',')"
 Write-OerLiveStep "Naming keys and values unchanged: $NamingOk; list items unchanged: $ListOk; the built values unchanged: $InjectOk"
 Write-OerLiveStep "Defaults keys: $(@($Data.Defaults.Keys).Count) (expected 10); an Environment key anywhere: $($Data.ContainsKey('Environment') -or $Data.Defaults.ContainsKey('Environment') -or $Data.Naming.ContainsKey('Environment'))"
 Write-OerLiveStep "Get-OERConfiguration: alias $([string]$Read.TenantAlias -ceq $Alias); tenant is the test tenant: $([string]$Read.TenantId -eq $Cfg.TenantId); Environment: '$([string]$Read.Environment)'"
@@ -227,14 +257,27 @@ Write-OerLiveStep "Get-OERConfiguration: alias $([string]$Read.TenantAlias -ceq 
 Defaults keys and `False` for an Environment key; the alias and tenant `True` and an empty Environment.
 **Failure looks like:** a parse error, a top-level `Environment` key, or a value read back changed.
 
-Result:
+Result: 2026-10-22 00:45 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Passed on run 2. Run 1 called Import-OerLiveModule, which OerLive does not export; the block now calls it in OerLive's scope and throws when the profile was not written, parsed or read back (run 1's hard-coded 'parses: True' hid that).
+[oer-s1113] Omnicit.EntraRBAC 1.3.1 loaded from REPO\.claude\worktrees\s11-steg13\output\module\Omnicit.EntraRBAC\1.3.1.
+[oer-s1113] The file parses: True; top-level keys: Defaults,Naming,TenantId
+[oer-s1113] Naming keys and values unchanged: True; list items unchanged: True; the built values unchanged: True
+[oer-s1113] Defaults keys: 10 (expected 10); an Environment key anywhere: False
+[oer-s1113] Get-OERConfiguration: alias True; tenant is the test tenant: True; Environment: ''
+TenantAlias      TenantId                             Environment Path
+-----------      --------                             ----------- ----
+oer-s1113-quotes 00000000-0000-0000-0000-000000000004             REPO\docs\live-verification\raw\…
+oer-s1113-quotes 00000000-0000-0000-0000-000000000004             REPO\docs\live-verification\raw\…
+```
 
 ### 1.2. Connect-OER -TenantAlias signs in with that profile, in the test tenant and the Global cloud
 
-- [ ] **1.2** `Connect-OER -TenantAlias oer-s1113-quotes -BasePath` the raw profile folder, with the certificate, signs in as oer-live-cc in the test tenant and the Global cloud, and a read follows. #type/subtask
+- [x] **1.2** `Connect-OER -TenantAlias oer-s1113-quotes -BasePath` the raw profile folder, with the certificate, signs in as oer-live-cc in the test tenant and the Global cloud, and a read follows. #type/subtask
 
 ```powershell
-Import-OerLiveModule
+& (Get-Module -Name OerLive) { Import-OerLiveModule }
 Start-S1113NoPrompt
 Disconnect-OerLive
 $ProfDir = Join-Path $Raw 'profiles'
@@ -244,7 +287,7 @@ $S = & (Get-Module -Name Omnicit.EntraRBAC) { $script:_OERAuthState }
 Write-OerLiveStep "Session: app-only certificate $([string]$S.AuthMethod -eq 'ClientCertificate'); client is the identity $(([string]$S.ClientId).ToLowerInvariant() -eq $Cfg.AppId); tenant is the test tenant $(([string]$S.TokenTenantId).ToLowerInvariant() -eq $Cfg.TenantId); cloud '$([string]$S.Environment)'"
 $S = $null
 Start-S1113Count
-$Groups = @(Get-OERGroup -Filter "startswith(displayName,'oer-')" -All -ErrorAction SilentlyContinue -ErrorVariable GrpErr)
+$Groups = @(Get-OERGroup -Filter 'securityEnabled eq true' -ErrorAction SilentlyContinue -ErrorVariable GrpErr)
 Stop-S1113Count
 Write-OerLiveStep "Groups read: $($Groups.Count); errors: [$(Get-S1113IdCounts $GrpErr)]; Microsoft Graph requests $global:S1113Graph; token requests $global:S1113TokenCalls"
 Disconnect-OerLive
@@ -254,13 +297,20 @@ Disconnect-OerLive
 certificate sign-in).
 **Failure looks like:** a parse error of the profile (the old writer), cloud `China`, or a fence refusal.
 
-Result:
+Result: 2026-10-22 00:45 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Passed on its first run with the corrected module import.
+[oer-s1113] Omnicit.EntraRBAC 1.3.1 loaded from REPO\.claude\worktrees\s11-steg13\output\module\Omnicit.EntraRBAC\1.3.1.
+[oer-s1113] Session: app-only certificate True; client is the identity True; tenant is the test tenant True; cloud 'Global'
+[oer-s1113] Groups read: 93; errors: []; Microsoft Graph requests 1; token requests 1
+```
 
 ## 2. Get-OERInventory after its own refused sign-in names no tenant (BL-157)
 
 ### 2.1. A refused sign-in after a session of the test tenant leaves the document without a tenantId
 
-- [ ] **2.1** After a session in the test tenant, `Get-OERInventory -TenantId` a domain that names no tenant is refused (`TenantResolutionFailed`), carries on as before (no try) and emits a partial document whose `TenantId` is empty, sending no Microsoft Graph or Azure Resource Manager request. #type/subtask
+- [x] **2.1** After a session in the test tenant, `Get-OERInventory -TenantId` a domain that names no tenant is refused (`TenantResolutionFailed`), carries on as before (no try) and emits a partial document whose `TenantId` is empty, sending no Microsoft Graph or Azure Resource Manager request. #type/subtask
 
 ```powershell
 # The block runs as a script file in a child process with no try around the call, as at a prompt.
@@ -308,13 +358,20 @@ names the test tenant `False`; errors `TenantResolutionFailed x1` and the partia
 writes (`InventoryPartial`, and `SignInRefused` for the refused read, if any); 0 Graph requests and 0 token requests.
 **Failure looks like:** the document naming the test tenant (the defect), a Graph request, or a token request.
 
-Result:
+Result: 2026-10-22 00:45 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Passed.
+[oer-s1113] Child process ended with END: True
+[oer-s1113] Session tenant before was the test tenant: True; document emitted: True (Omnicit.EntraRBAC.Inventory); its TenantId empty: True; names the test tenant: False
+[oer-s1113] Errors: [InventoryPartial x1, TenantResolutionFailed x1]; Microsoft Graph requests: 0; token requests: 0
+```
 
 ## 3. A host started with -NonInteractive is refused at once (BL-100)
 
 ### 3.1. With no session, an interactive sign-in is refused before any token request, without waiting
 
-- [ ] **3.1** In `pwsh -NoProfile -NonInteractive` with no session, `Get-OERGroup` and `Connect-OER -Interactive` are each refused with `InteractiveSignInUnavailable` within seconds, no token request and no tenant lookup sent; the same `Get-OERGroup` in a host without `-NonInteractive`, under a fence that refuses every token request, reaches the token request instead. #type/subtask
+- [x] **3.1** In `pwsh -NoProfile -NonInteractive` with no session, `Get-OERGroup` and `Connect-OER -Interactive` are each refused with `InteractiveSignInUnavailable` within seconds, no token request and no tenant lookup sent; the same `Get-OERGroup` in a host without `-NonInteractive`, under a fence that refuses every token request, reaches the token request instead. #type/subtask
 
 ```powershell
 $Child = Join-Path $Raw 'block-3-1.ps1'
@@ -360,7 +417,17 @@ no `InteractiveSignInUnavailable`. No browser opens in either host: the fence re
 **Failure looks like:** a token request in the `NonInteractive` host, a wait near 120 s, or `InteractiveSignInUnavailable`
 in the control host.
 
-Result:
+Result: 2026-10-22 00:45 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Passed.
+[oer-s1113] Host NonInteractive: ended with END True after 2.6 s; token requests 0; tenant lookups 0; Microsoft Graph requests 0
+[oer-s1113]   Get-OERGroup -All: 0.5 s; errors [InteractiveSignInUnavailable x1, SignInRefused x1]
+[oer-s1113]   Connect-OER -Interactive: 0.2 s; errors [InteractiveSignInUnavailable x1]
+[oer-s1113] Host Interactive: ended with END True after 2.7 s; token requests 2; tenant lookups 0; Microsoft Graph requests 0
+[oer-s1113]   Get-OERGroup -All: 0.5 s; errors [GraphTokenAcquisitionFailed x1, SignInRefused x1]
+[oer-s1113]   Connect-OER -Interactive: 0.1 s; errors [GraphTokenAcquisitionFailed x1]
+```
 
 ## B. Proved offline (class B)
 
@@ -387,7 +454,7 @@ Result:
 
 ### T.1. The step's raw folder is gone, and nothing was created in the tenant
 
-- [ ] **T.1** The raw folder `raw\s1113\` (profile, export, child output) is deleted, and no object with the prefix exists in the tenant. #type/subtask
+- [x] **T.1** The raw folder `raw\s1113\` (profile, export, child output) is deleted, and no object with the prefix exists in the tenant. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -401,4 +468,20 @@ Write-OerLiveStep "Raw folder gone: $(-not (Test-Path -LiteralPath $Raw))"
 **Expect:** 0 groups with the prefix; `Raw folder gone: True`.
 **Failure looks like:** a prefixed object (STOP: this file creates none) or the folder still there.
 
-Result:
+Result: 2026-10-22 00:45 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Passed.
+[oer-s1113] Omnicit.EntraRBAC 1.3.1 loaded from REPO\.claude\worktrees\s11-steg13\output\module\Omnicit.EntraRBAC\1.3.1.
+[oer-s1113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s1113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s1113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s1113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s1113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s1113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s1113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s1113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s1113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s1113] Groups with the prefix: 0
+[oer-s1113] Raw folder gone: True
+```

@@ -10231,7 +10231,9 @@ Describe 'Get-OERInventory names no tenant after its own refused sign-in (BL-157
             # preference (Stop in the gate), while the real Initialize-OERAuth is a child scope of
             # Get-OERInventory in the module and inherits the preference the call runs under: the
             # SilentlyContinue of the first row, and the SilentlyContinue the pin gives the Ignore row.
-            # Write under that preference, as the real function would.
+            # Write under that preference, as the real function would. Since the mock sets it itself, the
+            # Ignore row here does NOT prove the Ignore-to-SilentlyContinue pin; the runspace Context below,
+            # whose stand-ins are real functions, does.
             $ErrorActionPreference = 'SilentlyContinue'
             $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
                     [System.Exception]::new('The ARM token could not be acquired.'), 'ArmTokenAcquisitionFailed,Initialize-OERAuth',

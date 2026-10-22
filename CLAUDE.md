@@ -623,7 +623,7 @@ from AzAuth 2.11.0 and Azure.Identity 1.21.0, not measured live: write "fewer pr
 prompt" -- a failed refresh can open the browser inside AzAuth, and the tracker names ONE credential,
 so a renewal is silent only for the resource whose interactive request came last: every `-IncludeARM`
 sign-in requests ARM last, so a session using both resources gets no silent renewal (ruling R-3; the
-silent renewal helps a Graph-only or ARM-only session). `Why: docs/development/rationale.md#the-silent-renewal-of-an-interactive-session`
+silent renewal helps a Graph-only session). `Why: docs/development/rationale.md#the-silent-renewal-of-an-interactive-session`
 
 **An interactive sign-in in a host started with `pwsh -NonInteractive` is refused** with the terminating
 `InteractiveSignInUnavailable`, silent renewal included, after the cached return and before any tenant

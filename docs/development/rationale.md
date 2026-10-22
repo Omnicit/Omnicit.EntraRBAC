@@ -6736,7 +6736,7 @@ more reliable: each reaches a different credential store than the one this desig
   and is interactive, which moves the tracker to Graph; the ARM renewal then finds the tracker naming
   Graph and is interactive too, which moves it back to ARM; the next hour repeats, and the same
   alternation happens when the two expire in different commands. So the silent renewal helps a session
-  that uses only Microsoft Graph (or only Azure Resource Manager); a session using both prompts as often
+  that uses only Microsoft Graph (every sign-in requests Graph first); a session using both prompts as often
   as before this step. Ruling R-3 accepted that cost; a design that avoids it (one client id for both
   requests, or a Graph-first ordering) is a backlog question, not decided. Read in the code and the
   sources, not measured.
