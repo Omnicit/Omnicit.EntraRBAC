@@ -812,7 +812,8 @@ owner must really call its command, so a rule cannot hold
 over nothing and a stale owner is a failure. Two of those lists were widened by one owner each in
 Sprint 9 step 2, each widening justified in the gate's own text. Every row of the owner table is
 enforced by one `It` that reads the table as a whole (Sprint 10 step 10, BL-101): for each row, no
-caller outside its owners and every owner really calling it, with at least fourteen rows (thirteen
+caller outside its owners and every owner really calling it, with exactly the fourteen commands the
+`It` lists (since Sprint 11 step 15, BL-124 point 5; until then a floor of fourteen, and thirteen
 until Sprint 11 step 6c added the `Get-OERSubscriptionHomeTenant` row and raised the floor with it),
 one row per command (the scan keys its counts on the command, so a second row would replace the
 first one's owners) and a call by its owners found for every row's command. So a row added without an
@@ -829,12 +830,20 @@ stay green: `Register-OERSignInIdentity`, `Get-OERSignInRefusal`, `Get-OERSignIn
 `Get-OERSignInIdentity`, `Resolve-OERTenantDomain`, `Set-OERSessionUncertain` and
 `Get-OERDocumentTenantMismatch` (all thirteen measured, BL-101, each row deleted with a valid row
 added; the fourteenth, Sprint 11 step 6c, deleted from a scratch copy turns its own `It` red, since
-that `It` asserts the call count first). For those seven the row floor is what sees a deletion, and
-a deletion made in the same edit as a new row keeps the count, so nothing sees it. So the floor
-moves with every row added: when Sprint 11 step 6c added the fourteenth row, a floor left at
-thirteen would have let one of those seven rows be deleted unseen, and at fourteen deleting the
-`Get-OERDocumentTenantMismatch` row from a scratch copy turns the whole-table `It` red (mutation
-R1G4 in [#home-tenant-subscriptions](#home-tenant-subscriptions)).
+that `It` asserts the call count first). For those seven the whole-table `It` is what sees a
+deletion. The row floor it used to be saw a deletion only while the count fell: a deletion made in
+the same edit as a new row keeps the count, so nothing saw it, and the floor had to move with every
+row added (when Sprint 11 step 6c added the fourteenth row, a floor left at thirteen would have let
+one of those seven rows be deleted unseen; at fourteen, deleting the
+`Get-OERDocumentTenantMismatch` row from a scratch copy turned the whole-table `It` red, mutation
+R1G4 in [#home-tenant-subscriptions](#home-tenant-subscriptions)). BL-124 point 5 (Sprint 11 step
+15) replaced the floor with an exact set: the sorted command names of the table, compared
+ordinally, must equal the literal list of the fourteen in the `It`, and its message says a row added
+or removed is a rule change that edits that list in the same change. Measured on a scratch copy with
+the `Get-OERSignInRefusal` row removed and a `Checkpoint-OERSignIn` row added (the count stays
+fourteen, and every owner of the new row really calls it): the floor was green on that copy, and the
+exact set is red, naming the row missing from the table and the row missing from the list. The
+duplicate check stays, since a second row for one command would also show as a fifteenth name.
 The per-row `It`s stay and carry each row's reason; a new row still gets one for its explanation,
 but no longer needs one to be enforced.
 `Initialize-OERAuth` reads the latch once, before `Lock-OERSignIn`, to refuse a SIGN-IN under a
@@ -1006,7 +1015,10 @@ names the text of its value, not
 where a variable it names got its value; the guard walk climbs from the site to the top of the file,
 across function and script-block boundaries ("at any depth"), so an `if ($TenantId)` around a nested
 function or a script block guards a site inside it, though that code may run where the test no
-longer holds; it cannot see a splat built outside the function that calls the command (in another
+longer holds; a guard that stands in another function than the site (a caller that tests the tenant
+and hands it to a helper that forwards it unguarded) is not seen, so that site reads as a violation
+and needs an exemption (accepted limit, BL-124 point 6, Sprint 11 step 15, as are the abbreviated
+key, the second variable and the positional binding listed in this paragraph); it cannot see a splat built outside the function that calls the command (in another
 function, or handed in as a parameter), a key merged in from another variable (`$A += $Other`), a
 hashtable literal wrapped in a cast or `[ordered]`, a key or a parameter name built at run time, an
 abbreviated key in a splat (`@{ Tenant = $T }`; an abbreviated parameter is seen), a tenant
@@ -1024,6 +1036,35 @@ switch list reads no `[Alias()]` declared on a switch and no `-WhatIf` or `-Conf
 after either would be read as its value; and a function that reaches a sign-in only through a
 module-qualified call of another module function gets no call edge for that call, so the fixed point
 leaves it out of the set.
+
+**The `requiredscope` endpoint map** (Sprint 11 step 15, BL-138). `tests/QA/requiredscope.tests.ps1`
+holds each cmdlet's declared permissions against a small endpoint map, one rule per Graph path with a
+`Match`, an optional `NotMatch` and a `Read` and `Write` pattern; `Get-RequiredScopePattern` is the one
+place a literal is matched against it, and a `Write` that is an array is several requirements, each
+a separate pattern the per-cmdlet case must find a declared permission for. Two changes. First, the
+authentication context rule matched the whole prefix `identity/conditionalAccess`, so a future
+conditional access policies read would have been satisfied by `AuthenticationContext.Read.All`,
+which Microsoft Learn does not name for it. The rule now matches
+`identity/conditionalAccess/authenticationContextClassReferences` only, and a cautious rule takes every
+other `identity/conditionalAccess` path: a read needs `Policy.Read.All` (Microsoft Learn, "List
+policies", read 2026-10-22: least privileged, delegated and application) and a write needs BOTH
+`Policy.Read.All` and `Policy.ReadWrite.ConditionalAccess` ("Create policy"). The module reads no
+such path today, so the rule changes no cmdlet's table row; the known answers hold it (an
+authentication context read is one rule and `AuthenticationContext.Read.All` satisfies it; a policies
+read is one rule and `AuthenticationContext.Read.All` does not satisfy it; a policies write is two
+requirements). Second, the per-cmdlet case accepts a literal that no rule matches, since such a
+literal asks for nothing, so a deleted rule or a `Match` that drifted left the literal unchecked and
+the table green. An `It` now holds that every Graph URI literal the scan derives (the union of
+`$script:derived[*].GraphUri`, 97 distinct literals when it was written, with a non-vacuity floor of
+95; the same 97 are found per function, so no private function outside every cmdlet's reach holds one)
+matches at least one rule through `Get-RequiredScopePattern`, except an exact list of computed paths:
+today the one literal of `Test-OERDirectoryRoleAssignmentGone`, whose schedule collection is chosen at
+run time. An exception that names no literal, or that a rule now matches, fails too. Its limit: it
+judges the literals the scan reads, so a path built wholly from variables is not seen at all, and a
+literal is matched by any rule, not by the right one, which the known answers cover for the rules
+they name. Measured on scratch copies: the prefix restored turns the two policies known answers red;
+a deleted `roleDefinitions` rule leaves every other case green and turns only the new `It` red, naming
+its two literals; a stale exception, and one a rule now matches, each turn it red.
 
 Every gate asserts its own non-vacuity (per-root file counts, named control files, catch-clause and
 token counts, region-content checks) so a detection bug fails loudly instead of passing over an
