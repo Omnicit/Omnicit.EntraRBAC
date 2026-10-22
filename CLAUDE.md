@@ -137,7 +137,8 @@ tenant object ids, tenant domains outside an allowlist, non-documentation email 
 credentials in tracked files, and no angle bracket GitHub would render as a tag in tracked
 Markdown); `docsync.tests.ps1` (binds `README.md` to the about topic, and both to the manifest's
 cmdlet count); and `testhygiene.tests.ps1` (every unit test file that imports the module installs,
-checks and uninstalls the transport tripwire; read statically, importing nothing).
+checks and uninstalls the transport tripwire, and every `Mock` with `-ParameterFilter` has a default
+mock beside it, held by a ratchet; read statically, importing nothing).
 
 **`dochygiene.tests.ps1` applies TWO object-id rules, split by what the file is.** `docs/` and
 `specs/`: a GUID is prose and must be a `00000000-0000-0000-0000-0000000000NN` placeholder.
@@ -1299,6 +1300,11 @@ only if a `Justification` string is provided. Never suppress a rule that hides a
 - **A `Mock -ModuleName` covers only calls made from inside the module.** A command the test body
   calls itself runs for real unless it has its own test-scope `Mock`. No test may reach the real
   profile directory: a test of a `-BasePath` default intercepts `Test-Path` in module scope instead.
+  `Why: docs/development/rationale.md#bearer-scrub-tests`
+- **A `Mock` with `-ParameterFilter` has a default `Mock` of the same command and `-ModuleName`,
+  without a filter, in the SAME script block.** A call the filters stop matching throws on Pester 6.x
+  inside module code, where a catch can swallow it. `tests/QA/testhygiene.tests.ps1` holds it with a
+  per-file ratchet of the older sites: add the default mock, and lower the table when you fix a site.
   `Why: docs/development/rationale.md#bearer-scrub-tests`
 - **Pin `-ErrorAction` on any call whose non-terminating error the test observes or has to survive**
   (module code reads the GLOBAL `$ErrorActionPreference`; a test-local one does not pin it).

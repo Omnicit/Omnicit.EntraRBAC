@@ -361,9 +361,20 @@ in the final review of Sprint 8 step 4: a test that mocks `Invoke-OERGraphReques
 `-ErrorAction SilentlyContinue`, passed on Pester 6.2.0 with no hit, while the module's catch
 swallowed 13 "No mock for command" records; on 5.7.1 the same file failed its container on one hit,
 `Invoke-MgGraphRequest` from `Invoke-OERGraphRequest.ps1`. The real transport was reached on
-neither version. This is the inert shape that remains, recorded here and not gated: the remedy is a
-default mock beside every filtered mock, so a call the filters stop matching falls back to it
-instead of throwing.
+neither version. The remedy is a default mock beside every filtered mock, so a call the filters stop
+matching falls back to it instead of throwing. Gated since Sprint 11 step 15 (BL-59) by
+`tests/QA/testhygiene.tests.ps1`, which reads every unit test file statically, importing nothing:
+for each `Mock` carrying `-ParameterFilter`, the SAME script block (the innermost one holding the
+call: an `It`, `BeforeAll` or `BeforeEach` body, a `Context` or `Describe` body, an `InModuleScope`
+block) must also hold a `Mock` of the same command and the same `-ModuleName` text, or none on both,
+without `-ParameterFilter`. A default in an enclosing or a nested block does not count: that is
+stricter than Pester's own fallback, on purpose, and the sites that predate the rule are absorbed by
+a ratchet, a literal table of violations per file in the gate. The table is keyed on `Mock`
+statements only, so an edit of a `Should -Invoke` line moves nothing in it. A count above the table
+is a new violation; a count below it is a fixed site, and the same change lowers the number. A `Mock`
+whose command is a variable cannot be matched by name; it is counted as unresolvable and reported,
+never a violation. The first measurement (2026-10-22) found 931 filtered mocks in 324 unit test
+files: 793 without a default in the same block, in 74 files, and 138 with one.
 
 **The traps, measured on PowerShell 7.6 with a throwaway module.**
 
