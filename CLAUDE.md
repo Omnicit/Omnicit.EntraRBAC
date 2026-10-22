@@ -272,8 +272,11 @@ publish it.
     of that same run (it reuses the tested artefact, matches and tags).
   - **Run refused** (a later merge, same version, different build; a byte-identical build IS the
     package and is tagged): push the missing tag by hand onto the commit that published the
-    version, then re-run ALL jobs of the newest refused run (it counts up from that tag and
-    publishes it); re-running only its failed jobs reuses its own build and is refused again. The
+    version, then re-run ALL jobs of the newest refused run. That is EXPECTED to rebuild, count up
+    from the tag and publish the next preview, but it has not been seen on a real run: confirm in
+    the re-run's log that its publish step names the next preview, not the refused version, before
+    relying on it (naming the refused version again means the run is refused again, nothing tagged
+    wrongly). Re-running only its failed jobs reuses its own build and is refused again. The
     refusal names the steps. A preview tag on the wrong commit is named in either refusal -- by
     the tag check when the run's own build is the package, and in the comparison's repair text
     otherwise: delete it with `git push origin :refs/tags/v<version>` before tagging the right

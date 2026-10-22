@@ -8283,23 +8283,45 @@ another version would be refused here, never compared as if it were the version 
 package with no manifest at all is left to the file comparison, which names the missing file, as it
 did before this check existed.
 
-**The publish step's idempotence check and the Confirm step keep `Find-PSResource "[$Version]"`.**
-The runner answered that form (run 37913219972 logged "SKIPPING THE PUBLISH" and "Confirmed on the
-Gallery"), and so did PSResourceGet 1.2.0 when measured, so they were left as they are. Under
-PSResourceGet 1.0.1 the same `Find` answers nothing: on a runner carrying 1.0.1 every publish would
-time out in the Confirm step after ten minutes, and a re-run would then try to publish a version that
-is already there, which the Gallery does not accept. Both would fail red, not silently. The bare
-form answers in all three versions measured.
+**The publish step's idempotence check and the Confirm step name the version bare too (Sprint 11
+step 15, BL-118).** Until then they kept `Find-PSResource "[$Version]"`: the runner answered that
+form (run 37913219972 logged "SKIPPING THE PUBLISH" and "Confirmed on the Gallery"), and so did
+PSResourceGet 1.2.0 when measured, so they were left as they were. Under PSResourceGet 1.0.1 the
+same `Find` answers nothing (the table above): on a runner carrying 1.0.1 every publish would time
+out in the Confirm step after ten minutes, and a re-run would then try to publish a version that is
+already there, which the Gallery does not accept. Both would fail red, not silently, but the failure
+was avoidable, since the bare form answers in all three versions measured. Both calls now pass
+`-Version $Version`. The offline suite holds it: the ordinary-merge test reads `find.log`, which the
+`Find-PSResource` stand-in writes (the `-Version` each call was given, as given), and asserts that
+both calls passed the bare version. With the brackets put back in the publish step only, that test
+goes red at once on the log; with them put back in both steps the Confirm step never finds the
+version, and the harness stops it after three minutes.
 
-**The offline suite plays PSGallery under PSResourceGet 1.2.0.** Its `Save-PSResource` stand-in
-refuses a bracketed prerelease with the measured message and saves the bare version, and three tests
-of the stand-in itself hold that model. With the brackets put back in `-Compare`, 27 of the suite's
-42 tests go red, every shape that tags among them. With the version check removed, or moved after
+**The offline suite plays PSGallery under PSResourceGet 1.0.1 for `Find` and 1.2.0 for `Save`.**
+Its `Find-PSResource` stand-in finds nothing for a bracketed prerelease version and exactly that
+version for a bare one (a bracketed STABLE version is unmeasured and is read as the version inside),
+its `Save-PSResource` stand-in refuses a bracketed prerelease with the measured message and saves
+the bare version, and three tests of the Save stand-in and four of the Find stand-in hold that
+model. With the brackets put back in `-Compare`, 27 of the suite's 42 tests go red (the suite as
+it stood when the Save stand-in was written), every shape that tags among them. With the version check removed, or moved after
 the file comparison, the four version-check cases go red: the file comparison still refuses those
 packages, but with its own message, so the tests pin which check refused. Removing either half of
 the check, or comparing without regard to case, turns the cases that half covers red. Reading the
 manifest of a package that has none, or checking a version that was not read, turns the
 missing-manifest test red.
+
+**The recorded paths are cut by `Get-Item`'s `FullName` (Sprint 11 step 15, BL-118).**
+`Get-ArtefactFileHash` records each file's path relative to the version folder, cut from the file's
+`FullName` by the length of a prefix. The prefix came from `Resolve-Path`. Measured on Windows for a
+folder addressed by its 8.3 short path: `Resolve-Path` keeps the short component, the `FullName` of
+the files `Get-ChildItem -Recurse` returns carries the long form, and so does `Get-Item`'s
+`FullName`; a short prefix cut from a long path yields wrong relative names. The prefix is now
+`(Get-Item -LiteralPath ...).FullName`. This hardens, it does not repair: no mode of the script hands
+the function a short path today, since every caller passes the `FullName` of an item
+`Get-ChildItem` returned (long, measured). The all-OS test holds the recorded names exactly as
+they were; the Windows-only test cuts the function out of the script by AST, hands it the short
+path, and goes red against the `Resolve-Path` line (Skipped on a volume that gives the folder no 8.3
+name).
 
 **What was not chosen, and why.**
 
@@ -8341,7 +8363,7 @@ text in `pwsh`, wrapped the way `shell: pwsh` wraps it, against a fake Gallery a
 | The next merge, after a tag step that failed or a 500 nobody re-ran | skips the publish and tags ITS OWN commit over the previous commit's package | refused when its build differs, nothing tagged, the repair in the message |
 | The next merge, byte-identical build | skips the publish, tags that commit too | tags its commit (its build IS the package) |
 | Re-run of only the failed jobs after that | (the tag was already wrong) | refused again, also after the repair tag, also with a release made by hand |
-| Repair tag on the publishing commit, then all jobs re-run | -- | counts up, publishes and tags the refused commit |
+| Repair tag on the publishing commit, then all jobs re-run | -- | expected to count up, publish and tag the refused commit (the offline suite plays the rebuilt artefact; not seen on a real re-run) |
 | Re-run after a preview tag was pushed by hand onto another commit | attached the release to that commit | refused, nothing created, the repair in the message |
 | A rebuild of the published commit on a later day | tagged the right commit with another build's package | refused; the tag by hand on that commit is the whole repair |
 | A read of the Gallery that fails | (no read) | refused, then tags on a re-run that can read |
@@ -8354,8 +8376,11 @@ directory that holds a mutated copy of `.github/` for such a run; it is never se
 **Repair.** For a refused run: push the missing tag by hand onto the commit that published the
 version (`git tag v<version> <commit>` and `git push origin v<version>`), then re-run ALL jobs of
 the newest refused run (it carries the older ones' changes; an older one re-run after it is
-refused against the newer package). Its rebuild counts up from that tag and publishes it as the
-next preview. A preview tag carries a hyphen, so the `Stable Version` ruleset does not cover it.
+refused against the newer package). Its rebuild is EXPECTED to count up from that tag and publish it
+as the next preview, but a re-run of all jobs has not been seen on a real run (see Known limits):
+confirm in the re-run's log that its publish step names the next preview, not the refused version,
+before relying on it; if it names the refused version again, the run is refused again and nothing
+is tagged wrongly. A preview tag carries a hyphen, so the `Stable Version` ruleset does not cover it.
 The run that published can instead be repaired by re-running its own failed job, which matches and
 tags.
 
@@ -8375,6 +8400,13 @@ tags.
 - **The count-up after the repair tag is GitVersion's measured behaviour** (the measured table
   under "The tag after each publish is the mechanism, not bookkeeping"), not something the offline
   suite runs: the suite plays the rebuilt artefact.
+- **A re-run of ALL jobs is unmeasured on a real run.** The repair relies on the re-run's publish
+  job receiving the artefact of the NEW attempt (the artefact download taking the newest attempt's
+  upload), which has never been measured on a real re-run, and on the count-up in the bullet above.
+  The offline suite plays the rebuilt artefact, so it cannot show either. If the re-run were handed
+  the old attempt's artefact, its publish step would name the refused version again and the run
+  would be refused again, with nothing tagged wrongly: the guard fails closed. The refusal message,
+  the workflow comment and CLAUDE.md say to confirm that in the re-run's log first.
 
 #### CLAUDE.md text for the-tag-step-tags-only-the-build-that-was-published
 
