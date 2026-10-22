@@ -286,9 +286,9 @@ function Export-OERInventory {
     generated README.md lists them, with their count, in a section "Role assignments at the root
     scope (elevated access)", directly after "Members and owners left out as PIM for Groups access",
     or says that none was read. Leaving them out of the export changes nothing in the tenant. Under a
-    Stop warning preference (-WarningAction Stop, or $WarningPreference set to 'Stop') the export
-    stops at that warning, before it writes the bundle. Any other warning of a scope's read is
-    written after that read. An operator's -WarningVariable also collects the warnings of the
+    Stop warning preference (-WarningAction Stop, or a global $WarningPreference set to 'Stop') the
+    export stops at that warning, before it writes the bundle. Any other warning of a scope's read
+    is written after that read. An operator's -WarningVariable also collects the warnings of the
     per-scope reads -- Get-OERInventory's root-scope warning, its warning on role assignments whose
     principal the directory did not return, and the warning on role assignments at a scope no document
     can declare, once per scope, and any other per-scope warning twice -- while the display shows each
@@ -309,12 +309,12 @@ function Export-OERInventory {
     read, otherwise with one listing of every group -- and never once per Azure scope. The export
     writes ONE warning that gives how many names were left out and how many objects carry them in
     all. It writes it before the bundle is written, so -WhatIf shows it too, and under a
-    Stop warning preference (-WarningAction Stop, or $WarningPreference set to 'Stop') the export
-    stops at that warning, before it writes the bundle. The generated README.md lists each name, with
-    how many objects carry it and its section, in a section "Names two or more objects share",
-    directly after "Role assignments at the root scope (elevated access)", or says that no two objects
-    share a name. The names stay in IncompleteReads as well. Leaving them out changes nothing in the
-    tenant.
+    Stop warning preference (-WarningAction Stop, or a global $WarningPreference set to 'Stop') the
+    export stops at that warning, before it writes the bundle. The generated README.md lists each
+    name, with how many objects carry it and its section, in a section
+    "Names two or more objects share", directly after "Role assignments at the root scope
+    (elevated access)", or says that no two objects share a name. The names stay in IncompleteReads
+    as well. Leaving them out changes nothing in the tenant.
 
     ROLE ASSIGNMENTS WHOSE PRINCIPAL THE DIRECTORY DID NOT RETURN. A role assignment can name a
     principal that Microsoft Entra ID does not return: one that was deleted, or one the directory
@@ -2128,8 +2128,11 @@ function Export-OERInventory {
                 # Get-OERInventory report at all. Saying "N collection read(s) failed" made
                 # this message disagree with the seven triples printed right after it, and with
                 # Get-OERInventory's own "7 collection(s)" on the same run. The help already states
-                # the entry-per-report rule; the message now agrees with it.
-                $IncompletePart = "$($IncompleteReads.Count) partial Entra ID read entry(ies) name collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are NOT stated as facts in the bundle -- one entry can name several collections, so read the entries rather than this count: $($IncompleteReads -join '; '). A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as leave untouched; a path ending in scopedRoles/principalType is not such a key: it names a unit some or all of whose scoped role rows were written without principalType, and whose scopedRoles is not null. A section named alone is written as an empty array, which does not mean the tenant has none, and the entry groupsRoster means groupsRoster.json is empty since the group roster could not be read"
+                # the entry-per-report rule; the message now agrees with it. Since Sprint 11 step 14
+                # (BL-156) the clause names the entries and points at the bundle README for what each
+                # kind means, instead of explaining every kind, which made a run with only shared group
+                # names carry a very long message.
+                $IncompletePart = "$($IncompleteReads.Count) partial Entra ID read entry(ies) name collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are NOT stated as facts in the bundle -- one entry can name several collections, so read the entries rather than this count: $($IncompleteReads -join '; '). The bundle's README.md, which is not written under -WhatIf or a declined -Confirm, says what each kind of entry means and how an unread collection is written"
                 # WHY the group collections are missing. The group reader writes no error record, so
                 # this message is the only error that carries its causes (the verbose stream shows
                 # each as it is seen, and Get-OERInventory's own partial message carries the causes of

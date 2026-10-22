@@ -1478,7 +1478,7 @@ Describe 'Export-OERInventory (Azure role policy selection, BL-107)' {
         (@($Bundle.IncompleteReads) -join '|') | Should -BeExactly "groupsRoster|$script:BlUnjudged"
         $Partial = @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
         $Partial.Count | Should -Be 1
-        $Partial[0].Exception.Message | Should -BeLike '*1 partial Entra ID read entry(ies) name collections*: groupsRoster. A members*'
+        $Partial[0].Exception.Message | Should -BeLike '*1 partial Entra ID read entry(ies) name collections*: groupsRoster. The bundle''s README.md, which is not written under -WhatIf or a declined -Confirm, says what each kind of entry means*'
         $Partial[0].Exception.Message | Should -BeLike "*$script:BlUnjudged*"
         $Section = Get-ReadmeCouldNotReadSection -BundlePath $Bundle.BundlePath
         ((Get-SectionBullets -Section $Section) -join "`n") | Should -BeExactly (@('- Entra ID: `groupsRoster`', $script:BlAzureBullet) -join "`n")
@@ -1937,7 +1937,8 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
         $Partial = @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
         @($Partial).Count | Should -Be 1
         $Partial[0].Exception.Message | Should -Match 'groups/role_sec_team/members'
-        $Partial[0].Exception.Message | Should -Match 'explicit null'
+        $Partial[0].Exception.Message | Should -Match ([regex]::Escape('The bundle''s README.md, which is not written under -WhatIf or a declined -Confirm, says what each kind of entry means and how an unread collection is written'))
+        $Partial[0].Exception.Message | Should -Not -BeLike '*explicit null, which the apply engine*'
     }
 
     It 'counts IncompleteReads as partial reports, not as unread collections' {
@@ -2917,7 +2918,7 @@ Describe 'Export-OERInventory (an unread collection is never applied as empty)' 
         }
     }
 
-    It 'tells the operator in the export InventoryPartial message that a resources or resourceRoles key it names is an explicit null' {
+    It 'names the unread entry in the export InventoryPartial message and points at the bundle README for what each kind means' {
         Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -MockWith $script:FailBindingRead
         $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'b1msg') -Include Catalogs, AccessPackages `
             -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExpErr
@@ -2927,9 +2928,11 @@ Describe 'Export-OERInventory (an unread collection is never applied as empty)' 
         $Partial = @($ExpErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
         $Partial.Count | Should -Be 1
         $Partial[0].Exception.Message | Should -Match 'accessPackages/AP-Sales/resourceRoles'
-        $Partial[0].Exception.Message | Should -Match 'members, scopedRoles, resources or resourceRoles key reported here is an explicit null'
-        # Sprint 11 step 8: a scoped role principalType path names no null collection, and the message says so.
-        $Partial[0].Exception.Message | Should -Match ([regex]::Escape('leave untouched; a path ending in scopedRoles/principalType is not such a key: it names a unit some or all of whose scoped role rows were written without principalType, and whose scopedRoles is not null. A section named alone'))
+        # Sprint 11 step 14 (BL-156): the message names the entries and points at the bundle README for what each kind means.
+        $Partial[0].Exception.Message | Should -Match 'accessPackages/AP-Sales/resourceRoles'
+        $Partial[0].Exception.Message | Should -Match ([regex]::Escape('The bundle''s README.md, which is not written under -WhatIf or a declined -Confirm, says what each kind of entry means and how an unread collection is written'))
+        $Partial[0].Exception.Message | Should -Not -BeLike '*is not such a key*'
+        $Partial[0].Exception.Message | Should -Not -BeLike '*explicit null, which the apply engine*'
     }
 
     It 'writes a read that succeeded with nothing in it as [] and raises no partial' {
@@ -3425,7 +3428,7 @@ Describe 'Export-OERInventory (the group roster that could not be read is partia
         Assert-ListStaysOutOfJson -BundlePath $Bundle.BundlePath -Forbidden @('- Entra ID: `groupsRoster`')
     }
 
-    It 'says in the export InventoryPartial message what a section named alone and the groupsRoster entry mean' {
+    It 'points at the bundle README from the export InventoryPartial message when only the groupsRoster entry is named' {
         Mock -ModuleName $script:moduleName Get-OERGroup -MockWith $script:FailRosterRead
 
         $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'roster-msg') -Include Groups -WhatIf `
@@ -3439,7 +3442,8 @@ Describe 'Export-OERInventory (the group roster that could not be read is partia
         $Partial[0].Exception.Message |
             Should -BeLike '*1 partial Entra ID read entry(ies) name collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are NOT stated as facts in the bundle*'
         $Partial[0].Exception.Message |
-            Should -BeLike '*A section named alone is written as an empty array, which does not mean the tenant has none, and the entry groupsRoster means groupsRoster.json is empty since the group roster could not be read*'
+            Should -BeLike '*: groupsRoster. The bundle''s README.md, which is not written under -WhatIf or a declined -Confirm, says what each kind of entry means and how an unread collection is written*'
+        $Partial[0].Exception.Message | Should -Not -BeLike '*A section named alone*'
         # An Entra ID partial carries no Azure role selection clause, not even one counting zero
         # scopes.
         $Partial[0].Exception.Message | Should -Not -BeLike '*could not be judged*'
@@ -6677,7 +6681,7 @@ Describe 'Export-OERInventory (Azure Lighthouse delegations, Sprint 11 step 6b, 
             $Partial.Count | Should -Be 1
             $Message = $Partial[0].Exception.Message
             # The Entra ID clause still counts the Entra ID entries only.
-            $Message | Should -BeLike '*1 partial Entra ID read entry(ies) name collections*: groupsRoster. A members*'
+            $Message | Should -BeLike '*1 partial Entra ID read entry(ies) name collections*: groupsRoster. The bundle''s README.md, which is not written under -WhatIf or a declined -Confirm, says what each kind of entry means*'
             $Clause = '2 Azure Lighthouse read(s) failed, so lighthouseDelegations.json holds no delegation of a scope named here and writes the name of a role named here as null: ' +
                 "$script:LhxScopeEntry; $script:LhxRoleEntry. Causes of the unread Azure Lighthouse reads: $($script:LhxScopeCause.Cause); $($script:LhxRoleCause.Cause)"
             $Message | Should -MatchExactly ('(?s)' + [regex]::Escape($Clause + $script:LhxPartialTail) + '$')

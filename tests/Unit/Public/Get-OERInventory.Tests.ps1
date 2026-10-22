@@ -1705,6 +1705,7 @@ Describe 'Get-OERInventory' {
             $Inv = Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x' -WarningVariable Warned -WarningAction SilentlyContinue
             $Inv.AccessReviews[0].recurrence | Should -Be 'Monthly'
             ($Warned -join ' ') | Should -Match 'interval 2'
+            ($Warned -join ' ') | Should -Match ([regex]::Escape("exporting the cadence 'Monthly' instead of the true interval."))
         }
 
         It 'exports a live absoluteMonthly interval 6 as SemiAnnually and does not warn about the cadence' {
@@ -10474,7 +10475,8 @@ Describe 'Get-OERInventory help documents the subscriptions of another tenant (B
         # R-19: what -CommonRoles really does (the Describe 'Get-OERInventory -CommonRoles through the real
         # Get-OERRoleManagementPolicy' holds each claim), and the Stop warning preference.
         $Description | Should -Match ([regex]::Escape("-CommonRoles is the exception: the reader reads each curated role on its own and skips any role whose definition or policy it cannot read -- a refused or failed read as much as a role that is missing at the scope -- with a warning of its own (Skipping role, the role's name and the reason), and carries on. That skip is not reported through InventoryPartial, so the section holds the policies of the roles that were read, which may be fewer than the curated set; only a scope that cannot be resolved, or a sign-in or Azure Resource Manager token the reader cannot get, is reported unread."))
-        $Description | Should -Match ([regex]::Escape("Under a Stop warning preference (-WarningAction Stop, or `$WarningPreference set to 'Stop') the stop at that warning is caught here as well: the section is reported unread, with the warning's text in its cause, and the command carries on."))
+        $Description | Should -Match ([regex]::Escape("Under a Stop warning preference (-WarningAction Stop, or a global `$WarningPreference set to 'Stop') the stop at that warning is caught here as well: the section is reported unread, with the warning's text in its cause, and the command carries on."))
+        $Description | Should -Match ([regex]::Escape("a global `$WarningPreference set to 'Stop') the command stops at that warning, before it returns the inventory."))
         # The sentence that said the reader skips a curated role that does not exist, and nothing more, is gone.
         $Description | Should -Not -Match ([regex]::Escape('With -CommonRoles the reader still skips a curated role that does not exist in the subscription'))
     }

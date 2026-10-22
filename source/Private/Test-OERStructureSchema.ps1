@@ -320,7 +320,8 @@ function Test-OERStructureSchema {
     for its -NamingStandard parameter and Invoke-OERStructure never does, so applying a document is
     unchanged. It checks the names of the sections the standard lists (groups, administrativeUnits,
     catalogs, accessPackages, the assignmentPolicies of an access package, accessReviews) and adds one
-    Warning per object and broken rule, after every other finding, with Section the top-level section
+    Warning for each rule an object's name breaks, a segment rule (values, pattern or case) once for
+    each segment that breaks it, after every other finding, with Section the top-level section
     (a policy's is accessPackages), Item the name, Path the node that holds it and a Message that says
     which rule the name breaks and what was expected. Test-OERNamingStandardName owns the rules and
     their texts. The name checked is the one an object carries after the step: its displayName, or for
@@ -340,14 +341,16 @@ function Test-OERStructureSchema {
     The parsed document object (from Read-OERStructureDocument or ConvertFrom-Json) to validate.
     .PARAMETER NamingStandard
     The naming standard object Read-OERNamingStandard returns. When given, Rule 17 checks the names of
-    the sections it lists and adds one Warning for each rule a name breaks. When omitted, no name is
-    checked and the findings are exactly what they were without Rule 17.
+    the sections it lists and adds one Warning for each rule a name breaks, a segment rule (values,
+    pattern or case) once for each segment that breaks it. When omitted, no name is checked and the
+    findings are exactly what they were without Rule 17.
     .EXAMPLE
     Test-OERStructureSchema -Document ($json | ConvertFrom-Json)
     Returns a StructureValidation describing any schema problems in the document.
     .EXAMPLE
     Test-OERStructureSchema -Document ($json | ConvertFrom-Json) -NamingStandard (Read-OERNamingStandard -Path ./naming-standard.json)
-    Returns the same StructureValidation with a Warning for every name that does not follow the standard.
+    Returns the same StructureValidation with one Warning for each rule an object's name breaks, a
+    segment rule (values, pattern or case) once for each segment that breaks it.
     #>
     [OutputType([PSCustomObject])]
     [CmdletBinding()]

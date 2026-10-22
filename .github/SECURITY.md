@@ -32,9 +32,9 @@ it is enabled. No response-time commitment is made.
   work around that by pasting it anyway.
 - **Tenant ids, subscription ids and object ids are identifiers, not credentials.** They are not
   rotated, and disclosing one is not itself a credential compromise. They are still treated as
-  sensitive in this repository because they are correlatable to a real customer tenant, which is
-  why they are redacted from tracked files -- but including one in a report does not require the
-  rotation a leaked token or secret would.
+  sensitive in this repository because they are correlatable to a real tenant the module manages,
+  which is why they are redacted from tracked files -- but including one in a report does not
+  require the rotation a leaked token or secret would.
 
 ## Supported versions
 

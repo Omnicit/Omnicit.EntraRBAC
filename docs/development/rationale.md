@@ -1127,8 +1127,8 @@ to the transport as an answer
 The v1.0 API reference documents these operations as GA, but
 `learn.microsoft.com/graph/how-to-pim-update-rules` still states that PIM for groups APIs are
 available on beta only, and the Entra "Configure PIM for Groups settings" article still shows the
-beta policy URL. Because these paths grant and revoke standing privilege in customer tenants, the
-pin stays until a read-only v1.0 diff has been run against a real tenant.
+beta policy URL. Because these paths grant and revoke standing privilege in the tenants the module
+manages, the pin stays until a read-only v1.0 diff has been run against a real tenant.
 
 The eligibility paths and the four policy paths migrate as **one unit**: `Get-OERPimGroupPolicyId`
 returns the policy id that the policy readers and writers all consume, and Learn warns those ids
@@ -1377,6 +1377,11 @@ Behaviour that follows from this design:
   request, no record and an empty answer. The first call under `-All` stands in a
   `try` to attach the facts, which makes a throw in a nested function terminating even under
   silence; a single request stays outside it and is unchanged.
+- **The resource group list ignores `$top` (measured live in Sprint 11 step 12, BL-162).** At
+  api-version `2021-04-01` the Microsoft.Resources resource group list did not limit its page to
+  `$top`, so `$top` cannot force a second page there for a paging test. The module's resource group lists
+  (`Get-OERResourceGroup` and the Azure Lighthouse read in `Get-OERInventoryLighthouseDelegation`,
+  api-version `2025-04-01`) send no `$top`, so nothing they do depends on it.
 - Pinned api-versions: managementGroups `2020-05-01` (its list paging property is `@nextLink`, not
   `nextLink`), Entities - List `2020-05-01` (a POST to `/providers/Microsoft.Management/getEntities`
   with `$view=GroupsOnly`, see [#management-group-parents](#management-group-parents)),
@@ -2928,7 +2933,7 @@ module can name -- an `absoluteMonthly` interval other than 1, 3, 6 or 12 as `Mo
 interval other than 1 as `Weekly`, any other pattern type as `OneTime` -- with a warning that names
 the true pattern. `Resolve-OERAccessReviewChange` refuses to rebuild it: the recurrence, start date
 and range unit is suppressed and reported in `NotApplied`, never written, since rebuilding it from
-the collapsed cadence would downgrade a live review while reporting `Updated`. None of that
+the collapsed cadence would rewrite a live review while reporting `Updated`. None of that
 changed, and no new ErrorId or parameter came with `SemiAnnually`, nor any value other than
 `SemiAnnually` itself (A8).
 
@@ -3001,14 +3006,14 @@ Context `a live numbered range with fewer than one occurrence (BL-117, first poi
 hold it. Cost if wrong: such a review's recurrence changes only with a declared range.
 
 **A Warning preference of Stop (eighth point, R-9).** The question was whether a caller running with
-`$WarningPreference = 'Stop'` could see half of an entry written. It cannot, and nothing changed in
-code: `Sync-OERStructureAccessReview` writes each `NotApplied` reason with `Write-Warning` before
-`$Caller.ShouldProcess` and before its one write, so under Stop the entry ends at that warning with
-nothing sent, and through `Invoke-OERStructure` it is one `Failed` row (`handler error: ...`). Context
-`a Warning preference of Stop stops an entry with an unappliable note before any write (BL-117,
-eighth point)` in `Sync-OERStructureAccessReview.Tests.ps1` holds it three ways: the handler under a global Stop
-preference, the engine in a runspace with no `try`, and the same script under Continue as the
-control. Moving the warning after the write, or silencing it, turns them red.
+a global `$WarningPreference = 'Stop'` could see half of an entry written. It cannot, and nothing
+changed in code: `Sync-OERStructureAccessReview` writes each `NotApplied` reason with `Write-Warning`
+before `$Caller.ShouldProcess` and before its one write, so under Stop the entry ends at that warning
+with nothing sent, and through `Invoke-OERStructure` it is one `Failed` row (`handler error: ...`).
+Context `a Warning preference of Stop stops an entry with an unappliable note before any write
+(BL-117, eighth point)` in `Sync-OERStructureAccessReview.Tests.ps1` holds it three ways: the handler
+under a global Stop preference, the engine in a runspace with no `try`, and the same script under
+Continue as the control. Moving the warning after the write, or silencing it, turns them red.
 
 **`dayOfMonth` is never compared (sixth point, R-10, measured).** In the test tenant on 2026-10-20
 (check 1.5 of `docs/live-verification/fix-engine-and-validator-findings-checklist.md`) a review
@@ -3662,7 +3667,7 @@ never changed, and removes that key. This is a design decision, not a measured o
 cannot be provoked live, as below.
 
 **Why the helper returns its messages instead of writing them.** A caller running with
-`-WarningAction Stop`, or with `$WarningPreference` set to `Stop`, is stopped by the first
+`-WarningAction Stop`, or with a global `$WarningPreference` set to `Stop`, is stopped by the first
 `Write-Warning`. Measured: outside any `try` that ends the whole script (a hosted runspace's
 `Invoke()` then throws to its parent), and inside one the caller catches an
 `ActionPreferenceStopException`. The directory cmdlet wrote a rejected rule's warning inside its
@@ -4157,10 +4162,10 @@ was acquired, and carried the ARM half by wording; the ARM half's own check was 
 
 **The pre-call warning stops the sign-in under `-WarningAction Stop`.** Like the module's existing
 ambient `AZURE_AUTHORITY_HOST` warning, a caller running with `-WarningAction Stop` or
-`$WarningPreference = 'Stop'` turns the `Write-Warning` call into a terminating error at that point,
-before any token is requested. It is the module's one tenant-switch warning now. HISTORY: there were
-two until Sprint 9 step 3, and the post-call one stopped such a caller before `$script:_OERAuthState`
-was rebuilt, that is before the session was created.
+a global `$WarningPreference = 'Stop'` turns the `Write-Warning` call into a terminating error at that
+point, before any token is requested. It is the module's one tenant-switch warning now. HISTORY: there
+were two until Sprint 9 step 3, and the post-call one stopped such a caller before
+`$script:_OERAuthState` was rebuilt, that is before the session was created.
 
 **HISTORY: the retired post-call warning, and why the lookup replaced it.** From the F12 spike
 until Sprint 9 step 3 the module warned AFTER a sign-in that named its tenant by domain, when that
@@ -4643,24 +4648,30 @@ wrong: a declined `-Confirm` has shown a warning about a command that then did n
 warning stays true, since the session stays connected either way.
 
 Ruling: the warning before the gate stands under `-WarningAction Stop` and
-a global `$WarningPreference` of `Stop` too, and its cost is named and pinned. A `Disconnect-OER` that would
-leave another session (`Changed`, or `Untracked` with a session in the process) stops AT the warning
--- measured in plain PowerShell 7.6.6 as a script-terminating `ActionPreferenceStop`, error id
+a global `$WarningPreference` of `Stop` too, and its cost is named and pinned. A `Disconnect-OER` that
+would leave another session (`Changed`, or `Untracked` with a session in the process) stops AT the
+warning -- measured in plain PowerShell 7.6.6 as a script-terminating `ActionPreferenceStop`, error id
 `ActionPreferenceStop,Microsoft.PowerShell.Commands.WriteWarningCommand` -- so its gate never runs and
-it clears nothing: the state, its fingerprint, the ARM token and the A10 marker all stay. That is
-the safe side. A `Changed` state is refused by the session gate at the next entry, and the marker
-stays set, so a command that names no tenant is refused with `SignInRefused`; the only cost is that
-the operator meets a stop where a disconnect was asked for. The alternative, the warning inside the
-gate, would let the command clear first, but it would then print only after the answer and never
-under `-WhatIf`, which is the case the rule of
+it clears nothing: whatever state the module holds stays as it was, and so does the A10 marker. For
+`Changed` that is the state with its fingerprint and any ARM token. `Untracked` is, in practice, no
+state at all: every state `Initialize-OERAuth` builds records a fingerprint, and a re-import clears
+the state, so for an `Untracked` session only the marker is kept. That is the safe side. At the next
+entry the session gate refuses a `Changed` session with `GraphSessionChanged`, and that refusal
+stands before the marker's, so a command that names no tenant reads `GraphSessionChanged` too; with
+an `Untracked` session and the marker set, a command that names no tenant is refused with
+`SignInRefused`. The only cost is that the operator meets a stop where a disconnect was asked for.
+The alternative, the warning inside the gate, would let the command clear first, but it would then
+print only after the answer and never under `-WhatIf`, which is the case the rule of
 [#warning-before-confirmation](#warning-before-confirmation) exists for. So the help says to run it
 with the default warning preference, or to end the other session first with `Disconnect-MgGraph`,
-after which the state reads `Absent` and there is nothing to warn about. Two tests in the same
-Describe pin it, one per way to stop: `-WarningAction Stop` on a `Changed` state and a global
-`$WarningPreference` of `Stop` on an `Untracked` one each throw that error id, and the state, the
-marker and the `Disconnect-MgGraph` count are as they were (the fingerprint too, for `Changed`). The
-preference variable has to be set globally: module code does not see a caller's local one, measured
-by a first version of the test that set it locally and saw no exception.
+after which there is nothing to warn about: a `Changed` state then reads `Absent`, and an
+`Untracked` one finds no session in the process. Two tests in the same Describe pin it, one per way
+to stop: `-WarningAction Stop` on a `Changed` state and a global `$WarningPreference` of `Stop` on an
+`Untracked` one (a state built by hand without a fingerprint, a shape `Initialize-OERAuth` never
+builds) each throw that error id, and the state, the marker and the `Disconnect-MgGraph` count are as
+they were (the fingerprint too, for `Changed`). The preference variable has to be set globally:
+module code does not see a caller's local one, measured by a first version of the test that set it
+locally and saw no exception.
 
 Ruling: an `Untracked` session that the process holds is treated as not the module's. The module
 cannot prove it is its own, and leaving it is the safe direction. A session from an earlier import
@@ -4809,10 +4820,12 @@ switches the session back by itself, and `Connect-OER` run with the same sign-in
 interactively) or a new PowerShell process are the ways out; after a `Disconnect-MgGraph` run
 instead of `Disconnect-OER` the next cmdlet signs in again by itself, except on an app-only session;
 and `Disconnect-OER` ends only the session the module connected, leaving any other with a warning
-(A4). The README and the about topic add one sentence the two help texts do not carry: runspaces in
-one process (`ForEach-Object -Parallel`, `Start-ThreadJob`) share one Graph SDK session, so a
-parallel fan-out across tenants in one process gets `GraphSessionChanged`, and each tenant belongs
-in its own process (`Start-Job`, or a separate PowerShell process). `Connect-OER`'s `.DESCRIPTION`
+(A4). The README and the about topic add what the two help texts do not carry: runspaces in one
+process (`ForEach-Object -Parallel`, `Start-ThreadJob`) share one Graph SDK session, so a runspace
+connected as the same identity to the same tenant as another is not refused (values, not object
+identity, above), a parallel fan-out across tenants or identities in one process gets
+`GraphSessionChanged`, and each tenant belongs in its own process (`Start-Job`, or a separate
+PowerShell process). `Connect-OER`'s `.DESCRIPTION`
 alone carries the general case as well: a cmdlet whose own sign-in fails or is refused sends no
 Microsoft Graph or Azure Resource Manager request (`SignInRefused`).
 
@@ -5882,11 +5895,13 @@ before, `$null` included. Graph tokens carry an oid in practice.
 
 **The text.** `New-OERSignInSupersededError` has three causes and two effects, all with the id
 `SignInSuperseded`, the category and the command's name as the target. The account cause is chosen
-only by `-AccountChanged`: it reads that a renewal of the module's sign-in returned a token for
-another account than the one the command began with, and advises that the token was not used and the
-session stays the account it was, so the operator runs the command again and chooses that account, or
-runs `Connect-OER -Force` to sign in as another account. The no-state cause (`Disconnect-OER`) still
-wins first, and the other texts are byte-identical.
+only by `-AccountChanged`: it reads that a renewal of the module's sign-in, or a sign-in of its
+tenant named another way, returned a token for another account than the one the command began with,
+and advises that the token was not used and the session stays the account it was, so the operator
+runs the command again and chooses that account, or runs `Connect-OER -Force` to sign in as another
+account. The no-state cause (`Disconnect-OER`) still wins first, and the other texts are
+byte-identical. Until Sprint 11 step 14 (BL-163) the account cause said only "A renewal", also for a
+sign-in of the session's tenant named by another label (D4), which is not one.
 
 **What it does not do.** Each of these is a stated limit.
 
@@ -5948,11 +5963,14 @@ used as a template, which is not the architect's decision: A11 parked it for Phi
 
 **The decision (A14, Philip's decision 2026-10-07, P-4).** An exported document carries its tenant,
 and the apply refuses another one. The export writes a new top-level `tenantId`, the tenant the
-Microsoft Graph token was issued for; `tenantAlias` is still used only for the naming templates and
-does not change. The apply compares the document's tenant with the session's after its sign-in and
-refuses the whole document with the new `DocumentTenantMismatch` before any section is read or
-written; a `-TenantId` that is another tenant ID than the document's refuses it before the sign-in.
-Nothing ever signs in WITH the document's tenant, so A6 stands: the tenant is only compared. A
+Microsoft Graph token was issued for; `tenantAlias` does not change. The apply reads it only to find
+the Tenant Profile whose `PrimaryApprovers` and `EscalationApprovers` defaults an access package's
+assignment policy falls back to, for an approval stage that names no approver (no user, group, manager or sponsor),
+when `Sync-OERStructureAccessPackage` builds the policy's parts (it is not used for naming templates;
+Sprint 11 step 14, BL-139). The apply compares the document's tenant with the session's after its
+sign-in and refuses the whole document with the new `DocumentTenantMismatch` before any section is
+read or written; a `-TenantId` that is another tenant ID than the document's refuses it before the
+sign-in. Nothing ever signs in WITH the document's tenant, so A6 stands: the tenant is only compared. A
 document without `tenantId` behaves exactly as before, and an export used as a template for another
 tenant gets the key removed or changed first -- the cost Philip accepted. It closes BL-88 for an
 exported document, since the command inside the script block still signs in under the switched
@@ -9621,7 +9639,7 @@ subscription, `roleManagementPolicies/role selection at /subscriptions/<id>` -- 
 `Get-OERInventory`'s `directoryRoleManagementPolicies/role selection` entry. A scope is named when at
 least one policy there could not be judged, so the entry does not mean that every policy at the
 scope was kept: every policy there that could not be judged was kept, none of them left out, and
-where the scope's role assignment read or eligibility read failed that is every policy of a role
+where the scope's role assignment read or eligibility read failed, that is every policy of a role
 neither used nor changed there. A single row with no `policy` object at a scope whose reads succeeded
 names the scope too, while the other unused, unchanged policies there are still left out (the test
 'keeps the input order of the policies and names each unjudged scope once, in the order first seen'
@@ -10976,7 +10994,10 @@ uses too, and is `Set-OERGroupPimPolicy -Group G -AccessType A -AllowPermanentEl
 switch, and `Set-OERGroupPimPolicy` patches `Expiration_Admin_Eligibility` only when
 `-EligibleDuration` or `-AllowPermanentEligibility` is bound, so that command left the policy open.
 Binding the switch to false sends the rule with `isExpirationRequired` true and the live
-`maximumDuration`; the helper's own tests run the advice's text against the cmdlet to hold that.
+`maximumDuration` when the live read of the rule succeeds and carries one; if that read fails, or
+answers with no maximum, the cmdlet refuses the whole call and sends nothing (A24, below), so the
+advice closes the policy only after a read that succeeds. The helper's own tests run the advice's
+text against the cmdlet to hold that.
 
 Round 1 of the step (Sprint 10 step 2 round 1, finding 2) applied the same reading to the opposite
 instruction. `Add-OERGroupEligibility` tells the operator how to OPEN a policy by hand when its own
@@ -11079,10 +11100,10 @@ warning still comes after the cmdlet's own checks and lookups, so a call the cmd
 reaches its gate writes its error and never the warning.
 
 **What it changes for a `-WarningAction Stop` caller.** With `-WarningAction Stop`, or
-`$WarningPreference = 'Stop'`, the first warning stops the cmdlet. None of the moved warnings stands
-in a `try`, so under `-WhatIf` such a caller is now stopped at the warning instead of seeing the
-`What if:` line, and under `-Confirm` before the prompt instead of after answering it. Nothing is
-changed either way; it is the direction the rule exists for. The release note says so.
+a global `$WarningPreference = 'Stop'`, the first warning stops the cmdlet. None of the moved
+warnings stands in a `try`, so under `-WhatIf` such a caller is now stopped at the warning instead of
+seeing the `What if:` line, and under `-Confirm` before the prompt instead of after answering it.
+Nothing is changed either way; it is the direction the rule exists for. The release note says so.
 
 **Ruling R3: the cohort rule is "no warning after the first gate", not "no warning inside the if
 body".** `tests/Unit/Public/WarningBeforeConfirmation.Cohort.Tests.ps1` reads every
@@ -13039,8 +13060,8 @@ resolve (`InvalidScope`), or a sign-in or Azure Resource Manager token its own `
 under `-CommonRoles`; the test fixtures write `InvalidScope` for that call, and the `-CommonRoles` per-role
 failures are driven through the REAL reader
 with its helpers mocked (a mock of the reader cannot show them). Under a Stop warning preference
-(`-WarningAction Stop`, or `$WarningPreference` set to `Stop`) the stop at that `Skipping role` warning
-leaves the reader as a terminating error, which the policy section's `try` catches: the section is
+(`-WarningAction Stop`, or a global `$WarningPreference` set to `Stop`) the stop at that
+`Skipping role` warning leaves the reader as a terminating error, which the policy section's `try` catches: the section is
 named unread, with the warning's text as its cause, and the command carries on (measured, both forms; the
 command used to stop at that warning). That is the safe direction, the section named and not a subset
 presented as the whole, and it is stated in the help.
@@ -13414,8 +13435,8 @@ What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule
 ## naming-standard
 
 Sprint 11 step 7 (A6, A9) made the naming standard data. `Test-OERStructure -NamingStandard` reads a JSON
-file and adds one Warning per object and broken rule to the validation of a document or of an exported
-`inventory.json`; `Invoke-OERStructure` never receives one, so applying a document is unchanged. The
+file and adds one Warning for each rule a name breaks (a segment rule once for each segment that breaks
+it) to the validation of a document or of an exported `inventory.json`; `Invoke-OERStructure` never receives one, so applying a document is unchanged. The
 only new public parameter is `-NamingStandard` and the only new ErrorId is `InvalidNamingStandard`.
 Four functions own the pieces (CLAUDE.md, Code Style): `Test-OERNamingStandardName` the rules, their
 order and their Detail texts, `Read-OERNamingStandard` reading and refusing the file,
@@ -13527,7 +13548,7 @@ the real locked file, which those Its skip where the platform does not enforce t
 `tests/Unit/Public/Export-OERInventory.Tests.ps1` ("the exported inventory.json is checked against a
 naming standard") reads a bundle back through the real `Test-OERStructure`. Held end to end for the
 shipped examples by `tests/Unit/Public/Test-OERStructure.Tests.ps1` (the apply example against the
-example standard: still Valid, one Warning per name and broken rule).
+example standard: still Valid, one Warning for each rule a name breaks).
 
 **Known limits.** (a) `ConvertFrom-Json` turns a string that holds an ISO 8601 date and time into a
 `DateTime`, so such a string anywhere in the naming standard file is refused as not a string. Measured
@@ -13551,7 +13572,8 @@ the standard's `includeSyncedGroups` changes an export's findings only when the 
 similar name. (c) The standard does not model Microsoft Graph's own limits on a display name: it is
 advisory, and a name that follows it can still be refused when it is applied, as one that breaks it can
 be accepted. (d) Of the conflicts between a `values` entry and the rest of the standard, the reader
-refuses only a value that contains the separator. A value that breaks its own segment's `case` (for
+refuses two: a segment that declares both `values` and `pattern`, and a value that contains the
+separator. A value that breaks its own segment's `case` (for
 example `sg` under `UPPERCASE`) is accepted, and a name that carries it gets the `values` or the `case`
 Warning, so the output shows it. (e) Patterns are compiled without a match timeout, so a pattern with
 catastrophic backtracking (such as `(a+)+b`) can make the offline check slow on a long name (measured:
@@ -13844,9 +13866,11 @@ the rows of those principals without the key and names each such unit unread ONC
 `administrativeUnits/<name>/scopedRoles/principalType`, with the cause of its first such principal.
 Since one batch can fail while another succeeds, a named unit can hold rows with the key and rows
 without it -- "some or all of its rows", as every text says. The `scopedRoles` collection itself was
-read, so it stays written: the entry names no null collection, which the `InventoryPartial` message
-says in a sentence of its own, as does the export's, and the bundle README adds a sentence for such
-an entry only when one is present (the README's other prose stays as it was).
+read, so it stays written: the entry names no null collection, which the `InventoryPartial` message of
+`Get-OERInventory` says in a sentence of its own, and the bundle README adds a paragraph for such an
+entry only when one is present (the README's other prose stays as it was). The export's message has
+no such sentence since Sprint 11 step 14 (BL-156): it names the entries and points at the bundle
+README, whose paragraph on a `/scopedRoles/principalType` entry is the export's account of it.
 
 **The document.** The schema declares the key optional, the enum `User`, `Group`, `ServicePrincipal`.
 Ruling R-7: the validator holds it to the enum, as it does a role assignment's -- a value outside it is
@@ -13866,7 +13890,8 @@ exactly that membership under `-Prune`. Cost if wrong (R-7): a hand-written docu
 string an Error in both sections ([#enum-values-must-be-strings](#enum-values-must-be-strings)). (b) A unit later left out of the document because another
 unit shares its name is looked up, and named unread when the lookup failed, all the same. (c) The
 `InventoryPartial` sentence about such an entry stands in every partial message of `Get-OERInventory`
-and of the export, also when no such entry is listed; the bundle README's sentence does not.
+(since Sprint 11 step 14 (BL-156) no longer in the export's, which points at the bundle README), also
+when no such entry is listed; the bundle README's paragraph does not.
 
 **Mutation proofs.** Task 2 of the step (the inventory, the validator, the reader), each against a
 build; Task 4 (the README sentence) against a dev-mode copy of the source, where the unmutated copy

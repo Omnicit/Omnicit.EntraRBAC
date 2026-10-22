@@ -34,8 +34,10 @@ function Resolve-OERAccessReviewChange {
     A third consequence: New-OERAccessReviewRecurrence can only emit weekly interval 1 and
     absoluteMonthly interval 1/3/6/12, so a live pattern outside that set (a bi-monthly
     absoluteMonthly interval 2, a bi-weekly weekly interval 2, ...) cannot be reproduced.
-    Rebuilding the recurrence object from the collapsed cadence in that case would silently
-    downgrade the live review to a coarser one while reporting Updated. The
+    Rebuilding the recurrence object in that case would silently replace the live pattern with a
+    cadence the module can emit -- the declared one, or the one the live pattern collapses onto
+    (Weekly or Monthly, or OneTime for a pattern type that is neither weekly nor absoluteMonthly) --
+    while reporting Updated. The
     recurrence/startDate/endDate/occurrences unit is therefore suppressed and reported in
     NotApplied instead whenever the live pattern is not representable, even when some other field
     in the same unit legitimately differs.
@@ -438,15 +440,17 @@ function Resolve-OERAccessReviewChange {
                 $NotApplied.Add("recurrence change to '$DeclaredCadence' needs a startDate; declare 'startDate' to apply it")
             }
             elseif (-not $CurrentPatternRepresentable) {
-                # Rebuilding the recurrence object here would send the emitter's coarser cadence in
-                # place of a live pattern it cannot reproduce (e.g. absoluteMonthly interval 2, or a
-                # weekly interval other than 1) -- silently downgrading a bi-monthly or n-weekly review
+                # Rebuilding the recurrence object here would send a cadence the emitter can write (the
+                # declared one, or the cadence the live pattern collapses onto: Weekly, Monthly, or OneTime
+                # for any other pattern type) in place of a live
+                # pattern it cannot reproduce (e.g. absoluteMonthly interval 2, or a weekly interval other than
+                # 1) -- silently rewriting a bi-monthly or n-weekly review
                 # while reporting Updated. Suppress the whole unit (Recurrence, StartDate, EndDate,
                 # Occurrences) rather than send a range without the pattern it belongs to.
                 $NotApplied.Add(
                     ("the live recurrence pattern ({0} interval {1}) cannot be expressed by the module's cadence vocabulary; " -f
                         [string]$CurrentPattern.type, [int]$CurrentPattern.interval) +
-                    'the recurrence and start date were left untouched so it is not rewritten to a coarser cadence')
+                    'the recurrence and start date were left untouched so the live pattern is not replaced by one the module can write')
             }
             elseif (-not $IsOneTime -and -not $HasEndDate -and -not $HasOccurrences -and
                 $CurrentRangeType -ieq 'numbered' -and $CurrentOccurrenceCount -lt 1) {

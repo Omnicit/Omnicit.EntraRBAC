@@ -28,7 +28,7 @@ function Get-OERAccessReviewCadence {
     and PatternType and Interval then hold what a rebuild from that collapsed cadence would send. A
     pattern type that is neither weekly nor absoluteMonthly (an empty one included) reads as OneTime
     with Representable $false. A caller that rewrites a recurrence must refuse when Representable is
-    $false, since the rewrite would silently replace the live pattern with the coarser one.
+    $false, since the rewrite would silently replace the live pattern with the collapsed one.
 
     The pattern type is matched without regard to letter case. No Graph, ARM or authentication occurs.
 

@@ -187,9 +187,9 @@ function Initialize-OERAuth {
     the one this function adds for a cloud switch). AzAuth keeps the credential it built for that
     tenant for the whole process and reuses it for that application, so the new tenant is not
     reached. The warning does not refuse the sign-in, but a caller running with -WarningAction Stop
-    or $WarningPreference = 'Stop' is stopped at it, before its token request is made. A sign-in
-    whose token comes back from another tenant than the one it names is refused with TenantMismatch,
-    as above, whether the tenant was named by GUID or by domain.
+    or a global $WarningPreference = 'Stop' is stopped at it, before its token request is made. A
+    sign-in whose token comes back from another tenant than the one it names is refused with
+    TenantMismatch, as above, whether the tenant was named by GUID or by domain.
 
     On the DeviceCode flow the sign-in instruction that carries the user code is re-emitted on the
     INFORMATION stream instead of being left on the warning stream where AzAuth writes it. It is the
