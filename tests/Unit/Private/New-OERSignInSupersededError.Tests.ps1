@@ -218,6 +218,94 @@ Describe 'New-OERSignInSupersededError' {
         }
     }
 
+    # BL-119: a renewal answered by another account. The switch is Initialize-OERAuth's own refusal and
+    # the only source of that cause: a refused renewal leaves the session as it was, so no transport
+    # refusal has it and the state is never read for it (a stale SignInAccountChanged key, as an older
+    # build wrote, reads the pipeline text); the no-state cause wins first. The four texts above stay
+    # byte-identical (their Contexts), also when the flag is $false.
+    Context 'after a renewal returned a token for another account (BL-119)' {
+        BeforeAll {
+            function script:New-AccountProbe {
+                param([string]$Command, [bool]$Document, [object]$Flag, [bool]$Switch, [bool]$WithState = $true)
+                InModuleScope Omnicit.EntraRBAC -Parameters @{ C = $Command; D = $Document; F = $Flag; W = $Switch; S = $WithState } {
+                    param($C, $D, $F, $W, $S)
+                    $Found = $script:_OERAuthState
+                    try {
+                        $script:_OERAuthState = if ($S) {
+                            $State = @{ TenantId = '11111111-1111-1111-1111-111111111111'; AuthMethod = 'Interactive'; ClientId = ''; Environment = 'Global' }
+                            if ($null -ne $F) { $State.SignInAccountChanged = $F }
+                            $State
+                        } else { $null }
+                        New-OERSignInSupersededError -Command $C -Document:$D -AccountChanged:$W
+                    } finally {
+                        $script:_OERAuthState = $Found
+                    }
+                }
+            }
+            $script:AccountRequestText = "A renewal of the module's sign-in returned a token for another account than the one @@NAME@@ began with, " +
+                'so Omnicit.EntraRBAC sends nothing while @@NAME@@ runs: this request was not sent. The token was not used and the session ' +
+                'stays the account it was: run the command again and choose that account, or run Connect-OER -Force to sign in as another account.'
+            $script:AccountDocumentText = "A renewal of the module's sign-in returned a token for another account than the one @@NAME@@ began with, " +
+                'so @@NAME@@ did not apply this document and Omnicit.EntraRBAC sent nothing for it. The token was not used and the session ' +
+                'stays the account it was: run the command again and choose that account, or run Connect-OER -Force to sign in as another account.'
+        }
+
+        It 'declares -AccountChanged as an optional switch' {
+            $Parameter = InModuleScope Omnicit.EntraRBAC { (Get-Command New-OERSignInSupersededError).Parameters['AccountChanged'] }
+            $Parameter.ParameterType | Should -Be ([switch])
+            @($Parameter.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] -and $_.Mandatory }).Count |
+                Should -Be 0
+        }
+
+        It 'carries the exact account text with -AccountChanged, with the same id, category and target' {
+            $R = New-AccountProbe -Command 'New-OERGroup' -Document $false -Flag $null -Switch $true
+            $R.FullyQualifiedErrorId | Should -BeExactly 'SignInSuperseded'
+            $R.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
+            $R.TargetObject | Should -BeExactly 'New-OERGroup'
+            $R.Exception.Message | Should -BeExactly $script:AccountRequestText.Replace('@@NAME@@', 'New-OERGroup')
+        }
+
+        It 'never reads the account text from the state: a stale SignInAccountChanged key reads the pipeline text, in every variant' {
+            $R = New-AccountProbe -Command 'New-OERGroup' -Document $false -Flag $true -Switch $false
+            $R.Exception.Message | Should -BeExactly $script:RequestIdentityText.Replace('@@NAME@@', 'New-OERGroup')
+            $R.Exception.Message | Should -Not -Match 'another account'
+            $D = New-AccountProbe -Command 'Invoke-OERStructure' -Document $true -Flag $true -Switch $false
+            $D.Exception.Message | Should -BeExactly $script:DocumentIdentityText.Replace('@@NAME@@', 'Invoke-OERStructure')
+            $D.Exception.Message | Should -Not -Match 'another account'
+        }
+
+        It 'advises that the token was not used and the session stays the account it was' {
+            $R = New-AccountProbe -Command 'New-OERGroup' -Document $false -Flag $null -Switch $true
+            $R.Exception.Message | Should -BeLike '*The token was not used and the session stays the account it was: run the command again and choose that account, or run Connect-OER -Force to sign in as another account.'
+        }
+
+        It 'carries the document variant with -Document' {
+            $R = New-AccountProbe -Command 'Invoke-OERStructure' -Document $true -Flag $null -Switch $true
+            $R.Exception.Message | Should -BeExactly $script:AccountDocumentText.Replace('@@NAME@@', 'Invoke-OERStructure')
+        }
+
+        It 'writes the name exactly as passed and as the only value in the text' {
+            $Braced = New-AccountProbe -Command 'Invoke-{0}Probe' -Document $false -Flag $null -Switch $true
+            $Braced.TargetObject | Should -BeExactly 'Invoke-{0}Probe'
+            $Braced.Exception.Message | Should -BeExactly $script:AccountRequestText.Replace('@@NAME@@', 'Invoke-{0}Probe')
+            $Braced.Exception.Message | Should -Not -Match '11111111-1111-1111-1111-111111111111'
+        }
+
+        It 'lets the no-state cause win: Disconnect-OER ended the session, also with the switch' {
+            $WithSwitch = New-AccountProbe -Command 'New-OERGroup' -Document $false -Flag $null -Switch $true -WithState $false
+            $WithSwitch.Exception.Message | Should -BeExactly $script:RequestEndedText.Replace('@@NAME@@', 'New-OERGroup')
+            $WithSwitch.Exception.Message | Should -Not -Match 'another account'
+        }
+
+        It 'keeps the identity text when the state flag is <Case>' -ForEach @(
+            @{ Case = '$false'; Flag = $false }
+            @{ Case = 'absent'; Flag = $null }
+        ) {
+            $R = New-AccountProbe -Command 'New-OERGroup' -Document $false -Flag $Flag -Switch $false
+            $R.Exception.Message | Should -BeExactly $script:RequestIdentityText.Replace('@@NAME@@', 'New-OERGroup')
+        }
+    }
+
     Context 'the text is chosen by the state alone' {
         It 'reads a held but empty state as a held session another sign-in replaced, not as the ended one' {
             # Get-OERSignInIdentity reads $null as not signed in and nothing else, so an empty state is still

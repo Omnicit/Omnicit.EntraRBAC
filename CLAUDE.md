@@ -449,9 +449,9 @@ NAME `ReclaimGraphSession` to `Connect-OER.ps1` and `Initialize-OERAuth.ps1`.
 **A command whose sign-in is refused sends nothing -- no Graph and no ARM request.**
 `Initialize-OERAuth` latches its calling command (`Lock-OERSignIn`) and releases it only on success
 (`Unlock-OERSignIn`); both called only there. Every refusal, terminating error and early return
-leaves it latched (the nested-sign-in refusal below excepted), `ArmTokenAcquisitionFailed` included,
-so its Graph calls are refused although its Graph half connected. The latch is keyed weakly on the
-calling command's INVOCATION, never a module boolean.
+leaves it latched (the nested-sign-in refusals of BL-74 and BL-91 below excepted),
+`ArmTokenAcquisitionFailed` included, so its Graph calls are refused although its Graph half
+connected. The latch is keyed weakly on the calling command's INVOCATION, never a module boolean.
 
 Both transports ask `Get-OERSignInRefusal` before every request and refuse with `SignInRefused`
 (`New-OERSignInRefusedError` owns id and message). A refused command's nested sign-ins are refused
@@ -485,15 +485,18 @@ call stack remembers another identity than the state now carries.
 `Invoke-OERStructure` and the three builders that sign in only to look up a name --
 `New-OERAccessPackageApprovalStage`, `New-OERAccessPackageRequestorScope` (through
 `Resolve-OERTargetList`), `New-OERAccessReviewStage` (through `Resolve-OERReviewerScope`) -- take a
-snapshot of the session in `begin` and, without `-TenantId`, compare it in `process` directly before
-that sign-in or lookup (`Invoke-OERStructure` after the document is read and validated, the builders
-after their argument checks), refusing with `SignInSuperseded` and sending nothing when the identity
-changed, or when the module held no session and now holds one.
+snapshot of the session in `begin` and compare it in `process` directly before that sign-in or
+lookup -- with `-TenantId` only when that sign-in would inherit the session's identity
+(`Checkpoint-OERSignIn -TenantId`, through `Test-OERSessionUsable`) -- refusing with
+`SignInSuperseded` and sending nothing when the identity changed, or when the module held no session
+and now holds one (`Invoke-OERStructure` compares after the document is read and validated, the
+builders after their argument checks).
 
-`Checkpoint-OERSignIn` is the single owner of the session a command began with; it builds the
-snapshot only through `Get-OERSignInIdentity`. A new command that signs in only in `process`,
-directly or through a helper, without `-TenantId` takes the same snapshot. Never name the tenant the
-command began with as `-TenantId` in `process` in place of the snapshot.
+`Checkpoint-OERSignIn` is the single owner of the session a command began with (it builds the
+snapshot only through `Get-OERSignInIdentity`); `Test-OERSessionUsable` of whether a sign-in naming
+a tenant inherits the session. A new command that signs in only in `process`, directly or through a
+helper, takes the same snapshot. Never name the tenant the command began with as `-TenantId` in
+`process` in place of the snapshot.
 
 The snapshot is taken in the command's own `begin`: it covers a command standing in the pipeline
 itself, not one called inside a script block or function in a pipeline (known limit) --
@@ -512,11 +515,30 @@ session CACHE stays keyed on the tenant as named: a command naming its tenant di
 session inherits nothing and signs in again, so README.md's "Name the tenant explicitly and
 consistently" and the about topic's equivalent under SOVEREIGN CLOUDS stand.
 
+**A renewal never continues as another account** (BL-119). The identity's fifth term is the account
+(`SignInAccountId`). A renewal, or a sign-in of the session's tenant, application and method named
+by another label, whose Microsoft Graph or Azure Resource Manager token carries an oid
+(`Get-OERTokenObjectId`) that differs from the session's `SignedInObjectId`, both GUIDs, is refused
+for its caller with `SignInSuperseded` (`-AccountChanged`) before `Connect-MgGraph` (a Graph token)
+or before it is cached (an ARM token): the session stays the old account's, so no later command,
+with or without `-TenantId`, runs as the other account (`$ContinuesSession` decides it; limits: a
+token whose tenant is not a tenant ID is not compared on another label, and a command naming the
+tenant by another label inherits nothing, so it is compared only after an Interactive sign-in with
+the default application in the Global cloud); only `Connect-OER`
+(`-ReclaimGraphSession`, never refused by it) signs in as another account. The marker is set as
+after every refusal, but it is not what keeps the session: a command that names its tenant is never
+refused by it. A token without oid never refuses anything, and on either never replaces
+`SignedInObjectId`. Never let a renewal make the session another account's; never key the account
+on a name or the UPN.
+`Why: docs/development/rationale.md#a-renewal-never-continues-as-another-account`
+
 The order is fixed: Graph wrapper session gate, latch gate, supersession gate; ARM wrapper latch
 gate, supersession gate. A pipeline must not span tenants or identities: run the commands as
 separate statements, for example collecting into a variable first. Never call
 `Register-OERSignInIdentity` outside `Initialize-OERAuth` or anywhere but directly after an
-`Unlock-OERSignIn` with the same invocation; never read the supersession outside the two transports.
+`Unlock-OERSignIn` with the same invocation; never read the supersession outside the two transports
+and `Initialize-OERAuth`, which asks it with `-OutsideCaller` directly after its BL-74 check, so a
+sign-in nested under a superseded command is refused before any token request.
 `Why: docs/development/rationale.md#auth-state`
 
 **A tenant named by domain is looked up before any token request, and checked like a GUID.**

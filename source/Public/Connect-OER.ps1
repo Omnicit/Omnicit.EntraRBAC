@@ -56,8 +56,20 @@ function Connect-OER {
     its stored credential it can still open the browser itself, with no timeout the module can
     bound. So an
     interactive long run can still ask you to sign in (choose the account the session signed in
-    with; the account picker also offers other accounts of the same tenant, and the command then
-    carries on as the one you pick), and a device code session prints a new code to enter.
+    with; the account picker also offers other accounts of the same tenant, but a renewal answered
+    by another account is refused with SignInSuperseded for the command that asked for it, and so is
+    a sign-in naming the session's tenant by another label (a domain or its tenant ID) with the
+    session's own application, method and cloud: the token is not used and the session stays the
+    account it was, so a later command, with or without -TenantId, does not run as the other account
+    (a command that names the tenant by another label is compared only when the session is an
+    interactive sign-in with the default application in the global cloud: after a device code
+    sign-in, your own -ClientId or another cloud it signs in again with the default application and
+    is not compared, so name the tenant the same way on every command; nor is a token whose tenant
+    is not a tenant ID): it uses the session's token or renews again, and a
+    command that names no tenant is refused until Connect-OER or a command that names its tenant
+    signs in; run Connect-OER -Force to sign in as another account; Connect-OER itself, which signs
+    in deliberately, may sign in as another account), and a device code
+    session prints a new code to enter.
     Connect-OER itself never renews silently: its own interactive sign-in opens the browser. A
     managed identity renews with no prompt and is the only sign-in that renews unattended. In a
     console started with pwsh -NonInteractive an interactive sign-in, a silent renewal included, is
@@ -105,7 +117,11 @@ function Connect-OER {
     is refused too, with a SignInRefused error and before any token request; run as a statement of
     its own, it signs in as before. An OER command whose sign-in another command in the same
     pipeline later replaced with a different tenant or identity sends nothing more either: each
-    request made while it runs is refused with a SignInSuperseded error. One pipeline works in one
+    request made while it runs is refused with a SignInSuperseded error, and so is a sign-in made
+    while it runs, before any token request. -TenantId binds the tenant, not the identity:
+    Invoke-OERStructure and the access package and access review stage builders that look up a
+    name refuse a call that names the tenant the session is for, as they refuse one that names
+    none, when another command replaced the session after they began. One pipeline works in one
     tenant with one identity, so run such commands as separate statements. And after a sign-in that
     failed or was refused -- a Connect-OER among them, including one refused before it signs in, such
     as an unknown or empty -TenantAlias or an empty -TenantId -- the module's session may not be the

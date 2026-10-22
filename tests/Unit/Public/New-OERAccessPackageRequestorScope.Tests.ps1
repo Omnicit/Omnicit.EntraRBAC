@@ -403,9 +403,10 @@ Describe 'New-OERAccessPackageRequestorScope looks a target up only under the se
         Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERTargetList -Times 1 -Exactly
     }
 
-    It 'behaves as today with -TenantId: no check, the targets are looked up in the tenant it names' {
+    It 'behaves as today with -TenantId when the session is for another tenant (BL-90): not refused, the targets are looked up in the tenant it names' {
         # The same downstream switch as the first test. With -TenantId the lookup's sign-in names its
-        # tenant, so the builder does not compare.
+        # tenant, and the session the switch left is for ANOTHER tenant, so the sign-in does not take it
+        # (BL-90: Test-OERSessionUsable) and the builder does not refuse.
         $Errs = $null
         $Out = @(New-OERAccessPackageRequestorScope -Scope SpecificDirectoryUsers -User 'person1@example.com' -TenantId '44444444-4444-4444-4444-444444444444' -ErrorAction SilentlyContinue -ErrorVariable Errs |
                 ForEach-Object -Begin { Set-ProbeState -TenantId '77777777-7777-7777-7777-777777777777' } -Process { $_ })
@@ -417,6 +418,84 @@ Describe 'New-OERAccessPackageRequestorScope looks a target up only under the se
         Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERTargetList -Times 1 -Exactly
         # Not vacuous: the downstream switch really happened before the builder looked anything up.
         InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState.TenantId } | Should -Be '77777777-7777-7777-7777-777777777777'
+    }
+
+    # BL-90: -TenantId binds the tenant, not the identity. The lookup's sign-in names a tenant but, with no
+    # -AuthMethod and no -ClientId, still takes the session's identity when the session is for that tenant
+    # as named, so the compare also runs with -TenantId and refuses only in that case.
+    It 'refuses the scope with SignInSuperseded, before any lookup, with -TenantId when a later pipeline command signed in as another application to that same tenant (BL-90)' {
+        $Errs = $null
+        $Out = @(New-OERAccessPackageRequestorScope -Scope SpecificDirectoryUsers -User 'person1@example.com' -TenantId '44444444-4444-4444-4444-444444444444' -ErrorAction SilentlyContinue -ErrorVariable Errs |
+                ForEach-Object -Begin { Set-ProbeState -TenantId '44444444-4444-4444-4444-444444444444' -ClientId '55555555-5555-5555-5555-555555555555' } -Process { $_ })
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERTargetList -Times 0
+        @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'SignInSuperseded,New-OERAccessPackageRequestorScope' }).Count | Should -Be 1
+        @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'SignInSuperseded,New-OERAccessPackageRequestorScope' })[0].TargetObject |
+            Should -BeExactly 'New-OERAccessPackageRequestorScope'
+        @($Errs).Count | Should -Be 1
+        $Out | Should -BeNullOrEmpty
+        # Not vacuous: the downstream switch really happened, in the tenant -TenantId names.
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState.ClientId } | Should -Be '55555555-5555-5555-5555-555555555555'
+    }
+
+    It 'builds a scope with no targets with -TenantId under a session switched to that same tenant: it looks nothing up and is not refused (BL-90)' {
+        $Errs = $null
+        $Out = @(New-OERAccessPackageRequestorScope -Scope AllMemberUsers -TenantId '44444444-4444-4444-4444-444444444444' -ErrorAction SilentlyContinue -ErrorVariable Errs |
+                ForEach-Object -Begin { Set-ProbeState -TenantId '44444444-4444-4444-4444-444444444444' -ClientId '55555555-5555-5555-5555-555555555555' } -Process { $_ })
+        $Out.Count | Should -Be 1
+        $Out[0].AllowedTargetScope | Should -BeExactly 'allMemberUsers'
+        @($Errs).Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERTargetList -Times 0
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState.ClientId } | Should -Be '55555555-5555-5555-5555-555555555555'
+    }
+
+    It 'refuses with -TenantId when the process held no session and a later pipeline command signed in to that tenant (BL-90)' {
+        Set-ProbeState -TenantId $null
+        $Errs = $null
+        $Out = @(New-OERAccessPackageRequestorScope -Scope SpecificDirectoryUsers -User 'person1@example.com' -TenantId '44444444-4444-4444-4444-444444444444' -ErrorAction SilentlyContinue -ErrorVariable Errs |
+                ForEach-Object -Begin { Set-ProbeState -TenantId '44444444-4444-4444-4444-444444444444' } -Process { $_ })
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERTargetList -Times 0
+        @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'SignInSuperseded,New-OERAccessPackageRequestorScope' }).Count | Should -Be 1
+        @($Errs).Count | Should -Be 1
+        $Out | Should -BeNullOrEmpty
+    }
+
+    It 'looks the targets up in the tenant it names with -TenantId when the process held no session and a later pipeline command signed in to another tenant (BL-90)' {
+        Set-ProbeState -TenantId $null
+        $Errs = $null
+        $Out = @(New-OERAccessPackageRequestorScope -Scope SpecificDirectoryUsers -User 'person1@example.com' -TenantId '44444444-4444-4444-4444-444444444444' -ErrorAction SilentlyContinue -ErrorVariable Errs |
+                ForEach-Object -Begin { Set-ProbeState -TenantId '77777777-7777-7777-7777-777777777777' } -Process { $_ })
+        $Out.Count | Should -Be 1
+        @($Errs).Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERTargetList -Times 1 -Exactly -ParameterFilter { $TenantId -eq '44444444-4444-4444-4444-444444444444' }
+    }
+
+    It 'looks the targets up in the tenant it names with -TenantId when a later pipeline command signed in as another application to ANOTHER tenant (BL-90)' {
+        $Errs = $null
+        $Out = @(New-OERAccessPackageRequestorScope -Scope SpecificDirectoryUsers -User 'person1@example.com' -TenantId '44444444-4444-4444-4444-444444444444' -ErrorAction SilentlyContinue -ErrorVariable Errs |
+                ForEach-Object -Begin { Set-ProbeState -TenantId '77777777-7777-7777-7777-777777777777' -ClientId '55555555-5555-5555-5555-555555555555' } -Process { $_ })
+        $Out.Count | Should -Be 1
+        @($Errs).Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERTargetList -Times 1 -Exactly -ParameterFilter { $TenantId -eq '44444444-4444-4444-4444-444444444444' }
+    }
+
+    It 'looks the targets up with -TenantId when the identity is unchanged (BL-90)' {
+        $Errs = $null
+        $Out = @(New-OERAccessPackageRequestorScope -Scope SpecificDirectoryUsers -User 'person1@example.com' -TenantId '44444444-4444-4444-4444-444444444444' -ErrorAction SilentlyContinue -ErrorVariable Errs |
+                ForEach-Object -Begin { } -Process { $_ })
+        $Out.Count | Should -Be 1
+        @($Errs).Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERTargetList -Times 1 -Exactly -ParameterFilter { $TenantId -eq '44444444-4444-4444-4444-444444444444' }
+    }
+
+    It 'looks the targets up with -TenantId when a later pipeline command only renewed the session (the expiry moved, the identity did not) (BL-90)' {
+        $Errs = $null
+        $Out = @(New-OERAccessPackageRequestorScope -Scope SpecificDirectoryUsers -User 'person1@example.com' -TenantId '44444444-4444-4444-4444-444444444444' -ErrorAction SilentlyContinue -ErrorVariable Errs |
+                ForEach-Object -Begin { InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState.GraphTokenExpiry = [datetime]::UtcNow.AddHours(1) } } -Process { $_ })
+        $Out.Count | Should -Be 1
+        @($Errs).Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERTargetList -Times 1 -Exactly -ParameterFilter { $TenantId -eq '44444444-4444-4444-4444-444444444444' }
+        # Not vacuous: the renewal really happened.
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState.GraphTokenExpiry } | Should -Not -BeNullOrEmpty
     }
 
     It 'is not refused when called inside another command''s process block, the shape Sync-OERStructureAccessPackage uses' {

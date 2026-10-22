@@ -261,24 +261,31 @@ function Invoke-OERStructure {
     Microsoft Graph only, so a document holding either section never requests an ARM token on its
     account.
 
-    Pipeline session rule: without -TenantId the command acts only under the session it began with.
-    A document is refused with SignInSuperseded, and nothing is signed in to or sent for it, when
-    another command in the same pipeline signed in to a different tenant or identity, or
-    disconnected, after this command began and before the document was processed -- for example
+    Pipeline session rule: the command acts only under the session it began with. A document is
+    refused with SignInSuperseded, and nothing is signed in to or sent for it, when another command
+    in the same pipeline signed in to a different tenant or identity (another account of the same
+    tenant included), or disconnected, after this command began and before the document was
+    processed -- for example
     Connect-OER, or a cmdlet naming another tenant, downstream of this command (every begin block of
     a pipeline runs before this command's process block, where it signs in), or a sign-in made
     upstream in the process block that emits the document. When the module held no session as this
     command began, any such sign-in counts, even one that names no tenant. Run such commands as
     separate statements. The error says this command did not apply the document and sent nothing for
     it, and names the cause: Disconnect-OER ended the module's session, when the module holds none
-    by then, and another command's sign-in otherwise. A document that cannot be read or does not
-    validate reports its own error, as before. Several documents piped into one call are each
-    compared with the session the last sign-in of this call left, whether that sign-in succeeded or
-    was refused, or, before its first sign-in, with the session the call began with. So a first
-    sign-in from no session does not refuse the next document, while a document refused with
-    SignInSuperseded, or one that could not be read or did not validate, signs nothing in and moves
-    nothing: the document after it is compared with the same session. With -TenantId the command
-    signs in to that tenant as before, except that a document naming another tenant than a -TenantId
+    by then, and another command's sign-in otherwise. A document
+    that cannot be read or does not validate reports its own error, as before. Several documents
+    piped into one call are each compared with the session the last sign-in of this call left,
+    whether that sign-in succeeded or was refused, or, before its first sign-in, with the session the
+    call began with. So a first sign-in from no session does not refuse the next document, while a
+    document refused with SignInSuperseded, or one that could not be read or did not validate, signs
+    nothing in and moves nothing: the document after it is compared with the same session. With
+    -TenantId the same refusal
+    applies when the sign-in would take the session's identity for that tenant: the module's session
+    was built for exactly the tenant -TenantId names, as it was named (a tenant ID is not its
+    domain), and the identity it carries by then is not the one this command began with -- another
+    application or method, for example, signed in to that tenant -- also when the module held no
+    session as the command began. A command naming a tenant the session is not for signs in to that
+    tenant itself, as before, and is not refused. A document naming another tenant than a -TenantId
     that is a tenant ID is refused before that sign-in (see the document tenant rule below).
 
     Document tenant rule: a document whose top-level tenantId names a tenant -- as Get-OERInventory
@@ -555,7 +562,8 @@ function Invoke-OERStructure {
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth. Without it
-    the command acts only under the session it began with (see the pipeline session rule above). A
+    the command acts only under the session it began with; with it, the same holds when the sign-in
+    would take the session's identity for that tenant (see the pipeline session rule above). A
     document that names its tenant (tenantId) is applied only in that tenant: a -TenantId that is a
     GUID and differs from it refuses the document before the sign-in, and any other -TenantId is
     compared after the sign-in (see the document tenant rule above).
@@ -692,20 +700,27 @@ function Invoke-OERStructure {
                 return
             }
         }
-        # SEC (BL-76): without -TenantId, act only under the session this command began with (see
-        # begin). A changed identity -- another tenant, application, method or cloud, or none at all
-        # -- refuses this document with SignInSuperseded before anything is signed in to or sent. With
-        # -TenantId nothing changes: the sign-in names its tenant, and A20 refuses the requests of
-        # whichever command's sign-in that replaced.
-        if (-not $TenantId -and (Checkpoint-OERSignIn -ChangedSince $SignInSnapshot)) {
+        # SEC (BL-76, BL-90): act only under the session this command began with (see begin). A changed
+        # identity -- another tenant, application, method or cloud, or none at all -- refuses this
+        # document with SignInSuperseded before anything is signed in to or sent. With -TenantId the
+        # compare refuses only when that sign-in would take the session's identity for the tenant it
+        # names (Test-OERSessionUsable, asked through Checkpoint-OERSignIn -TenantId): the session is
+        # then for that tenant as named, whichever identity it now carries, also when none existed as
+        # this command began. A session for another tenant is not taken: the sign-in names its tenant
+        # and signs in itself, and A20 refuses the requests of whichever command's sign-in that
+        # replaced. The -TenantId is passed on only when it is set (gate 10).
+        $CompareParams = @{ ChangedSince = $SignInSnapshot }
+        if ($TenantId) { $CompareParams.TenantId = $TenantId }
+        if (Checkpoint-OERSignIn @CompareParams) {
             $PSCmdlet.WriteError((New-OERSignInSupersededError -Command $PSCmdlet.MyInvocation.MyCommand.Name -Document))
             return
         }
         Initialize-OERAuth @AuthParams
         # The next piped document compares with the session this one signed in under: a first sign-in
         # from no session must not refuse the second document. Taken after every sign-in, refused or
-        # not: without -TenantId a refused sign-in leaves the identity as it was, or sets the one this
-        # command itself asked for.
+        # not: a refused sign-in leaves the identity as it was (a renewal answered by another account
+        # is refused before the session is touched, BL-119), or sets the one this command itself
+        # asked for.
         $SignInSnapshot = Checkpoint-OERSignIn
         # SEC (BL-88, A14): after the sign-in, and before anything below reads or writes -- the
         # omitted-collection warning, the administrative unit pre-pass and every section -- the session

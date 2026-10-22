@@ -8,12 +8,14 @@ function New-OERSignInSupersededError {
     request made while a command on the call stack remembers another sign-in identity than the module's
     state now carries -- a command Get-OERSignInSupersession finds -- so nothing is sent, while that
     command runs, under a session another OER command in the same pipeline signed in to after it.
-    Invoke-OERStructure raises it too, before it signs in for a document without -TenantId, and so do
+    Invoke-OERStructure raises it too, before it signs in for a document, and so do
     New-OERAccessPackageApprovalStage, New-OERAccessPackageRequestorScope and New-OERAccessReviewStage
-    before their name lookup without -TenantId, when the identity changed after the command's begin
-    block took a snapshot of the session (Checkpoint-OERSignIn), which is why the message says the
-    other sign-in came after the command began, not after it signed in: a command refused there has
-    not signed in at all.
+    before their name lookup -- with -TenantId only where that sign-in would take the session's
+    identity (Test-OERSessionUsable) -- when the identity changed after the command's begin block
+    took a snapshot of the session (Checkpoint-OERSignIn), which is why the message says the other
+    sign-in came after the command began, not after it signed in: a command refused there has not
+    signed in at all. Initialize-OERAuth raises it too, terminating, for a sign-in nested under a
+    superseded command (BL-91) and for a renewal answered by another account (BL-119).
 
     The target is that command's name, and the request it refuses is one made while that command runs,
     which is not always one the command makes itself: it can be the command's own request, a request of
@@ -26,16 +28,20 @@ function New-OERSignInSupersededError {
     name. The record names no tenant, no account and no token: the text is fixed apart from the name,
     and the command's name is the only value the record carries.
 
-    The text fits its cause (BL-92), so there are four, all with the same id, category and target. By
-    cause: when the module still holds a session, another OER command in the same pipeline signed in to
-    a different tenant or identity after the command began; when it holds none, Disconnect-OER ended
-    the module's session after the command began, and the advice is to run Disconnect-OER as a
-    statement of its own. The function reads that from the module's state ($null is no session, the
-    same test Get-OERSignInIdentity makes for 'not signed in', and Disconnect-OER is the only place
-    that sets the state to $null), so the transports and the builders call it with no extra argument.
-    By effect: a request says it was not sent, and the module sends nothing while the command runs;
-    with -Document the refusal is of a whole document, which the command did not apply, and the text
-    says so.
+    The text fits its cause and its effect (BL-92, BL-119): there are three causes and two effects, all
+    with the same id, category and target. By cause: another OER command in the same pipeline signed in
+    to a different tenant or identity after the command began (the module still holds a session);
+    a renewal of the module's sign-in returned a token for another account than the one the command
+    began with (-AccountChanged, which only Initialize-OERAuth passes), and the advice is that the token
+    was not used and the session stays the account it was: run the command again and choose that
+    account, or run Connect-OER -Force to sign in as another account; or Disconnect-OER ended the
+    module's session after the command began (the module holds no session), and the advice is to run
+    Disconnect-OER as a statement of its own. The function reads the Disconnect-OER cause from the
+    module's state ($null is no session, the same test Get-OERSignInIdentity makes for 'not signed in',
+    and Disconnect-OER is the only place that sets the state to $null), so the transports and the
+    builders call it with no extra argument; the account cause is never read from the state. By effect: a request says it was not sent, and the
+    module sends nothing while the command runs; with -Document the refusal is of a whole document,
+    which the command did not apply, and the text says so.
 
     .PARAMETER Command
     The name of the command the record names. From a transport, that is the command whose remembered
@@ -51,6 +57,15 @@ function New-OERSignInSupersededError {
     request. Only Invoke-OERStructure passes it, because what it refuses is a whole document before it
     signs in. The transports refuse one request and the three builders refuse their name lookup, so
     they pass nothing and keep the wording for a request.
+
+    .PARAMETER AccountChanged
+    Builds the variant for a renewal answered by another account (BL-119): the text says a renewal of the
+    module's sign-in returned a token for another account than the one the command began with, and the
+    advice is that the token was not used and the session stays the account it was: run the command
+    again and choose that account, or run Connect-OER -Force to sign in as another account.
+    Initialize-OERAuth passes it when it refuses its caller for that reason, and nothing else does: the
+    function does not read the module's state for this cause. With no state at all, Disconnect-OER's
+    text wins.
 
     .EXAMPLE
     throw (New-OERSignInSupersededError -Command 'New-OERGroup')
@@ -72,7 +87,9 @@ function New-OERSignInSupersededError {
         [Parameter(Mandatory)]
         [string]$Command,
 
-        [switch]$Document
+        [switch]$Document,
+
+        [switch]$AccountChanged
     )
     # BL-92: the text fits its cause. No state at all means Disconnect-OER ended the module's session
     # (the only place under source/ that sets it to $null), not another sign-in. -Document is
@@ -80,8 +97,16 @@ function New-OERSignInSupersededError {
     # The command's name is the only value in the text. It is an argument of -f, never part of the
     # format string, so a name is written exactly as passed, whatever characters it holds.
     [bool]$SessionEnded = $null -eq $script:_OERAuthState
+    # BL-119: a renewal answered by another account. The switch is Initialize-OERAuth's own refusal and
+    # the ONLY source of this cause: the state is not read for it, since a refused renewal leaves the
+    # session as it was and so supersedes no outer command, and no transport refusal has this cause. The
+    # no-state cause wins first: with no session at all, Disconnect-OER is what ended it, which the
+    # order of the branches below holds.
+    [bool]$AccountReplaced = $AccountChanged
     [string]$Cause = if ($SessionEnded) {
         "Disconnect-OER ended the module's session after {0} began"
+    } elseif ($AccountReplaced) {
+        "A renewal of the module's sign-in returned a token for another account than the one {0} began with"
     } else {
         'Another OER command in the same pipeline signed in to a different tenant or identity after {0} began'
     }
@@ -92,6 +117,8 @@ function New-OERSignInSupersededError {
     }
     [string]$Advice = if ($SessionEnded) {
         'Run Disconnect-OER as a statement of its own, after the commands that use the session.'
+    } elseif ($AccountReplaced) {
+        'The token was not used and the session stays the account it was: run the command again and choose that account, or run Connect-OER -Force to sign in as another account.'
     } else {
         'Run the commands as separate statements, so that each one signs in and finishes before the next one starts.'
     }

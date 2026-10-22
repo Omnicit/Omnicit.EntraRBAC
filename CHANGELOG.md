@@ -39,6 +39,13 @@ renew together). `pwsh -NonInteractive` refuses interactive sign-in
 reports an unresolvable scope's own error id; `Get-OERInventory` names no `tenantId` after its
 refused sign-in.
 
+A `-TenantId` no longer lets a command continue under another identity's session:
+`Invoke-OERStructure` and the access package and review stage builders refuse a call when another
+application or account replaced the tenant's session, and a cmdlet that a replaced command calls is
+refused before it requests a token. A renewal answered by another account is refused with
+`SignInSuperseded` and its token is not used: the session stays the account it was until
+`Connect-OER`.
+
 ## [1.3.0] - 2026-10-19
 
 A PIM for Groups activation is no longer written or applied as a standing membership. Inventories
