@@ -108,17 +108,19 @@ alone:
 Where the class is not clear from the title, the `-Because` text or a comment, the It body decides,
 and when it is still unclear the site stays at least N: adding `-Exactly` on a guess would pin a
 number nobody chose. Measured on the step's base: 5,985 `Should -Invoke` assertions under
-`tests/Unit`, 703 candidates (682 with N of 1, 15 with 2, 4 with 3, 2 with 5). 170 are real and
+`tests/Unit`, 703 candidates (682 with N of 1, 15 with 2, 4 with 3, 2 with 5). 171 are real and
 fixed with `-Exactly`: 30 by a named count, 6 by the no-further-call scenario, 16 by one call per
-input or per live object, 3 by the documented bare-throw shape and 115 scrub guards. 533 are left at
+input or per live object, 3 by the documented bare-throw shape and 116 scrub guards. 532 are left at
 least N: 442 whose filter selects arguments (the URI, the body, a parameter value), 63 with no filter
-that prove a call happened, 27 whose filter only selects the call type and which prove a call
-happened (the single-input write tests; they are not argument checks), and 1 scrub guard. That one
-went red under `-Exactly` (`Remove-OERAccessReviewDefinition.Tests.ps1`, the Graph DELETE failure
-test, `Remove-OERErrorRecord -Times 1`, called 2 times by the scenario), so it was restored and left
-as it is: the scenario scrubs twice, which the bare count cannot tell from one. No other fixed site
-went red, so none of the 170 had hidden an extra call. The per-site table is in the step report; the
-AST scan is a read-only helper in the step's scratch area, not part of the repository. A new
+that prove a call happened, and 27 whose filter only selects the call type and which prove a call
+happened (the single-input write tests; they are not argument checks). One scrub guard went red
+under a bare `-Exactly` at the same N (`Remove-OERAccessReviewDefinition.Tests.ps1`, the Graph DELETE
+failure test, `Remove-OERErrorRecord -Times 1`, called 2 times by the scenario): the scenario scrubs
+twice, once in the catch around the definition read that decides the scope warning and once in the
+catch around the DELETE, which a bare count cannot tell from one. It was first restored and left, and
+in the final review of the step corrected to `-Times 2 -Exactly`. No other fixed site went red, so
+none of the other 170 had hidden an extra call. The per-site table is in the pull request
+description; the AST scan was a read-only helper kept outside the repository. A new
 `Should -Invoke -Times N` that means exactly N therefore carries `-Exactly` when it is written, and a
 new scrub guard always does: nothing gates it, since the heuristic needs a reader to tell the two
 meanings apart.
@@ -414,9 +416,12 @@ without `-ParameterFilter`. A default in an enclosing or a nested block does not
 stricter than Pester's own fallback, on purpose, and the sites that predate the rule are absorbed by
 a ratchet, a literal table of violations per file in the gate. The table is keyed on `Mock`
 statements only, so an edit of a `Should -Invoke` line moves nothing in it. A count above the table
-is a new violation; a count below it is a fixed site, and the same change lowers the number. A `Mock`
-whose command is a variable cannot be matched by name; it is counted as unresolvable and reported,
-never a violation. The first measurement (2026-10-22) found 931 filtered mocks in 324 unit test
+is a new violation; a count below it is a fixed site, and the same change lowers the number. A filtered
+`Mock` whose command is a variable, and every splatted `Mock` (a splat can carry the command, the
+`-ModuleName` and the `-ParameterFilter`), cannot be matched by name: each is classed Unresolvable,
+never a violation, and pinned in a second literal table of the gate (file to count; today 2, both in
+`AmbiguousName.Guard.Tests.ps1`), so a new one fails and a removed one lowers the table. Whether a
+filter inside a splat has a default beside it stays a review matter. The first measurement (2026-10-22) found 931 filtered mocks in 324 unit test
 files: 793 without a default in the same block, in 74 files, and 138 with one.
 
 **The traps, measured on PowerShell 7.6 with a throwaway module.**
@@ -1138,7 +1143,9 @@ the table green. An `It` now holds that every Graph URI literal the scan derives
 matches at least one rule through `Get-RequiredScopePattern`, except an exact list of computed paths:
 today the one literal of `Test-OERDirectoryRoleAssignmentGone`, whose schedule collection is chosen at
 run time. An exception that names no literal, or that a rule now matches, fails too. Its limit: it
-judges the literals the scan reads, so a path built wholly from variables is not seen at all, and a
+judges the literals the scan derives, and the scan derives only a literal that starts with `v1.0/` or
+`beta/` (or one of the two PIM-for-Groups and role management policy roots), so any other literal, for
+example `"$Base/groups"`, is never derived and not seen at all, and a
 literal is matched by any rule, not by the right one, which the known answers cover for the rules
 they name. Measured on scratch copies: the prefix restored turns the two policies known answers red;
 a deleted `roleDefinitions` rule leaves every other case green and turns only the new `It` red, naming
@@ -9592,8 +9599,12 @@ calls it for every comparison. The generic arguments of those calls are inferred
 never written out: an explicit type argument on a generic method call (`::OrderBy[object, string](...)`) is
 syntax PowerShell has only since 7.3, which fails to parse under the module's 7.2 floor and with it the whole
 merged module, and no gate runs 7.2 (CI runs a current PowerShell, and PSScriptAnalyzer's compatible syntax
-rule reports nothing for it), so the helper's test file parses the helper's own source and refuses any call
-that carries generic type arguments. Measured offline with plain PowerShell on the development
+rule reports nothing for it), so the helper's test file parses every `.ps1` under `source/` (Sprint 11 step 15,
+BL-157; until then the helper's own source only, though the same syntax in any other file would have failed the
+merged module just as hard) and refuses any call that carries generic type arguments. A parse error counts as a
+finding, and the scan asserts it read as many files as the tree holds and more than 250 (314 today), so a
+partial tree cannot pass. The rest of the 7.2 floor point -- CI runs one current PowerShell only, so nothing runs
+the module on 7.2 -- is closed by reference to GitHub issue #66, which raises the floor. Measured offline with plain PowerShell on the development
 machine, 50,000 texts: about 0.4 s through LINQ and about 7 s through `List.Sort`, and 5,000 texts about 0.8 s
 through `List.Sort` with the comparison inline, and about 1.9 s when it calls a function. Cost if wrong: put the
 comparison inline per file, which costs a second copy and the time above for a group with thousands of
@@ -9646,13 +9657,7 @@ What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule
   order such a list anywhere else. Its LINQ calls take their generic arguments by INFERENCE and never
   write them out: an explicit type argument on a generic method call is PowerShell 7.3 syntax, a parse
   error under the module's 7.2 floor that fails the whole merged module, and CI runs a current
-  PowerShell only, so nothing but the helper's own test would show it. That test is an AST check of
-  every `.ps1` under `source/` (Sprint 11 step 15, BL-157: it first read the helper's own file only,
-  and the same 7.3 syntax in any other file would have failed the merged module just as hard). It
-  asserts it read as many files as the tree holds, and more than a hundred, so a scan that lost its
-  tree cannot pass; a refused parse counts as a finding too. The rest of the 7.2 floor point -- CI
-  runs one current PowerShell only, so nothing runs the module on 7.2 -- is closed by reference to
-  GitHub issue #66, which raises the floor.
+  PowerShell only, so nothing but the helper's own test (an AST check of its file) would show it.
   `Why: docs/development/rationale.md#export-group-selection`
 
 - **`Read-OERGroupCollection` is the single owner of the three per-group collection reads
@@ -14660,9 +14665,11 @@ The quote above is what CLAUDE.md said before step 11b and is left as it was.
 sign-in type) in README's `### Long runs` and the about topic's `LONG RUNS`, word for word. Pipes,
 backticks, bold, links and line wrapping are normalised away first. The about topic's table has two columns at fixed
 positions, so its wrapped label ("Client secret" over "and certificate") is read apart from the text
-column and joined as one label. The one cross-reference, to the SWITCHING TENANTS section, is
-compared ignoring case, since the about topic names a section in capitals and README in a heading's
-case; every other word is compared ordinally. A row missing from either document fails on its own,
+column and joined as one label. The one cross-reference, to the SWITCHING TENANTS section, needs case
+folded, since the about topic names a section in capitals and README in a heading's case; the
+normaliser folds every occurrence of the phrase `switching tenants` in a row (it does not tell the
+cross-reference from another use of those two words, so the phrase is compared ignoring case
+wherever it stands), and every other word is compared ordinally. A row missing from either document fails on its own,
 so two documents that both lost a row are not reported as agreeing. Known limit: a Markdown link is
 reduced to its text, so its anchor target is not compared.
 

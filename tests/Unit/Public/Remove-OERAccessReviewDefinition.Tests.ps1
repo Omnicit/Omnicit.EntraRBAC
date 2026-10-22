@@ -155,7 +155,9 @@ Describe 'Remove-OERAccessReviewDefinition' {
         $Err = $null
         $Result = Remove-OERAccessReviewDefinition -Id 'd1' -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
         $Result | Should -BeNullOrEmpty
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+        # The scenario scrubs twice: the mock throws on the definition read that decides the scope
+        # warning (its catch scrubs) and again on the DELETE (the catch under test), so the count is 2.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 2 -Exactly
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,Remove-OERAccessReviewDefinition' }).Count |
             Should -Be 1
     }

@@ -137,8 +137,9 @@ tenant object ids, tenant domains outside an allowlist, non-documentation email 
 credentials in tracked files, and no angle bracket GitHub would render as a tag in tracked
 Markdown); `docsync.tests.ps1` (binds `README.md` to the about topic, and both to the manifest's
 cmdlet count); and `testhygiene.tests.ps1` (every unit test file that imports the module installs,
-checks and uninstalls the transport tripwire, and every `Mock` with `-ParameterFilter` has a default
-mock beside it, held by a ratchet; read statically, importing nothing).
+checks and uninstalls the transport tripwire, and no NEW `Mock` with `-ParameterFilter` lacks a default
+`Mock` of the same command in the same block -- the older sites are held by a per-file ratchet that may
+only fall; read statically, importing nothing).
 
 **`dochygiene.tests.ps1` applies TWO object-id rules, split by what the file is.** `docs/` and
 `specs/`: a GUID is prose and must be a `00000000-0000-0000-0000-0000000000NN` placeholder.

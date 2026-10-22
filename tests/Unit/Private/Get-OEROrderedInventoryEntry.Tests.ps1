@@ -191,7 +191,7 @@ Describe 'Get-OEROrderedInventoryEntry (Sprint 11 step 10, BL-121, R-16)' {
             }
             # Non-vacuity: the scan read every .ps1 the tree holds, and the tree is not a near-empty one.
             $Scanned | Should -Be @(Get-ChildItem -Path $script:SourceRoot -Recurse -File -Filter '*.ps1').Count
-            $Scanned | Should -BeGreaterThan 100 -Because 'the module holds well over a hundred source files, so a smaller count means the scan lost its tree'
+            $Scanned | Should -BeGreaterThan 250 -Because 'the module holds over three hundred source files, so a smaller count means a partial tree, which is what this floor catches'
             $Findings.Count | Should -Be 0 -Because "the module declares PowerShell 7.2 as its floor and an explicit generic type argument on a method call is syntax of 7.3 and later, so the merged module would not load there: $($Findings -join ' | ')"
         }
     }

@@ -200,8 +200,13 @@ BeforeAll {
     # in an enclosing or a nested block does not count -- stricter than Pester's own fallback, on
     # purpose, and the ratchet below absorbs the sites that predate the rule.
     #
-    # A Mock whose command is not a literal (a variable, a splat) cannot be matched by name. Such a
-    # site is counted as unresolvable and reported, never as a violation.
+    # A Mock whose command cannot be matched by name is Kind 'Unresolvable', never a violation: a
+    # filtered Mock whose command is not a string literal (a variable), and ANY splatted Mock, since
+    # a splat can carry the command, the -ModuleName and the -ParameterFilter alike. The ratchet pins
+    # the unresolvable sites in a second exact table (file -> count), so a new one fails and a removed
+    # one must lower the table. An unfiltered Mock of a variable command is no site: it is neither a
+    # filtered mock nor a splat. What the gate cannot see inside a splat -- whether its filter has a
+    # default beside it -- stays a review matter.
     #
     # The table is keyed on Mock statements only: a later edit of a Should -Invoke line moves
     # nothing in it.
@@ -274,24 +279,26 @@ BeforeAll {
             CommandName = $CommandName
             ModuleName  = $ModuleName
             Filtered    = $Named.ContainsKey('ParameterFilter')
+            Splatted    = $Splatted
         }
     }
 
     function Get-TestHygieneMockDefaultFinding {
         <#
         .SYNOPSIS
-        Returns one record per Mock call that carries -ParameterFilter, with whether it is a violation.
+        Returns one record per Mock call that carries -ParameterFilter or is splatted, with whether it is a violation.
         .DESCRIPTION
         Parses the text and looks at every command named Mock. For each that carries -ParameterFilter
-        the innermost script block holding it is found (the first ScriptBlockAst up its parents); the
+        or is splatted, the innermost script block holding it is found (the first ScriptBlockAst up its parents); the
         filtered mock is a violation unless that same block also holds a Mock of the same command
         name (ignoring case) and the same -ModuleName text (or none on both) with no
         -ParameterFilter. A Mock inside an if or a loop of the block counts as in the block; one in
-        a nested or an enclosing script block does not. A Mock whose command name is not a literal gets Kind 'Unresolvable' and is
-        never a violation. Each record has Kind ('Violation', 'Unresolvable', 'Covered' or
+        a nested or an enclosing script block does not. A filtered Mock whose command name is not a
+        literal, and every splatted Mock (filtered or not), gets Kind 'Unresolvable' and is never a
+        violation. Each record has Kind ('Violation', 'Unresolvable', 'Covered' or
         'Unparsable'), Line and Command. Returns the single record 'Unparsable' for text that does
         not parse, which the ratchet counts as a violation. Returns nothing for a file with no
-        filtered Mock.
+        filtered or splatted Mock.
         #>
         [OutputType([pscustomobject])]
         param(
@@ -319,9 +326,10 @@ BeforeAll {
                 CommandName = $Argument.CommandName
                 ModuleName  = $Argument.ModuleName
                 Filtered    = $Argument.Filtered
+                Splatted    = $Argument.Splatted
             }
         }
-        foreach ($Item in @($Parsed | Where-Object { $_.Filtered })) {
+        foreach ($Item in @($Parsed | Where-Object { $_.Filtered -or $_.Splatted })) {
             $Line = $Item.Ast.Extent.StartLineNumber
             if ($null -eq $Item.CommandName) {
                 [pscustomobject]@{ Kind = 'Unresolvable'; Line = $Line; Command = '' }
@@ -420,6 +428,13 @@ BeforeAll {
         'tests/Unit/Public/Set-OERResourceGroup.Tests.ps1' = 2
         'tests/Unit/Public/Set-OERRoleManagementPolicy.Tests.ps1' = 25
         'tests/Unit/Public/Stop-OERAccessReviewInstance.Tests.ps1' = 1
+    }
+
+    # File (relative path) -> count of unresolvable Mock calls (a filtered Mock whose command is not
+    # a string literal, or any splatted Mock), measured on 2026-10-22. A file not listed is held to
+    # 0. A higher count is a new site the gate cannot read; a lower one must lower the number.
+    $script:MockUnresolvableRatchet = [ordered]@{
+        'tests/Unit/Public/AmbiguousName.Guard.Tests.ps1' = 2
     }
 }
 
@@ -572,21 +587,27 @@ Describe 'x' { It 'y' { 1 | Should -Be 1 } }
 
         $Counts = [ordered]@{}
         $Filtered = 0
-        $Unresolvable = [System.Collections.Generic.List[string]]::new()
+        $UnresolvableCounts = [ordered]@{}
+        $UnresolvableTotal = 0
         foreach ($File in $Files) {
             $Relative = [System.IO.Path]::GetRelativePath($script:ProjectPath, $File.FullName).Replace('\', '/')
             $Violations = 0
+            $UnresolvableHere = 0
             $Text = [System.IO.File]::ReadAllText($File.FullName)
-            if ($Text -notmatch 'ParameterFilter') { continue }
+            if ($Text -notmatch 'ParameterFilter|\bMock\b') { continue }
             foreach ($Finding in @(Get-TestHygieneMockDefaultFinding -Text $Text)) {
                 $Filtered++
                 if ($Finding.Kind -eq 'Unresolvable') {
-                    $Unresolvable.Add(('{0}:{1}' -f $Relative, $Finding.Line))
+                    $UnresolvableHere++
                 } elseif ($Finding.Kind -ne 'Covered') {
                     $Violations++
                 }
             }
             if ($Violations -gt 0) { $Counts[$Relative] = $Violations }
+            if ($UnresolvableHere -gt 0) {
+                $UnresolvableCounts[$Relative] = $UnresolvableHere
+                $UnresolvableTotal += $UnresolvableHere
+            }
         }
         $Filtered | Should -BeGreaterThan 0 -Because 'the unit suite holds filtered mocks; zero means the scan read nothing'
 
@@ -603,9 +624,21 @@ Describe 'x' { It 'y' { 1 | Should -Be 1 } }
             }
         }
 
+        foreach ($Relative in $UnresolvableCounts.Keys) {
+            $Allowed = if ($script:MockUnresolvableRatchet.Contains($Relative)) { [int]$script:MockUnresolvableRatchet[$Relative] } else { 0 }
+            if ($UnresolvableCounts[$Relative] -ne $Allowed) {
+                $Differences.Add(('{0}: {1} unresolvable Mock calls found, {2} in the unresolvable table' -f $Relative, $UnresolvableCounts[$Relative], $Allowed))
+            }
+        }
+        foreach ($Relative in $script:MockUnresolvableRatchet.Keys) {
+            if (-not $UnresolvableCounts.Contains($Relative)) {
+                $Differences.Add(('{0}: 0 unresolvable Mock calls found, {1} in the unresolvable table' -f $Relative, $script:MockUnresolvableRatchet[$Relative]))
+            }
+        }
+
         $Sum = 0
         foreach ($Value in $Counts.Values) { $Sum += $Value }
-        @($Differences).Count | Should -Be 0 -Because ('every Mock that carries -ParameterFilter needs a Mock of the same command and -ModuleName without one in the same script block, so a call the filters stop matching falls back to it; a higher count is a new violation (add the default mock), a lower one a fixed site (lower the number in the table in the same change). Found {0} violations in {1} files of {2} scanned, {3} filtered mocks, {4} with a command that is not a literal and so not checked. Differences: {5}' -f $Sum, $Counts.Count, $Files.Count, $Filtered, $Unresolvable.Count, ($Differences -join '; '))
+        @($Differences).Count | Should -Be 0 -Because ('every Mock that carries -ParameterFilter needs a Mock of the same command and -ModuleName without one in the same script block, so a call the filters stop matching falls back to it; a higher count is a new violation (add the default mock), a lower one a fixed site (lower the number in the table in the same change). A filtered Mock whose command is not a literal and every splatted Mock cannot be read by name; they are pinned in a second table, so a new one fails (write the Mock with a literal command, or add the site to the table with a reason) and a removed one lowers it. Found {0} violations in {1} files of {2} scanned, {3} Mock calls read, {4} unresolvable. Differences: {5}' -f $Sum, $Counts.Count, $Files.Count, $Filtered, $UnresolvableTotal, ($Differences -join '; '))
     }
 
     It 'Should keep the default-mock ratchet table sorted, with every entry a unit test file and a positive count' {
@@ -618,6 +651,11 @@ Describe 'x' { It 'y' { 1 | Should -Be 1 } }
             Test-Path -LiteralPath (Join-Path -Path $script:ProjectPath -ChildPath $Relative) | Should -BeTrue -Because ('a table entry must name a unit test file that exists: {0}' -f $Relative)
             $Relative | Should -Match '^tests/Unit/.+\.Tests\.ps1$'
             $script:MockDefaultRatchet[$Relative] | Should -BeGreaterThan 0 -Because ('a count of zero is not an entry, so delete the line: {0}' -f $Relative)
+        }
+        foreach ($Relative in $script:MockUnresolvableRatchet.Keys) {
+            Test-Path -LiteralPath (Join-Path -Path $script:ProjectPath -ChildPath $Relative) | Should -BeTrue -Because ('an unresolvable table entry must name a unit test file that exists: {0}' -f $Relative)
+            $Relative | Should -Match '^tests/Unit/.+\.Tests\.ps1$'
+            $script:MockUnresolvableRatchet[$Relative] | Should -BeGreaterThan 0 -Because ('a count of zero is not an entry, so delete the line: {0}' -f $Relative)
         }
     }
 
@@ -746,10 +784,42 @@ Describe 'x' {
         & $Violations $TwoFiltered | Should -Be 2 -Because 'two filtered mocks and no default are two violations'
         & $Violations $Unfiltered | Should -Be 0 -Because 'a Should -Invoke filter and an unfiltered mock are no filtered Mock'
 
-        # A command that is not a literal cannot be matched by name: reported, never a violation.
+        # A filtered Mock whose command is not a literal, and any splatted Mock, cannot be matched by
+        # name: Kind Unresolvable (pinned in its own table by the ratchet), never a violation.
+        $Splatted = @'
+Describe 'x' {
+    It 'y' {
+        $Args = @{ CommandName = 'Invoke-OERGraphRequest'; ModuleName = 'Omnicit.EntraRBAC'; ParameterFilter = { $Uri -eq 'a' } }
+        Mock @Args -MockWith { 1 }
+    }
+}
+'@
+        $SplattedNoFilter = @'
+Describe 'x' {
+    It 'y' {
+        Mock @MockArguments
+    }
+}
+'@
+        $UnfilteredVariable = @'
+Describe 'x' {
+    It 'y' {
+        $Name = 'Invoke-OERGraphRequest'
+        Mock $Name { 1 }
+    }
+}
+'@
         $Found = @(Get-TestHygieneMockDefaultFinding -Text $Variable)
         $Found.Count | Should -Be 1
-        $Found[0].Kind | Should -Be 'Unresolvable' -Because 'a Mock of a variable command cannot be matched by name, so it is reported apart and not counted'
+        $Found[0].Kind | Should -Be 'Unresolvable' -Because 'a filtered Mock of a variable command cannot be matched by name, so it is counted apart from the violations'
+        $Found = @(Get-TestHygieneMockDefaultFinding -Text $Splatted)
+        $Found.Count | Should -Be 1
+        $Found[0].Kind | Should -Be 'Unresolvable' -Because 'a splatted Mock, with its filter inside the splat, is counted nowhere unless every splatted Mock is Unresolvable'
+        $Found = @(Get-TestHygieneMockDefaultFinding -Text $SplattedNoFilter)
+        $Found.Count | Should -Be 1
+        $Found[0].Kind | Should -Be 'Unresolvable' -Because 'any splatted Mock is Unresolvable, filter named or not'
+        @(Get-TestHygieneMockDefaultFinding -Text $UnfilteredVariable).Count | Should -Be 0 -Because 'an unfiltered Mock of a variable command is neither a filtered mock nor a splat'
+        & $Violations $Splatted | Should -Be 0 -Because 'an unresolvable site is never a violation'
         @(Get-TestHygieneMockDefaultFinding -Text 'Describe "x" {').Kind | Should -Be @('Unparsable') -Because 'text that does not parse is reported, which the ratchet counts as a violation'
     }
 }

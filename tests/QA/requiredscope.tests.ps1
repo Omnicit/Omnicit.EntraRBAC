@@ -906,7 +906,7 @@ Describe 'Required scope table' -Tags 'helpQuality' {
         }
     }
 
-    Context 'Every Graph literal asks for a permission' {
+    Context 'Every derived Graph literal asks for a permission' {
         It 'Should match every Graph URI literal the scan derives against at least one endpoint rule, except the named computed paths' {
             <#
                 The per-cmdlet It accepts a literal no rule matches, since such a literal asks for
@@ -919,6 +919,11 @@ Describe 'Required scope table' -Tags 'helpQuality' {
                 Private functions that no exported cmdlet reaches are not in that derivation, and
                 their literals are not judged here (the scan derives per cmdlet and this It reuses
                 it, as a second scanner would be a second place to keep right).
+
+                Only a literal the derivation reads is judged, and it reads only the ones that start
+                with v1.0/ or beta/ (or one of the two PIM roots, see the GraphUri block above). Any
+                other literal is never derived, so never judged here: a path that starts with a
+                variable, such as "$Base/groups", is not seen at all.
 
                 The exceptions are an EXACT list: each names a literal the scan reads that is not a
                 path at run time, with its reason. An entry that matches no literal, or that a rule
