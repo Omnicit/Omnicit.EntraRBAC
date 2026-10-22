@@ -13865,9 +13865,11 @@ the rows of those principals without the key and names each such unit unread ONC
 `administrativeUnits/<name>/scopedRoles/principalType`, with the cause of its first such principal.
 Since one batch can fail while another succeeds, a named unit can hold rows with the key and rows
 without it -- "some or all of its rows", as every text says. The `scopedRoles` collection itself was
-read, so it stays written: the entry names no null collection, which the `InventoryPartial` message
-says in a sentence of its own, as does the export's, and the bundle README adds a sentence for such
-an entry only when one is present (the README's other prose stays as it was).
+read, so it stays written: the entry names no null collection, which the `InventoryPartial` message of
+`Get-OERInventory` says in a sentence of its own, and the bundle README adds a paragraph for such an
+entry only when one is present (the README's other prose stays as it was). The export's message has
+no such sentence since Sprint 11 step 14 (BL-156): it names the entries and points at the bundle
+README, whose paragraph on a `/scopedRoles/principalType` entry is the export's account of it.
 
 **The document.** The schema declares the key optional, the enum `User`, `Group`, `ServicePrincipal`.
 Ruling R-7: the validator holds it to the enum, as it does a role assignment's -- a value outside it is
@@ -13887,7 +13889,8 @@ exactly that membership under `-Prune`. Cost if wrong (R-7): a hand-written docu
 string an Error in both sections ([#enum-values-must-be-strings](#enum-values-must-be-strings)). (b) A unit later left out of the document because another
 unit shares its name is looked up, and named unread when the lookup failed, all the same. (c) The
 `InventoryPartial` sentence about such an entry stands in every partial message of `Get-OERInventory`
-and of the export, also when no such entry is listed; the bundle README's sentence does not.
+(since Sprint 11 step 14 (BL-156) no longer in the export's, which points at the bundle README), also
+when no such entry is listed; the bundle README's paragraph does not.
 
 **Mutation proofs.** Task 2 of the step (the inventory, the validator, the reader), each against a
 build; Task 4 (the README sentence) against a dev-mode copy of the source, where the unmutated copy
