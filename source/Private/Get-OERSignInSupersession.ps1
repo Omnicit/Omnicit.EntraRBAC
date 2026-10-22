@@ -28,6 +28,18 @@ function Get-OERSignInSupersession {
     upstream command's output call, so for a request it makes there the frame found can be the upstream
     command's (Up | Down, Up | ForEach-Object { Inner }).
 
+    With -OutsideCaller, which only Initialize-OERAuth passes, for its BL-91 check before it latches
+    its own caller, the walk starts after the command that called Initialize-OERAuth: frame 0 is this
+    function, frame 1 Initialize-OERAuth, and the caller is the first frame from index 2 that carries
+    an invocation -- the frame Lock-OERSignIn latches. Only a command outside that caller counts, so a
+    command whose own remembered identity is another than the state's (it signed in before, and a
+    later command switched the state) may still sign in again, and its memory is replaced on success,
+    while a command it calls may not. The transports never pass it.
+
+    .PARAMETER OutsideCaller
+    Start the walk after the command that called Initialize-OERAuth, so only a command outside that
+    caller counts. Initialize-OERAuth only, for its BL-91 check; the transports never pass it.
+
     .EXAMPLE
     $Superseded = Get-OERSignInSupersession
     if ($Superseded) { throw (New-OERSignInSupersededError -Command $Superseded) }
@@ -36,7 +48,13 @@ function Get-OERSignInSupersession {
     #>
     [CmdletBinding()]
     [OutputType([string])]
-    param()
+    param(
+        # Initialize-OERAuth only, for its BL-91 check before it latches its caller: start the walk
+        # after the command that called Initialize-OERAuth -- the first frame after this function's and
+        # Initialize-OERAuth's own that carries an invocation, the frame Lock-OERSignIn latches -- so
+        # only a command OUTSIDE that caller counts. The transports never pass it.
+        [switch]$OutsideCaller
+    )
 
     if ($null -eq $script:_OERSignInIdentity) {
         return
@@ -45,8 +63,19 @@ function Get-OERSignInSupersession {
     $Remembered = $null
     # Module-qualified, so a function named Get-PSCallStack defined in the session cannot turn the
     # check off.
-    foreach ($Frame in Microsoft.PowerShell.Utility\Get-PSCallStack) {
-        $Inv = $Frame.InvocationInfo
+    $Stack = @(Microsoft.PowerShell.Utility\Get-PSCallStack)
+    $Start = 0
+    if ($OutsideCaller) {
+        $Start = $Stack.Count
+        for ($Index = 2; $Index -lt $Stack.Count; $Index++) {
+            if ($null -ne $Stack[$Index].InvocationInfo) {
+                $Start = $Index + 1
+                break
+            }
+        }
+    }
+    for ($Index = $Start; $Index -lt $Stack.Count; $Index++) {
+        $Inv = $Stack[$Index].InvocationInfo
         if ($null -eq $Inv) {
             continue
         }

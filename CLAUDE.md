@@ -516,7 +516,9 @@ The order is fixed: Graph wrapper session gate, latch gate, supersession gate; A
 gate, supersession gate. A pipeline must not span tenants or identities: run the commands as
 separate statements, for example collecting into a variable first. Never call
 `Register-OERSignInIdentity` outside `Initialize-OERAuth` or anywhere but directly after an
-`Unlock-OERSignIn` with the same invocation; never read the supersession outside the two transports.
+`Unlock-OERSignIn` with the same invocation; never read the supersession outside the two transports and
+`Initialize-OERAuth`, which asks it with `-OutsideCaller` directly after its BL-74 check, so a sign-in nested
+under a superseded command is refused before any token request.
 `Why: docs/development/rationale.md#auth-state`
 
 **A tenant named by domain is looked up before any token request, and checked like a GUID.**

@@ -5908,16 +5908,20 @@ $RecordLines
         $R.Output | Should -Contain 'END OF SCRIPT REACHED'
         $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
         $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
-        # No third pair of token calls: the nested Get-OERGroup signed in from the cache of B.
+        # No third pair of token calls: the nested Get-OERGroup's sign-in is refused before the cache
+        # answers (BL-91), and its read is refused by the transport.
         Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @(
             'graph 44444444-4444-4444-4444-444444444444', 'arm 44444444-4444-4444-4444-444444444444'
             'graph 77777777-7777-7777-7777-777777777777', 'arm 77777777-7777-7777-7777-777777777777')
         Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -BeNullOrEmpty
         Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -BeNullOrEmpty
-        # The nested cmdlet's read, the outer command's ARM call, then the downstream command's two,
-        # which run inside the outer command's output: all made while the outer command runs, so each
-        # record names the outer command, though the nested cmdlet remembers the state's own identity.
+        # The nested cmdlet's sign-in (BL-91: refused by Initialize-OERAuth, naming the outer command,
+        # before any token request), its read, the outer command's ARM call, then the downstream
+        # command's two, which run inside the outer command's output: all made while the outer command
+        # runs, so each record names the outer command, though the nested cmdlet remembers the state's
+        # own identity.
         Get-PipelineProbeSuperseded -Probe $R | Should -Be @(
+            'SignInSuperseded,Initialize-OERAuth | Invoke-OuterProbe'
             'SignInSuperseded,Get-OERGroup | Invoke-OuterProbe', 'SignInSuperseded,Invoke-OuterProbe | Invoke-OuterProbe'
             'SignInSuperseded,Invoke-SecondProbe | Invoke-OuterProbe', 'SignInSuperseded,Invoke-SecondProbe | Invoke-OuterProbe')
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0

@@ -1481,7 +1481,11 @@ BeforeAll {
         Get-OERSignInRefusal has one more owner, Initialize-OERAuth (BL-74): it reads the latch once,
         before it latches its caller, to refuse a SIGN-IN under a latched outer command, and refuses
         no request -- the transports' latch gates still do that, and this pass still places them -- so
-        the reason the rule exists does not apply to it.
+        the reason the rule exists does not apply to it. Get-OERSignInSupersession has the same one
+        more owner (BL-91): Initialize-OERAuth reads the supersession once, directly after its BL-74
+        check and before it latches its caller, with -OutsideCaller, to refuse a SIGN-IN under a
+        superseded outer command, and refuses no request -- the transports' supersession gates still do
+        that, and this pass still places them.
         Get-OERSignInIdentity is called only by Register-OERSignInIdentity, which stores it,
         Get-OERSignInSupersession, which compares it, and Checkpoint-OERSignIn, which takes a
         command's snapshot of it and compares that snapshot with the identity the state carries
@@ -1497,7 +1501,7 @@ BeforeAll {
         issued for. The lookup carries no credential of any kind: a second sender could add one, or
         send a secret to a request that needs none, so the call's own parameters are held as well.
         Set-OERSessionUncertain, the single owner of the session-uncertain marker (A10, BL-89), is
-        called only by Initialize-OERAuth, which sets the marker at every entry past its BL-74 check and
+        called only by Initialize-OERAuth, which sets the marker at every entry past its BL-74 and BL-91 checks and
         puts it back or clears it at its two success ends, Connect-OER, which sets it first thing, and
         Disconnect-OER, which clears it: a fourth caller could clear the marker for a session whose last
         sign-in was refused, and a command that names no tenant would then act on the previous tenant.
@@ -1650,8 +1654,8 @@ BeforeAll {
     # A set of owner files per command (see WHO MAY CALL WHAT in the Pass 9 comment): the command may
     # be CALLED nowhere else under source/, and every owner listed must really call it. The owner is
     # a file, not a function, so the rule is the same whichever function of that file calls it:
-    # Initialize-OERAuth calls Get-OERSignInRefusal once, at its entry (BL-74), Lock-OERSignIn once,
-    # directly after it, and Unlock-OERSignIn and Register-OERSignInIdentity at each of its two
+    # Initialize-OERAuth calls Get-OERSignInRefusal once, at its entry (BL-74), Get-OERSignInSupersession
+    # once, directly after it (BL-91), Lock-OERSignIn once, directly after that, and Unlock-OERSignIn and Register-OERSignInIdentity at each of its two
     # successful ends.
     $script:signInMemoryPath = 'source\Private\Initialize-OERAuth.ps1'
     $script:tenantLookupPath = 'source\Private\Resolve-OERTenantDomain.ps1'
@@ -1661,7 +1665,7 @@ BeforeAll {
         [PSCustomObject]@{ Command = 'Unlock-OERSignIn'; Owners = @($script:signInMemoryPath) }
         [PSCustomObject]@{ Command = 'Register-OERSignInIdentity'; Owners = @($script:signInMemoryPath) }
         [PSCustomObject]@{ Command = 'Get-OERSignInRefusal'; Owners = @($script:transportGateGraphPath, $script:transportGateArmPath, $script:signInMemoryPath) }
-        [PSCustomObject]@{ Command = 'Get-OERSignInSupersession'; Owners = @($script:transportGateGraphPath, $script:transportGateArmPath) }
+        [PSCustomObject]@{ Command = 'Get-OERSignInSupersession'; Owners = @($script:transportGateGraphPath, $script:transportGateArmPath, $script:signInMemoryPath) }
         [PSCustomObject]@{ Command = 'Get-OERSignInIdentity'; Owners = @(
                 'source\Private\Register-OERSignInIdentity.ps1', 'source\Private\Get-OERSignInSupersession.ps1',
                 'source\Private\Checkpoint-OERSignIn.ps1') }
@@ -4489,7 +4493,7 @@ rule it models changed.
 Initialize-OERAuth marks the session uncertain at the statement directly after it latches its caller
 (Lock-OERSignIn), so every refusal from there on -- the credential checks, the tenant lookup, the token
 calls, GraphSessionChanged and ArmTokenAcquisitionFailed included -- leaves the marker set, while the
-BL-74 refusal before the latch, which concerns a sign-in that was never attempted, leaves it as it was.
+BL-74 and BL-91 refusals before the latch, which concern a sign-in that was never attempted, leave it as it was.
 It puts the marker back, or clears it, at the statement directly after each
 Register-OERSignInIdentity, which stands where a sign-in succeeded. Put each Set-OERSessionUncertain
 call back as a statement of its own in one of those three places.
@@ -4659,16 +4663,20 @@ exists does not apply to it. The list is never wider than the call requires.
 '@
     }
 
-    It 'reads the supersession with Get-OERSignInSupersession only in the two transport wrappers' {
+    It 'reads the supersession with Get-OERSignInSupersession only in the two transport wrappers and in Initialize-OERAuth' {
         $script:transportOwnerStale['Get-OERSignInSupersession'] -join "`n" | Should -BeNullOrEmpty -Because (
-            'both transport wrappers must really call Get-OERSignInSupersession for their supersession gates; an owner listed here that calls it nowhere is a stale rule, not a pass')
+            'both transport wrappers must really call Get-OERSignInSupersession for their supersession gates, and Initialize-OERAuth for its BL-91 check; an owner listed here that calls it nowhere is a stale rule, not a pass')
         $script:transportOwnerViolations['Get-OERSignInSupersession'] -join "`n" | Should -BeNullOrEmpty -Because @'
 Get-OERSignInSupersession is the reader the supersession gate in front of every Graph and ARM request
 consults. This Describe proves where the transports' gates stand -- in the block that holds the send,
 after the latch gate, throwing and then returning -- and nothing proves any of that for a check in
 another file: a reader of the supersession outside the two transports is a gate no static check places,
 whose refusal may not stop a request at all. Refuse requests in the two wrappers, through their
-supersession gates.
+supersession gates. Initialize-OERAuth is the one other owner (BL-91): it reads the supersession once,
+directly after its BL-74 check and before it latches its caller, with -OutsideCaller, to refuse a
+SIGN-IN under a superseded outer command -- no token call, no Connect-MgGraph -- and it refuses no
+request; the transports' supersession gates still do that, and this Describe still places them, so the
+reason this rule exists does not apply to it. The list is never wider than the call requires.
 '@
     }
 

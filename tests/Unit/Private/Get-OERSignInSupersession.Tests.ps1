@@ -263,3 +263,154 @@ Describe 'Get-OERSignInSupersession' {
         $R | Should -BeExactly 'Invoke-SignedInCommand'
     }
 }
+
+Describe 'Get-OERSignInSupersession -OutsideCaller (BL-91)' {
+    # Initialize-OERAuth asks with -OutsideCaller before it latches its own caller. Each test below
+    # builds the chain Outer -> Caller -> Initialize-StandIn -> Get-OERSignInSupersession: frame 0 is
+    # Get-OERSignInSupersession, frame 1 the stand-in in Initialize-OERAuth's place, and the caller is the
+    # next frame that carries an invocation -- the frame Lock-OERSignIn would latch. A command is
+    # superseded when it remembers (Register-OERSignInIdentity) an identity the state no longer carries.
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC {
+            $script:_OERAuthState = @{
+                TenantId    = '11111111-1111-1111-1111-111111111111'
+                AuthMethod  = 'Interactive'
+                ClientId    = '33333333-3333-3333-3333-333333333333'
+                Environment = 'Global'
+            }
+        }
+    }
+
+    AfterEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+    }
+
+    It 'names a superseded command outside the caller' {
+        $R = InModuleScope Omnicit.EntraRBAC {
+            function Initialize-StandIn { param([switch]$Outside) Get-OERSignInSupersession -OutsideCaller:$Outside }
+            function Invoke-CallerCommand {
+                [CmdletBinding()]
+                param()
+                Initialize-StandIn -Outside
+            }
+            function Invoke-OuterCommand {
+                [CmdletBinding()]
+                param()
+                Register-OERSignInIdentity -Invocation $MyInvocation
+                $script:_OERAuthState.TenantId = '22222222-2222-2222-2222-222222222222'
+                Invoke-CallerCommand
+            }
+            Invoke-OuterCommand
+        }
+        $R | Should -BeOfType ([string])
+        $R | Should -BeExactly 'Invoke-OuterCommand'
+    }
+
+    It 'names the superseded command outside the caller, not the caller, when both are superseded' {
+        $R = InModuleScope Omnicit.EntraRBAC {
+            function Initialize-StandIn { param([switch]$Outside) Get-OERSignInSupersession -OutsideCaller:$Outside }
+            function Invoke-CallerCommand {
+                [CmdletBinding()]
+                param()
+                Register-OERSignInIdentity -Invocation $MyInvocation
+                $script:_OERAuthState.TenantId = '22222222-2222-2222-2222-222222222222'
+                Initialize-StandIn -Outside
+            }
+            function Invoke-OuterCommand {
+                [CmdletBinding()]
+                param()
+                Register-OERSignInIdentity -Invocation $MyInvocation
+                Invoke-CallerCommand
+            }
+            Invoke-OuterCommand
+        }
+        $R | Should -BeExactly 'Invoke-OuterCommand'
+    }
+
+    It 'returns nothing when only the caller is superseded' {
+        $R = InModuleScope Omnicit.EntraRBAC {
+            function Initialize-StandIn { param([switch]$Outside) Get-OERSignInSupersession -OutsideCaller:$Outside }
+            function Invoke-CallerCommand {
+                [CmdletBinding()]
+                param()
+                Register-OERSignInIdentity -Invocation $MyInvocation
+                $script:_OERAuthState.TenantId = '22222222-2222-2222-2222-222222222222'
+                @{ Outside = @(Initialize-StandIn -Outside); WholeStack = @(Initialize-StandIn) }
+            }
+            function Invoke-OuterCommand {
+                [CmdletBinding()]
+                param()
+                Invoke-CallerCommand
+            }
+            Invoke-OuterCommand
+        }
+        # Not vacuous: the same chain without the switch finds the superseded caller (unchanged behaviour).
+        $R.WholeStack | Should -Be @('Invoke-CallerCommand')
+        $R.Outside.Count | Should -Be 0
+    }
+
+    It 'returns nothing when the command outside the caller remembers the identity the state carries' {
+        $R = InModuleScope Omnicit.EntraRBAC {
+            function Initialize-StandIn { param([switch]$Outside) Get-OERSignInSupersession -OutsideCaller:$Outside }
+            function Invoke-CallerCommand {
+                [CmdletBinding()]
+                param()
+                Initialize-StandIn -Outside
+            }
+            function Invoke-OuterCommand {
+                [CmdletBinding()]
+                param()
+                Register-OERSignInIdentity -Invocation $MyInvocation
+                $Value = $null
+                @{
+                    Held    = $script:_OERSignInIdentity.TryGetValue($MyInvocation, [ref]$Value)
+                    Outside = @(Invoke-CallerCommand)
+                }
+            }
+            Invoke-OuterCommand
+        }
+        # Not vacuous: the outer command is remembered, so it was compared.
+        $R.Held | Should -BeTrue
+        $R.Outside.Count | Should -Be 0
+    }
+
+    It 'returns nothing when no frame on the call stack remembers anything' {
+        $R = InModuleScope Omnicit.EntraRBAC {
+            function Initialize-StandIn { param([switch]$Outside) Get-OERSignInSupersession -OutsideCaller:$Outside }
+            function Invoke-CallerCommand {
+                [CmdletBinding()]
+                param()
+                Initialize-StandIn -Outside
+            }
+            function Invoke-OuterCommand {
+                [CmdletBinding()]
+                param()
+                Invoke-CallerCommand
+            }
+            if ($null -eq $script:_OERSignInIdentity) {
+                $script:_OERSignInIdentity = [System.Runtime.CompilerServices.ConditionalWeakTable[object, object]]::new()
+            }
+            @{ TableExists = $null -ne $script:_OERSignInIdentity; Supersession = @(Invoke-OuterCommand) }
+        }
+        # The table is there, so the read walked the stack and found no remembered frame.
+        $R.TableExists | Should -BeTrue
+        $R.Supersession.Count | Should -Be 0
+    }
+
+    It 'returns nothing at once, without reading the call stack, when the memory table was never created' {
+        Mock -ModuleName Omnicit.EntraRBAC Get-PSCallStack { }
+        $R = InModuleScope Omnicit.EntraRBAC {
+            Remove-Variable -Scope Script -Name _OERSignInIdentity -ErrorAction Ignore
+            @(Get-OERSignInSupersession -OutsideCaller)
+        }
+        $R.Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Get-PSCallStack -Times 0
+
+        # Not vacuous: the same mock does see the module-qualified call once a table exists.
+        $null = InModuleScope Omnicit.EntraRBAC {
+            $script:_OERSignInIdentity = [System.Runtime.CompilerServices.ConditionalWeakTable[object, object]]::new()
+            @(Get-OERSignInSupersession -OutsideCaller)
+        }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Get-PSCallStack -Times 1 -Exactly
+    }
+}

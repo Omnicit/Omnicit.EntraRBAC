@@ -4674,6 +4674,316 @@ Describe 'Initialize-OERAuth sign-in latch (A19)' {
         }
     }
 
+    Context 'refused under a superseded outer command (BL-91)' {
+        # A command whose sign-in another command has since replaced carries on, and the cmdlets it
+        # calls sign in again without -TenantId. Initialize-OERAuth refuses such a nested sign-in before
+        # it latches its caller and before any token call (Get-OERSignInSupersession -OutsideCaller). The
+        # probe's outer command remembers the identity the state carries (Register-OERSignInIdentity, as
+        # Initialize-OERAuth does where it releases the latch) and, with -Supersede, then switches the
+        # state's tenant the way a later pipeline command's sign-in would. The state is an interactive
+        # session whose Microsoft Graph token expires within five minutes (or in an hour, with
+        # -ExpiryMinutes), so a nested sign-in that got past the check would renew it with Get-AzToken and
+        # Connect-MgGraph (or answer from the cache).
+        BeforeAll {
+            function script:Invoke-NestedUnderSupersededProbe {
+                param([switch]$Supersede, [switch]$LatchOuter, [int]$ExpiryMinutes = 2, [object]$Marker = $false)
+                InModuleScope $script:moduleName -Parameters @{
+                    Supersede = [bool]$Supersede; LatchOuter = [bool]$LatchOuter; ExpiryMinutes = $ExpiryMinutes; Marker = $Marker
+                } {
+                    param($Supersede, $LatchOuter, $ExpiryMinutes, $Marker)
+                    # A fresh interactive session for tenant A on every probe: a probe switches the state.
+                    $script:_OERAuthState = @{
+                        TenantId         = '44444444-4444-4444-4444-444444444444'
+                        AuthMethod       = 'Interactive'
+                        ClientId         = ''
+                        Environment      = 'Global'
+                        Account          = 'admin@contoso.com'
+                        GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes($ExpiryMinutes)
+                        ArmToken         = $null
+                        ArmTokenExpiry   = $null
+                        ArmResourceUrl   = $null
+                        ClaimsSatisfied  = $false
+                    }
+                    $script:_OERSessionUncertain = $Marker
+                    $Holder = @{ Caught = $null; Nested = $null; OuterRefusal = $null; MarkerBefore = $Marker }
+                    function Invoke-NestedCommand {
+                        [CmdletBinding()]
+                        param()
+                        $Holder.Nested = $MyInvocation
+                        Initialize-OERAuth
+                    }
+                    function Invoke-OuterCommand {
+                        [CmdletBinding()]
+                        param([bool]$Supersede, [bool]$Latch)
+                        Register-OERSignInIdentity -Invocation $MyInvocation
+                        if ($Latch) {
+                            if ($null -eq $script:_OERSignInLatch) {
+                                $script:_OERSignInLatch = [System.Runtime.CompilerServices.ConditionalWeakTable[object, object]]::new()
+                            }
+                            $script:_OERSignInLatch.AddOrUpdate($MyInvocation, $true)
+                        }
+                        if ($Supersede) {
+                            # What a later pipeline command's sign-in does to the state.
+                            $script:_OERAuthState.TenantId = '55555555-5555-5555-5555-555555555555'
+                        }
+                        try { Invoke-NestedCommand } catch { $Holder.Caught = $PSItem }
+                        $Holder.OuterRefusal = Get-OERSignInRefusal
+                    }
+                    Invoke-OuterCommand -Supersede $Supersede -Latch $LatchOuter
+                    $Value = $null
+                    $Holder.NestedLatched = $null -ne $script:_OERSignInLatch -and
+                        $script:_OERSignInLatch.TryGetValue($Holder.Nested, [ref]$Value)
+                    $Holder.NestedRemembered = $null -ne $script:_OERSignInIdentity -and
+                        $script:_OERSignInIdentity.TryGetValue($Holder.Nested, [ref]$Value)
+                    $Holder.MarkerAfter = $script:_OERSessionUncertain
+                    $Holder
+                }
+            }
+        }
+
+        It 'refuses with SignInSuperseded naming the outer command, before Get-AzToken and Connect-MgGraph, when a command outside its caller remembers another identity' {
+            $R = Invoke-NestedUnderSupersededProbe -Supersede
+
+            # The token call and the connection first: a nested sign-in that got past the check would
+            # make both.
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 0 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 0 -Exactly
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'SignInSuperseded,Initialize-OERAuth'
+            $R.Caught.CategoryInfo.Category | Should -Be 'AuthenticationError'
+            $R.Caught.TargetObject | Should -BeExactly 'Invoke-OuterCommand'
+            $R.Caught.Exception.Message | Should -Match 'Invoke-OuterCommand'
+
+            # Not vacuous: the same nested sign-in under an outer command that remembers the identity
+            # the state carries renews the token.
+            $Control = Invoke-NestedUnderSupersededProbe
+            $Control.Caught | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+        }
+
+        It 'refuses even where the cached return would have answered' {
+            $R = Invoke-NestedUnderSupersededProbe -Supersede -ExpiryMinutes 60
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'SignInSuperseded,Initialize-OERAuth'
+            $R.Caught.TargetObject | Should -BeExactly 'Invoke-OuterCommand'
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 0 -Exactly
+
+            # Not vacuous: with no supersession the same call is answered from the cache, with no token
+            # call, and the nested command releases its latch and remembers its identity.
+            $Control = Invoke-NestedUnderSupersededProbe -ExpiryMinutes 60
+            $Control.Caught | Should -BeNullOrEmpty
+            $Control.NestedLatched | Should -BeFalse
+            $Control.NestedRemembered | Should -BeTrue
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 0 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 0 -Exactly
+        }
+
+        It 'leaves the calling command unlatched and unremembered, and the session-uncertain marker as it was (the check stands before Lock-OERSignIn)' {
+            $Clear = Invoke-NestedUnderSupersededProbe -Supersede -Marker $false
+
+            $Clear.Caught.FullyQualifiedErrorId | Should -BeExactly 'SignInSuperseded,Initialize-OERAuth'
+            $Clear.Nested | Should -BeOfType ([System.Management.Automation.InvocationInfo])
+            $Clear.NestedLatched | Should -BeFalse
+            $Clear.NestedRemembered | Should -BeFalse
+            $Clear.MarkerBefore | Should -BeFalse
+            $Clear.MarkerAfter | Should -BeFalse
+            # The outer command is not latched either: the transports refuse its requests by the
+            # supersession gate, not the latch.
+            $Clear.OuterRefusal | Should -BeNullOrEmpty
+
+            # A marker that was set stays set.
+            $Set = Invoke-NestedUnderSupersededProbe -Supersede -Marker $true
+            $Set.Caught.FullyQualifiedErrorId | Should -BeExactly 'SignInSuperseded,Initialize-OERAuth'
+            $Set.MarkerAfter | Should -BeTrue
+
+            # Not vacuous: a nested sign-in refused for a reason of its own is found latched, and
+            # sets the marker, by the same lookups.
+            $Control = InModuleScope $script:moduleName {
+                $script:_OERSessionUncertain = $false
+                $Holder = @{ Caught = $null }
+                function Invoke-OwnRefusalCommand {
+                    [CmdletBinding()]
+                    param()
+                    try {
+                        Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'ClientSecret' -ClientId '33333333-3333-3333-3333-333333333333'
+                    } catch { $Holder.Caught = $PSItem }
+                    $Holder.Latched = $null -ne (Get-OERSignInRefusal)
+                }
+                Invoke-OwnRefusalCommand
+                $Holder.Marker = $script:_OERSessionUncertain
+                $Holder
+            }
+            $Control.Caught.FullyQualifiedErrorId | Should -BeExactly 'MissingClientSecret,Initialize-OERAuth'
+            $Control.Latched | Should -BeTrue
+            $Control.Marker | Should -BeTrue
+        }
+
+        It 'refuses with SignInRefused (BL-74 first) when the outer command is both latched and superseded' {
+            $R = Invoke-NestedUnderSupersededProbe -Supersede -LatchOuter
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'SignInRefused,Initialize-OERAuth'
+            $R.Caught.TargetObject | Should -BeExactly 'Invoke-OuterCommand'
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 0 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 0 -Exactly
+        }
+
+        It 'does not refuse a nested sign-in under an outer command that remembers the identity the state carries' {
+            $R = Invoke-NestedUnderSupersededProbe -ExpiryMinutes 60
+
+            $R.Caught | Should -BeNullOrEmpty
+            $R.NestedRemembered | Should -BeTrue
+            $R.OuterRefusal | Should -BeNullOrEmpty
+            # A cache hit: no token call and no connection.
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 0 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 0 -Exactly
+        }
+
+        It 'does not refuse a command that was itself superseded: its own frame never counts, it signs in again and its memory is replaced' {
+            $R = InModuleScope $script:moduleName {
+                $script:_OERAuthState = @{
+                    TenantId         = '44444444-4444-4444-4444-444444444444'
+                    AuthMethod       = 'Interactive'
+                    ClientId         = ''
+                    Environment      = 'Global'
+                    Account          = 'admin@contoso.com'
+                    GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(2)
+                    ArmToken         = $null
+                    ArmTokenExpiry   = $null
+                    ArmResourceUrl   = $null
+                    ClaimsSatisfied  = $false
+                }
+                $Holder = @{ Caught = $null }
+                function Invoke-SupersededCaller {
+                    [CmdletBinding()]
+                    param()
+                    Register-OERSignInIdentity -Invocation $MyInvocation
+                    $Before = $null
+                    $null = $script:_OERSignInIdentity.TryGetValue($MyInvocation, [ref]$Before)
+                    # What a later sign-in does to the state: another client.
+                    $script:_OERAuthState.ClientId = '33333333-3333-3333-3333-333333333333'
+                    $Holder.Before = $Before
+                    $Holder.StateBefore = Get-OERSignInIdentity
+                    $Holder.Superseded = Get-OERSignInSupersession
+                    try {
+                        Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'Interactive'
+                    } catch { $Holder.Caught = $PSItem }
+                    $After = $null
+                    $null = $script:_OERSignInIdentity.TryGetValue($MyInvocation, [ref]$After)
+                    $Holder.After = $After
+                    $Holder.Identity = Get-OERSignInIdentity
+                }
+                Invoke-SupersededCaller
+                $Holder
+            }
+
+            # Not vacuous: before it signs in again, the command IS superseded (the whole-stack read
+            # names it), and its remembered identity is not the state's.
+            $R.Superseded | Should -BeExactly 'Invoke-SupersededCaller'
+            $R.Before | Should -Not -BeExactly $R.StateBefore
+            # Then it signed in as a user of that tenant and its memory was replaced.
+            $R.Caught | Should -BeNullOrEmpty
+            $R.After | Should -BeExactly $R.Identity
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+        }
+    }
+
+    Context 'a sign-in nested in a superseded command, in a script with no try above it (BL-91)' {
+        BeforeAll {
+            . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+            # The real Initialize-OERAuth and the real Get-OERGroup run in a runspace. The outer command
+            # signs in as tenant 6666 (a real success, remembered), the log is emptied, and then the state
+            # is switched to another tenant with the Graph token near expiry -- what a later pipeline
+            # command's sign-in does -- before Get-OERGroup, which signs in again without -TenantId, is
+            # called with no try anywhere above it. Every token, connection and request the module could
+            # make is replaced by a function that logs a line, so an empty log proves nothing was
+            # requested.
+            function script:New-SupersededNoTryScenario {
+                param([string]$Log, [string]$Supersede)
+                [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    $script:_OERAuthState = $null
+    $script:_OERSessionUncertain = $null
+    $script:_OERInteractiveCredential = $null
+    Set-Item -Path function:script:Test-OERHostNonInteractive -Value { $false }
+    Set-Item -Path function:script:Get-AzToken -Value {
+        param($ClientId, $Resource, $Tenant, $Scope, $Interactive, $Force, $CredentialPrecedence, $ErrorAction, $WarningAction)
+        [System.IO.File]::AppendAllText('#LOG#', "TOKEN $Resource`n")
+        [pscustomobject]@{
+            Token     = 'NOT-A-REAL-TOKEN-bl91'
+            ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+            Identity  = 'admin@contoso.com'
+            TenantId  = '66666666-6666-6666-6666-666666666666'
+        }
+    }
+    Set-Item -Path function:script:Get-OERTokenObjectId -Value { '88888888-8888-8888-8888-888888888888' }
+    Set-Item -Path function:script:Connect-MgGraph -Value { [System.IO.File]::AppendAllText('#LOG#', "CONNECT`n") }
+    Set-Item -Path function:script:Get-MgContext -Value {
+        [pscustomobject]@{ AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '11111111-1111-1111-1111-111111111111'; TenantId = '66666666-6666-6666-6666-666666666666'
+            Account = 'admin@contoso.com'; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All') }
+    }
+    Set-Item -Path function:script:Invoke-MgGraphRequest -Value { [System.IO.File]::AppendAllText('#LOG#', "GRAPH`n") }
+    Set-Item -Path function:script:Invoke-WebRequest -Value { [System.IO.File]::AppendAllText('#LOG#', "ARM`n") }
+    Set-Item -Path function:script:Resolve-OERTenantDomain -Value { [System.IO.File]::AppendAllText('#LOG#', "LOOKUP`n"); '66666666-6666-6666-6666-666666666666' }
+    function script:Invoke-OuterCommand {
+        [CmdletBinding()]
+        param([bool]$Supersede)
+        Initialize-OERAuth -TenantId '66666666-6666-6666-6666-666666666666' -AuthMethod 'Interactive'
+        [System.IO.File]::WriteAllText('#LOG#', '')
+        if ($Supersede) {
+            # The identity's tenant term is the tenant the Graph token was issued for, so both move.
+            $script:_OERAuthState.TenantId = '77777777-7777-7777-7777-777777777777'
+            $script:_OERAuthState.TokenTenantId = '77777777-7777-7777-7777-777777777777'
+        }
+        $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(2)
+        Get-OERGroup -Group 'g1' -ErrorAction Continue
+    }
+}
+$All = @(& (Get-Module Omnicit.EntraRBAC) { Invoke-OuterCommand -Supersede $#SUPERSEDE# } 2>&1)
+foreach ($E in $All) { "ERR:$($E.FullyQualifiedErrorId)" }
+# The stubs of a transport name above shadow the tripwire's replacements in this runspace's copy of the
+# module, and the tripwire check after the scenario reads that scope: removed here (the nearest definition,
+# which is the stub), so the check sees the replacements again.
+& (Get-Module Omnicit.EntraRBAC) {
+    foreach ($Name in 'Get-AzToken', 'Connect-MgGraph', 'Invoke-MgGraphRequest', 'Invoke-WebRequest') {
+        Remove-Item -Path ('function:' + $Name) -ErrorAction SilentlyContinue
+    }
+}
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#SUPERSEDE#', $Supersede))
+            }
+        }
+
+        It 'raises SignInSuperseded for the nested sign-in, then for the command''s own request, requests no token, no connection and nothing else, and carries on' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-SupersededNoTryScenario -Log $Log -Supersede 'true')
+
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Output | Where-Object { $_ -like 'ERR:*' }) | Should -Be @(
+                'ERR:SignInSuperseded,Initialize-OERAuth'
+                'ERR:SignInSuperseded,Get-OERGroup'
+            )
+            if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) | Should -BeNullOrEmpty }
+            $Run.Warnings | Should -BeNullOrEmpty
+        }
+
+        It 'is not raised in an unchanged session: the nested sign-in renews the token and the command sends its request' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-SupersededNoTryScenario -Log $Log -Supersede 'false')
+
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Output | Where-Object { $_ -like 'ERR:SignInSuperseded*' }) | Should -BeNullOrEmpty
+            # Not vacuous: the sign-in the refusal above prevents does reach the token call, the
+            # connection and the request here.
+            $Lines = @(Get-Content -LiteralPath $Log)
+            ($Lines -join ',') | Should -Match 'TOKEN'
+            ($Lines -join ',') | Should -Match 'CONNECT'
+            ($Lines -join ',') | Should -Match 'GRAPH'
+        }
+    }
+
     Context 'what the latch table stores' {
         # The keys are the commands' own invocation objects, which carry their bound parameters (a
         # tenant among them); what this checks is that every value is $true, every key is an

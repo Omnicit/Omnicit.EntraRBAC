@@ -104,6 +104,13 @@ function Initialize-OERAuth {
     a refused command calls never reaches a sign-in prompt. The caller's own latched frame, from an
     earlier refused sign-in in the same invocation, does not count, so that command may sign in again.
 
+    The same holds for a command whose sign-in another command has since replaced: when a command on
+    the call stack outside the command that called this function remembers another identity than the
+    module's state now carries (Get-OERSignInSupersession -OutsideCaller), it raises a terminating
+    SignInSuperseded naming that command, directly after the BL-74 check and before the latch, any
+    token call or Connect-MgGraph (BL-91). The caller's own remembered identity does not count: it may
+    sign in again, and its memory is replaced on success.
+
     Every other entry then latches the command that called this function (Lock-OERSignIn), and only a
     success releases it (Unlock-OERSignIn): the cached return, or a new connection that went the whole
     way. Every refusal, terminating error and early return -- ArmTokenAcquisitionFailed's included,
@@ -130,7 +137,7 @@ function Initialize-OERAuth {
     A sign-in that does not succeed also leaves the session uncertain (A10, BL-89): the module's session
     is still the one an earlier sign-in left -- the previous tenant's, or none -- and outside any try the
     script carries on, so a command that names no tenant would act on that previous tenant. Every entry
-    past the BL-74 check therefore marks the session uncertain (Set-OERSessionUncertain), directly after
+    past the BL-74 and BL-91 checks therefore marks the session uncertain (Set-OERSessionUncertain), directly after
     it latches its caller, and a success clears the marker when the sign-in named its tenant -- a
     -TenantId other than 'organizations', and not a transport's own refresh (-ForceRefresh or
     -ClaimsChallenge) -- or was Connect-OER's (-ReclaimGraphSession); any other success puts back the
@@ -287,14 +294,31 @@ function Initialize-OERAuth {
         return
     }
 
-    # SEC (A19): the sign-in latch. Set directly after the BL-74 check above, for the command that
-    # called this function, and released only where a sign-in succeeded: at the cached return below,
-    # and as the last statement of a new connection that went the whole way -- after the ARM step,
-    # inside the big try and never in its finally. Every refusal, terminating error and early return
-    # leaves it set, ArmTokenAcquisitionFailed's early return included, although the Graph session is
-    # connected by then, so that command's Graph calls are refused as well as its ARM calls. The BL-74
-    # refusal above is the one exception: it comes before this latch, so it latches nothing of its own
-    # -- the latched outer command it found already refuses the caller's requests. A terminating error
+    # SEC (BL-91): a sign-in under a command whose sign-in another command has since replaced is
+    # refused here, directly after the BL-74 check and before anything else. That command carries on
+    # past the supersession, and the cmdlets it calls sign in again without -TenantId, inherit the
+    # session the later command switched and, near the cached token's expiry, would reach Get-AzToken
+    # -- an interactive or device code prompt -- or Connect-MgGraph for a command whose requests the
+    # transports refuse with SignInSuperseded. Only a frame OUTSIDE the calling command counts
+    # (Get-OERSignInSupersession -OutsideCaller): the caller's own remembered identity may differ from
+    # the state's, and it may sign in again -- its memory is replaced on success. Placed before
+    # Lock-OERSignIn, so the refusal latches nothing of its own and leaves the marker as it was. No
+    # token call, no Connect-MgGraph. Not covered: an upstream command's begin has finished when a
+    # downstream begin signs in, so its frame is on no call stack (known limit).
+    $OuterSuperseded = Get-OERSignInSupersession -OutsideCaller
+    if ($OuterSuperseded) {
+        Write-CmdletError -ErrorRecord (New-OERSignInSupersededError -Command $OuterSuperseded) -Cmdlet $PSCmdlet -Terminating
+        return
+    }
+
+    # SEC (A19): the sign-in latch. Set directly after the BL-74 and BL-91 checks above, for the
+    # command that called this function, and released only where a sign-in succeeded: at the cached
+    # return below, and as the last statement of a new connection that went the whole way -- after the
+    # ARM step, inside the big try and never in its finally. Every refusal, terminating error and early
+    # return leaves it set, ArmTokenAcquisitionFailed's early return included, although the Graph
+    # session is connected by then, so that command's Graph calls are refused as well as its ARM calls.
+    # The BL-74 and BL-91 refusals above are the exceptions: they come before this latch, so they latch
+    # nothing of their own -- the outer command they found already has its requests refused. A terminating error
     # ends this function but not the command that called it: outside any try that command carries on
     # with its next statement (see the SEC (A18) comment below), so a command whose sign-in for tenant
     # B failed or was refused would otherwise send its Graph and ARM calls under the session tenant A
@@ -350,7 +374,7 @@ function Initialize-OERAuth {
     #
     # SEC (A10, BL-89): the session-uncertain marker, set as the statement directly after the latch, so
     # every refusal from here on -- ArmTokenAcquisitionFailed's early return and GraphSessionChanged
-    # included -- leaves the session uncertain, while the BL-74 refusal above, for a sign-in never
+    # included -- leaves the session uncertain, while the BL-74 and BL-91 refusals above, for a sign-in never
     # attempted, leaves the marker as it was. $SessionWasUncertain keeps what the marker said before this
     # entry: the refusal below the GraphSessionChanged one reads it, and the two success ends put it back
     # unless this sign-in clears it ($ClearsUncertainty). Set-OERSessionUncertain is the marker's single
