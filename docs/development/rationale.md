@@ -9527,7 +9527,13 @@ What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule
   order such a list anywhere else. Its LINQ calls take their generic arguments by INFERENCE and never
   write them out: an explicit type argument on a generic method call is PowerShell 7.3 syntax, a parse
   error under the module's 7.2 floor that fails the whole merged module, and CI runs a current
-  PowerShell only, so nothing but the helper's own test (an AST check of its file) would show it.
+  PowerShell only, so nothing but the helper's own test would show it. That test is an AST check of
+  every `.ps1` under `source/` (Sprint 11 step 15, BL-157: it first read the helper's own file only,
+  and the same 7.3 syntax in any other file would have failed the merged module just as hard). It
+  asserts it read as many files as the tree holds, and more than a hundred, so a scan that lost its
+  tree cannot pass; a refused parse counts as a finding too. The rest of the 7.2 floor point -- CI
+  runs one current PowerShell only, so nothing runs the module on 7.2 -- is closed by reference to
+  GitHub issue #66, which raises the floor.
   `Why: docs/development/rationale.md#export-group-selection`
 
 - **`Read-OERGroupCollection` is the single owner of the three per-group collection reads

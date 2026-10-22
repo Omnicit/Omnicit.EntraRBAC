@@ -5975,7 +5975,7 @@ Describe 'Get-OERInventory' {
             # the data loss the SilentlyContinue + -ErrorVariable shape exists to prevent.
             Mock -ModuleName $script:moduleName Get-OERGroup {
                 param($Filter, $IncludeMembers, $IncludeOwners, $IncludePimEligibility, $ErrorAction)
-                $Ea = if ($ErrorAction) { $ErrorAction } else { 'Continue' }
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
                 Write-Error -Message 'members read failed' -ErrorId 'GroupMemberReadFailed' `
                     -Category LimitsExceeded -ErrorAction $Ea
                 [PSCustomObject]@{
@@ -6495,7 +6495,7 @@ Describe 'Get-OERInventory' {
             # and the units after it are lost, which is what the AU read must no longer do.
             Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
                 param($IncludeMembers, $IncludeScopedRoles, $ErrorAction)
-                $Ea = if ($ErrorAction) { $ErrorAction } else { 'Continue' }
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
                 Write-Error -Message 'scoped role read failed' -ErrorId 'AdministrativeUnitScopedRoleReadFailed' `
                     -Category LimitsExceeded -ErrorAction $Ea
                 [PSCustomObject]@{
@@ -7523,6 +7523,30 @@ Describe 'Get-OERInventory' {
                 }).Count | Should -Be 1 -Because 'the retained arm republishes the record under its own id'
             @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count |
                 Should -Be 0 -Because 'a filter that names no catalog is a fact about the filter, not an unread collection'
+        }
+
+        It 'republishes the module''s own AmbiguousCatalogName answer for a -Catalog name two catalogs carry as itself and reports nothing as unread' {
+            # The second clause of the same catch: a name that more than one catalog carries is refused by
+            # Get-OERCatalog with AmbiguousCatalogName, a fact about the caller's own filter. The record
+            # is republished as itself (positive reached-check) and no collection is named unread.
+            Mock -ModuleName $script:moduleName Get-OERCatalog {
+                [CmdletBinding()] param($Id, $DisplayName)
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("More than one catalog is named '$DisplayName'."), 'AmbiguousCatalogName',
+                        [System.Management.Automation.ErrorCategory]::InvalidArgument, $DisplayName))
+            }
+            $Inv = Get-OERInventory -Include Catalogs, AccessPackages -Catalog 'CAT-IT-Core' -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalog -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'CAT-IT-Core' }
+            @($Inv.Catalogs).Count | Should -Be 0
+            @($Inv.AccessPackages).Count | Should -Be 0
+            # The promoted record is copied into -ErrorVariable once per mock layer, so the count is taken
+            # on the record Get-OERInventory itself published.
+            @(@($InvErr) | Where-Object {
+                    $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like 'AmbiguousCatalogName*' -and
+                    $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory'
+                }).Count | Should -Be 1 -Because 'the retained arm republishes the record under its own id'
+            @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count |
+                Should -Be 0 -Because 'a name that two catalogs carry is a fact about the filter, not an unread collection'
         }
 
         It 'counts a by-id <Code> on the -Catalog filter as unread, no longer as a missing catalog (Sprint 11 step 10, BL-21, R-13)' -ForEach @(

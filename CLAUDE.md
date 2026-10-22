@@ -1023,7 +1023,8 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   in:** a group's `members`, `owners`, `eligibility` and an administrative unit's `members`.
   `Get-OERInventoryGroup` orders the three group lists, `Get-OERInventory` the unit members; never
   order such a list elsewhere. Its LINQ calls take generic arguments by INFERENCE, never written out;
-  nothing but the helper's own test (an AST check of its file) would show a written one.
+  nothing but the helper's own test (an AST check of every `.ps1` under `source/`) would show a
+  written one.
   `Why: docs/development/rationale.md#export-group-selection`
 - **`Read-OERGroupCollection` is the single owner of the three per-group collection reads
   `Get-OERGroup` attaches and the inventory's group reader uses** (members, owners, PIM eligibility)

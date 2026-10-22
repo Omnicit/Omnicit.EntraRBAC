@@ -1300,7 +1300,7 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
                 # nothing about the single condition this guard rests on.
                 Mock Get-OERAdministrativeUnit {
                     param($Id, $AdministrativeUnit, $IncludeMembers, $IncludeScopedRoles, $TenantId, $ErrorAction)
-                    $Ea = if ($ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
+                    $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
                     Write-Error -Message "Could not read members for administrative unit $Id. The Members property is omitted rather than reported as empty." -ErrorId 'AdministrativeUnitMemberReadFailed' -Category LimitsExceeded -TargetObject $Id -ErrorAction $Ea
                     [PSCustomObject]@{ Id = 'au-1'; DisplayName = 'AU-IT'; Description = $null; MembershipType = 'Assigned'; Visibility = $null }
                 }
@@ -1364,7 +1364,7 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
                 # single condition under test.
                 Mock Get-OERAdministrativeUnit {
                     param($Id, $AdministrativeUnit, $IncludeMembers, $IncludeScopedRoles, $TenantId, $ErrorAction)
-                    $Ea = if ($ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
+                    $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
                     if ($IncludeScopedRoles) {
                         Write-Error -Message "Could not read scoped roles for administrative unit $Id." -ErrorId 'AdministrativeUnitScopedRoleReadFailed' -Category PermissionDenied -TargetObject $Id -ErrorAction $Ea
                         return

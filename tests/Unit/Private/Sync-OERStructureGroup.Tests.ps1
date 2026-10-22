@@ -2049,7 +2049,7 @@ $Item = '{ "displayName": "grp-luo", "owners": [ "person2@example.com" ] }' | Co
                 # really does inherit the caller's suppression the way the real one does.
                 Mock Get-OERGroup {
                     param($Id, $Group, $IncludeMembers, $IncludeOwners, $IncludePimEligibility, $TenantId, $ErrorAction)
-                    $Ea = if ($ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
+                    $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
                     Write-Error -Message "Could not read members for group $Id. The Members property is omitted rather than reported as empty." -ErrorId 'GroupMemberReadFailed' -Category LimitsExceeded -TargetObject $Id -ErrorAction $Ea
                     [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null; GroupType = 'Assigned'; IsAssignableToRole = $false }
                 }
@@ -2119,7 +2119,7 @@ $Item = '{ "displayName": "grp-luo", "owners": [ "person2@example.com" ] }' | Co
                 # the mock keys off $IncludePimEligibility and not off anything else.
                 Mock Get-OERGroup {
                     param($Id, $Group, $IncludeMembers, $IncludeOwners, $IncludePimEligibility, $TenantId, $ErrorAction)
-                    $Ea = if ($ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
+                    $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
                     if ($IncludePimEligibility) {
                         Write-Error -Message "Could not read PIM eligibility for group $Id." -ErrorId 'GroupPimEligibilityReadFailed' -Category PermissionDenied -TargetObject $Id -ErrorAction $Ea
                         return
@@ -2169,7 +2169,7 @@ $Item = '{ "displayName": "grp-luo", "owners": [ "person2@example.com" ] }' | Co
                 # pass whether or not the call site pins -ErrorAction Stop and would prove nothing.
                 Mock Get-OERGroup {
                     param($Id, $Group, $IncludeMembers, $IncludeOwners, $IncludePimEligibility, $TenantId, $ErrorAction)
-                    $Ea = if ($ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
+                    $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
                     if ($IncludePimEligibility) {
                         Write-Error -Message "Could not read PIM eligibility for group $Id." -ErrorId 'GroupPimEligibilityReadFailed' -Category PermissionDenied -TargetObject $Id -ErrorAction $Ea
                         return

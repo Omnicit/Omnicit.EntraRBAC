@@ -2420,7 +2420,7 @@ Describe 'Sync-OERStructureAccessPackage' {
                 # does inherit the suppression it used to ask for.
                 Mock Get-OERAccessPackageAssignmentPolicy {
                     param($AccessPackage, $ErrorAction)
-                    $Ea = if ($ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
+                    $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
                     Write-Error -Message "The assignment policies of access package '$AccessPackage' could not be read." -ErrorId 'AssignmentPolicyReadFailed' -Category PermissionDenied -TargetObject $AccessPackage -ErrorAction $Ea
                 }
                 Mock New-OERAccessPackageAssignmentPolicy { }
@@ -2475,7 +2475,7 @@ Describe 'Sync-OERStructureAccessPackage' {
                 # nothing.
                 Mock Get-OERCatalogResource {
                     param($Catalog, $IncludeRoles, $TenantId, $ErrorAction)
-                    $Ea = if ($ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
+                    $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
                     Write-Error -Message "The resources of catalog '$Catalog' could not be read." -ErrorId 'CatalogResourceReadFailed' -Category PermissionDenied -TargetObject $Catalog -ErrorAction $Ea
                 }
                 # The fallback the reverted code takes: it must not rescue the run either.
@@ -2589,7 +2589,7 @@ Describe 'Sync-OERStructureAccessPackage' {
                 # that removing the count gate really does reproduce the regression.
                 Mock Get-OERCatalogResource {
                     param($Catalog, $IncludeRoles, $TenantId, $ErrorAction)
-                    $Ea = if ($ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
+                    $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
                     Write-Error -Message "The resources of catalog '$Catalog' could not be read." -ErrorId 'CatalogResourceReadFailed' -Category PermissionDenied -TargetObject $Catalog -ErrorAction $Ea
                 }
                 Mock Remove-OERAccessPackageResourceRole { }
