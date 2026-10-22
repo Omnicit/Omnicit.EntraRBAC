@@ -516,15 +516,18 @@ session inherits nothing and signs in again, so README.md's "Name the tenant exp
 consistently" and the about topic's equivalent under SOVEREIGN CLOUDS stand.
 
 **A renewal never continues as another account** (BL-119). The identity's fifth term is the account
-(`SignInAccountId`). A renewal whose Microsoft Graph or Azure Resource Manager token carries an oid
-(`Get-OERTokenObjectId`) that differs from the session's `SignedInObjectId`, both GUIDs, is refused for
-its caller with `SignInSuperseded` (`-AccountChanged`) before `Connect-MgGraph` (a Graph token) or
-before it is cached (an ARM token): the session stays the old account's, so no later command, with or
-without `-TenantId`, runs as the other account; only `Connect-OER` (`-ReclaimGraphSession`, never
-refused by it) signs in as another account. The marker is set as after every refusal, but it is not
-what keeps the session: a command that names its tenant is never refused by it. A token without oid
-never refuses anything, and on a renewal never replaces `SignedInObjectId`. Never let a renewal make the session another account's;
-never key the account on a name or the UPN.
+(`SignInAccountId`). A renewal, or a sign-in of the session's tenant, application and method named
+by another label, whose Microsoft Graph or Azure Resource Manager token carries an oid
+(`Get-OERTokenObjectId`) that differs from the session's `SignedInObjectId`, both GUIDs, is refused
+for its caller with `SignInSuperseded` (`-AccountChanged`) before `Connect-MgGraph` (a Graph token)
+or before it is cached (an ARM token): the session stays the old account's, so no later command,
+with or without `-TenantId`, runs as the other account (`$ContinuesSession` decides it; a token whose
+tenant is not a tenant ID is not compared on another label); only `Connect-OER`
+(`-ReclaimGraphSession`, never refused by it) signs in as another account. The marker is set as
+after every refusal, but it is not what keeps the session: a command that names its tenant is never
+refused by it. A token without oid never refuses anything, and on either never replaces
+`SignedInObjectId`. Never let a renewal make the session another account's; never key the account
+on a name or the UPN.
 `Why: docs/development/rationale.md#a-renewal-never-continues-as-another-account`
 
 The order is fixed: Graph wrapper session gate, latch gate, supersession gate; ARM wrapper latch

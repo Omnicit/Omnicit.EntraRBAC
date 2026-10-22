@@ -57,9 +57,12 @@ function Connect-OER {
     bound. So an
     interactive long run can still ask you to sign in (choose the account the session signed in
     with; the account picker also offers other accounts of the same tenant, but a renewal answered
-    by another account is refused with SignInSuperseded for the command that asked for it: the
+    by another account is refused with SignInSuperseded for the command that asked for it, and so is
+    a sign-in naming the session's tenant by another label (a domain or its tenant ID) with the
+    session's own application, method and cloud: the
     token is not used and the session stays the account it was, so a later command, with or without
-    -TenantId, never runs as the other account: it uses the session's token or renews again, and a
+    -TenantId, never runs as the other account (a token whose tenant is not a tenant ID is not
+    compared on another label): it uses the session's token or renews again, and a
     command that names no tenant is refused until Connect-OER or a command that names its tenant
     signs in; run Connect-OER -Force to sign in as another account; Connect-OER itself, which signs
     in deliberately, may sign in as another account), and a device code

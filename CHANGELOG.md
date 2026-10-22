@@ -43,7 +43,7 @@ A `-TenantId` no longer lets a command continue under another identity's session
 `Invoke-OERStructure` and the access package and review stage builders refuse a call when another
 application or account replaced the tenant's session, and a cmdlet that a replaced command calls is
 refused before it requests a token. A renewal answered by another account is refused with
-`SignInSuperseded` and its token is not used: the session stays the first account until
+`SignInSuperseded` and its token is not used: the session stays the account it was until
 `Connect-OER`.
 
 ## [1.3.0] - 2026-10-19

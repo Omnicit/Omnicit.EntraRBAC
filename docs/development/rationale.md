@@ -5776,13 +5776,19 @@ tenant label, method, client and cloud (`$ArmIdentityUnchanged`) and the call is
 state's `-AuthMethod` explicitly, so `$InheritIdentity` is `$false` for it, and it is a renewal all
 the same. A renewal carries the account over from the old state; any other sign-in sets it to the new
 token's oid when that is a GUID, else `$null`. A renewal that is accepted has, by construction, the
-same account as the session, so the term never moves on a renewal. `SignedInObjectId` keeps its
-meaning, the oid of the last token (the prune's self-protection reads it).
+same account as the session, so the term never moves on a renewal. `SignedInObjectId` stays the oid
+of the signed-in identity, read by the prune's self-protection, but on a renewal (or the continuation
+of D4 below) whose token carries no oid it is no longer the last token's: it keeps the session's
+value (D2). The trade-off of that, for the directory-role prune (`Get-OERSignedInObjectId` in
+`Sync-OERStructureDirectoryRoleAssignment`): after such a renewal the prune protects the carried
+account's assignments, where it used to be withheld (`$null`) and so protected nothing; the carried
+account is the one the renewal proved, or could not disprove, to be the session's.
 
 **The refusal of the Graph token (D1).** In the Graph branch, after `TenantMismatch` and before
 `Connect-MgGraph`, `Initialize-OERAuth` reads the oid of the new token once (`Get-OERTokenObjectId`)
-and decides `$AccountChanged` as a renewal whose new oid and the state's `SignedInObjectId` are both
-GUIDs and differ, each term on its own line. It then refuses its caller with a terminating
+and decides `$AccountChanged` as a sign-in that continues the session (`$ContinuesSession`: a renewal,
+or the D4 case below) whose new oid and the state's `SignedInObjectId` are both GUIDs and differ, each
+term on its own line. It then refuses its caller with a terminating
 `SignInSuperseded` (`New-OERSignInSupersededError -AccountChanged`, naming the caller) right there:
 before `Connect-MgGraph`, before the state is rebuilt and before the ARM step. The new token is not
 used, and the session stays the account it was: the state, the Graph SDK session (no
@@ -5826,9 +5832,37 @@ for it, only its `-AccountChanged` switch, which only `Initialize-OERAuth` passe
 snapshot exception of `Invoke-OERStructure` (see
 [A command acts under the session it began with](#a-command-acts-under-the-session-it-began-with)).
 
+**A sign-in that names the session's tenant by another label (D4, final review of step 13b).** The
+refusal first read `$RenewsSession`, which needs the same tenant LABEL. The final review found that a
+later command naming the session's tenant by another label -- its tenant ID against a domain, or ANY
+`-TenantId` after a sign-in that named none (label `organizations`, which is what a bare
+`Connect-OER` or a command run without `-TenantId` leaves) -- is a new sign-in for the cache, so when
+the picker was answered by the other account it was accepted, cleared the marker and made the session
+the other account's without `Connect-OER`: the case this section exists to refuse, by the usual
+interactive session. D4 closes it in code. After the Graph token's tenant is known,
+`$ContinuesSession` is decided as `$RenewsSession`, or (a state exists, the call is not `Connect-OER`'s,
+and the session's method, client and cloud equal the sign-in's, and the new token's tenant is a GUID
+equal to the session's `TokenTenantId`), each term on its own line. The account check (`$AccountChanged`),
+the carry-over of `SignedInObjectId` (D2) and of `SignInAccountId` read `$ContinuesSession`; the ARM
+check reads it too when this call acquired the Graph token, and `$RenewsSession` when only the ARM
+token was acquired (a cached Graph token means the label already matched). `$RenewsSession`, the
+silent-renewal predicates and every cache predicate are unchanged, and the refusal stays before
+`Connect-MgGraph`. The tenant is the same tenant and the application and method are the session's, so
+the token continues the session; another account there is the case BL-119 refuses, and a deliberate
+switch of account goes through `Connect-OER`. The false-refusal controls, each a test: a sign-in for
+ANOTHER tenant (a tenant switch), with another `-ClientId`, in another cloud or with another method,
+and `Connect-OER` itself (`-ReclaimGraphSession`) with the other label, all answered by another
+account, are accepted. The sign-in method is compared as the sign-in resolves it: a command that names
+another tenant label inherits nothing, so a bare command after a device code session labelled
+`organizations` signs in as `Interactive` and is another method, not a continuation. If wrong: an
+operator in session A who names the same tenant by another label and deliberately picks account B is
+refused and must run `Connect-OER`, the safer direction.
+
 **The ARM token of a renewal.** In the ARM step, after the two tenant checks and before the token is
-cached, a renewal whose ARM token has an oid that is a GUID differing from the state's
-`SignedInObjectId` (a GUID) is refused with the same terminating `SignInSuperseded -AccountChanged`,
+cached, a renewal (or a D4 continuation whose Graph token this call acquired, which the same call has
+just recorded as the state's account) whose ARM token has an oid that is a GUID differing from the
+state's `SignedInObjectId` (a GUID) is refused with the same terminating `SignInSuperseded
+-AccountChanged`,
 with the same effects: the token is not cached, the state is left as it is, the caller stays latched
 and the marker stays set. The ARM request of a renewal opens the same account picker as the Graph
 one, so it is held to the same rule. A Graph token of the session's own account that is cached before
@@ -5836,8 +5870,9 @@ an ARM token of another account is refused remains the session's: the Graph half
 already been accepted, which is the same state any other refused ARM step leaves.
 
 **A token without an oid (D2).** A token without an oid, on either side, proves nothing and never
-refuses. On a renewal it also never replaces the session's `SignedInObjectId`: the old value is
-carried over, so the next renewal is still compared with the known account. The first design left
+refuses. On a renewal (or a D4 continuation) it also never replaces the session's `SignedInObjectId`:
+the old value is carried over, so the next renewal is still compared with the known account. The
+first design left
 `SignedInObjectId` empty after such a renewal (A31's second point: a renewal without an oid
 overwrote `SignedInObjectId` with null), so a LATER renewal as another account was no longer
 refused; that is closed. Any other sign-in (a first sign-in, a switch of
@@ -5854,12 +5889,16 @@ wins first, and the other texts are byte-identical.
 
 **What it does not do.** Each of these is a stated limit.
 
-- It guards the RENEWAL. A first sign-in, or a `Connect-OER`, whose Azure Resource Manager prompt is
+- It guards the RENEWAL and the D4 continuation. A first sign-in, or a `Connect-OER`, whose Azure Resource Manager prompt is
   answered by another account than its Graph prompt is not compared (BL-163, open).
-- A sign-in that names the session's tenant by another label (a domain against a GUID, say) is not a
-  renewal, since the session cache is keyed on the tenant as named: another account answering it is
-  not refused, and the session becomes that account's as for any new sign-in. The outer frames that
-  remember the old account are then refused, since the identity moves.
+- What D4 still does not cover. A token whose tenant is not a tenant ID (AzAuth reports none, or a
+  name) is not compared on another label, since nothing proves it is the session's tenant: another
+  account answering it is accepted and the session becomes that account's, as for any new sign-in,
+  and the outer frames that remember the old account are then refused, since the identity moves. A
+  sign-in with another method, client or cloud is a different session and is not compared either; so
+  is a bare command after a session whose method is not `Interactive`, since a command that names
+  another tenant label inherits nothing and signs in as `Interactive`. Both are decided by the
+  sign-in as the module resolves it, not by what the operator meant.
 - The refusal names the function that called `Initialize-OERAuth`. For a transport's own refresh
   (`Invoke-GraphSingle`, `Invoke-ArmCallWithRefresh`) that is the transport's function, not the
   public command whose request was rejected (read in the code). A transport's forced refresh is a
@@ -5879,7 +5918,12 @@ refused by the marker; `Connect-OER` making the session the other account's. The
 NOT refuse: the same account, a token without an oid (and the next renewal still compared with the
 known account), a session without one, a method switch, a first sign-in, and a nested sign-in under an
 unchanged session; the ARM cases; and a runspace with no `try` above a real `Get-OERGroup`, for the
-refusal, the later command and the control.
+refusal, the later command and the control. The Context for D4 holds the other-label cases: a tenant
+ID after a sign-in that named none, and a domain after a tenant ID, each refused when the other
+account answers (state unchanged, no second `Connect-MgGraph`) and succeeding when the session's own
+account does; the carry-over of the account and the oid over a token without an oid; the ARM token of
+such a sign-in refused and not cached; the false-refusal controls (another tenant, client, cloud or
+method, `Connect-OER`, a token tenant that is not a tenant ID); and the runspace with no `try`.
 `Get-OERSignInIdentity.Tests.ps1` pins the fifth term and `New-OERSignInSupersededError.Tests.ps1`
 the account text. `Invoke-OERStructure.Tests.ps1` (Context `a sign-in refused for an account change
 leaves the session as it was, and the next document is compared with it`) pipes two documents with

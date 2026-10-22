@@ -792,23 +792,32 @@ LONG RUNS
 
     A renewal never continues as another account. The module compares the
     object id of the account a renewed Microsoft Graph token belongs to with
-    the account of the session it renews. When the two differ -- you picked
-    another account in the picker -- the command that asked for the renewal
-    is refused with SignInSuperseded and the token is not used. The session
-    stays the account it was, so no later command runs as the account you
-    picked by mistake: a command that names its tenant with -TenantId uses
-    the session's own token or renews again, and the picker opens again
-    until you choose the account the session signed in with, while a command
-    that names no tenant is refused with SignInRefused until Connect-OER, or
-    a command that names its tenant, signs in. To sign in as the other
-    account on purpose, run Connect-OER -Force, which always opens the
-    account picker and takes the session as the account you choose (a bare
+    the account of the session it renews. The same holds for a sign-in that
+    continues the session under another label of its tenant: the session's
+    own application, sign-in method and cloud, and a token issued for the
+    tenant the session's token was, however the command named it (a tenant
+    ID against a domain, or a tenant named after a sign-in that named none:
+    a bare Connect-OER, or any command run without -TenantId, labels the
+    session organizations). When the two accounts differ -- you picked
+    another account in the picker -- the command that asked is refused with
+    SignInSuperseded and the token is not used. The session stays the
+    account it was, so no later command runs as the account you picked by
+    mistake: a command that names its tenant with -TenantId uses the
+    session's own token or renews again, and the picker opens again until
+    you choose the account the session signed in with, while a command that
+    names no tenant is refused with SignInRefused until Connect-OER, or a
+    command that names its tenant, signs in. To sign in as the other account
+    on purpose, run Connect-OER -Force, which always opens the account
+    picker and takes the session as the account you choose (a bare
     Connect-OER signs in again unless the session's token is still valid, so
     only -Force is sure to open the picker). A renewed Azure Resource
     Manager token for another account is refused the same way, for the
     command that asked for it, and is not kept. A token that carries no
-    object id never causes a refusal, and neither does a first sign-in or
-    Connect-OER: this guards the renewal only.
+    object id never causes a refusal, a token whose tenant is not a tenant
+    ID is not compared when the tenant is named by another label, and a
+    first sign-in, a sign-in for another tenant, application, method or
+    cloud, and Connect-OER are never refused: this guards the renewal and
+    the sign-in that continues the session.
 
     The silent renewal of an interactive session. From AzAuth 2.11.0 the
     module asks Get-AzToken to renew an interactive session without
