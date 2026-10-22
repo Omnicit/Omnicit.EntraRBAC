@@ -90,6 +90,137 @@ Describe 'Test-OERHostNonInteractive (BL-100)' {
     }
 }
 
+Describe 'Test-OERHostNonInteractive answers $false when the reflection fails (BL-100)' {
+    BeforeAll {
+        # A host that calls itself 'ConsoleHost', so the helper gets past its host name check and into the
+        # reflection, but whose user interface is not ConsoleHostUserInterface: it has no
+        # _throwOnReadAndPrompt field, and with ThrowOnUi set its UI getter throws. Both are the "any step of
+        # the reflection fails" path of the helper's help, which must answer $false ("not proven") and write
+        # no error record. ThrowOnUi is set only after the runspace is open, since opening it reads the UI.
+        class OERNamedConsoleHostUI : System.Management.Automation.Host.PSHostUserInterface {
+            [System.Management.Automation.Host.PSHostRawUserInterface] get_RawUI() { return $null }
+            [string] ReadLine() { return '' }
+            [System.Security.SecureString] ReadLineAsSecureString() { return $null }
+            [void] Write([string]$Value) { }
+            [void] Write([System.ConsoleColor]$Foreground, [System.ConsoleColor]$Background, [string]$Value) { }
+            [void] WriteLine([string]$Value) { }
+            [void] WriteErrorLine([string]$Value) { }
+            [void] WriteDebugLine([string]$Value) { }
+            [void] WriteVerboseLine([string]$Value) { }
+            [void] WriteWarningLine([string]$Value) { }
+            [void] WriteProgress([long]$SourceId, [System.Management.Automation.ProgressRecord]$Record) { }
+            [System.Collections.Generic.Dictionary[string, psobject]] Prompt(
+                [string]$Caption,
+                [string]$Message,
+                [System.Collections.ObjectModel.Collection[System.Management.Automation.Host.FieldDescription]]$Descriptions) {
+                return $null
+            }
+            [int] PromptForChoice(
+                [string]$Caption,
+                [string]$Message,
+                [System.Collections.ObjectModel.Collection[System.Management.Automation.Host.ChoiceDescription]]$Choices,
+                [int]$DefaultChoice) {
+                return $DefaultChoice
+            }
+            [pscredential] PromptForCredential([string]$Caption, [string]$Message, [string]$UserName, [string]$TargetName) { return $null }
+            [pscredential] PromptForCredential(
+                [string]$Caption,
+                [string]$Message,
+                [string]$UserName,
+                [string]$TargetName,
+                [System.Management.Automation.PSCredentialTypes]$AllowedCredentialTypes,
+                [System.Management.Automation.PSCredentialUIOptions]$Options) {
+                return $null
+            }
+        }
+
+        class OERNamedConsoleHost : System.Management.Automation.Host.PSHost {
+            hidden [OERNamedConsoleHostUI]$HostUi = [OERNamedConsoleHostUI]::new()
+            hidden [guid]$Id = [guid]::NewGuid()
+            [bool]$ThrowOnUi = $false
+
+            [string] get_Name() { return 'ConsoleHost' }
+            [version] get_Version() { return [version]'1.0.0' }
+            [guid] get_InstanceId() { return $this.Id }
+            [System.Management.Automation.Host.PSHostUserInterface] get_UI() {
+                if ($this.ThrowOnUi) { throw 'This host has no user interface to read.' }
+                return $this.HostUi
+            }
+            [System.Globalization.CultureInfo] get_CurrentCulture() { return [System.Globalization.CultureInfo]::InvariantCulture }
+            [System.Globalization.CultureInfo] get_CurrentUICulture() { return [System.Globalization.CultureInfo]::InvariantCulture }
+            [void] EnterNestedPrompt() { }
+            [void] ExitNestedPrompt() { }
+            [void] NotifyBeginApplication() { }
+            [void] NotifyEndApplication() { }
+            [void] SetShouldExit([int]$ExitCode) { }
+        }
+
+        # Runs the helper in a runspace on that host and reports what it answered, whether the reflection
+        # step really fails there (so the answer came from the catch, not from a host name check), how many
+        # records it left in $Error and the runspace's error stream.
+        function script:Invoke-NamedConsoleHostQuestion {
+            param([bool]$ThrowOnUi)
+            $FakeHost = [OERNamedConsoleHost]::new()
+            $Runspace = [runspacefactory]::CreateRunspace($FakeHost)
+            $Runspace.Open()
+            $FakeHost.ThrowOnUi = $ThrowOnUi
+            $Shell = [powershell]::Create()
+            try {
+                Install-OERTransportTripwireInRunspace -Runspace $Runspace
+                $Shell.Runspace = $Runspace
+                $null = $Shell.AddScript({
+                        Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+                        $Instance = [System.Reflection.BindingFlags]'NonPublic,Instance'
+                        $ReflectionFails = try {
+                            $Ui = $Host.GetType().GetProperty('ExternalHost', $Instance).GetValue($Host).UI
+                            $null -eq $Ui.GetType().GetField('_throwOnReadAndPrompt', $Instance)
+                        } catch {
+                            $true
+                        }
+                        $global:Error.Clear()
+                        $Answer = & (Get-Module Omnicit.EntraRBAC) { Test-OERHostNonInteractive }
+                        [PSCustomObject]@{
+                            HostName        = $Host.Name
+                            ReflectionFails = $ReflectionFails
+                            Answer          = $Answer
+                            IsBool          = $Answer -is [bool]
+                            ErrorCount      = $global:Error.Count
+                        }
+                    }.ToString())
+                $Output = @($Shell.Invoke())
+                Test-OERTransportTripwireInRunspace -Runspace $Runspace
+                [PSCustomObject]@{
+                    Result = $Output[-1]
+                    Errors = @($Shell.Streams.Error | ForEach-Object { $_.ToString() })
+                }
+            } finally {
+                $Shell.Dispose()
+                $Runspace.Dispose()
+            }
+        }
+    }
+
+    It 'returns $false and writes no error record when the user interface has no _throwOnReadAndPrompt field' {
+        $Run = Invoke-NamedConsoleHostQuestion -ThrowOnUi $false
+        $Run.Result.HostName | Should -BeExactly 'ConsoleHost'
+        $Run.Result.ReflectionFails | Should -BeTrue
+        $Run.Result.IsBool | Should -BeTrue
+        $Run.Result.Answer | Should -BeFalse
+        $Run.Result.ErrorCount | Should -Be 0
+        $Run.Errors | Should -BeNullOrEmpty
+    }
+
+    It 'returns $false and writes no error record when reading the user interface throws' {
+        $Run = Invoke-NamedConsoleHostQuestion -ThrowOnUi $true
+        $Run.Result.HostName | Should -BeExactly 'ConsoleHost'
+        $Run.Result.ReflectionFails | Should -BeTrue
+        $Run.Result.IsBool | Should -BeTrue
+        $Run.Result.Answer | Should -BeFalse
+        $Run.Result.ErrorCount | Should -Be 0
+        $Run.Errors | Should -BeNullOrEmpty
+    }
+}
+
 Describe 'Test-OERHostNonInteractive is the single owner of the host question (BL-100)' {
     It 'is the only file under source that names _throwOnReadAndPrompt' {
         $SourceRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../../source')).Path
