@@ -8,12 +8,14 @@ function New-OERSignInSupersededError {
     request made while a command on the call stack remembers another sign-in identity than the module's
     state now carries -- a command Get-OERSignInSupersession finds -- so nothing is sent, while that
     command runs, under a session another OER command in the same pipeline signed in to after it.
-    Invoke-OERStructure raises it too, before it signs in for a document without -TenantId, and so do
+    Invoke-OERStructure raises it too, before it signs in for a document, and so do
     New-OERAccessPackageApprovalStage, New-OERAccessPackageRequestorScope and New-OERAccessReviewStage
-    before their name lookup without -TenantId, when the identity changed after the command's begin
-    block took a snapshot of the session (Checkpoint-OERSignIn), which is why the message says the
-    other sign-in came after the command began, not after it signed in: a command refused there has
-    not signed in at all.
+    before their name lookup -- with -TenantId only where that sign-in would take the session's
+    identity (Test-OERSessionUsable) -- when the identity changed after the command's begin block
+    took a snapshot of the session (Checkpoint-OERSignIn), which is why the message says the other
+    sign-in came after the command began, not after it signed in: a command refused there has not
+    signed in at all. Initialize-OERAuth raises it too, terminating, for a sign-in nested under a
+    superseded command (BL-91) and for a renewal answered by another account (BL-119).
 
     The target is that command's name, and the request it refuses is one made while that command runs,
     which is not always one the command makes itself: it can be the command's own request, a request of
@@ -31,8 +33,8 @@ function New-OERSignInSupersededError {
     to a different tenant or identity after the command began (the module still holds a session);
     a renewal of the module's sign-in returned a token for another account than the one the command
     began with (the state's SignInAccountChanged, or -AccountChanged), and the advice is to run
-    Connect-OER as the account meant and then the command again; or Disconnect-OER ended the module's
-    session after the command began (the module holds no session), and the advice is to run
+    Connect-OER -Force as the account meant and then the command again; or Disconnect-OER ended the
+    module's session after the command began (the module holds no session), and the advice is to run
     Disconnect-OER as a statement of its own. The function reads the cause from the module's state
     ($null is no session, the same test Get-OERSignInIdentity makes for 'not signed in', and
     Disconnect-OER is the only place that sets the state to $null), so the transports and the
@@ -58,10 +60,11 @@ function New-OERSignInSupersededError {
     .PARAMETER AccountChanged
     Builds the variant for a renewal answered by another account (BL-119): the text says a renewal of the
     module's sign-in returned a token for another account than the one the command began with, and the
-    advice is to run Connect-OER as the account meant and then the command again. Initialize-OERAuth
-    passes it when it refuses its caller for that reason. The function also reads the module's state: while
-    the state's SignInAccountChanged is $true (the state a refused renewal left), a transport's refusal of
-    a request reads the same text without the switch. With no state at all, Disconnect-OER's text wins.
+    advice is to run Connect-OER -Force as the account meant and then the command again.
+    Initialize-OERAuth passes it when it refuses its caller for that reason. The function also reads
+    the module's state: while the state's SignInAccountChanged is $true (the state a refused renewal
+    left), a transport's refusal of a request reads the same text without the switch. With no state
+    at all, Disconnect-OER's text wins.
 
     .EXAMPLE
     throw (New-OERSignInSupersededError -Command 'New-OERGroup')
@@ -113,7 +116,7 @@ function New-OERSignInSupersededError {
     [string]$Advice = if ($SessionEnded) {
         'Run Disconnect-OER as a statement of its own, after the commands that use the session.'
     } elseif ($AccountReplaced) {
-        'Run Connect-OER to sign in as the account you mean, then run the command again.'
+        'Run Connect-OER -Force to sign in again as the account you mean, then run the command again.'
     } else {
         'Run the commands as separate statements, so that each one signs in and finishes before the next one starts.'
     }

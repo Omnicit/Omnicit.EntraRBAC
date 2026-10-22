@@ -335,9 +335,9 @@ function Initialize-OERAuth {
     # return leaves it set, ArmTokenAcquisitionFailed's early return included, although the Graph
     # session is connected by then, so that command's Graph calls are refused as well as its ARM calls.
     # The BL-74 and BL-91 refusals above are the exceptions: they come before this latch, so they latch
-    # nothing of their own -- the outer command they found already has its requests refused. A terminating error
-    # ends this function but not the command that called it: outside any try that command carries on
-    # with its next statement (see the SEC (A18) comment below), so a command whose sign-in for tenant
+    # nothing of their own -- the outer command they found already has its requests refused. A
+    # terminating error ends this function but not the command that called it: outside any try that
+    # command carries on with its next statement (see the SEC (A18) comment below), so a command whose sign-in for tenant
     # B failed or was refused would otherwise send its Graph and ARM calls under the session tenant A
     # left -- for Invoke-OERStructure -Prune, B's document applied to A. Invoke-OERGraphRequest and
     # Invoke-OERArmRequest read the latch through Get-OERSignInRefusal before every request and refuse
@@ -391,9 +391,9 @@ function Initialize-OERAuth {
     #
     # SEC (A10, BL-89): the session-uncertain marker, set as the statement directly after the latch, so
     # every refusal from here on -- ArmTokenAcquisitionFailed's early return and GraphSessionChanged
-    # included -- leaves the session uncertain, while the BL-74 and BL-91 refusals above, for a sign-in never
-    # attempted, leaves the marker as it was. $SessionWasUncertain keeps what the marker said before this
-    # entry: the refusal below the GraphSessionChanged one reads it, and the two success ends put it back
+    # included -- leaves the session uncertain, while the BL-74 and BL-91 refusals above, for a
+    # sign-in never attempted, leaves the marker as it was. $SessionWasUncertain keeps what the marker
+    # said before this entry: the refusal below the GraphSessionChanged one reads it, and the two success ends put it back
     # unless this sign-in clears it ($ClearsUncertainty). Set-OERSessionUncertain is the marker's single
     # owner, and $script:_OERSessionUncertain the one module variable it keeps; gate 10 of
     # tests/QA/sourcehygiene.tests.ps1 holds where the three calls in this function stand.

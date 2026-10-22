@@ -241,10 +241,10 @@ Describe 'New-OERSignInSupersededError' {
                 }
             }
             $script:AccountRequestText = "A renewal of the module's sign-in returned a token for another account than the one @@NAME@@ began with, " +
-                'so Omnicit.EntraRBAC sends nothing while @@NAME@@ runs: this request was not sent. Run Connect-OER to sign in as ' +
+                'so Omnicit.EntraRBAC sends nothing while @@NAME@@ runs: this request was not sent. Run Connect-OER -Force to sign in again as ' +
                 'the account you mean, then run the command again.'
             $script:AccountDocumentText = "A renewal of the module's sign-in returned a token for another account than the one @@NAME@@ began with, " +
-                'so @@NAME@@ did not apply this document and Omnicit.EntraRBAC sent nothing for it. Run Connect-OER to sign in as ' +
+                'so @@NAME@@ did not apply this document and Omnicit.EntraRBAC sent nothing for it. Run Connect-OER -Force to sign in again as ' +
                 'the account you mean, then run the command again.'
         }
 

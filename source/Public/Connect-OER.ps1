@@ -59,9 +59,9 @@ function Connect-OER {
     with; the account picker also offers other accounts of the same tenant, but a renewal answered
     by another account is refused with SignInSuperseded: the command that asked for it, and the
     commands that began before it, send nothing more, and the session is then that account's, left
-    uncertain, so a command that names no tenant is refused until Connect-OER signs in as the
-    account you mean, while a command that names its tenant runs as that account; Connect-OER
-    itself, which signs in deliberately, may sign in as another account), and a device code
+    uncertain, so a command that names no tenant is refused until Connect-OER -Force signs in again
+    as the account you mean, while a command that names its tenant runs as that account;
+    Connect-OER itself, which signs in deliberately, may sign in as another account), and a device code
     session prints a new code to enter.
     Connect-OER itself never renews silently: its own interactive sign-in opens the browser. A
     managed identity renews with no prompt and is the only sign-in that renews unattended. In a
@@ -114,8 +114,8 @@ function Connect-OER {
     while it runs, before any token request. -TenantId binds the tenant, not the identity:
     Invoke-OERStructure and the access package and access review stage builders that look up a
     name refuse a call that names the tenant the session is for, as they refuse one that names
-    none, when another command replaced the session after they began. One pipeline works in one tenant with one identity, so
-    run such commands as separate statements. And after a sign-in that
+    none, when another command replaced the session after they began. One pipeline works in one
+    tenant with one identity, so run such commands as separate statements. And after a sign-in that
     failed or was refused -- a Connect-OER among them, including one refused before it signs in, such
     as an unknown or empty -TenantAlias or an empty -TenantId -- the module's session may not be the
     one that sign-in asked for (usually it is the previous session, or none), so a later OER command

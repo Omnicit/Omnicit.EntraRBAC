@@ -949,7 +949,7 @@ Describe 'Invoke-OERStructure help pointer to the worked example' {
 
         # The new paragraph stands after the pipeline session rule, which is still there word for word at
         # its head and its end, and before the next paragraph.
-        $Description | Should -Match ([regex]::Escape('Pipeline session rule: without -TenantId the command acts only under the session it began with.'))
+        $Description | Should -Match ([regex]::Escape('Pipeline session rule: the command acts only under the session it began with.'))
         $Description | Should -Match ([regex]::Escape('Run such commands as separate statements.'))
         $Rule = $Description.IndexOf('Pipeline session rule:')
         $Rule | Should -BeGreaterThan -1
@@ -965,6 +965,10 @@ Describe 'Invoke-OERStructure help pointer to the worked example' {
         $Description | Should -Match ([regex]::Escape('also when the module held no session as the command began. A command naming a tenant the session is not for signs in to that tenant itself, as before, and is not refused.'))
         $Description | Should -Match ([regex]::Escape('A document naming another tenant than a -TenantId that is a tenant ID is refused before that sign-in (see the document tenant rule below).'))
         $ParamText['TenantId'] | Should -Match ([regex]::Escape('with it, the same holds when the sign-in would take the session''s identity for that tenant (see the pipeline session rule above)'))
+        # The three causes of the refusal, and the sign-in of this command that never becomes the snapshot (BL-119).
+        $Description | Should -Match ([regex]::Escape("names the cause: Disconnect-OER ended the module's session, when the module holds none by then; a renewal of the sign-in answered by another account than the one the command began with, when the module's state records that; and another command's sign-in otherwise."))
+        $Description | Should -Match ([regex]::Escape('a sign-in of this command that was itself refused with SignInSuperseded, because a renewal was answered by another account, never becomes the session the next document is compared with.'))
+        $Description | Should -Match ([regex]::Escape('run Connect-OER -Force to sign in again as the account you mean.'))
     }
 }
 
@@ -2388,6 +2392,163 @@ $RunErrors | ForEach-Object { "ERRID:unchanged:$($_.FullyQualifiedErrorId)" }
             )
             @($Run.Errors).Count | Should -Be 1
             $Run.Errors[0] | Should -Be 'Another OER command in the same pipeline signed in to a different tenant or identity after Invoke-OERStructure began, so Invoke-OERStructure did not apply this document and Omnicit.EntraRBAC sent nothing for it. Run the commands as separate statements, so that each one signs in and finishes before the next one starts.'
+            @($Run.Prompts).Count | Should -Be 0
+        }
+    }
+
+    Context 'a sign-in refused for an account change never becomes the snapshot (BL-119, final review of step 13b)' {
+        # Initialize-OERAuth refuses a renewal answered by another account AFTER it rebuilt the module's
+        # state as that account. Were that state taken as the snapshot, the next piped document with
+        # -TenantId would compare the new account with itself, sign in on the cache and be applied as that
+        # account. The scenario runs the public engine in a runspace with NO try above it (the refusal is a
+        # terminating error of the nested sign-in, which the command survives outside a try), pipes two
+        # documents with -TenantId, and replaces Initialize-OERAuth in the runspace's own copy of the
+        # module with a stand-in that does what the real function does at this refusal: it rebuilds the
+        # state as another account (SignInAccountId, SignInAccountChanged) and raises the real record,
+        # New-OERSignInSupersededError -AccountChanged, with ThrowTerminatingError, so its
+        # FullyQualifiedErrorId is 'SignInSuperseded,Initialize-OERAuth' as the real function's is. The
+        # stand-in is chosen over the real function (stubbed Get-AzToken, Connect-MgGraph, Get-MgContext)
+        # because only the state it leaves and the record it raises matter to the command under test,
+        # and the real function's refusal is proven in Initialize-OERAuth.Tests.ps1 (BL-119). The stand-in
+        # does not model the sign-in latch, so the document whose own sign-in was refused still reaches
+        # the group handler stand-in here; the latch is what refuses its requests in the real module.
+        BeforeAll {
+            . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+            function script:New-BL119SnapshotScenario {
+                param([string]$Log)
+                [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+function Set-Session {
+    param([string]$Tenant, [string]$Client, [string]$Account)
+    & (Get-Module Omnicit.EntraRBAC) {
+        param($T, $C, $A)
+        $script:_OERAuthState = if ($T) {
+            @{ TenantId = $T; AuthMethod = 'ClientCertificate'; ClientId = $C; Environment = 'Global'; SignInAccountId = $A }
+        } else { $null }
+    } $Tenant $Client $Account
+}
+function Get-Record {
+    # -ErrorVariable of the outer call holds the written records and, for a terminating error of a nested
+    # call, both the exception that carries one (measured) and the record itself: count the records once.
+    param($Errors)
+    foreach ($E in @($Errors)) {
+        if ($E -is [System.Management.Automation.ErrorRecord]) { $E }
+    }
+}
+function Set-Mode {
+    param([string]$Mode, [string]$Client, [string]$Account)
+    & (Get-Module Omnicit.EntraRBAC) {
+        param($M, $C, $A)
+        $script:StubMode = $M; $script:StubClient = $C; $script:StubAccount = $A
+    } $Mode $Client $Account
+}
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value {
+        [CmdletBinding()]
+        param([string]$TenantId, [switch]$IncludeARM)
+        [System.IO.File]::AppendAllText('#LOG#', "AUTH $script:StubMode`n")
+        $NewState = @{
+            TenantId = $TenantId; AuthMethod = 'ClientCertificate'; ClientId = $script:StubClient
+            Environment = 'Global'; SignInAccountId = $script:StubAccount
+        }
+        switch ($script:StubMode) {
+            'account' {
+                # The renewal came back as another account: the state IS that account's, flagged, and the caller is refused.
+                $NewState.SignInAccountChanged = $true
+                $script:_OERAuthState = $NewState
+                $PSCmdlet.ThrowTerminatingError((New-OERSignInSupersededError -Command 'Invoke-OERStructure' -AccountChanged))
+            }
+            'other' {
+                # A refusal of another kind that leaves the identity this command asked for.
+                $script:_OERAuthState = $NewState
+                $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('stand-in refusal'), 'TenantMismatch',
+                    [System.Management.Automation.ErrorCategory]::AuthenticationError, $TenantId))
+            }
+            'first' { $script:_OERAuthState = $NewState }
+        }
+    }
+    Set-Item -Path function:script:Sync-OERStructureGroup -Value {
+        param($Item, $Caller, [switch]$Prune, $TenantAlias, $CreatedUnitMembership, $RenameMap)
+        [System.IO.File]::AppendAllText('#LOG#', "ASK group $($Item.displayName)`n")
+        ConvertTo-OERStructureResult -Section 'groups' -Item ([string]$Item.displayName) -Action 'Unchanged' -Detail 'stub row'
+    }
+}
+$Doc1 = '{ "version": "1.0", "groups": [ { "displayName": "g1" } ] }' | ConvertFrom-Json
+$Doc2 = '{ "version": "1.0", "groups": [ { "displayName": "g2" } ] }' | ConvertFrom-Json
+$Named = '44444444-4444-4444-4444-444444444444'
+$App = '33333333-3333-3333-3333-333333333333'
+$OtherApp = '55555555-5555-5555-5555-555555555555'
+$AccountA = '66666666-6666-6666-6666-666666666666'
+$AccountB = '88888888-8888-8888-8888-888888888888'
+
+# 1. The first document's sign-in is refused for an account change: the second must be refused too.
+[System.IO.File]::AppendAllText('#LOG#', "STEP account`n")
+Set-Session $Named $App $AccountA
+Set-Mode 'account' $App $AccountB
+$Doc1, $Doc2 | Invoke-OERStructure -TenantId $Named -WhatIf -ErrorVariable RunErrors |
+    ForEach-Object -Process { "ROW:account:$($_.Item)" }
+Get-Record $RunErrors | ForEach-Object { "ERRID:account:$($_.FullyQualifiedErrorId)" }
+Get-Record $RunErrors | Where-Object { $_.FullyQualifiedErrorId -eq 'SignInSuperseded,Invoke-OERStructure' } | ForEach-Object { "ERRMSG:account:$($_.Exception.Message)" }
+"STATE:account:$(& (Get-Module Omnicit.EntraRBAC) { $script:_OERAuthState.SignInAccountId })"
+
+# 2. Control: a sign-in refused for another reason is taken as the snapshot, as before: the second document is applied.
+[System.IO.File]::AppendAllText('#LOG#', "STEP other`n")
+Set-Session $Named $App $AccountA
+Set-Mode 'other' $OtherApp $AccountA
+$Doc1, $Doc2 | Invoke-OERStructure -TenantId $Named -WhatIf -ErrorVariable RunErrors |
+    ForEach-Object -Process { "ROW:other:$($_.Item)" }
+Get-Record $RunErrors | ForEach-Object { "ERRID:other:$($_.FullyQualifiedErrorId)" }
+
+# 3. Control: a first sign-in from no session is taken as the snapshot: the second document is applied.
+[System.IO.File]::AppendAllText('#LOG#', "STEP first`n")
+Set-Session $null $null $null
+Set-Mode 'first' $App $AccountA
+$Doc1, $Doc2 | Invoke-OERStructure -TenantId $Named -WhatIf -ErrorVariable RunErrors |
+    ForEach-Object -Process { "ROW:first:$($_.Item)" }
+Get-Record $RunErrors | ForEach-Object { "ERRID:first:$($_.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")))
+            }
+        }
+
+        It 'refuses the document after one whose sign-in was refused for an account change, signing in to and sending nothing for it, and takes the snapshot again after the controls' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-BL119SnapshotScenario -Log $Log)
+            $Out = @($Run.Output)
+            # The account step: the first document's sign-in raised the real refusal, the second document was refused.
+            $Out | Where-Object { $_ -like '*:account:*' } | Should -Be @(
+                'ROW:account:g1'
+                'ERRID:account:SignInSuperseded,Initialize-OERAuth'
+                'ERRID:account:SignInSuperseded,Invoke-OERStructure'
+                'ERRMSG:account:A renewal of the module''s sign-in returned a token for another account than the one Invoke-OERStructure began with, so Invoke-OERStructure did not apply this document and Omnicit.EntraRBAC sent nothing for it. Run Connect-OER -Force to sign in again as the account you mean, then run the command again.'
+                'STATE:account:88888888-8888-8888-8888-888888888888'
+            ) -Because "the output was:`n$($Out -join "`n")"
+            # Not vacuous: the module really held the other account when the second document came.
+            # The controls: the second document is applied, as it is after any other refusal or a first sign-in.
+            $Out | Where-Object { $_ -like '*:other:*' } | Should -Be @(
+                'ROW:other:g1'
+                'ROW:other:g2'
+                'ERRID:other:TenantMismatch,Initialize-OERAuth'
+                'ERRID:other:TenantMismatch,Initialize-OERAuth'
+            ) -Because "the output was:`n$($Out -join "`n")"
+            $Out | Where-Object { $_ -like '*:first:*' } | Should -Be @(
+                'ROW:first:g1'
+                'ROW:first:g2'
+            ) -Because "the output was:`n$($Out -join "`n")"
+            $Out[-1] | Should -Be 'END'
+            # The log: the refused document signed in once and the second document signed in to nothing and was not applied.
+            @(Get-Content -LiteralPath $Log) | Should -Be @(
+                'STEP account'
+                'AUTH account'
+                'ASK group g1'
+                'STEP other'
+                'AUTH other', 'ASK group g1'
+                'AUTH other', 'ASK group g2'
+                'STEP first'
+                'AUTH first', 'ASK group g1'
+                'AUTH first', 'ASK group g2'
+            )
             @($Run.Prompts).Count | Should -Be 0
         }
     }

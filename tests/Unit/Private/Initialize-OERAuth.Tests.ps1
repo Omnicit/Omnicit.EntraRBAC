@@ -7658,7 +7658,7 @@ Describe 'Initialize-OERAuth never continues a renewal as another account (BL-11
             $Probe.Caught.FullyQualifiedErrorId | Should -BeExactly 'SignInSuperseded,Initialize-OERAuth'
             $Probe.Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
             $Probe.Caught.TargetObject | Should -BeExactly 'Invoke-A119Command'
-            $Probe.Caught.Exception.Message | Should -BeLike "A renewal of the module's sign-in returned a token for another account than the one Invoke-A119Command began with,*Run Connect-OER to sign in as the account you mean, then run the command again."
+            $Probe.Caught.Exception.Message | Should -BeLike "A renewal of the module's sign-in returned a token for another account than the one Invoke-A119Command began with,*Run Connect-OER -Force to sign in again as the account you mean, then run the command again."
             $Probe.Latched | Should -BeTrue
             $Probe.Marker | Should -BeTrue
             $Probe.Remembers | Should -BeFalse -Because 'a refused sign-in is not remembered'
