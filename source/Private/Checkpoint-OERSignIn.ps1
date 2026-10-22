@@ -22,8 +22,8 @@ function Checkpoint-OERSignIn {
     whatever session the module holds by then, and refuses with SignInSuperseded, sending nothing,
     when the identity changed. A sign-in that names no tenant inherits whatever session the module
     holds; one that names a tenant (-TenantId) inherits it only when Test-OERSessionUsable says the
-    session is for that tenant as named (BL-90). So a command passes its -TenantId, when it has one,
-    and is refused in that case too -- also when the module held no session as it began -- while a
+    session is for that tenant as named (BL-90). So a command compares with its -TenantId, when it has
+    one; it is refused in that case too, also when the module held no session as it began, while a
     command naming a tenant the session is not for signs in itself, as the identity it asked for,
     and is not refused. Invoke-OERStructure compares for each document after the
     document is read and validated, directly before its sign-in, and takes the snapshot again after

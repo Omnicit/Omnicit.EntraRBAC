@@ -485,16 +485,16 @@ call stack remembers another identity than the state now carries.
 `Invoke-OERStructure` and the three builders that sign in only to look up a name --
 `New-OERAccessPackageApprovalStage`, `New-OERAccessPackageRequestorScope` (through
 `Resolve-OERTargetList`), `New-OERAccessReviewStage` (through `Resolve-OERReviewerScope`) -- take a
-snapshot of the session in `begin` and compare it in `process` directly before that sign-in or lookup
--- with `-TenantId` only when that sign-in would inherit the session's identity
+snapshot of the session in `begin` and compare it in `process` directly before that sign-in or
+lookup -- with `-TenantId` only when that sign-in would inherit the session's identity
 (`Checkpoint-OERSignIn -TenantId`, through `Test-OERSessionUsable`) -- refusing with
 `SignInSuperseded` and sending nothing when the identity changed, or when the module held no session
 and now holds one (`Invoke-OERStructure` compares after the document is read and validated, the
 builders after their argument checks).
 
 `Checkpoint-OERSignIn` is the single owner of the session a command began with (it builds the
-snapshot only through `Get-OERSignInIdentity`); `Test-OERSessionUsable` of whether a sign-in naming a
-tenant inherits the session. A new command that signs in only in `process`, directly or through a
+snapshot only through `Get-OERSignInIdentity`); `Test-OERSessionUsable` of whether a sign-in naming
+a tenant inherits the session. A new command that signs in only in `process`, directly or through a
 helper, takes the same snapshot. Never name the tenant the command began with as `-TenantId` in
 `process` in place of the snapshot.
 
@@ -516,10 +516,11 @@ session inherits nothing and signs in again, so README.md's "Name the tenant exp
 consistently" and the about topic's equivalent under SOVEREIGN CLOUDS stand.
 
 **A renewal never continues as another account** (BL-119). The identity's fifth term is the account
-(`SignInAccountId`), carried over a renewal unless a Graph token's oid (`Get-OERTokenObjectId`) differs
-from the session's `SignedInObjectId`, both GUIDs; `Initialize-OERAuth` then refuses its caller with
-`SignInSuperseded` (`-AccountChanged`) and every frame remembering the old account is refused as
-superseded; a renewal's ARM token of another account is refused the same way and not cached.
+(`SignInAccountId`), carried over a renewal unless a Graph token's oid (`Get-OERTokenObjectId`)
+differs from the session's `SignedInObjectId`, both GUIDs; `Initialize-OERAuth` then refuses its
+caller with `SignInSuperseded` (`-AccountChanged`) and every frame remembering the old account is
+refused as superseded; a renewal's ARM token of another account is refused with `SignInSuperseded`
+for its caller and not cached, and the session stays the old account's.
 `Connect-OER` (`-ReclaimGraphSession`) is never refused by it; a token without oid never refuses
 anything. Never key the account on a name or the UPN.
 `Why: docs/development/rationale.md#a-renewal-never-continues-as-another-account`
@@ -528,9 +529,9 @@ The order is fixed: Graph wrapper session gate, latch gate, supersession gate; A
 gate, supersession gate. A pipeline must not span tenants or identities: run the commands as
 separate statements, for example collecting into a variable first. Never call
 `Register-OERSignInIdentity` outside `Initialize-OERAuth` or anywhere but directly after an
-`Unlock-OERSignIn` with the same invocation; never read the supersession outside the two transports and
-`Initialize-OERAuth`, which asks it with `-OutsideCaller` directly after its BL-74 check, so a sign-in nested
-under a superseded command is refused before any token request.
+`Unlock-OERSignIn` with the same invocation; never read the supersession outside the two transports
+and `Initialize-OERAuth`, which asks it with `-OutsideCaller` directly after its BL-74 check, so a
+sign-in nested under a superseded command is refused before any token request.
 `Why: docs/development/rationale.md#auth-state`
 
 **A tenant named by domain is looked up before any token request, and checked like a GUID.**

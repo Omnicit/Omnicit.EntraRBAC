@@ -716,8 +716,8 @@ function Invoke-OERStructure {
         Initialize-OERAuth @AuthParams
         # The next piped document compares with the session this one signed in under: a first sign-in
         # from no session must not refuse the second document. Taken after every sign-in, refused or
-        # not: without -TenantId a refused sign-in leaves the identity as it was, or sets the one this
-        # command itself asked for.
+        # not: a refused sign-in leaves the identity as it was, or sets the one this command itself
+        # asked for.
         $SignInSnapshot = Checkpoint-OERSignIn
         # SEC (BL-88, A14): after the sign-in, and before anything below reads or writes -- the
         # omitted-collection warning, the administrative unit pre-pass and every section -- the session

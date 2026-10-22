@@ -244,7 +244,10 @@ it is, and keeps it through an update that does not name `-TenantId`. On any oth
 One OER pipeline works in one tenant with one identity. If commands in the same pipeline sign in to
 different tenants or identities, a command whose sign-in another one replaced sends nothing more:
 every request made while it runs is refused with `SignInSuperseded`, including the requests of a
-command that handles its output, a `ForEach-Object` script block among them. Most OER cmdlets sign
+command that handles its output, a `ForEach-Object` script block among them. A sign-in made while
+such a command runs -- by a cmdlet it calls, or by a command that handles its output -- is refused
+too, with the same error naming that command and before any token request, so it opens no browser.
+Most OER cmdlets sign
 in before any command in the pipeline processes input, so that is usually the first command. A
 cmdlet that reports a failed lookup under an error of its own carries the refusal's message in that
 error instead -- `New-OERGroup`'s `GroupResolveFailed`, for one, which names the refusal
@@ -256,13 +259,16 @@ differently from the session inherits nothing from it and signs in again -- inte
 names no credential, which on an app-only session means a browser prompt and another identity, and
 the pipeline is then refused as above. So name it the same way on every command, as
 **Name the tenant explicitly and consistently** under [Sovereign Clouds](#sovereign-clouds) says.
-`Invoke-OERStructure` signs in when it processes its document, not before, but without `-TenantId`
-it acts only under the session it began with: when another command in the same pipeline has signed
-in to a different tenant or identity by then -- any sign-in counts if the module held no session
-when it began -- it refuses that document with `SignInSuperseded` and sends nothing for it.
-`New-OERAccessPackageApprovalStage`, `New-OERAccessPackageRequestorScope` and
-`New-OERAccessReviewStage` do the same before they resolve the approvers, targets or reviewers they
-are given. Called inside a script block or a function in a pipeline, such as
+`Invoke-OERStructure` signs in when it processes its document, not before, but it acts only under
+the session it began with: when another command in the same pipeline has signed in to a different
+tenant or identity by then -- any sign-in counts if the module held no session when it began -- it
+refuses that document with `SignInSuperseded` and sends nothing for it. Naming `-TenantId` does not
+change that when the session is for that tenant: such a command inherits the session, so a
+different application, method, cloud or account in that tenant still refuses it. A `-TenantId` that
+names another tenant than the session is for makes the command sign in itself, as the identity it
+asks for, and it is not refused. `New-OERAccessPackageApprovalStage`,
+`New-OERAccessPackageRequestorScope` and `New-OERAccessReviewStage` do the same before they resolve
+the approvers, targets or reviewers they are given. Called inside a script block or a function in a pipeline, such as
 `ForEach-Object { Invoke-OERStructure ... }`, each of these commands begins only when that block
 runs, after every other command in the pipeline has begun and so after most of their sign-ins, and
 it takes the session they left for its own. A document exported by `Get-OERInventory` or
@@ -315,10 +321,21 @@ depends on the sign-in type:
 
 | Sign-in type | Renewal of the token |
 |---|---|
-| Interactive | When a command starts near the token's expiry, first tries to renew without a prompt, from the interactive credential AzAuth already holds (see below); when that is not possible, and always for the renewal after a 401, the browser opens to sign in again, so a long run can still ask you to sign in. The account picker lets you choose another account of the same tenant, and the command then carries on as that account: choose the account the session signed in with |
+| Interactive | When a command starts near the token's expiry, first tries to renew without a prompt, from the interactive credential AzAuth already holds (see below); when that is not possible, and always for the renewal after a 401, the browser opens to sign in again, so a long run can still ask you to sign in. The account picker lets you choose another account of the same tenant: choose the account the session signed in with, since a renewal answered by another account is refused (see below) |
 | Device code | Every renewal prints a new code to enter, about once an hour, as every device code sign-in does: see the known limitation under [Switching tenants](#switching-tenants) |
 | Managed identity | Renews with no prompt |
 | Client secret and certificate | Not renewed, since the module never keeps the secret or certificate: once the token has expired a request is refused with `AppOnlyTokenRefreshUnsatisfiable`, and a command that starts within five minutes of its expiry, or later, fails to sign in with `AppOnlySessionCredentialUnavailable`, until you run `Connect-OER` with the secret or certificate again |
+
+**A renewal never continues as another account.** The module compares the object id of the account
+a renewed Microsoft Graph token belongs to with the account of the session it renews. When the two
+differ -- you picked another account in the picker -- the command that asked for the renewal is
+refused with `SignInSuperseded`, and so are the commands that began before it, which send nothing
+more. The session is then the account you picked, left uncertain: a command that names no tenant is
+refused until you run `Connect-OER` as the account you mean (`Connect-OER` itself may sign in as
+another account), while a command that names its tenant with `-TenantId` runs as that account. A
+renewed Azure Resource Manager token for another account is refused for the command that asked for
+it and is not kept; the session stays as it was. A token that carries no object id never causes a
+refusal, and neither does a first sign-in or `Connect-OER`: this guards the renewal only.
 
 **The silent renewal of an interactive session.** From AzAuth 2.11.0 the module asks `Get-AzToken` to
 renew an interactive session without `-Interactive`, so AzAuth answers from the interactive
@@ -516,7 +533,10 @@ crosses a cloud boundary, but the sign-in fails at the authority with an error t
 and never the cloud, which makes it easy to misread. (A tenant named by domain is looked up at that
 same authority first, and may be refused there instead, with `TenantResolutionFailed`, whose message
 does mention `-Environment`.) Pass the same `-TenantId` spelling on every call, or use a Tenant
-Profile whose `Environment` key carries the cloud for you.
+Profile whose `Environment` key carries the cloud for you. A `-TenantId` binds the tenant, not the
+identity: a command that names the tenant the session is for inherits the session's application,
+method, cloud and account, so in a pipeline another command's sign-in in that tenant still refuses
+it (see [Disconnect](#disconnect)).
 
 **Known limitation:** PIM-for-Groups is pinned to the Microsoft Graph `beta` endpoint (see
 [Permissions](#permissions) and `docs/development/rationale.md`), and beta endpoint availability in

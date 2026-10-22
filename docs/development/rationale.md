@@ -798,8 +798,8 @@ this gate machine-checks that claim from the source. Ownership
 rules, read from the command names the shared walk collected per file: `Get-MgContext` is called
 only in `Get-OERGraphSessionFingerprint`; `Lock-OERSignIn`, `Unlock-OERSignIn` and
 `Register-OERSignInIdentity` only in `Initialize-OERAuth`; `Get-OERSignInRefusal` only in the two
-wrappers and in `Initialize-OERAuth`; `Get-OERSignInSupersession` only in the two wrappers;
-`Get-OERSignInIdentity` only in `Register-OERSignInIdentity`, `Get-OERSignInSupersession` and
+wrappers and in `Initialize-OERAuth`; `Get-OERSignInSupersession` only in the two wrappers and,
+since Sprint 11 step 13b (BL-91), in `Initialize-OERAuth`; `Get-OERSignInIdentity` only in `Register-OERSignInIdentity`, `Get-OERSignInSupersession` and
 `Checkpoint-OERSignIn`; `Invoke-MgGraphRequest` only in the Graph wrapper and `Invoke-WebRequest`
 only in the ARM wrapper; `Invoke-RestMethod` only in `Resolve-OERTenantDomain`, and
 `Resolve-OERTenantDomain` only in `Initialize-OERAuth`; `Set-OERSessionUncertain` only in
@@ -842,7 +842,10 @@ gate places, still do, so the reason a reader elsewhere is refused -- a gate no 
 -- does not apply to it. The gate checks the file, not that the call stands before
 `Lock-OERSignIn`; the unit test
 `leaves the calling command unlatched when it refuses (the check stands before Lock-OERSignIn)`
-holds that. `Checkpoint-OERSignIn` builds the snapshot of the session a command began with (BL-76,
+holds that. `Initialize-OERAuth` reads the supersession once as well (BL-91), with
+`-OutsideCaller`, directly after the BL-74 check and before `Lock-OERSignIn`, to refuse a SIGN-IN
+nested under a superseded command; the same reasoning applies, and its owner row lists it as the
+third reader beside the two wrappers. `Checkpoint-OERSignIn` builds the snapshot of the session a command began with (BL-76,
 BL-81) through the same function the memory uses, which keeps its terms identical to the
 remembered ones -- a second identity builder there is the drift the rule exists to stop. Its own
 callers get no row: the snapshot is a value a command keeps in its own variable, never a gate in
@@ -5158,8 +5161,9 @@ on the same invocation the latch uses (`$SignInCaller`, which `Lock-OERSignIn` r
 The table, `$script:_OERSignInIdentity`, is a `ConditionalWeakTable` like the latch's: created on
 first use, keyed weakly on the commands' own invocation objects, and used only for their identity.
 Its value is one string from `Get-OERSignInIdentity`: a tenant, then the state's AuthMethod, ClientId
-and Environment, in that fixed order, each read as a string (a missing one as empty) and joined by a
-line feed -- never a token. The tenant term is the tenant the Graph token was issued for
+and Environment and, since Sprint 11 step 13b (BL-119), the account (`SignInAccountId`), in that
+fixed order, each read as a string (a missing one as empty) and joined by a line feed -- never a
+token. Until BL-119 there were four terms. The tenant term is the tenant the Graph token was issued for
 (`TokenTenantId`) when that is a GUID, and the tenant as named (`TenantId`) otherwise, never the ARM
 token's (BL-77, Sprint 9 step 3; until then it was always `TenantId`, so the four terms were exactly
 the ones `$ArmIdentityUnchanged` compares -- see "One tenant named two ways" below). A later success of
@@ -5409,12 +5413,15 @@ check, but a command that names it differently from the session signs in again, 
 "Name the tenant explicitly and consistently" (until Sprint 9 step 3, BL-77, this clause said that a
 tenant counted by the name given, so those were three sign-ins and a pipeline naming one tenant two
 ways was refused); `Invoke-OERStructure` signs in when it processes its document, but
-without `-TenantId` it acts only under the session it began with, and refuses a document with
+it acts only under the session it began with, and refuses a document with
 `SignInSuperseded`, sending nothing for it, when another command in the pipeline has signed in to a
 different tenant or identity by then -- any sign-in counting when the module held no session --
 and the three builders that look up a name do the same before they resolve what they are given
 (until Sprint 9 step 2 this clause said that nothing refused it, and told the operator to name
-`-TenantId` on it or run it as a statement of its own); called inside a script block or a function
+`-TenantId` on it or run it as a statement of its own; until Sprint 11 step 13b, BL-90, it said
+"without `-TenantId`", and a `-TenantId` naming the session's own tenant disabled the check -- it
+now compares there too, and a `-TenantId` naming another tenant makes the command sign in itself,
+unrefused); called inside a script block or a function
 in a pipeline, each of those four commands begins only when that block runs, after every other
 command in the pipeline has begun and so after most of their sign-ins, and takes the session they
 left for its own; a document exported by `Get-OERInventory` or `Export-OERInventory` names its
@@ -5441,7 +5448,13 @@ as before as a statement of its own. The `Invoke-OERStructure` help states its p
 rule in full, and each builder's `-TenantId` help states its own, the fail-safe refusals included.
 BL-74 has no paragraph of its own in the README or the about topic: what an operator sees is the
 existing rule that a refused command sends nothing, except that a cmdlet it calls no longer reaches
-a sign-in prompt; the release note states that.
+a sign-in prompt; the release note states that. BL-91 (b) (Sprint 11 step 13b) adds one sentence to
+the same paragraph in both documents: a sign-in made while a superseded command runs is refused
+before any token request, with `SignInSuperseded` naming that command. BL-119 has a paragraph of its
+own under README's `### Long runs` and the about topic's `LONG RUNS`, "A renewal never continues as
+another account", and the Interactive row of both tables no longer says the command carries on as
+the account picked (see
+[A renewal never continues as another account](#a-renewal-never-continues-as-another-account)).
 
 **The proof.** The two places the memory is written are pinned in
 `tests/Unit/Private/Initialize-OERAuth.Tests.ps1`, Describe
@@ -5509,8 +5522,8 @@ each a sign-in that should not have run as it did.
 
 **The snapshot (BL-76, BL-81).** `Checkpoint-OERSignIn` is the single owner of the session a command
 began with. Without parameters it returns an `Omnicit.EntraRBAC.SignInSnapshot` whose only
-property, `Identity`, is what `Get-OERSignInIdentity` returns now -- the four terms the memory
-holds, never a token -- or `$null` when the module holds no state. With `-ChangedSince` it tells
+property, `Identity`, is what `Get-OERSignInIdentity` returns now -- the terms the memory holds
+(four when this step was written, five since BL-119), never a token -- or `$null` when the module holds no state. With `-ChangedSince` it tells
 whether the identity now differs, by the same case-insensitive `-eq` the supersession gate uses, so
 no state matches only a snapshot of no state. The snapshot is a value the command keeps in its own
 variable: nothing else reads it, and it ends with the command. `Invoke-OERStructure` and the three
@@ -5522,12 +5535,13 @@ block of the outer pipeline, so its snapshot may already hold a downstream comma
 is the known limit above, which this step did not close, and which Sprint 9 step 6b closed only for
 a document that names its tenant (BL-88, under
 [A document names the tenant it was exported from](#a-document-names-the-tenant-it-was-exported-from)).
-Without `-TenantId` each of them compares in `process`:
+Each of them compares in `process` (with `-TenantId` only where that sign-in would inherit the
+session, BL-90, below):
 
 - `Invoke-OERStructure` for each document after the document is read and validated, directly
   before `Initialize-OERAuth`, so a document that cannot be read or does not validate still reports
   `InvalidStructureDocument` or `StructureValidationFailed`. It takes the snapshot again after every
-  sign-in, refused or not: without `-TenantId` a refused sign-in leaves the identity as it was, or
+  sign-in, refused or not: a refused sign-in leaves the identity as it was, or
   sets the one this command asked for, so the result is the same and nothing has to read the latch.
   A first sign-in from no session therefore does not refuse the next piped document, while a
   document refused with `SignInSuperseded` moves nothing, and the document after it is compared
@@ -5542,7 +5556,8 @@ When the identity changed -- another tenant, application, method or cloud, or no
 `Disconnect-OER` -- the command writes `SignInSuperseded` (`New-OERSignInSupersededError`, with its
 own name as the target) as a non-terminating error and returns before anything is signed in to or
 looked up: `Invoke-OERStructure` applies nothing of that document and goes on to the next, and a
-builder builds nothing. With `-TenantId` nothing changes: the sign-in names its tenant, and the
+builder builds nothing. With `-TenantId` the comparison is made only when the sign-in would inherit
+the session (BL-90, below); otherwise the sign-in names its tenant and is its own, and the
 supersession gate covers the rest. A builder called nested, as `Sync-OERStructureAccessPackage` calls
 the two access package builders, runs its `begin` and `process` blocks back to back under one
 identity and is never refused. The `SignInSuperseded` message says the change came "after X began"
@@ -5556,12 +5571,41 @@ refuse is their lookup. See "Why no state counts as a difference" under
 **Why a snapshot, and never `-TenantId` from `begin` (A6, decided 2026-10-06).** The fix that the
 known limit above sketched, while it was open until this step, was to capture the tenant in `begin`
 and name it in the `process` block's sign-in. A `-TenantId` other than the tenant the state holds
-inherits nothing (`$SessionUsable` in `Initialize-OERAuth`), so that sign-in would fall back to the
-default method, `Interactive`: an app-only or managed-identity session -- the unattended case --
-would get a browser prompt instead of a refusal. A tenant alone would also miss a change of
-application, method or cloud, all of which the snapshot's four terms catch. The snapshot only
-compares, and the command refuses, which is the safe direction; it never signs in on the command's
-behalf.
+inherits nothing (`Test-OERSessionUsable`, which `Initialize-OERAuth` asks for `$SessionUsable`), so
+that sign-in would fall back to the default method, `Interactive`: an app-only or managed-identity
+session -- the unattended case -- would get a browser prompt instead of a refusal. A tenant alone
+would also miss a change of application, method, cloud or account, all of which the snapshot's terms
+catch. The snapshot only compares, and the command refuses, which is the safe direction; it never
+signs in on the command's behalf.
+
+**BL-90: `-TenantId` binds the tenant, not the identity (Sprint 11 step 13b).** Until this step the
+four commands compared only WITHOUT `-TenantId`, on the reading that a sign-in naming its tenant
+names the identity it asks for. It does not: a `-TenantId` equal to the tenant the session is for, as
+named, inherits the session's method, client, cloud and account (`$InheritIdentity` in
+`Initialize-OERAuth`, which equals `$SessionUsable` for a sign-in that passes no method and no
+client, as these four commands' sign-ins do). So
+`Invoke-OERStructure -TenantId A` after another application's sign-in in tenant A had replaced the
+session applied the document under that other application, and the three builders looked their
+names up there. `Test-OERSessionUsable -TenantId` is now the single owner of "this sign-in inherits
+the session" (the state exists and, when `-TenantId` is not empty, the state's `TenantId` is `-eq`
+it, the tenant as NAMED); `Initialize-OERAuth` computes `$SessionUsable` from it, and
+`Checkpoint-OERSignIn -ChangedSince $Snapshot -TenantId $TenantId` answers `$true` only when the
+identity changed AND the owner says the sign-in would inherit. The four commands compare with
+`-TenantId` passed on only when it is set. Why an extraction and not a second copy of the inheritance
+term in `Checkpoint-OERSignIn`: two copies would drift, and the compare would then refuse where the
+sign-in does not inherit (or the reverse). The consequences are the ones the user-facing texts state:
+a `-TenantId` naming another tenant than the session is for (or a domain where the session is
+labelled by the tenant ID, since the session cache is keyed on the tenant as named) makes the
+sign-in its own, as the identity it asks for, and is not refused; one naming the session's tenant is
+refused when the identity changed, and also when the module held no session as the command began and
+now holds one for that tenant. Two documents piped to `Invoke-OERStructure -TenantId` still retake
+the snapshot after each sign-in. The pre-sign-in `Get-OERDocumentTenantMismatch` check still runs
+before the comparison. `Initialize-OERAuth`'s behaviour is unchanged: the expression moved verbatim. Proof:
+`tests/Unit/Private/Test-OERSessionUsable.Tests.ps1`, the Context `for a sign-in that names a tenant
+(BL-90)` of `Checkpoint-OERSignIn.Tests.ps1`, the `(BL-90)` Its of the four commands' test files
+(the `Invoke-OERStructure` ones include a runspace with no `try`), and two tests in
+`Initialize-OERAuth.Tests.ps1` that fail when the tenant term of the inheritance is dropped (it was
+not mutation-provable before: the whole file stayed green).
 
 **BL-74: a sign-in under a refused command is refused before it is made.** `Initialize-OERAuth`
 now asks `Get-OERSignInRefusal -OutsideCaller` before anything else. The walk starts after the
@@ -5581,6 +5625,28 @@ the whole stack would find that command's own latched frame and refuse the retry
 two documents would be refused because the first one's sign-in failed. The check stands before
 `Lock-OERSignIn` so that its refusal latches nothing of its own: the outer command's latch already
 refuses every request the caller makes while it runs.
+
+**BL-91 (b): a sign-in under a superseded command is refused before it is made (Sprint 11 step
+13b).** The supersession gate of the transports refused every REQUEST made while a command whose
+sign-in another command replaced was on the stack, but a cmdlet that command calls, or a command
+signing in inside its output, still reached `Get-AzToken` (a browser or device code prompt near the
+cached token's expiry) and `Connect-MgGraph` for a command that sends nothing. `Initialize-OERAuth`
+now asks `Get-OERSignInSupersession -OutsideCaller` directly after the BL-74 check and before
+`Lock-OERSignIn`, with exactly `Get-OERSignInRefusal -OutsideCaller`'s frame rule (frame 0 itself,
+frame 1 `Initialize-OERAuth`, the caller the first frame from index 2 with an invocation, the walk
+starting after it). A name it returns is raised as a terminating `SignInSuperseded`
+(`New-OERSignInSupersededError -Command` with that name, the text unchanged), with a `return`, no
+token call, no `Connect-MgGraph`, no latch and the session-uncertain marker as it was. The caller's
+own remembered identity never counts: it may sign in again, and its memory is replaced on success.
+BL-74's check is unchanged and comes first, so a latched outer command still reads `SignInRefused`.
+Gate 10 lists `Initialize-OERAuth` as the third reader of the supersession (see
+[#static-source-gates](#static-source-gates)).
+
+**BL-91 (a), written off as a known limit.** An upstream command that signs in in its `begin` block
+and then has its sign-in replaced by a downstream command's `begin` block is on no call stack when
+that downstream sign-in runs (every `begin` has finished), so nothing finds it and the downstream
+sign-in can still prompt. The transports refuse every request the upstream command then makes when
+its `process` block runs. No measured path closes it without a new public parameter.
 
 **What it costs.**
 
@@ -5626,7 +5692,7 @@ refuses every request the caller makes while it runs.
   only the token and connection counts tell the two apart.
 
 **The proof.** Unit: `tests/Unit/Private/Checkpoint-OERSignIn.Tests.ps1` (Describe
-`Checkpoint-OERSignIn`) pins the snapshot's shape, a change of each of the four terms, letter case,
+`Checkpoint-OERSignIn`) pins the snapshot's shape, a change of each term, letter case,
 no state on either side, the type guard and the read through `Get-OERSignInIdentity`.
 `tests/Unit/Public/Invoke-OERStructure.Tests.ps1`, Describe
 `Invoke-OERStructure acts only under the session it began with (BL-76)`, pins the refusal on a
@@ -5682,6 +5748,100 @@ One guard survives every test by construction: the `return` after the terminatin
 stack -- measured with a Pester probe that was not committed -- so the `return` is unreachable
 today, and it stays against a future change that stops that helper throwing. Gate 10 of
 [#static-source-gates](#static-source-gates) holds the two widened owner lists.
+
+### A renewal never continues as another account
+
+**The finding (BL-119, Sprint 11 step 13b).** A renewal of an interactive session opens the account
+picker (see "Per sign-in type" under
+[How a long run renews its token](#how-a-long-run-renews-its-token)), and the picker offers other
+accounts of the same tenant. The identity the memory and the snapshot compare had four terms -- tenant,
+method, client, cloud -- so a renewal answered by another account of the same tenant changed none of
+them: the command carried on, and the pipeline's other commands with it, as an account none of them
+had begun with, with every gate green. The same holds for the Azure Resource Manager request of a
+renewal, which opens the same picker.
+
+**The account term.** `Get-OERSignInIdentity` has a fifth term, the account: the state's
+`SignInAccountId`, a GUID string or `$null`, read as a string, never a name, a user principal name
+or a token. `Initialize-OERAuth` writes it so that only a PROVEN change of account moves it. A
+sign-in is a RENEWAL (`$RenewsSession`) when the module holds a state with the same tenant label,
+method, client and cloud (`$ArmIdentityUnchanged`) and the call is not `Connect-OER`'s
+(`-ReclaimGraphSession`). It is deliberately not `$InheritIdentity`: a transport's refresh passes the
+state's `-AuthMethod` explicitly, so `$InheritIdentity` is `$false` for it, and it is a renewal all
+the same. On a renewal the account is carried from the old state unless the account changed, in which
+case it is the new token's oid; on any other sign-in it is the new token's oid when that is a GUID,
+else `$null`. `SignedInObjectId` keeps its meaning, the oid of the last token (the prune's
+self-protection reads it), and is set as before.
+
+**The refusal of the Graph token.** In the Graph branch, after `TenantMismatch` and before
+`Connect-MgGraph`, `Initialize-OERAuth` reads the oid of the new token once (`Get-OERTokenObjectId`)
+and decides `$AccountChanged` as a renewal whose new oid and the state's `SignedInObjectId` are both
+GUIDs and differ, each term on its own line. The session then becomes the new account as any sign-in
+would: `Connect-MgGraph`, the rebuild with `SignInAccountId` the new oid and the state flag
+`SignInAccountChanged` `$true`, and the cached ARM token NOT carried (`-not $AccountChanged` joins
+`$ArmTokenKept`; an ARM token acquired for the old account does not belong to the new one). Directly
+after the rebuild the caller is refused with a terminating `SignInSuperseded`
+(`New-OERSignInSupersededError -AccountChanged`, naming the caller), before the ARM step and before
+`Unlock-OERSignIn`, `Register-OERSignInIdentity` and the end of the call, so the caller stays latched
+and the session-uncertain marker stays set. Every outer frame that remembers the old account now
+differs from the state: the transports refuse its requests and BL-91 (b) refuses its nested
+sign-ins. `Connect-OER` (`-ReclaimGraphSession`) is never refused here, since it signs in
+deliberately and takes the session back. The silent renewal (A22) is unchanged and still comes
+first: its own check of the object id discards another account's token, and the interactive request
+that follows is the one this refusal can reach.
+
+**Why the session becomes the new account rather than keeping the old one.** The outer frames that
+remember the old account must be refused, and the supersession gate does that only when the state
+names another account. A refusal that left the state as it was would leave them running under a
+session that still reads as theirs, and nothing would refuse their requests. The cost, stated for the operator: after the refusal the session IS the account the renewal
+returned, marked uncertain. A later command that names no tenant is refused (`SignInRefused`) until
+`Connect-OER` signs in as the account meant, or a command that names its tenant signs in; a command
+that names the tenant runs as that account.
+
+**The ARM token of a renewal.** In the ARM step, after the two tenant checks and before the token is
+cached, a renewal whose ARM token has an oid that is a GUID differing from the state's
+`SignedInObjectId` (a GUID) is refused with the same terminating `SignInSuperseded -AccountChanged`.
+The token is not cached and the state is left as it is: this refusal refuses the caller only, and no
+identity moves, so the outer frames keep the old account, which is still the session's. This is the
+difference from the Graph refusal, where the session has already become the new account. A22 names
+the Graph token; the ARM request of a renewal opens the same account picker, so it is held to the
+same rule.
+
+**The text.** `New-OERSignInSupersededError` has three causes and two effects, all with the id
+`SignInSuperseded`, the category and the command's name as the target. The account cause reads that
+a renewal of the module's sign-in returned a token for another account than the one the command
+began with, and advises running `Connect-OER` to sign in as the account meant, then the command
+again. It is chosen by `-AccountChanged` or by the state's `SignInAccountChanged` being `$true`, so a
+transport's refusal of an outer frame while that state stands reads it too; the no-state cause
+(`Disconnect-OER`) still wins first, and the other texts are byte-identical. Known cost: a transport
+refusal of an older supersession reads the account text for as long as that state stands.
+
+**What it does not do.** Each of these is a stated limit.
+
+- A token without an oid, on either side, proves nothing and never refuses, and never moves the
+  identity. A renewal whose new token carried no oid leaves `SignedInObjectId` empty while the
+  account stays carried, so a LATER renewal as another account is then not refused (R5 and R6 compare
+  with `SignedInObjectId`, the oid of the last token, not with the carried account) until
+  `Connect-OER`. Graph tokens carry an oid in practice.
+- It guards the RENEWAL. A first sign-in, or a `Connect-OER`, whose Azure Resource Manager prompt is
+  answered by another account than its Graph prompt is not compared.
+- The refusal names the function that called `Initialize-OERAuth`. For a transport's own refresh
+  (`Invoke-GraphSingle`, `Invoke-ArmCallWithRefresh`) that is the transport's function, not the
+  public command whose request was rejected (read in the code).
+- BL-91 (a) stays a known limit (see "BL-91 (a)" under
+  [A command acts under the session it began with](#a-command-acts-under-the-session-it-began-with)):
+  an upstream command's `begin` has finished when a downstream `begin` signs in; the transports
+  refuse every request it then makes.
+
+**The proof.** `tests/Unit/Private/Initialize-OERAuth.Tests.ps1`, Describe `Initialize-OERAuth never
+continues a renewal as another account (BL-119)`: the refusal for an interactive and a device code
+renewal, for a sign-in that names only a tenant and for a transport's forced refresh (the caller
+latched, the marker set, the state the new account's with the ARM token dropped, the ARM request not
+sent under `-IncludeARM`), an outer frame refused by the supersession and a nested sign-in refused by
+BL-91; and the controls that must NOT refuse: the same account, a token without an oid, a session
+without one, a method switch, a first sign-in, `Connect-OER` as another account and a nested sign-in
+under an unchanged session; the ARM cases; and a runspace with no `try` above a real `Get-OERGroup`.
+`Get-OERSignInIdentity.Tests.ps1` pins the fifth term and `New-OERSignInSupersededError.Tests.ps1` the
+fifth text.
 
 ### A document names the tenant it was exported from
 
@@ -6616,7 +6776,10 @@ one.
   Graph token's expiry moved into the five-minute window, the next command at once opened a new
   interactive sign-in -- a renewal without `-Force` opened a new interactive sign-in, which confirms
   Ruling R1. So a long interactive run asks the operator to sign in about once an hour, and the
-  account picker offers other accounts of the same tenant, as whom the command then carries on.
+  account picker offers other accounts of the same tenant. Until Sprint 11 step 13b (BL-119) the
+  command then carried on as whichever account was picked; a renewal answered by another account is
+  now refused, see
+  [A renewal never continues as another account](#a-renewal-never-continues-as-another-account).
   A17 does not change this type. Since Sprint 11 step 13 (A22, BL-115) a renewal first tries a silent
   request that AzAuth 2.11.0 may answer from the credential it holds, and opens the browser as above
   only when that does not work: see

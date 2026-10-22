@@ -26,20 +26,19 @@ function New-OERSignInSupersededError {
     name. The record names no tenant, no account and no token: the text is fixed apart from the name,
     and the command's name is the only value the record carries.
 
-    The text fits its cause (BL-92, BL-119), so there are three causes and, with the effect, four texts
-    of the two older ones and one of the new one, all with the same id, category and target. By
-    cause: when the module still holds a session, another OER command in the same pipeline signed in to
-    a different tenant or identity after the command began; when the session's last sign-in was a renewal
-    that returned a token for another account (the state's SignInAccountChanged, or -AccountChanged), a
-    renewal of the module's sign-in returned a token for another account than the one the command began
-    with, and the advice is to run Connect-OER as the account meant and then the command again; when it
-    holds no session, Disconnect-OER ended the module's session after the command began, and the advice
-    is to run Disconnect-OER as a statement of its own. The function reads that from the module's state ($null is no session, the
-    same test Get-OERSignInIdentity makes for 'not signed in', and Disconnect-OER is the only place
-    that sets the state to $null), so the transports and the builders call it with no extra argument.
-    By effect: a request says it was not sent, and the module sends nothing while the command runs;
-    with -Document the refusal is of a whole document, which the command did not apply, and the text
-    says so.
+    The text fits its cause and its effect (BL-92, BL-119): there are three causes and two effects, all
+    with the same id, category and target. By cause: another OER command in the same pipeline signed in
+    to a different tenant or identity after the command began (the module still holds a session);
+    a renewal of the module's sign-in returned a token for another account than the one the command
+    began with (the state's SignInAccountChanged, or -AccountChanged), and the advice is to run
+    Connect-OER as the account meant and then the command again; or Disconnect-OER ended the module's
+    session after the command began (the module holds no session), and the advice is to run
+    Disconnect-OER as a statement of its own. The function reads the cause from the module's state
+    ($null is no session, the same test Get-OERSignInIdentity makes for 'not signed in', and
+    Disconnect-OER is the only place that sets the state to $null), so the transports and the
+    builders call it with no extra argument. By effect: a request says it was not sent, and the
+    module sends nothing while the command runs; with -Document the refusal is of a whole document,
+    which the command did not apply, and the text says so.
 
     .PARAMETER Command
     The name of the command the record names. From a transport, that is the command whose remembered

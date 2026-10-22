@@ -5918,8 +5918,8 @@ $RecordLines
         # The nested cmdlet's sign-in (BL-91: refused by Initialize-OERAuth, naming the outer command,
         # before any token request), its read, the outer command's ARM call, then the downstream
         # command's two, which run inside the outer command's output: all made while the outer command
-        # runs, so each record names the outer command, though the nested cmdlet remembers the state's
-        # own identity.
+        # runs, so each record names the outer command (the nested sign-in is refused at sign-in, and
+        # remembers nothing).
         Get-PipelineProbeSuperseded -Probe $R | Should -Be @(
             'SignInSuperseded,Initialize-OERAuth | Invoke-OuterProbe'
             'SignInSuperseded,Get-OERGroup | Invoke-OuterProbe', 'SignInSuperseded,Invoke-OuterProbe | Invoke-OuterProbe'
