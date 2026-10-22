@@ -46,6 +46,10 @@ refused before it requests a token. A renewal answered by another account is ref
 `SignInSuperseded` and its token is not used: the session stays the account it was until
 `Connect-OER`.
 
+Messages now say what the module does: `PolicyOpenFailed` from `New-OERActiveRoleAssignment` and
+`New-OEREligibleRoleAssignment` gives a command that runs as typed, `Export-OERInventory`'s
+`InventoryPartial` is shorter, and a review cadence the module cannot write names the one exported.
+
 ## [1.3.0] - 2026-10-19
 
 A PIM for Groups activation is no longer written or applied as a standing membership. Inventories
