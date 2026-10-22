@@ -349,6 +349,6 @@ Describe 'Set-OERRoleAssignment' {
         Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
         $null = Set-OERRoleAssignment -Id '/subscriptions/s/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-000000000059' -Description 'x' -Confirm:$false -ErrorAction SilentlyContinue
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -ParameterFilter { $Method -eq 'PUT' }
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
     }
 }

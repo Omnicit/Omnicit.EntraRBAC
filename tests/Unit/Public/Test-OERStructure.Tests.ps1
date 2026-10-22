@@ -147,7 +147,7 @@ Describe 'Test-OERStructure' {
         Mock -ModuleName $script:moduleName Read-OERStructureDocument { throw 'unreadable document' }
         Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
         Test-OERStructure -Json '{ "version": "1.0" }' -ErrorAction SilentlyContinue | Out-Null
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
     It 'surfaces a schema Warning to the caller' {
         $Doc = [pscustomobject]@{

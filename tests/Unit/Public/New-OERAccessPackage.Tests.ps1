@@ -102,7 +102,7 @@ Describe 'New-OERAccessPackage' {
         $Result | Should -BeNullOrEmpty
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Request_BadRequest,New-OERAccessPackage' }).Count |
             Should -Be 1
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 
     Context 'pre-check failure must not create a duplicate' {
@@ -119,7 +119,7 @@ Describe 'New-OERAccessPackage' {
             Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId { throw 'Graph returned 429 TooManyRequests' }
             Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
             New-OERAccessPackage -DisplayName 'AP-Sales' -Catalog 'CAT-IT-Core' -Confirm:$false -ErrorAction SilentlyContinue
-            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
         }
 
         It 'still creates when the pre-check genuinely finds nothing' {
@@ -146,7 +146,7 @@ Describe 'New-OERAccessPackage' {
             Mock -ModuleName $script:moduleName Resolve-OERCatalogId { throw 'Graph returned 429 TooManyRequests' }
             Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
             New-OERAccessPackage -DisplayName 'AP-Sales' -Catalog 'CAT-IT-Core' -Confirm:$false -ErrorAction SilentlyContinue
-            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
         }
 
         It 'still reports CatalogNotFound when the catalog lookup genuinely finds nothing' {
@@ -219,7 +219,7 @@ Describe 'New-OERAccessPackage' {
             $R.CatalogId | Should -BeNullOrEmpty
             @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,New-OERAccessPackage' }).Count | Should -Be 0
             # The failed confirmation read carried the bearer header too.
-            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
         }
     }
 }

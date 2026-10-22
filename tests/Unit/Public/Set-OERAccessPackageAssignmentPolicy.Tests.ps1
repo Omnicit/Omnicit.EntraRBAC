@@ -301,7 +301,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy' {
         $Result | Should -BeNullOrEmpty
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,Set-OERAccessPackageAssignmentPolicy' }).Count |
             Should -Be 1
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 
     It 'surfaces a Graph failure as a non-terminating error on the PUT and emits nothing' {
@@ -326,7 +326,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy' {
         $Result | Should -BeNullOrEmpty
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Request_BadRequest,Set-OERAccessPackageAssignmentPolicy' }).Count |
             Should -Be 1
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 }
 

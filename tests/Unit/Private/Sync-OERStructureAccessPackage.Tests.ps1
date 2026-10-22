@@ -731,7 +731,7 @@ Describe 'Sync-OERStructureAccessPackage' {
             Mock Remove-OERErrorRecord { }
             $r = @(Invoke-SyncApViaCaller -Item ([PSCustomObject]@{ displayName = 'AP-Sales'; catalog = 'CAT-IT' }) -ErrorAction SilentlyContinue)
             ($r | Where-Object Action -eq 'Failed').Count | Should -BeGreaterThan 0
-            Should -Invoke Remove-OERErrorRecord -Times 1
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
         }
     }
 
@@ -1483,7 +1483,7 @@ Describe 'Sync-OERStructureAccessPackage' {
                 Mock Initialize-OERAuth { }
                 $Item = '{ "displayName": "AP-Sales", "catalog": "CAT-IT", "resourceRoles": [] }' | ConvertFrom-Json
                 $null = Invoke-SyncApViaCaller -Item $Item -Prune
-                Should -Invoke Remove-OERAccessPackageResourceRole -Times 2
+                Should -Invoke Remove-OERAccessPackageResourceRole -Times 2 -Exactly
             }
         }
     }

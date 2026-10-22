@@ -105,7 +105,7 @@ Describe 'Invoke-OERStructure' {
         Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
         Invoke-OERStructure -Json '{ "version":"1.0", "groups":[{"displayName":"g"}] }' `
             -Include Groups -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 
     It 'sets -ReconcileScope on only the first roleAssignment of each scope' {

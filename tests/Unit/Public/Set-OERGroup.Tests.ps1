@@ -129,7 +129,7 @@ Describe 'Set-OERGroup' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw 'transport failure' }
         Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
         Set-OERGroup -Group 'gid-1' -Description 'x' -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 
     Context 'unified -Group target (audit PR6)' {

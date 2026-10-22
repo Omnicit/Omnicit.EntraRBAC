@@ -31,7 +31,7 @@ Describe 'Add-OERAdministrativeUnitMember' {
         Mock -ModuleName $script:moduleName Resolve-OERAdministrativeUnitId { 'au-1' }
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {} -ParameterFilter { $Method -eq 'POST' }
         Add-OERAdministrativeUnitMember -Id 'au-1' -MemberId '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333'
-        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 2 -ParameterFilter { $Method -eq 'POST' }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 2 -Exactly -ParameterFilter { $Method -eq 'POST' }
     }
 
     It 'positional binding: collapsing ById/ByName into a single -AdministrativeUnit parameter ADDS positional binding (a capability, not a break), and the named contract still resolves correctly' {
@@ -119,7 +119,7 @@ Describe 'Add-OERAdministrativeUnitMember' {
             }
             Add-OERAdministrativeUnitMember -Id 'auau0000-0000-0000-0000-00000000000b' `
                 -MemberId 'aaaa0000-0000-0000-0000-000000000001' -User 'anna.berg@contoso.com' -Confirm:$false
-            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 2 -ParameterFilter {
+            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 2 -Exactly -ParameterFilter {
                 $Method -eq 'POST'
             }
         }
@@ -325,6 +325,6 @@ Describe 'Add-OERAdministrativeUnitMember bearer-token hygiene' {
         $null = Add-OERAdministrativeUnitMember -Id 'au-1' `
             -MemberId '11111111-1111-1111-1111-111111111111' `
             -Confirm:$false -ErrorAction SilentlyContinue
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 }

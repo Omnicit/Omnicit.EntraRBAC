@@ -250,6 +250,6 @@ Describe 'Resolve-OERPrincipalOrId' {
             $Result = Resolve-OERPrincipalOrId -User 'anna@contoso.com'
             $Result.ErrorId | Should -Be 'PrincipalNotFound'
         }
-        Should -Invoke Remove-OERErrorRecord -ModuleName Omnicit.EntraRBAC -Times 1
+        Should -Invoke Remove-OERErrorRecord -ModuleName Omnicit.EntraRBAC -Times 1 -Exactly
     }
 }

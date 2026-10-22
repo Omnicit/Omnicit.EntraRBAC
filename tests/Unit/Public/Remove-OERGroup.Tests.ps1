@@ -103,7 +103,7 @@ Describe 'Remove-OERGroup' {
         $Err = $null
         Remove-OERGroup -Id 'gid-1' -Confirm:$false -WarningAction SilentlyContinue `
             -ErrorAction SilentlyContinue -ErrorVariable Err
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,Remove-OERGroup' }).Count |
             Should -Be 1
     }
@@ -125,7 +125,7 @@ Describe 'Remove-OERGroup' {
         Remove-OERGroup -Group 'Dup' -Confirm:$false -WarningAction SilentlyContinue `
             -ErrorAction SilentlyContinue -ErrorVariable Err
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'DELETE' }
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AmbiguousGroupName,Remove-OERGroup' }).Count | Should -Be 1
         # The guard must RETURN, not fall through: without the return the cmdlet would also emit the
         # misleading GroupNotFound. The -Times 0 DELETE assertion above cannot see that, because the

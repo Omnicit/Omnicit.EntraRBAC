@@ -62,6 +62,6 @@ Describe 'New-OERResourceGroup' {
         Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
         $null = New-OERResourceGroup -Subscription 'Prod' -Name 'rg-net' -Location 'westeurope' -Confirm:$false -ErrorAction SilentlyContinue
         Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERScope -Times 1
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
     }
 }

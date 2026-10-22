@@ -231,7 +231,7 @@ Describe 'New-OERConfiguration' {
         $Base = Join-Path $TestDrive 'ScrubNewEscape'
         $null = New-OERConfiguration -TenantAlias '..\..\evil' -TenantId 'x' -BasePath $Base `
             -ErrorAction SilentlyContinue
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         Should -Invoke -ModuleName Omnicit.EntraRBAC Export-OERConfiguration -Times 0
     }
 

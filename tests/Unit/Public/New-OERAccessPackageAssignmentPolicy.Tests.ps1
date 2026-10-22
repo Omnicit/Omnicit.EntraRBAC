@@ -198,7 +198,7 @@ Describe 'New-OERAccessPackageAssignmentPolicy' {
         $Owned = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidPolicyInput,New-OERAccessPackageAssignmentPolicy' })
         $Owned.Count | Should -Be 1
         $Owned[0].Exception.InnerException.Message | Should -Match 'body assembly failed'
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'POST' }
     }
 
@@ -224,7 +224,7 @@ Describe 'New-OERAccessPackageAssignmentPolicy' {
         $Result | Should -BeNullOrEmpty
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Request_BadRequest,New-OERAccessPackageAssignmentPolicy' }).Count |
             Should -Be 1
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 }
 

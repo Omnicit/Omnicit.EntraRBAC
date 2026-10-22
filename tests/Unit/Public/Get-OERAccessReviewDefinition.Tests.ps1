@@ -308,7 +308,7 @@ Describe 'Get-OERAccessReviewDefinition' {
         $Err = $null
         $Result = Get-OERAccessReviewDefinition -Id 'd1' -ErrorAction SilentlyContinue -ErrorVariable Err
         $Result | Should -BeNullOrEmpty
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,Get-OERAccessReviewDefinition' }).Count |
             Should -Be 1
     }

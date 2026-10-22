@@ -81,9 +81,9 @@ vacuously true is simply wrong -- that false justification was written into two 
 being caught on 2026-09-21, which is why it is recorded here rather than just deleted.
 
 **Which bare `-Times N` assertions mean "exactly N" (Sprint 11 step 15, BL-30).** The trap above is
-only a defect where the test means exactly N, and most `-Times 1` assertions do not: they prove a
-call happened, or happened with the right arguments. So the rule is a heuristic, not a blanket
-`-Exactly`. A *candidate* is a `Should -Invoke` (or `Assert-MockCalled`) with `-Times N`, N a
+only a defect where the test means exactly N, and many `-Times 1` assertions do not: they prove a
+call happened, or happened with particular arguments. So the rule is a heuristic, not a blanket
+`-Exactly`, with one deliberate blanket inside it (scrub guards, below). A *candidate* is a `Should -Invoke` (or `Assert-MockCalled`) with `-Times N`, N a
 literal of 1 or more, and no `-Exactly`, found by an AST walk over `tests/Unit/**/*.Tests.ps1`
 (single-line or multi-line; a `-Times` taking a variable is not a candidate). A candidate is *real*
 (the test means exactly N) when any of these holds, and is otherwise *at least N by intent* and left
@@ -94,21 +94,34 @@ alone:
   again", "not again", "a single"). The word has to count calls or objects: a hit such as "single
   quote" or "only exists on the second page" is not a count;
 - N is the count the scenario itself fixes and the assertion exists to show that no further call
-  happens (a retry, a refusal, an idempotent second call, a cached reuse);
+  happens (a retry, a refusal, an idempotent second call, a cached reuse, one token request per
+  sign-in), and in particular N is the number of piped or listed inputs (one call per input) or of
+  live objects a prune test's mocked state holds: a duplicate would be a double write. A
+  `-ParameterFilter` that only selects the call type (`$Method -eq 'POST'`) does not make such a site
+  an argument check;
 - the shape is the documented one for a bare-throw re-throw scrub guard, `Mock Remove-OERErrorRecord`
-  plus `-Times 1 -Exactly` (first section of this anchor).
+  plus `-Times 1 -Exactly` (first section of this anchor). That extends to every scrub guard
+  (`Should -Invoke Remove-OERErrorRecord -Times N`): a bare count is satisfied by ANY scrub, so
+  another catch's scrub can stand in for this one while this one is deleted. That is the multi-catch
+  trap, and it is why a scrub guard is the one blanket in the rule.
 
 Where the class is not clear from the title, the `-Because` text or a comment, the It body decides,
 and when it is still unclear the site stays at least N: adding `-Exactly` on a guess would pin a
 number nobody chose. Measured on the step's base: 5,985 `Should -Invoke` assertions under
-`tests/Unit`, 703 candidates (682 with N of 1, 15 with 2, 4 with 3, 2 with 5), 36 real and fixed
-(31 by a named count, 2 by the no-further-call scenario, 3 by the documented scrub-guard shape), 667
-left at least N: 480 prove the call carried the right arguments (a `-ParameterFilter` is the
-point), 116 prove a scrub ran (`Remove-OERErrorRecord`), 71 prove a call happened. No fixed site went
-red under `-Exactly`, so none of the 36 had hidden an extra call. The per-site table is in the step
-report; the AST scan is a read-only helper in the step's scratch area, not part of the repository.
-A new `Should -Invoke -Times N` that means exactly N therefore carries `-Exactly` when it is
-written: nothing gates it, since the heuristic needs a reader to tell the two meanings apart.
+`tests/Unit`, 703 candidates (682 with N of 1, 15 with 2, 4 with 3, 2 with 5). 170 are real and
+fixed with `-Exactly`: 30 by a named count, 6 by the no-further-call scenario, 16 by one call per
+input or per live object, 3 by the documented bare-throw shape and 115 scrub guards. 533 are left at
+least N: 442 whose filter selects arguments (the URI, the body, a parameter value), 63 with no filter
+that prove a call happened, 27 whose filter only selects the call type and which prove a call
+happened (the single-input write tests; they are not argument checks), and 1 scrub guard. That one
+went red under `-Exactly` (`Remove-OERAccessReviewDefinition.Tests.ps1`, the Graph DELETE failure
+test, `Remove-OERErrorRecord -Times 1`, called 2 times by the scenario), so it was restored and left
+as it is: the scenario scrubs twice, which the bare count cannot tell from one. No other fixed site
+went red, so none of the 170 had hidden an extra call. The per-site table is in the step report; the
+AST scan is a read-only helper in the step's scratch area, not part of the repository. A new
+`Should -Invoke -Times N` that means exactly N therefore carries `-Exactly` when it is written, and a
+new scrub guard always does: nothing gates it, since the heuristic needs a reader to tell the two
+meanings apart.
 
 **A `-Because` string containing the word "because"** is the same family with a different mechanism:
 the assertion works, the explanation it prints does not.

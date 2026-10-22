@@ -40,7 +40,7 @@ Describe 'Set-OERResourceGroup' {
         # is the only possible cover for that catch's mandatory Remove-OERErrorRecord line.
         Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
         $null = Set-OERResourceGroup -Subscription 'Prod' -Name 'missing' -Tag @{ a = 'b' } -ErrorAction SilentlyContinue -ErrorVariable Err
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         # $Err[0] is the MOCK's record, not the cmdlet's: PowerShell auto-records the thrown record
         # at roughly a dozen call boundaries before the catch runs (13 records here; the mock throws
         # the bare code 'ResourceGroupNotFound' itself, so a -BeLike on index 0 passed even with the

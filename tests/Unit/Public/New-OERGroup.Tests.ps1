@@ -173,7 +173,7 @@ Describe 'New-OERGroup' {
             Mock -ModuleName $script:moduleName Resolve-OERGroupId { throw 'Graph returned 429 TooManyRequests' }
             Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
             New-OERGroup -DisplayName 'RoleSec-Test' -MailNickname 'rolesectest' -Confirm:$false -ErrorAction SilentlyContinue
-            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
         }
 
         # BL-78: a lookup the module refused is still GroupResolveFailed, but the message names the refusal
@@ -331,7 +331,7 @@ $X = $Own[0]
             Mock -ModuleName $script:moduleName Resolve-OERAdministrativeUnitId { throw 'Graph returned 503 ServiceUnavailable' }
             Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
             New-OERGroup -DisplayName 'role_sec_hr' -AdministrativeUnit 'au_hr' -Confirm:$false -ErrorAction SilentlyContinue
-            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
         }
 
         It 'still reports AdministrativeUnitNotFound when the AU lookup genuinely finds nothing' {

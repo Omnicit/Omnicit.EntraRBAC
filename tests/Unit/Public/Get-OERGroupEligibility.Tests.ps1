@@ -61,7 +61,7 @@ Describe 'Get-OERGroupEligibility' {
         # guard the call directly -- a $global:Error reference-identity proof cannot see it.
         Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
         Get-OERGroupEligibility -Group 'role_sec_x' -ErrorVariable Err -ErrorAction SilentlyContinue | Out-Null
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
         # Match the cmdlet-QUALIFIED ErrorId: the mock's own record is auto-recorded into
         # -ErrorVariable roughly a dozen times before the catch runs, so a bare count or a
         # bare-code match passes even with the cmdlet's $PSCmdlet.WriteError deleted.

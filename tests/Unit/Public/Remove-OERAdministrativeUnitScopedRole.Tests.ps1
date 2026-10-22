@@ -601,6 +601,6 @@ Describe 'Remove-OERAdministrativeUnitScopedRole bearer-token hygiene' {
         Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
         $null = Remove-OERAdministrativeUnitScopedRole -Id 'au-1' -ScopedRoleMembershipId 'srm-1' `
             -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 }

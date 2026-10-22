@@ -265,7 +265,7 @@ Describe 'Get-OERRoleAssignment' {
         Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { throw 'transport failure' }
         Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
         $null = Get-OERRoleAssignment -Scope '/subscriptions/aaaa1111-0000-0000-0000-000000000000' -ErrorAction SilentlyContinue
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
     }
 }
 

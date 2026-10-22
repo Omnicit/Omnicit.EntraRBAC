@@ -88,7 +88,7 @@ Describe 'New-OERCatalog' {
         $Result | Should -BeNullOrEmpty
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,New-OERCatalog' }).Count |
             Should -Be 1
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 
     It 'surfaces a Graph failure as a non-terminating error on the create POST and emits nothing' {
@@ -106,7 +106,7 @@ Describe 'New-OERCatalog' {
         $Result | Should -BeNullOrEmpty
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'TooManyRequests,New-OERCatalog' }).Count |
             Should -Be 1
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 
     Context 'pre-check failure must not create a duplicate' {
@@ -122,7 +122,7 @@ Describe 'New-OERCatalog' {
             Mock -ModuleName $script:moduleName Resolve-OERCatalogId { throw 'Graph returned 429 TooManyRequests' }
             Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
             New-OERCatalog -DisplayName 'CAT-IT-Core' -Confirm:$false -ErrorAction SilentlyContinue
-            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
         }
 
         It 'still creates when the pre-check genuinely finds nothing' {

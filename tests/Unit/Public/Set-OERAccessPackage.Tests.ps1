@@ -90,7 +90,7 @@ Describe 'Set-OERAccessPackage' {
         $Result | Should -BeNullOrEmpty
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,Set-OERAccessPackage' }).Count |
             Should -Be 1
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 
     Context 'CatalogId is populated on the emitted object' {
@@ -153,7 +153,7 @@ Describe 'Set-OERAccessPackage' {
             $R.CatalogId | Should -BeNullOrEmpty
             @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Set-OERAccessPackage' }).Count | Should -Be 0
             # The failed confirmation read carried the bearer header too.
-            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
         }
     }
 }

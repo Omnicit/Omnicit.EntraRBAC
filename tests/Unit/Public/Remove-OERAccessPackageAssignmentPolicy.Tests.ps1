@@ -73,9 +73,9 @@ Describe 'Remove-OERAccessPackageAssignmentPolicy' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}
         Mock -ModuleName $script:moduleName Write-Warning {}
         @([pscustomobject]@{ Id = 'pol-1' }, [pscustomobject]@{ Id = 'pol-2' }) | Remove-OERAccessPackageAssignmentPolicy -Confirm:$false
-        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 2 -ParameterFilter { $Method -eq 'DELETE' }
-        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -ParameterFilter { $Uri -like '*assignmentPolicies/pol-1' }
-        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -ParameterFilter { $Uri -like '*assignmentPolicies/pol-2' }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 2 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*assignmentPolicies/pol-1' }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*assignmentPolicies/pol-2' }
     }
 
     It 'surfaces a Graph failure as a non-terminating error and emits nothing' {
@@ -99,6 +99,6 @@ Describe 'Remove-OERAccessPackageAssignmentPolicy' {
         $Result | Should -BeNullOrEmpty
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,Remove-OERAccessPackageAssignmentPolicy' }).Count |
             Should -Be 1
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 }

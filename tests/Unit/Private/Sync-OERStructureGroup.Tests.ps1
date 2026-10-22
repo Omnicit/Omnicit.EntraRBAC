@@ -325,7 +325,7 @@ Describe 'Sync-OERStructureGroup' {
             Mock Remove-OERErrorRecord { }
             $r = @(Invoke-SyncGroupViaCaller -Item ([PSCustomObject]@{ displayName = 'role_sec_x' }) -ErrorAction SilentlyContinue)
             ($r | Where-Object Action -eq 'Failed').Count | Should -BeGreaterThan 0
-            Should -Invoke Remove-OERErrorRecord -Times 1
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
         }
     }
 
@@ -1051,7 +1051,7 @@ Describe 'Sync-OERStructureGroup' {
             Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
             $Item = '{ "displayName": "role_sec_x", "members": [] }' | ConvertFrom-Json
             $null = Invoke-SyncGroupViaCaller -Item $Item -Prune
-            Should -Invoke Remove-OERGroupMember -Times 2
+            Should -Invoke Remove-OERGroupMember -Times 2 -Exactly
         }
     }
 

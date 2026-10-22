@@ -284,7 +284,7 @@ Describe 'Read-OERStructureDocument' {
         InModuleScope $script:moduleName {
             Mock Remove-OERErrorRecord { }
             { Read-OERStructureDocument -Json '{ not json' } | Should -Throw '*not valid JSON*'
-            Should -Invoke Remove-OERErrorRecord -Times 1
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
         }
     }
 

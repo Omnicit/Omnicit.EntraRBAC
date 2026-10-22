@@ -116,7 +116,7 @@ Describe 'Resolve-OERTargetList ambiguity handling' {
         $Result.Descriptor.FailedErrorId | Should -Be 'AmbiguousGroupName'
         $Result.Descriptor.FailedMessage | Should -Match 'aaa-1'
         $Result.Descriptor.FailedMessage | Should -Match 'bbb-2'
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 
     It 'still reports a genuine no-match through FailedKind/FailedValue with no ErrorId override' {

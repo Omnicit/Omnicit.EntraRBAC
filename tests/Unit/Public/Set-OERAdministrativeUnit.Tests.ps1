@@ -311,6 +311,6 @@ Describe 'Set-OERAdministrativeUnit bearer-token hygiene' {
         Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
         $null = Set-OERAdministrativeUnit -Id 'au-1' -Description 'new' `
             -Confirm:$false -ErrorAction SilentlyContinue
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 }

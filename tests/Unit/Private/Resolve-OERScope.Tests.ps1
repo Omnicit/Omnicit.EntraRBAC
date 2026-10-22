@@ -178,7 +178,7 @@ Describe 'Resolve-OERScope' {
             Mock Invoke-OERArmRequest { throw 'transport failure' }
             Mock Remove-OERErrorRecord { }
             { Resolve-OERScope -ManagementGroup 'mg-platform' } | Should -Throw '*transport failure*'
-            Should -Invoke Remove-OERErrorRecord -Times 1
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
         }
     }
 }

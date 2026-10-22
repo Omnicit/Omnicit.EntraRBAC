@@ -308,7 +308,7 @@ Describe 'Get-OERAccessReviewInstance' {
             @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'TooManyRequests,Get-OERAccessReviewInstance' }).Count |
                 Should -Be 1
             $Joined | Should -Not -Match 'AccessReviewInstanceNotFound'
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         }
 
         It 'does not misroute a 403 whose message uses existence-ambiguous wording' {
@@ -330,7 +330,7 @@ Describe 'Get-OERAccessReviewInstance' {
             @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Forbidden,Get-OERAccessReviewInstance' }).Count |
                 Should -Be 1
             $Joined | Should -Not -Match 'AccessReviewInstanceNotFound'
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         }
 
         It 'does not misroute a 403 whose message uses the reference-property existence-ambiguous wording' {
@@ -353,7 +353,7 @@ Describe 'Get-OERAccessReviewInstance' {
             @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Forbidden,Get-OERAccessReviewInstance' }).Count |
                 Should -Be 1
             $Joined | Should -Not -Match 'AccessReviewInstanceNotFound'
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         }
 
         It 'still routes the not-found marker to AccessReviewInstanceNotFound even with an unhelpful message' {
@@ -398,7 +398,7 @@ Describe 'Get-OERAccessReviewInstance' {
             }
             @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Forbidden,Get-OERAccessReviewInstance' }).Count |
                 Should -Be 1
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         }
 
         It 'surfaces a definition-resolution failure and scrubs the record' {
@@ -419,7 +419,7 @@ Describe 'Get-OERAccessReviewInstance' {
             @($Err | Where-Object {
                     $_.FullyQualifiedErrorId -eq 'AccessReviewDefinitionResolveFailed,Get-OERAccessReviewInstance'
                 }).Count | Should -Be 1
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         }
 
         It 'warns and falls back to an empty stage list when the stages sub-request fails' {
@@ -441,7 +441,7 @@ Describe 'Get-OERAccessReviewInstance' {
             @($Warnings).Count | Should -Be 1
             @($Warnings)[0] | Should -Match 'Could not read stages'
             @($Result.Stages).Count | Should -Be 0
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         }
 
         It 'warns and falls back to an empty decision list when the decisions sub-request fails' {
@@ -459,7 +459,7 @@ Describe 'Get-OERAccessReviewInstance' {
             @($Warnings).Count | Should -Be 1
             @($Warnings)[0] | Should -Match 'Could not read decisions'
             @($Result.Decisions).Count | Should -Be 0
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         }
     }
 

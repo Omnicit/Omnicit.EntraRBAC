@@ -99,7 +99,7 @@ Describe 'Remove-OERAdministrativeUnitMember' {
             }
             Remove-OERAdministrativeUnitMember -Id 'auau0000-0000-0000-0000-00000000000b' `
                 -MemberId 'aaaa0000-0000-0000-0000-000000000001' -User 'anna.berg@contoso.com' -Confirm:$false
-            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 2 -ParameterFilter {
+            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 2 -Exactly -ParameterFilter {
                 $Method -eq 'DELETE'
             }
         }
@@ -243,6 +243,6 @@ Describe 'Remove-OERAdministrativeUnitMember bearer-token hygiene' {
         $null = Remove-OERAdministrativeUnitMember -Id 'au-1' `
             -MemberId '11111111-1111-1111-1111-111111111111' `
             -Confirm:$false -ErrorAction SilentlyContinue
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 }

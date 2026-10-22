@@ -177,7 +177,7 @@ Describe 'Initialize-OERAuth' {
             $script:_OERAuthState.ArmToken | Should -BeOfType [System.Security.SecureString]
             $script:_OERAuthState.ArmResourceUrl | Should -Be 'https://management.azure.com/'
         }
-        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly
         # The module no longer establishes an Az context; it sends the bearer token directly.
         # This negative assertion is the test-level proof of the premise Az.Resources was removed
         # on (2026-09-21). It depends on Az.Accounts being resolved into output/RequiredModules so
@@ -202,7 +202,7 @@ Describe 'Initialize-OERAuth' {
             Initialize-OERAuth -TenantId 'contoso' -AuthMethod 'Interactive' -ForceRefresh
         }
 
-        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly
     }
 
     # -- New test 6: identity switch (different AuthMethod) re-acquires ----------------------------
@@ -222,7 +222,7 @@ Describe 'Initialize-OERAuth' {
                 -ClientSecret $Secret
         }
 
-        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly
     }
 
     # -- New test 7: Graph token acquisition failure is terminating --------------------------------
@@ -841,7 +841,7 @@ Describe 'Initialize-OERAuth error hygiene' {
             { Initialize-OERAuth -TenantId 'contoso' -AuthMethod Interactive } |
                 Should -Throw -ErrorId 'GraphTokenAcquisitionFailed,Initialize-OERAuth'
 
-            Should -Invoke Remove-OERErrorRecord -Times 1
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
         }
     }
 
@@ -860,7 +860,7 @@ Describe 'Initialize-OERAuth error hygiene' {
             { Initialize-OERAuth -TenantId 'contoso' -AuthMethod Interactive } |
                 Should -Throw -ErrorId 'GraphConnectFailed,Initialize-OERAuth'
 
-            Should -Invoke Remove-OERErrorRecord -Times 1
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
         }
     }
 
@@ -886,7 +886,7 @@ Describe 'Initialize-OERAuth error hygiene' {
 
             @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'ArmTokenAcquisitionFailed,Initialize-OERAuth' }).Count |
                 Should -Be 1
-            Should -Invoke Remove-OERErrorRecord -Times 1
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
         }
     }
 

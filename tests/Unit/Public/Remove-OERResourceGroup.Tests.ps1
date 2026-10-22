@@ -70,7 +70,7 @@ Describe 'Remove-OERResourceGroup' {
         $Err = $null
         Remove-OERResourceGroup -Subscription 'Prod' -Name 'rg-net' -Confirm:$false `
             -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AuthorizationFailed,Remove-OERResourceGroup' }).Count |
             Should -Be 1
     }

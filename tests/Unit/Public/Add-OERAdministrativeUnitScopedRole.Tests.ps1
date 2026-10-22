@@ -415,6 +415,6 @@ Describe 'Add-OERAdministrativeUnitScopedRole bearer-token hygiene' {
         $null = Add-OERAdministrativeUnitScopedRole -Id 'au-1' -RoleId 'role-1' `
             -PrincipalId '11111111-1111-1111-1111-111111111111' `
             -Confirm:$false -ErrorAction SilentlyContinue
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 }

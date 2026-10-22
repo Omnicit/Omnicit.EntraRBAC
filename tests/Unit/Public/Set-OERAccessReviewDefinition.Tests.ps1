@@ -130,7 +130,7 @@ Describe 'Set-OERAccessReviewDefinition' {
         $Result = Set-OERAccessReviewDefinition -Id 'd1' -DisplayName 'New' -Confirm:$false `
             -ErrorAction SilentlyContinue -ErrorVariable Err
         $Result | Should -BeNullOrEmpty
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,Set-OERAccessReviewDefinition' }).Count |
             Should -Be 1
     }
@@ -161,7 +161,7 @@ Describe 'Set-OERAccessReviewDefinition' {
         $Result = Set-OERAccessReviewDefinition -Id 'd1' -DisplayName 'New' -Confirm:$false `
             -ErrorAction SilentlyContinue -ErrorVariable Err
         $Result | Should -BeNullOrEmpty
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,Set-OERAccessReviewDefinition' }).Count |
             Should -Be 1
     }
@@ -196,7 +196,7 @@ Describe 'Set-OERAccessReviewDefinition' {
         $Result = Set-OERAccessReviewDefinition -Id 'd1' -DisplayName 'New' -Confirm:$false `
             -ErrorAction SilentlyContinue -ErrorVariable Err
         $Result | Should -BeNullOrEmpty
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,Set-OERAccessReviewDefinition' }).Count |
             Should -Be 1
     }

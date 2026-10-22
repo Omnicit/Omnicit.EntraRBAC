@@ -332,7 +332,7 @@ Describe 'Add-OERAccessPackageResourceRole' {
         $Result | Should -BeNullOrEmpty
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Request_BadRequest,Add-OERAccessPackageResourceRole' }).Count |
             Should -Be 1
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 
     It 'still falls back to a composed tagged object when the confirmation read throws a Graph error record' {
@@ -356,7 +356,7 @@ Describe 'Add-OERAccessPackageResourceRole' {
         $Result.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.AccessPackageResourceRole'
         $Result.ResourceRoleScopeId | Should -Be 'scope-1'
         $Result.RoleName | Should -Be 'Member'
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 }
 

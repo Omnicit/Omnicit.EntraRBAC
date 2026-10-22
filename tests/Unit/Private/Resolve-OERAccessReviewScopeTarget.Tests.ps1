@@ -118,7 +118,7 @@ Describe 'Resolve-OERAccessReviewScopeTarget ambiguity handling' {
             $R.FailedKind    | Should -Be 'AccessPackage'
             $R.FailedErrorId | Should -Be 'AmbiguousAccessPackageName'
             $R.FailedMessage | Should -Match 'aaa-1'
-            Should -Invoke Remove-OERErrorRecord -Times 1
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
             Should -Invoke Invoke-OERGraphRequest -Times 0
         }
     }
