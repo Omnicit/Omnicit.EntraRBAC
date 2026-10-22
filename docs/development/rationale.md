@@ -5801,15 +5801,20 @@ account succeeds and clears the marker. A later command that names no tenant is 
 [A refused sign-in leaves the session uncertain](#a-refused-sign-in-leaves-the-session-uncertain))
 until `Connect-OER`, or a command that names its tenant, signs in. An operator who really wants the
 other account runs `Connect-OER -Force`, which opens the picker and takes the session back as the
-account picked; the message says so. A bare `Connect-OER` would hit the cache and keep the old account.
+account picked; the message says so. A bare `Connect-OER` signs in again unless the session's token
+is still valid (the cache is hit only while `GraphTokenExpiry` is beyond the five-minute window, and
+a refused renewal leaves the old state, so usually the token is inside it), so only `-Force` is sure
+to open the picker; a bare `Connect-OER` answers from the session only after a renewal forced by a
+rejected token.
 
 **Why the session stays the old account (D1), and what it replaced.** The first design of this step
 connected and rebuilt the state as the account the renewal returned and only then refused the caller;
 the outer commands were refused because the state named another account than they remembered. The
-review of PR #69 found (R5) that this made the refusal itself the problem: after it the SESSION was
-the other account, so a later command that named its tenant ran as that account on the cache,
-`-Prune` of `Invoke-OERStructure` included, and the engine needed an exception to keep its snapshot
-(final review of step 13b). Refusing before the session is touched closes that at the root: no
+review of PR #69 found (R5) that after a refused account switch, a later command that names the
+tenant ran as the other account, with no new entry, and cleared the session-uncertain marker, while
+the Azure Resource Manager side kept the old account (R6). That made the refusal itself the
+problem, `-Prune` of `Invoke-OERStructure` included, and the engine needed an exception to keep its
+snapshot (final review of step 13b). Refusing before the session is touched closes that at the root: no
 later command can run as an account nobody chose, and no outer frame is superseded by an account
 change, since the identity does not move. The alternatives were to refuse every later command (new
 state, a new gate, and a false refusal of a command whose own renewal is answered by the session's
@@ -5833,8 +5838,9 @@ already been accepted, which is the same state any other refused ARM step leaves
 **A token without an oid (D2).** A token without an oid, on either side, proves nothing and never
 refuses. On a renewal it also never replaces the session's `SignedInObjectId`: the old value is
 carried over, so the next renewal is still compared with the known account. The first design left
-`SignedInObjectId` empty after such a renewal, so a LATER renewal as another account was no longer
-refused (the second half of R5); that is closed. Any other sign-in (a first sign-in, a switch of
+`SignedInObjectId` empty after such a renewal (A31's second point: a renewal without an oid
+overwrote `SignedInObjectId` with null), so a LATER renewal as another account was no longer
+refused; that is closed. Any other sign-in (a first sign-in, a switch of
 tenant, method, client or cloud, `Connect-OER`) is a new session and records its own token's oid as
 before, `$null` included. Graph tokens carry an oid in practice.
 

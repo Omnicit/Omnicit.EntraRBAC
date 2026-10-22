@@ -449,9 +449,9 @@ NAME `ReclaimGraphSession` to `Connect-OER.ps1` and `Initialize-OERAuth.ps1`.
 **A command whose sign-in is refused sends nothing -- no Graph and no ARM request.**
 `Initialize-OERAuth` latches its calling command (`Lock-OERSignIn`) and releases it only on success
 (`Unlock-OERSignIn`); both called only there. Every refusal, terminating error and early return
-leaves it latched (the nested-sign-in refusals of BL-74 and BL-91 below excepted), `ArmTokenAcquisitionFailed` included,
-so its Graph calls are refused although its Graph half connected. The latch is keyed weakly on the
-calling command's INVOCATION, never a module boolean.
+leaves it latched (the nested-sign-in refusals of BL-74 and BL-91 below excepted),
+`ArmTokenAcquisitionFailed` included, so its Graph calls are refused although its Graph half
+connected. The latch is keyed weakly on the calling command's INVOCATION, never a module boolean.
 
 Both transports ask `Get-OERSignInRefusal` before every request and refuse with `SignInRefused`
 (`New-OERSignInRefusedError` owns id and message). A refused command's nested sign-ins are refused
@@ -518,11 +518,12 @@ consistently" and the about topic's equivalent under SOVEREIGN CLOUDS stand.
 **A renewal never continues as another account** (BL-119). The identity's fifth term is the account
 (`SignInAccountId`). A renewal whose Microsoft Graph or Azure Resource Manager token carries an oid
 (`Get-OERTokenObjectId`) that differs from the session's `SignedInObjectId`, both GUIDs, is refused for
-its caller with `SignInSuperseded` (`-AccountChanged`) before `Connect-MgGraph` and before anything is
-cached: the session stays the old account's, so no later command, with or without `-TenantId`, runs as
-the other account; only `Connect-OER` (`-ReclaimGraphSession`, never refused by it) signs in as another
-account. This is not the session-uncertain marker. A token without oid never refuses anything, and on a
-renewal never replaces `SignedInObjectId`. Never let a renewal make the session another account's;
+its caller with `SignInSuperseded` (`-AccountChanged`) before `Connect-MgGraph` (a Graph token) or
+before it is cached (an ARM token): the session stays the old account's, so no later command, with or
+without `-TenantId`, runs as the other account; only `Connect-OER` (`-ReclaimGraphSession`, never
+refused by it) signs in as another account. The marker is set as after every refusal, but it is not
+what keeps the session: a command that names its tenant is never refused by it. A token without oid
+never refuses anything, and on a renewal never replaces `SignedInObjectId`. Never let a renewal make the session another account's;
 never key the account on a name or the UPN.
 `Why: docs/development/rationale.md#a-renewal-never-continues-as-another-account`
 

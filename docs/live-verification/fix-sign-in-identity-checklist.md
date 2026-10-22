@@ -227,6 +227,7 @@ Write-S1113bResult $Res
 **Expect:** `END`; `IdentityTerms: 5`; `AccountTermIsSignedInObject: True`; `AccountChangedFlag: False`;
 `SubscriptionsRead: True`; a group count; `Errors: []`; at least one Graph and one ARM request, 0 writes, 0 token
 requests.
+Round 1: the state no longer has the key, so `AccountChangedFlag` reads False whatever happens; check 0.2 reads the key.
 **Failure looks like:** four terms (the old build), an error id, or a token request (the session was not cached).
 
 Result: 2026-10-22 08:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
@@ -646,7 +647,8 @@ the later renewal: `[SignInSuperseded x1]`, `a script block (account text)`, 1 t
 id `True`; the read naming the tenant: 0 groups, no `SignInSuperseded`, 0 Graph requests, the session still the moved
 one `True` (a public command cannot renew an app-only session itself, so the read is refused at its sign-in, most
 likely with `AppOnlySessionCredentialUnavailable`; it never runs as the token's account); the read naming no tenant: 0
-groups, `SignInRefused`, 0 Graph requests; a bare `Connect-OER`: no error, 1 token request, the session is the
+groups, `SignInRefused`, 0 Graph requests; a bare `Connect-OER`: no error, 1 token request (it signs in, since the
+session's token is inside the five-minute renewal window and misses the cache), the session is the
 token's account `True`; then a read: groups, no error; 0 writes.
 **Failure looks like:** no refusal (the renewal continued as another account), a session that is the token's account
 before the bare `Connect-OER`, a changed identity, Graph SDK session or ARM token after the refusal, or a Graph

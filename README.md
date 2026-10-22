@@ -334,9 +334,9 @@ no later command runs as the account you picked by mistake: a command that names
 `-TenantId` uses the session's own token or renews again, and the picker opens again until you
 choose the account the session signed in with, while a command that names no tenant is refused with
 `SignInRefused` until `Connect-OER`, or a command that names its tenant, signs in. To sign in as
-the other account on purpose, run `Connect-OER -Force`, which opens the account picker and takes
-the session as the account you choose (a bare `Connect-OER` would keep the account the session
-had). A renewed Azure Resource Manager token for another account is refused the same way, for the
+the other account on purpose, run `Connect-OER -Force`, which always opens the account picker and
+takes the session as the account you choose (a bare `Connect-OER` signs in again unless the
+session's token is still valid, so only `-Force` is sure to open the picker). A renewed Azure Resource Manager token for another account is refused the same way, for the
 command that asked for it, and is not kept. A token that carries no object id never causes a
 refusal, and neither does a first sign-in or `Connect-OER`: this guards the renewal only.
 
