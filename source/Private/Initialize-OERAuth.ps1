@@ -119,15 +119,21 @@ function Initialize-OERAuth {
     that named none -- compares the oid of the new Microsoft Graph token (Get-OERTokenObjectId) with the
     session's SignedInObjectId, after the TenantMismatch check and before Connect-MgGraph; a token without
     an oid, on either side, proves nothing and never refuses, and neither does a token whose tenant is
-    not a tenant ID (relabelled sign-in only). When both oids are GUIDs and differ, the caller is
+    not a tenant ID (relabelled sign-in only). A command that names the tenant by another label inherits
+    nothing from the session (Test-OERSessionUsable compares labels), so unless it passes the session's
+    own -AuthMethod, -ClientId and -Environment it signs in as Interactive, with the default application,
+    in the Global cloud: it is compared only when the session is that kind of sign-in, and after a
+    device code sign-in, an own -ClientId or another cloud it is another session and is not compared.
+    When both oids are GUIDs and differ, the caller is
     refused with a terminating SignInSuperseded (New-OERSignInSupersededError -AccountChanged) before
     Connect-MgGraph and before the state is rebuilt: the token is not used, and the session stays the
     account it was -- the state, the Graph SDK session, the cached Azure Resource Manager token, the
     sign-in identity and the sign-in memory are all left as they were. The caller stays latched and the
     session stays uncertain, as after any refusal, so a later command that names no tenant is refused
     (SignInRefused) until Connect-OER, or a command that names its tenant, signs in; a later command
-    that does name it either uses the session's cached token or renews again, and a renewal answered by
-    the other account again is refused again. No outer command is superseded by this refusal, since the
+    that does name it the same way either uses the session's cached token or renews again, one that
+    names it by another label signs in as a continuation (D4) and is compared the same way, and a
+    renewal answered by the other account again is refused again. No outer command is superseded by this refusal, since the
     sign-in identity does not move. Only Connect-OER (-ReclaimGraphSession, never a continuation) can
     make the session another account's. A renewal, or a sign-in continuing the session, whose new token
     carries no oid never replaces the session's SignedInObjectId: it is carried over, so the next one is

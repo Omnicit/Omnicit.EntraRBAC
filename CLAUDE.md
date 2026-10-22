@@ -521,8 +521,10 @@ by another label, whose Microsoft Graph or Azure Resource Manager token carries 
 (`Get-OERTokenObjectId`) that differs from the session's `SignedInObjectId`, both GUIDs, is refused
 for its caller with `SignInSuperseded` (`-AccountChanged`) before `Connect-MgGraph` (a Graph token)
 or before it is cached (an ARM token): the session stays the old account's, so no later command,
-with or without `-TenantId`, runs as the other account (`$ContinuesSession` decides it; a token whose
-tenant is not a tenant ID is not compared on another label); only `Connect-OER`
+with or without `-TenantId`, runs as the other account (`$ContinuesSession` decides it; limits: a
+token whose tenant is not a tenant ID is not compared on another label, and a command naming the
+tenant by another label inherits nothing, so it is compared only after an Interactive sign-in with
+the default application in the Global cloud); only `Connect-OER`
 (`-ReclaimGraphSession`, never refused by it) signs in as another account. The marker is set as
 after every refusal, but it is not what keeps the session: a command that names its tenant is never
 refused by it. A token without oid never refuses anything, and on either never replaces

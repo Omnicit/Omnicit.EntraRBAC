@@ -798,14 +798,19 @@ LONG RUNS
     tenant the session's token was, however the command named it (a tenant
     ID against a domain, or a tenant named after a sign-in that named none:
     a bare Connect-OER, or any command run without -TenantId, labels the
-    session organizations). When the two accounts differ -- you picked
-    another account in the picker -- the command that asked is refused with
-    SignInSuperseded and the token is not used. The session stays the
-    account it was, so no later command runs as the account you picked by
-    mistake: a command that names its tenant with -TenantId uses the
-    session's own token or renews again, and the picker opens again until
-    you choose the account the session signed in with, while a command that
-    names no tenant is refused with SignInRefused until Connect-OER, or a
+    session organizations when no session is held). A command that names
+    the tenant by another label is compared only when the session is an
+    interactive sign-in with the default application in the global cloud:
+    after a device code sign-in, your own -ClientId or another cloud it
+    signs in again with the default application and is not compared, so
+    name the tenant the same way on every command. When the two accounts
+    differ -- you picked another account in the picker -- the command that
+    asked is refused with SignInSuperseded and the token is not used. The
+    session stays the account it was, so the commands above do not run as
+    the account you picked by mistake: a command that names its tenant with
+    -TenantId the same way uses the session's own token or renews again,
+    and the picker opens again until you choose the account the session
+    signed in with, while a command that names no tenant is refused with SignInRefused until Connect-OER, or a
     command that names its tenant, signs in. To sign in as the other account
     on purpose, run Connect-OER -Force, which always opens the account
     picker and takes the session as the account you choose (a bare

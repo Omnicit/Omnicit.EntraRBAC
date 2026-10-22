@@ -5836,7 +5836,8 @@ snapshot exception of `Invoke-OERStructure` (see
 refusal first read `$RenewsSession`, which needs the same tenant LABEL. The final review found that a
 later command naming the session's tenant by another label -- its tenant ID against a domain, or ANY
 `-TenantId` after a sign-in that named none (label `organizations`, which is what a bare
-`Connect-OER` or a command run without `-TenantId` leaves) -- is a new sign-in for the cache, so when
+`Connect-OER` or a command run without `-TenantId` leaves when no session is held) -- is a new
+sign-in for the cache, so when
 the picker was answered by the other account it was accepted, cleared the marker and made the session
 the other account's without `Connect-OER`: the case this section exists to refuse, by the usual
 interactive session. D4 closes it in code. After the Graph token's tenant is known,
