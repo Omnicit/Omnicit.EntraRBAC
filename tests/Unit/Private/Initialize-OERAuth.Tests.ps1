@@ -16,6 +16,12 @@ BeforeAll {
     }
     Mock -ModuleName $script:moduleName Get-MgContext { $script:DefaultGraphContext }
 
+    # The host these tests run in may have been started with -NonInteractive (the build agent's tool host
+    # is), and Initialize-OERAuth refuses an interactive sign-in there (BL-100). Every suite below
+    # signs in interactively as an ordinary user would, so the host question is answered "no" for the
+    # whole file; the Describe on that refusal mocks it to $true for itself.
+    Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $false }
+
     # Builds a JWT-shaped string at run time only -- never a literal starting 'eyJ' in this tracked
     # file -- for the Get-OERTokenObjectId (oid claim / SignedInObjectId) tests below. The signature
     # segment is deliberately not a real signature; nothing here checks one.
@@ -45,6 +51,7 @@ Describe 'Initialize-OERAuth' {
             $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
         }
         # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any token
         # is requested. The tokens in this Describe carry no GUID tenant, so the mocked lookup answers
@@ -485,6 +492,7 @@ Describe 'Initialize-OERAuth ARM cache isolation' {
             $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
         }
         # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any token
         # is requested. The tokens in this Describe carry no GUID tenant, so the mocked lookup answers
@@ -632,6 +640,7 @@ Describe 'Initialize-OERAuth carries an ARM token over a renewal only for the re
             $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
         }
         $script:BL95GraphTenant = '11111111-1111-1111-1111-111111111111'
         $script:BL95ArmTenant = '11111111-1111-1111-1111-111111111111'
@@ -813,6 +822,7 @@ Describe 'Initialize-OERAuth error hygiene' {
             $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
         }
         # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any token
         # is requested. The tokens in this Describe carry no GUID tenant, so the mocked lookup answers
@@ -920,6 +930,7 @@ Describe 'Initialize-OERAuth session inheritance' {
             $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
         }
         # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any token
         # is requested. The tokens in this Describe carry no GUID tenant, so the mocked lookup answers
@@ -1222,6 +1233,7 @@ Describe 'Initialize-OERAuth sovereign clouds' {
             $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
         }
         # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any token
         # is requested. The tokens in this Describe carry no GUID tenant, so the mocked lookup answers
@@ -1514,6 +1526,7 @@ Describe 'Initialize-OERAuth AZURE_AUTHORITY_HOST restore' {
             $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
         }
         # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any token
         # is requested. The tokens in this Describe carry no GUID tenant, so the mocked lookup answers
@@ -1628,6 +1641,7 @@ Describe 'Initialize-OERAuth sovereign cloud -Force scoping' {
             $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
         }
         # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any token
         # is requested. The tokens in this Describe carry no GUID tenant, so the mocked lookup answers
@@ -1764,6 +1778,7 @@ Describe 'Initialize-OERAuth authority tracking across a failed acquisition' {
             $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
         }
         # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any token
         # is requested. The tokens in this Describe carry no GUID tenant, so the mocked lookup answers
@@ -1851,6 +1866,7 @@ Describe 'Initialize-OERAuth ambient AZURE_AUTHORITY_HOST warning' {
             $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
         }
         # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any token
         # is requested. The tokens in this Describe carry no GUID tenant, so the mocked lookup answers
@@ -1946,6 +1962,7 @@ Describe 'Initialize-OERAuth device-code instruction visibility' {
             $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
         }
         # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any token
         # is requested. The tokens in this Describe carry no GUID tenant, so the mocked lookup answers
@@ -2260,6 +2277,7 @@ Describe 'Initialize-OERAuth forces every device code sign-in (A17, BL-112)' {
             $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
         }
         $script:A17Calls = [System.Collections.Generic.List[object]]::new()
         # BL-12: every tenant here is a GUID, so no lookup runs; the mock keeps one off the network if it did.
@@ -2510,6 +2528,7 @@ Describe 'Initialize-OERAuth granted-tenant guard' {
             $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
             # The resolver's process-wide cache, which one It below reaches through the real resolver.
             $script:_OERTenantDomainCache = $null
         }
@@ -3225,6 +3244,7 @@ Describe 'Initialize-OERAuth tenant-switch warnings' {
             $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
         }
         # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any token
         # is requested. The tokens of the P Its carry no tenant, so the mocked lookup answers with any
@@ -3857,6 +3877,7 @@ Describe 'Initialize-OERAuth Graph SDK session fingerprint (A18)' {
             $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
         }
         $script:CurrentContext = $null
         $script:OwnContext = [pscustomobject]@{
@@ -3946,6 +3967,7 @@ Describe 'Initialize-OERAuth Graph SDK session check (A18)' {
             $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
         }
         $script:CurrentContext = $null
         $script:OwnContext = [pscustomobject]@{
@@ -4250,6 +4272,7 @@ Describe 'Initialize-OERAuth sign-in latch (A19)' {
             $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
         }
         $script:CurrentContext = $null
         $script:OwnContext = [pscustomobject]@{
@@ -4742,6 +4765,7 @@ Describe 'Initialize-OERAuth sign-in memory (A20)' {
             $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
         }
         $script:CurrentContext = $null
         $script:OwnContext = [pscustomobject]@{
@@ -5029,6 +5053,7 @@ Describe 'Initialize-OERAuth tenant named by domain (BL-12)' {
             $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
             $script:_OERTenantDomainCache = $null
         }
         $script:ResolverCalls = 0
@@ -5433,6 +5458,7 @@ Describe 'Initialize-OERAuth session uncertain after a refused sign-in (A10)' {
             $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
             $script:_OERTenantDomainCache = $null
         }
         $script:TokenCalls = 0
@@ -5776,5 +5802,1346 @@ Describe 'Initialize-OERAuth session uncertain after a refused sign-in (A10)' {
             $Before | Should -BeFalse
             Get-UncertainMarker | Should -Be $Before
         }
+    }
+}
+
+Describe 'Initialize-OERAuth renews an interactive session silently (A22, BL-115)' {
+    # AzAuth 2.11.0 answers a NON-interactive Get-AzToken from the interactive credential it holds when
+    # the request is for the tenant of the last token call (TokenManager.NonInteractive.cs:71). A renewal
+    # of an interactive session therefore tries that request first -- no -Interactive, no -ClientId,
+    # -CredentialPrecedence Environment -- and accepts its token only for the identity the session
+    # already holds; any failure, or a token of another identity, falls back to the interactive request
+    # exactly once. This module keeps a tracker of the credential AzAuth holds
+    # ($script:_OERInteractiveCredential: the client id and the tenant the interactive call passed).
+    #
+    # Nothing here reaches AzAuth: Get-AzToken, Connect-MgGraph and Get-MgContext are mocked, and so is
+    # Get-OERTokenObjectId (the fake tokens are not JWTs; the object id travels after a '|' in the fake
+    # token text). Each token request is recorded as the resource it asked for, whether it was the silent
+    # kind (it bound -CredentialPrecedence) and the parameter names it bound. Every assertion counts the
+    # requests of each kind exactly, so a "no silent request" can never pass on a request not made.
+    BeforeAll {
+        $script:A22Tenant = '66666666-6666-6666-6666-666666666666'
+        $script:A22OtherTenant = '77777777-7777-7777-7777-777777777777'
+        $script:A22Oid = '88888888-8888-8888-8888-888888888888'
+        $script:A22OtherOid = '99999999-9999-9999-9999-999999999999'
+        $script:A22GraphClient = '14d82eec-204b-4c2f-b7e8-296a70dab67e'
+        $script:A22Claims = '{"access_token":{"acrs":{"essential":true,"value":"c1"}}}'
+
+        # How the mocked Get-AzToken answers. Silent: ok | throw | none (writes nothing) | otheroid |
+        # othertenant | nooid. Interactive: ok | throw. InteractiveOid and InteractiveTenant override what
+        # an interactive-kind token carries ($null keeps the default: the session's oid, the requested
+        # tenant, or the tenant above for 'organizations').
+        $script:A22TokenMock = {
+            param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $WarningAction, $Interactive,
+                  $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                  $Scope, $Force, $Claim, $CredentialPrecedence)
+            $IsSilent = $PSBoundParameters.ContainsKey('CredentialPrecedence')
+            $script:A22Calls.Add([pscustomobject]@{
+                Resource   = $Resource
+                Silent     = $IsSilent
+                Keys       = @($PSBoundParameters.Keys)
+                Tenant     = $Tenant
+                ClientId   = $ClientId
+                Precedence = @($CredentialPrecedence)
+            })
+            # A tenant named by GUID is the tenant of the token; a domain or none is the tenant above.
+            [string]$TokenTenant = if ($Tenant -and $Tenant -match '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$') { $Tenant } else { $script:A22Tenant }
+            [string]$Oid = $script:A22Oid
+            [string]$Identity = 'interactive@contoso.com'
+            if ($IsSilent) {
+                $Identity = 'silent@contoso.com'
+                switch ($script:A22SilentMode) {
+                    'throw'       { throw 'NOT-A-REAL-TOKEN silent request failed' }
+                    'none'        { return }
+                    'otheroid'    { $Oid = $script:A22OtherOid }
+                    'othertenant' { $TokenTenant = $script:A22OtherTenant }
+                    'nooid'       { $Oid = '' }
+                }
+            }
+            else {
+                if ($script:A22InteractiveMode -eq 'throw' -and
+                    (-not $script:A22ThrowFor -or [string]$Resource -like $script:A22ThrowFor)) {
+                    throw 'NOT-A-REAL-TOKEN interactive request failed'
+                }
+                if ($null -ne $script:A22InteractiveOid) { $Oid = $script:A22InteractiveOid }
+                if ($script:A22InteractiveTenant) { $TokenTenant = $script:A22InteractiveTenant }
+            }
+            [pscustomobject]@{
+                Token     = "NOT-A-REAL-TOKEN-a22|$Oid"
+                ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+                Identity  = $Identity
+                TenantId  = $TokenTenant
+            }
+        }
+
+        # Calls Initialize-OERAuth with -Verbose and keeps the verbose lines in $script:A22Verbose, where
+        # Assert-A22Calls counts the silent attempts the function itself reports: a request that never
+        # reaches the mocked Get-AzToken (the real command's parameter sets refuse a combination before
+        # the mock runs) is still an attempt, and only this line shows it. Returns the other records
+        # (warnings, written errors); a terminating error propagates as it does without the redirection.
+        function script:Invoke-A22SignIn {
+            param([hashtable]$Parameters = @{})
+            $Records = InModuleScope $script:moduleName -Parameters @{ P = $Parameters } {
+                param($P)
+                Initialize-OERAuth @P -Verbose *>&1
+            }
+            Save-A22Verbose $Records
+            @($Records | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })
+        }
+
+        function script:Save-A22Verbose {
+            param($Records)
+            foreach ($Record in @($Records)) {
+                if ($Record -is [System.Management.Automation.VerboseRecord]) { $script:A22Verbose.Add([string]$Record.Message) }
+            }
+        }
+
+        # The first sign-in of a test, with its token requests forgotten afterwards.
+        function script:Start-A22Session {
+            param([hashtable]$Parameters = @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive' })
+            $null = Invoke-A22SignIn $Parameters
+            $script:A22Calls.Clear()
+            $script:A22Verbose.Clear()
+        }
+
+        function script:Set-A22Expiry {
+            param([int]$GraphMinutes, [int]$ArmMinutes)
+            InModuleScope $script:moduleName -Parameters @{ G = $GraphMinutes; A = $ArmMinutes } {
+                param($G, $A)
+                $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes($G)
+                $script:_OERAuthState.ArmTokenExpiry = [DateTime]::UtcNow.AddMinutes($A)
+            }
+        }
+
+        function script:Get-A22Tracker {
+            InModuleScope $script:moduleName {
+                if ($null -eq $script:_OERInteractiveCredential) { return $null }
+                [pscustomobject]@{
+                    ClientId = $script:_OERInteractiveCredential.ClientId
+                    Tenant   = $script:_OERInteractiveCredential.Tenant
+                }
+            }
+        }
+
+        function script:Set-A22Tracker {
+            param([string]$ClientId, [string]$Tenant)
+            InModuleScope $script:moduleName -Parameters @{ C = $ClientId; T = $Tenant } {
+                param($C, $T)
+                $script:_OERInteractiveCredential = @{ ClientId = $C; Tenant = $(if ($T) { $T } else { $null }) }
+            }
+        }
+
+        function script:Get-A22State {
+            InModuleScope $script:moduleName { $script:_OERAuthState }
+        }
+
+        function script:Get-A22Call {
+            param([ValidateSet('Graph', 'Arm')][string]$Kind, [bool]$Silent)
+            [string]$Pattern = if ($Kind -eq 'Graph') { '*graph*' } else { '*management*' }
+            @($script:A22Calls | Where-Object { [string]$_.Resource -like $Pattern -and $_.Silent -eq $Silent })
+        }
+
+        # Exactly this many silent and other token requests per resource and no others. The counts come
+        # first, resource by resource, so a failure names what it is about.
+        function script:Assert-A22Calls {
+            param([int]$GraphSilent = 0, [int]$GraphOther = 0, [int]$ArmSilent = 0, [int]$ArmOther = 0, [switch]$SkipAttemptCheck)
+            if (-not $SkipAttemptCheck) {
+                # One verbose line per silent attempt, whatever came of it (renewed, no token, another
+                # identity, failed) -- the attempts the function reports equal the ones the mock saw.
+                @($script:A22Verbose | Where-Object { $_ -match 'The silent renewal|Renewed the interactive session silently' }).Count |
+                    Should -Be ($GraphSilent + $ArmSilent) -Because 'every silent attempt reaches the mocked Get-AzToken and is reported once'
+            }
+            @(Get-A22Call -Kind Graph -Silent $true).Count | Should -Be $GraphSilent -Because 'the silent Microsoft Graph requests are counted exactly'
+            @(Get-A22Call -Kind Graph -Silent $false).Count | Should -Be $GraphOther -Because 'the other Microsoft Graph requests are counted exactly'
+            @(Get-A22Call -Kind Arm -Silent $true).Count | Should -Be $ArmSilent -Because 'the silent Azure Resource Manager requests are counted exactly'
+            @(Get-A22Call -Kind Arm -Silent $false).Count | Should -Be $ArmOther -Because 'the other Azure Resource Manager requests are counted exactly'
+            $script:A22Calls.Count | Should -Be ($GraphSilent + $GraphOther + $ArmSilent + $ArmOther) -Because 'every token request is recorded, each for Microsoft Graph or Azure Resource Manager'
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
+            $script:_OERLastAuthorityHost = $null
+            $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
+        }
+        $script:A22Calls = [System.Collections.Generic.List[object]]::new()
+        $script:A22Verbose = [System.Collections.Generic.List[string]]::new()
+        $script:A22SilentMode = 'ok'
+        $script:A22InteractiveMode = 'ok'
+        $script:A22ThrowFor = $null
+        $script:A22InteractiveOid = $null
+        $script:A22InteractiveTenant = $null
+        Mock -ModuleName $script:moduleName Get-AzToken -MockWith $script:A22TokenMock
+        Mock -ModuleName $script:moduleName Connect-MgGraph { }
+        Mock -ModuleName $script:moduleName Disconnect-MgGraph { }
+        Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '66666666-6666-6666-6666-666666666666' }
+        Mock -ModuleName $script:moduleName Get-OERTokenObjectId {
+            param($Token)
+            $Plain = [System.Net.NetworkCredential]::new('', $Token).Password
+            $Parts = $Plain -split '\|'
+            if ($Parts.Count -gt 1 -and $Parts[1]) { $Parts[1] } else { $null }
+        }
+    }
+
+    Context 'a renewal that is answered silently' {
+        It 'sends one silent Microsoft Graph request and no interactive one' {
+            Start-A22Session
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 1 -GraphOther 0
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
+        }
+
+        It 'builds the silent request from the interactive one: no Interactive, no ClientId, CredentialPrecedence Environment, Tenant and Scope as before' {
+            Start-A22Session
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn
+
+            $Call = @(Get-A22Call -Kind Graph -Silent $true)[0]
+            $Call.Keys | Should -Not -Contain 'Interactive'
+            $Call.Keys | Should -Not -Contain 'ClientId'
+            $Call.Keys | Should -Not -Contain 'Force'
+            $Call.Keys | Should -Not -Contain 'Claim'
+            $Call.Keys | Should -Contain 'CredentialPrecedence'
+            $Call.Keys | Should -Contain 'Scope'
+            @($Call.Precedence).Count | Should -Be 1
+            $Call.Precedence[0] | Should -BeExactly 'Environment'
+            $Call.Tenant | Should -BeExactly $script:A22Tenant
+        }
+
+        It 'renews a session that names no tenant without a Tenant key, since the interactive request named none' {
+            Start-A22Session @{ AuthMethod = 'Interactive' }
+            (Get-A22Tracker).Tenant | Should -BeNullOrEmpty
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 1 -GraphOther 0
+            @(Get-A22Call -Kind Graph -Silent $true)[0].Keys | Should -Not -Contain 'Tenant'
+        }
+
+        It 'names a tenant given as a domain exactly as the interactive request did, and compares the token with the tenant ID it resolved to' {
+            Start-A22Session @{ TenantId = 'contoso.onmicrosoft.com'; AuthMethod = 'Interactive' }
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 1 -GraphOther 0
+            @(Get-A22Call -Kind Graph -Silent $true)[0].Tenant | Should -BeExactly 'contoso.onmicrosoft.com'
+            (Get-A22State).Account | Should -BeExactly 'silent@contoso.com'
+        }
+
+        It 'puts the silent token in the session: the state carries its identity and expiry' {
+            Start-A22Session
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn
+
+            $State = Get-A22State
+            $State.Account | Should -BeExactly 'silent@contoso.com'
+            $State.GraphTokenExpiry | Should -BeGreaterThan ([DateTime]::UtcNow.AddMinutes(30))
+            $State.SignedInObjectId | Should -Be $script:A22Oid
+            $State.TokenTenantId | Should -Be $script:A22Tenant
+        }
+
+        It 'leaves the tracker as it was' {
+            Start-A22Session
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn
+
+            (Get-A22Tracker).ClientId | Should -BeExactly $script:A22GraphClient
+            (Get-A22Tracker).Tenant | Should -BeExactly $script:A22Tenant
+        }
+
+        It 'a second renewal is silent again' {
+            Start-A22Session
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+            $null = Invoke-A22SignIn
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+            $script:A22Calls.Clear()
+            $script:A22Verbose.Clear()
+
+            $null = Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 1 -GraphOther 0
+        }
+
+        It 'a caller-supplied client id is the tracker''s client id, and the renewal is silent for it' {
+            Start-A22Session @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive'; ClientId = 'my-app-id' }
+            (Get-A22Tracker).ClientId | Should -BeExactly 'my-app-id'
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 1 -GraphOther 0
+            @(Get-A22Call -Kind Graph -Silent $true)[0].Keys | Should -Not -Contain 'ClientId'
+        }
+
+        It 'keeps the cached Azure Resource Manager token over a silent Graph renewal' {
+            Start-A22Session @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive'; IncludeARM = $true }
+            # AzAuth holds ONE interactive credential, the one the last interactive request built. Every
+            # -IncludeARM sign-in requests Azure Resource Manager last, so in a session using both
+            # resources the tracker names ARM and the Graph renewal is not silent (ruling R-3 accepted
+            # that cost). This test forces the tracker to Graph to prove what the Graph request does
+            # when the tracker names the Graph credential.
+            Set-A22Tracker -ClientId $script:A22GraphClient -Tenant $script:A22Tenant
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 60
+
+            Invoke-A22SignIn @{ IncludeARM = $true }
+
+            Assert-A22Calls -GraphSilent 1 -GraphOther 0 -ArmSilent 0 -ArmOther 0
+            $State = Get-A22State
+            $State.ArmToken | Should -Not -BeNullOrEmpty
+            $State.ArmTokenTenantId | Should -Be $script:A22Tenant
+        }
+    }
+
+    Context 'a silent request that does not give the session''s identity' {
+        It 'falls back to exactly one interactive request when the silent one throws, with no warning and no error record' {
+            Start-A22Session
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+            $script:A22SilentMode = 'throw'
+
+            # The streams, not -ErrorVariable: that collects the exception the silent mock throws as it
+            # unwinds, caught or not, which is not a record written to anyone.
+            $Streams = Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 1 -GraphOther 1
+            @($Streams | Where-Object { $_ -is [System.Management.Automation.WarningRecord] }).Count | Should -Be 0
+            @($Streams | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+            $Interactive = @(Get-A22Call -Kind Graph -Silent $false)[0]
+            $Interactive.Keys | Should -Contain 'Interactive'
+            $Interactive.ClientId | Should -BeExactly $script:A22GraphClient
+            (Get-A22State).Account | Should -BeExactly 'interactive@contoso.com'
+        }
+
+        It 'sets the tracker again after the interactive fallback' {
+            Start-A22Session @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive'; ClientId = 'my-app-id' }
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+            $script:A22SilentMode = 'throw'
+
+            Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 1 -GraphOther 1
+            (Get-A22Tracker).ClientId | Should -BeExactly 'my-app-id'
+            (Get-A22Tracker).Tenant | Should -BeExactly $script:A22Tenant
+        }
+
+        It 'scrubs the error record of a failed silent request first, and writes only the exception type at the verbose stream' {
+            Start-A22Session
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+            $script:A22SilentMode = 'throw'
+            Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+
+            $null = Invoke-A22SignIn
+
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record.Exception.Message -like '*silent request failed*'
+            }
+            $Verbose = $script:A22Verbose -join "`n"
+            $Verbose | Should -Match 'The silent renewal failed \(\w+\)'
+            $Verbose | Should -Not -Match 'NOT-A-REAL-TOKEN'
+        }
+
+        It 'falls back when the silent request returns nothing' {
+            Start-A22Session
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+            $script:A22SilentMode = 'none'
+
+            $null = Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 1 -GraphOther 1
+            (Get-A22State).Account | Should -BeExactly 'interactive@contoso.com'
+            # The no-token guard answers by itself; without it the empty answer would fail further down
+            # and be reported as a failed request.
+            $Verbose = $script:A22Verbose -join "`n"
+            $Verbose | Should -Match 'The silent renewal returned no token'
+            $Verbose | Should -Not -Match 'The silent renewal failed'
+        }
+
+        It 'discards a silent token of another object id and signs in interactively once' {
+            Start-A22Session
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+            $script:A22SilentMode = 'otheroid'
+
+            Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 1 -GraphOther 1
+            $State = Get-A22State
+            $State.Account | Should -BeExactly 'interactive@contoso.com'
+            $State.SignedInObjectId | Should -Be $script:A22Oid
+        }
+
+        It 'discards a silent token of another tenant and signs in interactively once' {
+            Start-A22Session @{ AuthMethod = 'Interactive' }
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+            $script:A22SilentMode = 'othertenant'
+
+            Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 1 -GraphOther 1
+            $State = Get-A22State
+            $State.Account | Should -BeExactly 'interactive@contoso.com'
+            $State.TokenTenantId | Should -Be $script:A22Tenant
+        }
+
+        It 'discards a silent token with no readable object id' {
+            Start-A22Session
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+            $script:A22SilentMode = 'nooid'
+
+            Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 1 -GraphOther 1
+            (Get-A22State).Account | Should -BeExactly 'interactive@contoso.com'
+        }
+
+        It 'stops with GraphTokenAcquisitionFailed, and leaves the tracker empty, when the fallback fails too' {
+            Start-A22Session
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+            $script:A22SilentMode = 'throw'
+            $script:A22InteractiveMode = 'throw'
+
+            $Caught = InModuleScope $script:moduleName {
+                try { Initialize-OERAuth; $null } catch { $PSItem }
+            }
+
+            $Caught.FullyQualifiedErrorId | Should -BeLike 'GraphTokenAcquisitionFailed*'
+            # The verbose lines of a call that ends in a terminating error are lost to the catch above.
+            Assert-A22Calls -GraphSilent 1 -GraphOther 1 -SkipAttemptCheck
+            Get-A22Tracker | Should -BeNullOrEmpty
+        }
+
+        It 'gives the interactive token that follows a discarded silent one the same TenantMismatch check as ever' {
+            Start-A22Session
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+            $script:A22SilentMode = 'othertenant'
+            $script:A22InteractiveTenant = $script:A22OtherTenant
+
+            $Caught = InModuleScope $script:moduleName {
+                try { Initialize-OERAuth; $null } catch { $PSItem }
+            }
+
+            $Caught.FullyQualifiedErrorId | Should -BeLike 'TenantMismatch*'
+            Assert-A22Calls -GraphSilent 1 -GraphOther 1 -SkipAttemptCheck
+        }
+    }
+
+    Context 'the identity check reads a real token (a delegating mock wraps the real Get-OERTokenObjectId)' {
+        BeforeAll {
+            # The real reader's body, taken before any test of this Context mocks the name; a script block of
+            # a module function stays bound to the module, so its private helpers resolve when it is called.
+            $script:A22RealGetOid = InModuleScope $script:moduleName { (Get-Command Get-OERTokenObjectId -CommandType Function).ScriptBlock }
+        }
+
+        BeforeEach {
+            # The real reader of the oid claim, through the silent path: the tokens the mocked Get-AzToken
+            # returns are JWT-shaped (header.payload.signature, the signature NOT-A-REAL-TOKEN text), the
+            # payload carrying the oid and tid claims, so Invoke-SilentRenewal decodes what it compares.
+            $script:A22Jwt = @{
+                $script:A22Oid      = New-TestToken -Claims @{ oid = $script:A22Oid; tid = $script:A22Tenant }
+                $script:A22OtherOid = New-TestToken -Claims @{ oid = $script:A22OtherOid; tid = $script:A22Tenant }
+            }
+            Mock -ModuleName $script:moduleName Get-OERTokenObjectId {
+                param($Token)
+                & $script:A22RealGetOid -Token $Token
+            }
+            Mock -ModuleName $script:moduleName Get-AzToken {
+                param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $WarningAction, $Interactive,
+                      $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                      $Scope, $Force, $Claim, $CredentialPrecedence)
+                $Result = & $script:A22TokenMock @PSBoundParameters
+                if ($null -ne $Result) {
+                    $Result.Token = $script:A22Jwt[($Result.Token -split '\|')[1]]
+                }
+                $Result
+            }
+        }
+
+        It 'accepts a silent JWT whose oid and tid are the session''s, and sends no interactive request' {
+            Start-A22Session
+            (Get-A22State).SignedInObjectId | Should -Be $script:A22Oid -Because 'the real reader decoded the first token'
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 1 -GraphOther 0
+            (Get-A22State).Account | Should -BeExactly 'silent@contoso.com'
+        }
+
+        It 'discards a silent JWT of another oid and sends exactly one interactive request' {
+            Start-A22Session
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+            $script:A22SilentMode = 'otheroid'
+
+            Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 1 -GraphOther 1
+            $State = Get-A22State
+            $State.Account | Should -BeExactly 'interactive@contoso.com'
+            $State.SignedInObjectId | Should -Be $script:A22Oid
+        }
+    }
+
+    Context 'the tracker' {
+        It 'names the client id and tenant of an interactive Microsoft Graph request' {
+            Invoke-A22SignIn @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive' }
+
+            (Get-A22Tracker).ClientId | Should -BeExactly $script:A22GraphClient
+            (Get-A22Tracker).Tenant | Should -BeExactly $script:A22Tenant
+        }
+
+        It 'names the empty client id, as a string, after an interactive Azure Resource Manager request' {
+            Invoke-A22SignIn @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive'; IncludeARM = $true }
+
+            (Get-A22Tracker).ClientId | Should -BeOfType [string]
+            (Get-A22Tracker).ClientId | Should -BeExactly ''
+            (Get-A22Tracker).Tenant | Should -BeExactly $script:A22Tenant
+        }
+
+        It 'is empty after a request that throws' {
+            Set-A22Tracker -ClientId $script:A22GraphClient -Tenant $script:A22Tenant
+            $script:A22InteractiveMode = 'throw'
+
+            InModuleScope $script:moduleName {
+                try { Initialize-OERAuth -TenantId '66666666-6666-6666-6666-666666666666' -AuthMethod Interactive } catch { $null = $PSItem }
+            }
+
+            Get-A22Tracker | Should -BeNullOrEmpty
+        }
+
+        It 'is cleared before a device code request' {
+            Start-A22Session
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn @{ TenantId = $script:A22Tenant; AuthMethod = 'DeviceCode' }
+
+            Get-A22Tracker | Should -BeNullOrEmpty
+        }
+
+        It 'is cleared before a managed identity request' {
+            Start-A22Session
+            Invoke-A22SignIn @{ TenantId = $script:A22Tenant; AuthMethod = 'ManagedIdentity' }
+
+            Get-A22Tracker | Should -BeNullOrEmpty
+        }
+
+        It 'is empty after a managed identity sign-in that also acquires an Azure Resource Manager token' {
+            Invoke-A22SignIn @{ TenantId = $script:A22Tenant; AuthMethod = 'ManagedIdentity'; IncludeARM = $true }
+
+            Get-A22Tracker | Should -BeNullOrEmpty
+        }
+
+        It 'is empty after an Azure Resource Manager request that throws, whatever the tracker named before it' {
+            Start-A22Session
+            Set-A22Tracker -ClientId $script:A22GraphClient -Tenant $script:A22Tenant
+            $script:A22InteractiveMode = 'throw'
+            $script:A22ThrowFor = '*management*'
+
+            $null = Invoke-A22SignIn @{ IncludeARM = $true; ErrorAction = 'SilentlyContinue' }
+
+            # The Graph token was cached, so the Azure Resource Manager request was the only one made.
+            Assert-A22Calls -ArmSilent 0 -ArmOther 1
+            Get-A22Tracker | Should -BeNullOrEmpty
+        }
+
+        It 'is cleared before a client secret request' {
+            Start-A22Session
+            Invoke-A22SignIn @{
+                TenantId     = $script:A22Tenant
+                AuthMethod   = 'ClientSecret'
+                ClientId     = 'app-id'
+                ClientSecret = (ConvertTo-SecureString 'not-a-real-secret' -AsPlainText -Force)
+            }
+
+            Get-A22Tracker | Should -BeNullOrEmpty
+        }
+
+        It 'is cleared before a client certificate request' {
+            Start-A22Session
+            Invoke-A22SignIn @{
+                TenantId        = $script:A22Tenant
+                AuthMethod      = 'ClientCertificate'
+                ClientId        = 'app-id'
+                CertificatePath = 'oer-a22-not-a-real-certificate.pfx'
+            }
+
+            Get-A22Tracker | Should -BeNullOrEmpty
+        }
+
+        It 'is cleared before an interactive request that falls back, and set again after it' {
+            Start-A22Session
+            Set-A22Tracker -ClientId 'stale-client' -Tenant $script:A22OtherTenant
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 0 -GraphOther 1
+            (Get-A22Tracker).ClientId | Should -BeExactly $script:A22GraphClient
+            (Get-A22Tracker).Tenant | Should -BeExactly $script:A22Tenant
+        }
+
+        It 'is not touched by Disconnect-OER: the credential AzAuth holds outlives the state' {
+            Start-A22Session
+
+            Disconnect-OER -Confirm:$false
+
+            (Get-A22Tracker).ClientId | Should -BeExactly $script:A22GraphClient
+        }
+    }
+
+    Context 'a renewal that is never silent' {
+        It 'does not try for a first sign-in, whatever the tracker says' {
+            Set-A22Tracker -ClientId $script:A22GraphClient -Tenant $script:A22Tenant
+
+            Invoke-A22SignIn @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive' }
+
+            Assert-A22Calls -GraphSilent 0 -GraphOther 1
+        }
+
+        It 'does not try with no tracker (the module was reloaded, or AzAuth was last called by a request that is not interactive)' {
+            Start-A22Session
+            InModuleScope $script:moduleName { $script:_OERInteractiveCredential = $null }
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 0 -GraphOther 1
+        }
+
+        It 'does not try for Connect-OER''s sign-in (-ReclaimGraphSession), which signs in as before' {
+            Start-A22Session
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn @{ ReclaimGraphSession = $true }
+
+            Assert-A22Calls -GraphSilent 0 -GraphOther 1
+        }
+
+        It 'does not try under Connect-OER' {
+            Start-A22Session
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Save-A22Verbose (Connect-OER -TenantId $script:A22Tenant -Interactive -Verbose *>&1)
+
+            Assert-A22Calls -GraphSilent 0 -GraphOther 1
+        }
+
+        It 'does not try under -ForceRefresh, which carries Force' {
+            Start-A22Session
+
+            Invoke-A22SignIn @{ ForceRefresh = $true }
+
+            Assert-A22Calls -GraphSilent 0 -GraphOther 1
+            @(Get-A22Call -Kind Graph -Silent $false)[0].Keys | Should -Contain 'Force'
+        }
+
+        It 'does not try for a claims challenge' {
+            Start-A22Session
+
+            Invoke-A22SignIn @{ ClaimsChallenge = $script:A22Claims }
+
+            Assert-A22Calls -GraphSilent 0 -GraphOther 1
+            @(Get-A22Call -Kind Graph -Silent $false)[0].Keys | Should -Contain 'Claim'
+        }
+
+        It 'does not try for a cloud switch' {
+            Start-A22Session
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive'; Environment = 'USGov' }
+
+            Assert-A22Calls -GraphSilent 0 -GraphOther 1
+            @(Get-A22Call -Kind Graph -Silent $false)[0].Keys | Should -Contain 'Force'
+        }
+
+        It 'does not try for a cloud switch even when no Force is on the request' {
+            # The authority tracker already names the sovereign host, so no Force is added: the cloud
+            # alone (a state of another cloud, $ArmIdentityUnchanged) keeps the renewal interactive.
+            Start-A22Session
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+            InModuleScope $script:moduleName {
+                $script:_OERLastAuthorityHost = (Get-OERCloudEndpoint -Environment 'USGov').AuthorityHost
+            }
+
+            Invoke-A22SignIn @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive'; Environment = 'USGov' }
+
+            Assert-A22Calls -GraphSilent 0 -GraphOther 1
+            @(Get-A22Call -Kind Graph -Silent $false)[0].Keys | Should -Not -Contain 'Force'
+        }
+
+        It 'does not try for another tenant than the session''s' {
+            Start-A22Session
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn @{ TenantId = $script:A22OtherTenant; AuthMethod = 'Interactive' }
+
+            Assert-A22Calls -GraphSilent 0 -GraphOther 1
+        }
+
+        It 'does not try for another client than the session''s' {
+            Start-A22Session
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive'; ClientId = 'my-app-id' }
+
+            Assert-A22Calls -GraphSilent 0 -GraphOther 1
+        }
+
+        It 'does not try when the tracker names another client than the interactive request would pass' {
+            Start-A22Session
+            Set-A22Tracker -ClientId 'another-client' -Tenant $script:A22Tenant
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 0 -GraphOther 1
+        }
+
+        It 'does not try when the tracker names another tenant than the interactive request would pass' {
+            Start-A22Session
+            Set-A22Tracker -ClientId $script:A22GraphClient -Tenant $script:A22OtherTenant
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 0 -GraphOther 1
+        }
+
+        It 'does not try when the tracker names a tenant and the request names none' {
+            Start-A22Session @{ AuthMethod = 'Interactive' }
+            Set-A22Tracker -ClientId $script:A22GraphClient -Tenant $script:A22Tenant
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 0 -GraphOther 1
+        }
+
+        It 'does not try when the tracker differs from the client id only in letter case' {
+            Start-A22Session @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive'; ClientId = 'My-App-Id' }
+            Set-A22Tracker -ClientId 'my-app-id' -Tenant $script:A22Tenant
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 0 -GraphOther 1
+        }
+
+        It 'does not try when the tracker differs from the tenant only in letter case' {
+            Start-A22Session @{ TenantId = 'Contoso.onmicrosoft.com'; AuthMethod = 'Interactive' }
+            Set-A22Tracker -ClientId $script:A22GraphClient -Tenant 'contoso.onmicrosoft.com'
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 0 -GraphOther 1
+        }
+
+        It 'does not try when the session has no object id to compare a token with' {
+            $script:A22InteractiveOid = ''
+            Start-A22Session
+            (Get-A22State).SignedInObjectId | Should -BeNullOrEmpty
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+            $script:A22InteractiveOid = $null
+
+            Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 0 -GraphOther 1
+        }
+
+        It 'does not try when the session''s token tenant is not a GUID' {
+            $script:A22InteractiveTenant = 'contoso'
+            Start-A22Session @{ AuthMethod = 'Interactive' }
+            (Get-A22State).TokenTenantId | Should -BeExactly 'contoso'
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+            $script:A22InteractiveTenant = $null
+
+            Invoke-A22SignIn
+
+            Assert-A22Calls -GraphSilent 0 -GraphOther 1
+        }
+
+        It 'does not try for a session switched to Interactive from another method' {
+            Start-A22Session @{ TenantId = $script:A22Tenant; AuthMethod = 'ManagedIdentity' }
+            Set-A22Tracker -ClientId $script:A22GraphClient -Tenant $script:A22Tenant
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive' }
+
+            Assert-A22Calls -GraphSilent 0 -GraphOther 1
+        }
+
+        It 'does not try for a <Method> session, whatever the tracker says' -ForEach @(
+            @{ Method = 'DeviceCode' }
+            @{ Method = 'ManagedIdentity' }
+            @{ Method = 'ClientSecret' }
+            @{ Method = 'ClientCertificate' }
+        ) {
+            $Parameters = @{ TenantId = $script:A22Tenant; AuthMethod = $Method }
+            if ($Method -in 'ClientSecret', 'ClientCertificate') { $Parameters.ClientId = 'app-id' }
+            if ($Method -eq 'ClientSecret') { $Parameters.ClientSecret = ConvertTo-SecureString 'not-a-real-secret' -AsPlainText -Force }
+            if ($Method -eq 'ClientCertificate') { $Parameters.CertificatePath = 'oer-a22-not-a-real-certificate.pfx' }
+            Start-A22Session $Parameters
+            # A tracker that would match an interactive request, planted: only the method keeps this
+            # renewal from being silent.
+            [string]$PlantedClient = if ($Method -in 'ClientSecret', 'ClientCertificate') { 'app-id' } else { $script:A22GraphClient }
+            Set-A22Tracker -ClientId $PlantedClient -Tenant $script:A22Tenant
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn $Parameters
+
+            Assert-A22Calls -GraphSilent 0 -GraphOther 1
+            @(Get-A22Call -Kind Graph -Silent $false)[0].Keys | Should -Not -Contain 'CredentialPrecedence'
+        }
+    }
+
+    Context 'the Azure Resource Manager token' {
+        It 'is renewed silently when the Azure Resource Manager credential is the one AzAuth holds' {
+            Start-A22Session @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive'; IncludeARM = $true }
+            (Get-A22Tracker).ClientId | Should -BeExactly ''
+            Set-A22Expiry -GraphMinutes 60 -ArmMinutes 2
+
+            Invoke-A22SignIn @{ IncludeARM = $true }
+
+            Assert-A22Calls -ArmSilent 1 -ArmOther 0 -GraphSilent 0 -GraphOther 0
+            $Call = @(Get-A22Call -Kind Arm -Silent $true)[0]
+            $Call.Keys | Should -Not -Contain 'Interactive'
+            $Call.Keys | Should -Not -Contain 'ClientId'
+            $Call.Keys | Should -Not -Contain 'Scope'
+            $Call.Precedence[0] | Should -BeExactly 'Environment'
+            $Call.Tenant | Should -BeExactly $script:A22Tenant
+            $State = Get-A22State
+            $State.ArmTokenExpiry | Should -BeGreaterThan ([DateTime]::UtcNow.AddMinutes(30))
+            $State.ArmTokenTenantId | Should -Be $script:A22Tenant
+            (Get-A22Tracker).ClientId | Should -BeExactly ''
+        }
+
+        It 'is requested interactively, once, when the Microsoft Graph credential is the one AzAuth holds' {
+            Start-A22Session
+            Set-A22Tracker -ClientId $script:A22GraphClient -Tenant $script:A22Tenant
+
+            Invoke-A22SignIn @{ IncludeARM = $true }
+
+            Assert-A22Calls -ArmSilent 0 -ArmOther 1 -GraphSilent 0 -GraphOther 0
+            (Get-A22Tracker).ClientId | Should -BeExactly ''
+        }
+
+        It 'is requested interactively after an interactive Microsoft Graph request, since AzAuth then holds the Graph credential' {
+            # The tracker names the Azure Resource Manager credential going in. The Graph request does not
+            # match it and is interactive, which makes AzAuth hold the Graph credential, so the Azure
+            # Resource Manager request that follows must not be silent: its predicate is read after it.
+            Start-A22Session @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive'; IncludeARM = $true }
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn @{ IncludeARM = $true }
+
+            Assert-A22Calls -GraphSilent 0 -GraphOther 1 -ArmSilent 0 -ArmOther 1
+            (Get-A22Tracker).ClientId | Should -BeExactly ''
+        }
+
+        It 'is requested interactively after a silent Graph renewal, since the credential AzAuth holds is the Graph one' {
+            Start-A22Session
+            Set-A22Expiry -GraphMinutes 2 -ArmMinutes 2
+
+            Invoke-A22SignIn @{ IncludeARM = $true }
+
+            Assert-A22Calls -GraphSilent 1 -GraphOther 0 -ArmSilent 0 -ArmOther 1
+        }
+
+        It 'falls back to one interactive Azure Resource Manager request when the silent one throws' {
+            Start-A22Session @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive'; IncludeARM = $true }
+            Set-A22Expiry -GraphMinutes 60 -ArmMinutes 2
+            $script:A22SilentMode = 'throw'
+
+            Invoke-A22SignIn @{ IncludeARM = $true }
+
+            Assert-A22Calls -ArmSilent 1 -ArmOther 1
+            @(Get-A22Call -Kind Arm -Silent $false)[0].Keys | Should -Contain 'Interactive'
+        }
+
+        It 'discards a silent token of another object id' {
+            Start-A22Session @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive'; IncludeARM = $true }
+            Set-A22Expiry -GraphMinutes 60 -ArmMinutes 2
+            $script:A22SilentMode = 'otheroid'
+
+            Invoke-A22SignIn @{ IncludeARM = $true }
+
+            Assert-A22Calls -ArmSilent 1 -ArmOther 1
+        }
+
+        It 'discards a silent token of another tenant than the session''s' {
+            Start-A22Session @{ AuthMethod = 'Interactive'; IncludeARM = $true }
+            Set-A22Expiry -GraphMinutes 60 -ArmMinutes 2
+            $script:A22SilentMode = 'othertenant'
+
+            Invoke-A22SignIn @{ IncludeARM = $true }
+
+            Assert-A22Calls -ArmSilent 1 -ArmOther 1
+            (Get-A22State).ArmTokenTenantId | Should -Be $script:A22Tenant
+        }
+
+        It 'is not silent for a session that is not interactive' {
+            Start-A22Session @{ TenantId = $script:A22Tenant; AuthMethod = 'ManagedIdentity'; IncludeARM = $true }
+            Set-A22Tracker -ClientId '' -Tenant $script:A22Tenant
+            Set-A22Expiry -GraphMinutes 60 -ArmMinutes 2
+
+            Invoke-A22SignIn @{ TenantId = $script:A22Tenant; AuthMethod = 'ManagedIdentity'; IncludeARM = $true }
+
+            Assert-A22Calls -ArmSilent 0 -ArmOther 1
+        }
+
+        It 'is not silent under -ForceRefresh' {
+            Start-A22Session @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive'; IncludeARM = $true }
+
+            Invoke-A22SignIn @{ IncludeARM = $true; ForceRefresh = $true }
+
+            Assert-A22Calls -GraphSilent 0 -GraphOther 1 -ArmSilent 0 -ArmOther 1
+        }
+
+        It 'is not silent for a claims challenge' {
+            Start-A22Session @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive'; IncludeARM = $true }
+            Set-A22Expiry -GraphMinutes 60 -ArmMinutes 2
+
+            Invoke-A22SignIn @{ IncludeARM = $true; ClaimsChallenge = $script:A22Claims }
+
+            Assert-A22Calls -ArmSilent 0 -ArmOther 1 -GraphSilent 0 -GraphOther 1
+        }
+
+        It 'is not silent for Connect-OER''s sign-in (-ReclaimGraphSession)' {
+            Start-A22Session @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive'; IncludeARM = $true }
+            Set-A22Expiry -GraphMinutes 60 -ArmMinutes 2
+
+            Invoke-A22SignIn @{ IncludeARM = $true; ReclaimGraphSession = $true }
+
+            Assert-A22Calls -ArmSilent 0 -ArmOther 1
+        }
+
+        It 'is not silent when the tracker names another tenant than the request' {
+            Start-A22Session @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive'; IncludeARM = $true }
+            Set-A22Tracker -ClientId '' -Tenant $script:A22OtherTenant
+            Set-A22Expiry -GraphMinutes 60 -ArmMinutes 2
+
+            Invoke-A22SignIn @{ IncludeARM = $true }
+
+            Assert-A22Calls -ArmSilent 0 -ArmOther 1
+        }
+
+        It 'is not silent when the request carries Force for the authority the credential was not built at' {
+            Start-A22Session @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive'; IncludeARM = $true }
+            Set-A22Expiry -GraphMinutes 60 -ArmMinutes 2
+            InModuleScope $script:moduleName {
+                $script:_OERLastAuthorityHost = (Get-OERCloudEndpoint -Environment 'USGov').AuthorityHost
+            }
+
+            Invoke-A22SignIn @{ IncludeARM = $true }
+
+            Assert-A22Calls -ArmSilent 0 -ArmOther 1 -GraphSilent 0 -GraphOther 0
+            @(Get-A22Call -Kind Arm -Silent $false)[0].Keys | Should -Contain 'Force'
+        }
+
+        It 'is not silent when the session has no object id to compare a token with' {
+            $script:A22InteractiveOid = ''
+            Start-A22Session @{ TenantId = $script:A22Tenant; AuthMethod = 'Interactive'; IncludeARM = $true }
+            Set-A22Expiry -GraphMinutes 60 -ArmMinutes 2
+            $script:A22InteractiveOid = $null
+
+            Invoke-A22SignIn @{ IncludeARM = $true }
+
+            Assert-A22Calls -ArmSilent 0 -ArmOther 1
+        }
+
+        It 'is not silent when the session''s token tenant is not a GUID' {
+            $script:A22InteractiveTenant = 'contoso'
+            Start-A22Session @{ AuthMethod = 'Interactive'; IncludeARM = $true }
+            Set-A22Expiry -GraphMinutes 60 -ArmMinutes 2
+            $script:A22InteractiveTenant = $null
+
+            Invoke-A22SignIn @{ IncludeARM = $true }
+
+            Assert-A22Calls -ArmSilent 0 -ArmOther 1
+        }
+    }
+}
+
+Describe 'Initialize-OERAuth refuses an interactive sign-in in a host started with -NonInteractive (BL-100)' {
+    # A host started with pwsh -NonInteractive declares that nobody can answer a prompt (a policy; whether a
+    # browser could be completed there is not measured), and AzAuth would still open the browser from the
+    # token request. Initialize-OERAuth refuses it with InteractiveSignInUnavailable,
+    # after the cached return and the credential checks and before the tenant lookup and every token request
+    # (the silent renewal included). Test-OERHostNonInteractive is the single owner of the host question;
+    # here it is mocked, so the answer is the test's choice and not the host this file happens to run in.
+    # Nothing reaches AzAuth, Microsoft Graph or the tenant lookup: Get-AzToken, Connect-MgGraph,
+    # Disconnect-MgGraph and Resolve-OERTenantDomain are mocked, and the root Get-MgContext mock answers.
+    BeforeAll {
+        $script:NiTenant = '66666666-6666-6666-6666-666666666666'
+        $script:NiOid = '88888888-8888-8888-8888-888888888888'
+
+        # Calls Initialize-OERAuth from ONE script block, then reads the latch and the session-uncertain
+        # marker from that same script block, as the latch Describe does. Returns the record it raised.
+        function script:Invoke-NiProbe {
+            param([hashtable]$Parameters = @{})
+            InModuleScope $script:moduleName -Parameters @{ P = $Parameters } {
+                param($P)
+                $Caught = $null
+                try { Initialize-OERAuth @P } catch { $Caught = $PSItem }
+                $Refusal = Get-OERSignInRefusal
+                $Was = Set-OERSessionUncertain -Value $true
+                $null = Set-OERSessionUncertain -Value $Was
+                @{ Caught = $Caught; Refusal = $Refusal; Marker = $Was }
+            }
+        }
+
+        function script:Set-NiGraphExpiry {
+            param([int]$Minutes)
+            InModuleScope $script:moduleName -Parameters @{ M = $Minutes } {
+                param($M)
+                $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes($M)
+            }
+        }
+
+        function script:Get-NiSilentCallCount {
+            @($script:NiCalls | Where-Object { $_.Silent }).Count
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
+            $script:_OERLastAuthorityHost = $null
+            $script:_OERLastTokenRequest = $null
+            $script:_OERInteractiveCredential = $null
+        }
+        $script:NiCalls = [System.Collections.Generic.List[object]]::new()
+        Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $true }
+        Mock -ModuleName $script:moduleName Get-AzToken {
+            param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $WarningAction, $Interactive,
+                  $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                  $Scope, $Force, $Claim, $CredentialPrecedence)
+            $script:NiCalls.Add([pscustomobject]@{ Resource = $Resource; Silent = $PSBoundParameters.ContainsKey('CredentialPrecedence') })
+            [string]$TokenTenant = if ($Tenant -and $Tenant -match '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$') { $Tenant } else { '66666666-6666-6666-6666-666666666666' }
+            [pscustomobject]@{
+                Token     = 'NOT-A-REAL-TOKEN-ni|88888888-8888-8888-8888-888888888888'
+                ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+                Identity  = 'admin@contoso.com'
+                TenantId  = $TokenTenant
+            }
+        }
+        Mock -ModuleName $script:moduleName Connect-MgGraph { }
+        Mock -ModuleName $script:moduleName Disconnect-MgGraph { }
+        Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '66666666-6666-6666-6666-666666666666' }
+        Mock -ModuleName $script:moduleName Get-OERTokenObjectId {
+            param($Token)
+            $Plain = [System.Net.NetworkCredential]::new('', $Token).Password
+            $Parts = $Plain -split '\|'
+            if ($Parts.Count -gt 1 -and $Parts[1]) { $Parts[1] } else { $null }
+        }
+    }
+
+    Context 'an interactive sign-in in a non-interactive host' {
+        It 'is refused with InteractiveSignInUnavailable, naming the host, the tenant and the ways that work' {
+            $R = Invoke-NiProbe -Parameters @{ TenantId = $script:NiTenant; AuthMethod = 'Interactive' }
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'InteractiveSignInUnavailable,Initialize-OERAuth'
+            $R.Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
+            $R.Caught.TargetObject | Should -BeExactly $script:NiTenant
+            $R.Caught.Exception.Message | Should -Match '-NonInteractive'
+            $R.Caught.Exception.Message | Should -Match 'browser sign-in'
+            $R.Caught.Exception.Message | Should -Match 'no token was requested'
+            $R.Caught.Exception.Message | Should -Match 'Connect-OER'
+            $R.Caught.Exception.Message | Should -Match '-DeviceCode'
+            $R.Caught.Exception.Message | Should -Match '-ManagedIdentity'
+            $R.Caught.Exception.Message | Should -Match '-CertificatePath'
+            $R.Caught.Exception.Message | Should -Match '-ClientSecret'
+        }
+
+        It 'requests nothing: no token, no tenant lookup, no Connect-MgGraph, and builds no session' {
+            $R = Invoke-NiProbe -Parameters @{ TenantId = 'contoso.onmicrosoft.com'; AuthMethod = 'Interactive'; IncludeARM = $true }
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'InteractiveSignInUnavailable,Initialize-OERAuth'
+            $R.Caught.TargetObject | Should -BeExactly 'contoso.onmicrosoft.com'
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 0 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERTenantDomain -Times 0 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 0 -Exactly
+            InModuleScope $script:moduleName { $script:_OERAuthState } | Should -BeNullOrEmpty
+        }
+
+        It 'refuses a call that names no -AuthMethod, since the default is the interactive sign-in' {
+            $R = Invoke-NiProbe -Parameters @{ TenantId = $script:NiTenant }
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'InteractiveSignInUnavailable,Initialize-OERAuth'
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 0 -Exactly
+        }
+
+        It 'leaves the calling command latched and the session marked uncertain' {
+            $R = Invoke-NiProbe -Parameters @{ TenantId = $script:NiTenant; AuthMethod = 'Interactive' }
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'InteractiveSignInUnavailable,Initialize-OERAuth'
+            $R.Refusal | Should -Not -BeNullOrEmpty
+            $R.Marker | Should -BeTrue
+        }
+
+        It 'asks the host question once per call' {
+            $null = Invoke-NiProbe -Parameters @{ TenantId = $script:NiTenant; AuthMethod = 'Interactive'; IncludeARM = $true }
+
+            Should -Invoke -ModuleName $script:moduleName Test-OERHostNonInteractive -Times 1 -Exactly
+        }
+
+        It 'is refused before the silent renewal of a session that would otherwise renew without a prompt' {
+            # Control: in a host that can prompt, the same expired session renews silently (one silent request).
+            Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $false }
+            $Parameters = @{ TenantId = $script:NiTenant; AuthMethod = 'Interactive' }
+            $First = Invoke-NiProbe -Parameters $Parameters
+            $First.Caught | Should -BeNullOrEmpty
+            (InModuleScope $script:moduleName { $script:_OERInteractiveCredential }) | Should -Not -BeNullOrEmpty
+            Set-NiGraphExpiry -Minutes 2
+            $script:NiCalls.Clear()
+            $Renewed = Invoke-NiProbe -Parameters $Parameters
+            $Renewed.Caught | Should -BeNullOrEmpty
+            Get-NiSilentCallCount | Should -Be 1 -Because 'the control renews silently, so the refusal below is what stops it'
+
+            # The same session, expired again, in a -NonInteractive host: refused, no token request at all.
+            Set-NiGraphExpiry -Minutes 2
+            $script:NiCalls.Clear()
+            Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $true }
+            $R = Invoke-NiProbe -Parameters $Parameters
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'InteractiveSignInUnavailable,Initialize-OERAuth'
+            $script:NiCalls.Count | Should -Be 0 -Because 'neither a silent nor an interactive request is made'
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
+        }
+
+        It 'refuses a cached Microsoft Graph session that needs a NEW Azure Resource Manager token, before any token request at all' {
+            # The guard stands before the Graph block, not between the Graph and the ARM block: a valid cached
+            # Graph session with -IncludeARM falls through the cached return (the ARM token is missing) and must
+            # not send even the ARM request.
+            Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $false }
+            $First = Invoke-NiProbe -Parameters @{ TenantId = $script:NiTenant; AuthMethod = 'Interactive' }
+            $First.Caught | Should -BeNullOrEmpty
+            $script:NiCalls.Count | Should -Be 1 -Because 'the control signed in once, for Microsoft Graph only'
+            $script:NiCalls.Clear()
+            Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $true }
+
+            $R = Invoke-NiProbe -Parameters @{ TenantId = $script:NiTenant; AuthMethod = 'Interactive'; IncludeARM = $true }
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'InteractiveSignInUnavailable,Initialize-OERAuth'
+            $script:NiCalls.Count | Should -Be 0 -Because 'neither a Graph nor an ARM token request is made'
+            $R.Refusal | Should -Not -BeNullOrEmpty
+        }
+
+        It 'refuses -ForceRefresh of a cached interactive session before any token request at all' {
+            Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $false }
+            $First = Invoke-NiProbe -Parameters @{ TenantId = $script:NiTenant; AuthMethod = 'Interactive' }
+            $First.Caught | Should -BeNullOrEmpty
+            $script:NiCalls.Clear()
+            Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $true }
+
+            $R = Invoke-NiProbe -Parameters @{ TenantId = $script:NiTenant; AuthMethod = 'Interactive'; ForceRefresh = $true }
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'InteractiveSignInUnavailable,Initialize-OERAuth'
+            $script:NiCalls.Count | Should -Be 0 -Because 'the Graph request a forced refresh would send is never made'
+            $R.Refusal | Should -Not -BeNullOrEmpty
+        }
+    }
+
+    Context 'what the refusal does not touch' {
+        It 'allows an interactive sign-in in a host that can prompt' {
+            Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $false }
+
+            $R = Invoke-NiProbe -Parameters @{ TenantId = $script:NiTenant; AuthMethod = 'Interactive' }
+
+            $R.Caught | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Test-OERHostNonInteractive -Times 1 -Exactly
+        }
+
+        It 'answers a session that is still valid from the cache: no refusal, no token request, no host question' {
+            Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $false }
+            $Parameters = @{ TenantId = $script:NiTenant; AuthMethod = 'Interactive' }
+            $null = Invoke-NiProbe -Parameters $Parameters
+            $script:NiCalls.Clear()
+            # Counted by the mock itself: a mock set again in the same scope keeps the call history of the one
+            # it replaces, so Should -Invoke could not tell the two sign-ins apart.
+            $script:NiHostAsked = 0
+            Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $script:NiHostAsked++; $true }
+
+            $R = Invoke-NiProbe -Parameters $Parameters
+
+            $R.Caught | Should -BeNullOrEmpty
+            $script:NiCalls.Count | Should -Be 0
+            $script:NiHostAsked | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+        }
+
+        It 'does not ask the host question for <Method>' -ForEach @(
+            @{ Method = 'DeviceCode' }
+            @{ Method = 'ManagedIdentity' }
+            @{ Method = 'ClientSecret' }
+            @{ Method = 'ClientCertificate' }
+        ) {
+            $Parameters = @{ TenantId = $script:NiTenant; AuthMethod = $Method }
+            if ($Method -eq 'ClientSecret') {
+                $Parameters.ClientId = '33333333-3333-3333-3333-333333333333'
+                $Parameters.ClientSecret = ConvertTo-SecureString 'NOT-A-REAL-TOKEN' -AsPlainText -Force
+            }
+            if ($Method -eq 'ClientCertificate') {
+                $Parameters.ClientId = '33333333-3333-3333-3333-333333333333'
+                $Parameters.CertificatePath = 'TestDrive:\oer-test.pfx'
+            }
+
+            $R = Invoke-NiProbe -Parameters $Parameters
+
+            $R.Caught | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Test-OERHostNonInteractive -Times 0 -Exactly
+        }
+    }
+
+    Context 'a public command in a script with no try above it' {
+        BeforeAll {
+            . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+            # Get-OERGroup in a runspace (Invoke-OERWithConfirmAnswer), no session, the host question faked to
+            # $true in that runspace's copy of the module. Every token and Graph request the module could make
+            # is replaced by a function that logs a line, so an empty log proves nothing was requested.
+            function script:New-NiNoTryScenario {
+                param([string]$Log)
+                [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    $script:_OERAuthState = $null
+    $script:_OERSessionUncertain = $null
+    $script:_OERInteractiveCredential = $null
+    Set-Item -Path function:script:Test-OERHostNonInteractive -Value { $true }
+    Set-Item -Path function:script:Get-AzToken -Value { [System.IO.File]::AppendAllText('#LOG#', "TOKEN`n"); throw 'NOT-A-REAL-TOKEN unexpected' }
+    Set-Item -Path function:script:Connect-MgGraph -Value { [System.IO.File]::AppendAllText('#LOG#', "CONNECT`n") }
+    Set-Item -Path function:script:Invoke-MgGraphRequest -Value { [System.IO.File]::AppendAllText('#LOG#', "GRAPH`n") }
+    Set-Item -Path function:script:Resolve-OERTenantDomain -Value { [System.IO.File]::AppendAllText('#LOG#', "LOOKUP`n"); 'eeee0000-0000-0000-0000-000000000001' }
+}
+$All = @(Get-OERGroup -Group 'g1' -TenantId 'contoso.onmicrosoft.com' -ErrorAction Continue 2>&1)
+foreach ($E in $All) { "ERR:$($E.FullyQualifiedErrorId)" }
+# The three stubs of a transport name above shadow the tripwire's replacements in this runspace's copy of the
+# module, and the tripwire check after the scenario reads that scope (a name that no longer resolves to a
+# replacement is a hit): removed here, the nearest definition being the stub, so the check sees them again.
+& (Get-Module Omnicit.EntraRBAC) {
+    foreach ($Name in 'Get-AzToken', 'Connect-MgGraph', 'Invoke-MgGraphRequest') {
+        Remove-Item -Path ('function:' + $Name) -ErrorAction SilentlyContinue
+    }
+}
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")))
+            }
+        }
+
+        It 'raises one InteractiveSignInUnavailable, refuses the command''s own Graph call, requests nothing and carries on' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-NiNoTryScenario -Log $Log)
+
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Output | Where-Object { $_ -like 'ERR:*' }) | Should -Be @(
+                'ERR:InteractiveSignInUnavailable,Initialize-OERAuth'
+                'ERR:SignInRefused,Get-OERGroup'
+            )
+            if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) | Should -BeNullOrEmpty }
+            $Run.Warnings | Should -BeNullOrEmpty
+        }
+    }
+}
+
+Describe 'Initialize-OERAuth token failures reach a public command''s caller exactly once (BL-20)' {
+    # BL-20 pins what was measured on 2026-10-21 (no code change): a token that cannot be acquired reaches the
+    # caller of a public command, with no try above it, as ONE record of Initialize-OERAuth's (the sign-in's
+    # own id) followed by ONE SignInRefused of the command itself (its own Graph or ARM call, refused by the
+    # latch before anything is sent), and no warning. The real Initialize-OERAuth and the real public command
+    # run in a runspace; only what could leave the process is replaced, in that runspace's copy of the module,
+    # by functions that log a line. The host question is faked to $false there for certainty: a runspace is the
+    # 'Default Host', where the real Test-OERHostNonInteractive answers $false anyway (the interactive sign-in
+    # below is therefore not refused as InteractiveSignInUnavailable).
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        function script:New-TfNoTryScenario {
+            param([string]$Log, [string]$Mode, [string]$Call)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    $script:_OERAuthState = $null
+    $script:_OERSessionUncertain = $null
+    $script:_OERInteractiveCredential = $null
+    Set-Item -Path function:script:Test-OERHostNonInteractive -Value { $false }
+    # The Graph token is acquired; the Azure Resource Manager one is not (Mode Arm), or no token at all is (Graph).
+    Set-Item -Path function:script:Get-AzToken -Value {
+        param($ClientId, $Resource, $Tenant, $Scope, $Interactive, $Force, $CredentialPrecedence, $ErrorAction, $WarningAction)
+        [System.IO.File]::AppendAllText('#LOG#', "TOKEN $Resource`n")
+        if ('#MODE#' -eq 'Graph' -or ([string]$Resource -match 'management')) { throw 'NOT-A-REAL-TOKEN the token request failed' }
+        [pscustomobject]@{
+            Token     = 'NOT-A-REAL-TOKEN-tf'
+            ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+            Identity  = 'admin@contoso.com'
+            TenantId  = '66666666-6666-6666-6666-666666666666'
+        }
+    }
+    Set-Item -Path function:script:Get-OERTokenObjectId -Value { '88888888-8888-8888-8888-888888888888' }
+    Set-Item -Path function:script:Connect-MgGraph -Value { [System.IO.File]::AppendAllText('#LOG#', "CONNECT`n") }
+    Set-Item -Path function:script:Get-MgContext -Value {
+        [pscustomobject]@{ AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '11111111-1111-1111-1111-111111111111'; TenantId = '66666666-6666-6666-6666-666666666666'
+            Account = 'admin@contoso.com'; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All') }
+    }
+    Set-Item -Path function:script:Invoke-MgGraphRequest -Value { [System.IO.File]::AppendAllText('#LOG#', "GRAPH`n") }
+    Set-Item -Path function:script:Invoke-WebRequest -Value { [System.IO.File]::AppendAllText('#LOG#', "ARM`n") }
+    Set-Item -Path function:script:Resolve-OERTenantDomain -Value { [System.IO.File]::AppendAllText('#LOG#', "LOOKUP`n"); '66666666-6666-6666-6666-666666666666' }
+}
+$All = @(#CALL# 2>&1)
+foreach ($E in $All) { "ERR:$($E.FullyQualifiedErrorId)" }
+# The four stubs of a transport name above shadow the tripwire's replacements in this runspace's copy of the
+# module, and the tripwire check after the scenario reads that scope: removed here (the nearest definition,
+# which is the stub), so the check sees the replacements again.
+& (Get-Module Omnicit.EntraRBAC) {
+    foreach ($Name in 'Get-AzToken', 'Connect-MgGraph', 'Invoke-MgGraphRequest', 'Invoke-WebRequest') {
+        Remove-Item -Path ('function:' + $Name) -ErrorAction SilentlyContinue
+    }
+}
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#MODE#', $Mode).Replace('#CALL#', $Call))
+        }
+    }
+
+    It 'an Azure Resource Manager token failure reaches Get-OERSubscription''s caller as one ArmTokenAcquisitionFailed and one SignInRefused, with no warning and nothing sent' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-TfNoTryScenario -Log $Log -Mode 'Arm' -Call "Get-OERSubscription -TenantId '66666666-6666-6666-6666-666666666666' -ErrorAction Continue")
+
+        $Run.Output[-1] | Should -BeExactly 'END'
+        @($Run.Output | Where-Object { $_ -like 'ERR:*' }) | Should -Be @(
+            'ERR:ArmTokenAcquisitionFailed,Initialize-OERAuth'
+            'ERR:SignInRefused,Get-OERSubscription'
+        )
+        $Run.Warnings | Should -BeNullOrEmpty
+        # Reach proof: the Graph token was acquired and connected, and the ARM token request is what failed;
+        # no Graph or ARM request left the command.
+        @(Get-Content -LiteralPath $Log | Where-Object { $_ -like 'TOKEN*' -or $_ -eq 'CONNECT' }) |
+            Should -Be @('TOKEN https://graph.microsoft.com/', 'CONNECT', 'TOKEN https://management.azure.com/')
+        @(Get-Content -LiteralPath $Log | Where-Object { $_ -eq 'GRAPH' -or $_ -eq 'ARM' }).Count | Should -Be 0
+    }
+
+    It 'a Microsoft Graph token failure reaches Get-OERGroup''s caller as one GraphTokenAcquisitionFailed and one SignInRefused, with no warning and nothing sent' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-TfNoTryScenario -Log $Log -Mode 'Graph' -Call "Get-OERGroup -Group 'g1' -TenantId '66666666-6666-6666-6666-666666666666' -ErrorAction Continue")
+
+        $Run.Output[-1] | Should -BeExactly 'END'
+        @($Run.Output | Where-Object { $_ -like 'ERR:*' }) | Should -Be @(
+            'ERR:GraphTokenAcquisitionFailed,Initialize-OERAuth'
+            'ERR:SignInRefused,Get-OERGroup'
+        )
+        $Run.Warnings | Should -BeNullOrEmpty
+        @(Get-Content -LiteralPath $Log | Where-Object { $_ -like 'TOKEN*' -or $_ -eq 'CONNECT' }) |
+            Should -Be @('TOKEN https://graph.microsoft.com/')
+        @(Get-Content -LiteralPath $Log | Where-Object { $_ -eq 'GRAPH' -or $_ -eq 'ARM' }).Count | Should -Be 0
     }
 }

@@ -35,6 +35,37 @@ function Initialize-OERAuth {
     is cached in $script:_OERAuthState, and a renewal near expiry signs in again with it. Whether
     that renewal prompts depends on the sign-in type; see about_Omnicit.EntraRBAC, LONG RUNS.
 
+    An interactive session is renewed without a prompt where AzAuth can answer from the interactive
+    credential it already holds (A22, BL-115). As READ from the AzAuth 2.11.0 and Azure.Identity 1.21.0
+    sources, not measured against a tenant, Get-AzToken (AzAuth 2.11.0 and later) accepts a
+    non-interactive request that tries that credential first when the request is for the tenant of the
+    last token call: the renewal is sent without -Interactive and without -ClientId, with
+    -CredentialPrecedence Environment, so AzAuth's chain holds the stored interactive credential and the
+    one source that sends nothing unless AZURE_* variables are set. The renewal is attempted only for the
+    session's own tenant label, client and cloud, only when this module's own record of the interactive
+    credential AzAuth holds (a tracker, never a token) names the client id and tenant the interactive
+    request for that resource would pass, and never for a first sign-in, for Connect-OER
+    (-ReclaimGraphSession), for -ForceRefresh, for a claims challenge or for a cloud switch. The token it
+    returns is accepted only when its object id (the oid claim, through Get-OERTokenObjectId) equals the
+    session's SignedInObjectId and its tenant equals the session's TokenTenantId. A failed attempt, or a
+    token of another identity, is discarded and the interactive request runs exactly once, as before. An
+    accepted token takes every check an interactive token takes. A stored credential whose refresh token
+    can no longer be used is not unavailable to AzAuth: it can still open its browser from this
+    non-interactive request (Azure.Identity InteractiveBrowserCredential.cs:254-269), so the renewal
+    narrows the prompts to those AzAuth cannot avoid; it does not promise none. Device code, managed
+    identity, client secret and client certificate sign-ins never take this path.
+
+    An interactive (browser) sign-in in a console host that was started with pwsh -NonInteractive is
+    refused with a terminating InteractiveSignInUnavailable error (BL-100): -NonInteractive declares
+    that nobody can answer a prompt, so the module does not start an interactive sign-in there (a policy;
+    whether a browser could be completed in such a host is not measured). The silent renewal above is
+    refused with it, and nothing is requested. The
+    refusal stands after the cached return and the credential checks and before the tenant lookup and
+    every token call; the command stays latched, like every other refusal. Test-OERHostNonInteractive
+    decides it, and does not detect a service or scheduled task that runs without -NonInteractive, or a
+    host that is not the console host. Device code, managed identity, client secret and client
+    certificate sign-ins are not affected.
+
     The tenant each acquired token was actually ISSUED for is recorded beside the requested one, as
     TokenTenantId and ArmTokenTenantId. TenantId keeps naming what the caller asked for, since that
     is what the cache-key predicates compare. A requested tenant that is neither a GUID nor
@@ -696,6 +727,30 @@ function Initialize-OERAuth {
         }
     }
 
+    # BL-100 point 2: -NonInteractive declares that nobody can answer a prompt, so an interactive (browser)
+    # sign-in is not started in such a host (policy; whether a browser could be completed there is not
+    # measured), and AzAuth would still open the browser from the token request. Refused here, once, for
+    # every interactive token request below (Graph, ARM and the silent renewal alike): placed after the
+    # cached return (a session that needs no token is answered), after the credential checks and the
+    # app-only check, and BEFORE the tenant lookup and every token call, so nothing is requested. The
+    # latch and the session-uncertain marker stay set, like every refusal above this line.
+    # Test-OERHostNonInteractive is the single owner of the host question.
+    if ($EffectiveMethod -eq 'Interactive' -and (Test-OERHostNonInteractive)) {
+        Write-CmdletError `
+            -Message ([System.Exception]::new(
+                "This PowerShell host was started with -NonInteractive, which declares that nobody can answer a " +
+                "prompt, so Omnicit.EntraRBAC does not start a browser sign-in here and no token was requested " +
+                "for tenant '$EffectiveTenant'. Use Connect-OER with a certificate " +
+                "(-ClientId and -Certificate or -CertificatePath), a client secret (-ClientId and -ClientSecret), " +
+                "a managed identity (-ManagedIdentity) or -DeviceCode instead.")) `
+            -ErrorId 'InteractiveSignInUnavailable' `
+            -Category AuthenticationError `
+            -TargetObject $EffectiveTenant `
+            -Cmdlet $PSCmdlet `
+            -Terminating
+        return
+    }
+
     # SEC (BL-12, decided by Philip 2026-10-06, P-2): a tenant named by domain is resolved to its tenant
     # ID before any token is requested, through the cloud authority's OpenID discovery document
     # (Resolve-OERTenantDomain, the one network call outside the Microsoft Graph and Azure Resource
@@ -823,6 +878,73 @@ function Initialize-OERAuth {
                 $PSItem
             }
         }
+    }
+
+    # SEC (A22, BL-115): the silent renewal of an interactive session, sent and judged here for both
+    # resources; the predicate that decides whether to try stands at each call site, where the
+    # tracker and the splat of that resource are known. What this answers is one question: did the
+    # non-interactive request return a token for the identity the session already holds? It returns
+    # that token, or $null, and the caller then runs the interactive request exactly once.
+    #
+    # WHY IT CAN WORK. READ in the AzAuth 2.11.0 and Azure.Identity 1.21.0 sources (2026-10-21; not yet
+    # measured against a real tenant): GetAzToken's NonInteractive parameter set puts the stored
+    # credential FIRST in its chain when that credential is an InteractiveBrowserCredential and the
+    # request names the tenant of the LAST token call
+    # (TokenManager.NonInteractive.cs:71, sameTenant from TokenManager.cs:37), and keeps the chain for
+    # the next non-interactive call of the same tenant and precedence (:77-81). The stored credential
+    # carries an AuthenticationRecord once it has signed in (InteractiveBrowserCredential.cs:300), so
+    # it answers from MSAL's cache without a prompt (:218-253). Every interactive call builds a NEW
+    # credential holding only the client id (TokenManager.Interactive.cs:43), which is why the
+    # tracker below names the client id and the tenant of the call that built the credential, and why
+    # the silent request must name the same tenant and carry no -ClientId (GetAzToken.cs:203-216
+    # refuses -ClientId in this parameter set).
+    #
+    # WHAT IT CANNOT PROMISE. A stored credential whose refresh token no longer works throws
+    # MsalUiRequiredException, and Azure.Identity opens the BROWSER from that very call unless the
+    # credential was built chained by options (InteractiveBrowserCredential.cs:254-269); AzAuth sets
+    # neither option, so "non-interactive" means "no prompt when MSAL can answer", not "never a
+    # prompt". Only a CredentialUnavailableException moves a chain to its next source
+    # (ChainedTokenCredential.cs:119-126); any other failure ends it, and this function treats every
+    # failure alike: discard, and the interactive request runs once.
+    #
+    # WHY THE IDENTITY CHECK. The chain's other source, Environment, answers when AZURE_CLIENT_ID and
+    # its siblings are set in the process, and a browser opened from this call could be answered by a
+    # different account. Either would otherwise become the session's token under the session's label.
+    # The object id and the tenant of the token are therefore compared with the ones the session was
+    # built with, and only an equal pair is accepted. Both halves stand on their own line and are
+    # independently deletable. Both are GUIDs: the predicate at the call site requires it of the
+    # session's two values, so equal means a GUID too.
+    #
+    # The catch scrubs first, like every catch here, and writes only a verbose line that names the
+    # exception TYPE: no error record, no warning, no message (a message of a failed token request
+    # can quote the request). The accepted token is passed back unchanged to the checks after it
+    # (TenantMismatch, the state rebuild, the ARM carry). The silent request is the one call that
+    # leaves the tracker as it is: the credential AzAuth holds is still the one it was built from.
+    function Invoke-SilentRenewal {
+        param(
+            [hashtable]$SilentParameter
+        )
+        $SilentToken = $null
+        try {
+            $SilentToken = Invoke-AzTokenCall -TokenParameter $SilentParameter
+            if ($null -eq $SilentToken) {
+                Write-Verbose '[Initialize-OERAuth] The silent renewal returned no token; signing in interactively.'
+                return $null
+            }
+            $SilentSecure = [System.Net.NetworkCredential]::new('', $SilentToken.Token).SecurePassword
+            [bool]$SameIdentity = (Get-OERTokenObjectId -Token $SilentSecure) -eq $script:_OERAuthState.SignedInObjectId -and
+                $SilentToken.TenantId -eq $script:_OERAuthState.TokenTenantId
+        } catch {
+            Remove-OERErrorRecord -Record $PSItem
+            Write-Verbose "[Initialize-OERAuth] The silent renewal failed ($($PSItem.Exception.GetType().Name)); signing in interactively."
+            return $null
+        }
+        if (-not $SameIdentity) {
+            Write-Verbose '[Initialize-OERAuth] The silent renewal returned a token for another identity or tenant; discarded, signing in interactively.'
+            return $null
+        }
+        Write-Verbose '[Initialize-OERAuth] Renewed the interactive session silently.'
+        return $SilentToken
     }
 
     # Build the common Get-AzToken splat for the selected credential.
@@ -987,6 +1109,8 @@ function Initialize-OERAuth {
         # the call, AFTER the prediction above has read the record as it stood, for the same reason the
         # authority tracker below is recorded before the call. It is still only this module's view: a
         # Get-AzToken call made outside this module, or a reload of this module, is invisible to it.
+        # Such a call can leave the tracker naming a credential AzAuth no longer holds; the object id and
+        # tenant check on the silent token (Invoke-SilentRenewal) and the single interactive fallback keep that safe.
         #
         # Every term on its own line and independently deletable, so each stays mutation-provable.
         [bool]$AzAuthBuildsNewCredential = -not $script:_OERLastTokenRequest -or
@@ -1044,21 +1168,86 @@ function Initialize-OERAuth {
                 $GraphParams.ClientId = if ($EffectiveClientId) { $EffectiveClientId } else { $DefaultGraphClientId }
             }
 
-            $GraphToken = try {
-                Invoke-AzTokenCall -TokenParameter $GraphParams -DeviceCodeFlow:($EffectiveMethod -eq 'DeviceCode')
-            } catch {
-                # Security hygiene, uniform with the Graph and ARM transport wrappers: scrub first, then
-                # report. A failed ClientSecret token call binds the plaintext secret into the request
-                # this record describes.
-                Remove-OERErrorRecord -Record $PSItem
-                Write-CmdletError `
-                    -Message ([System.Exception]::new("Failed to acquire a Microsoft Graph token: $($PSItem.Exception.Message)")) `
-                    -InnerException $PSItem.Exception `
-                    -ErrorId 'GraphTokenAcquisitionFailed' `
-                    -Category AuthenticationError `
-                    -TargetObject $EffectiveTenant `
-                    -Cmdlet $PSCmdlet `
-                    -Terminating
+            # SEC (A22, BL-115): renew an interactive session without a prompt where AzAuth can answer
+            # from the interactive credential it holds; see Invoke-SilentRenewal for the evidence and
+            # for what the silent request cannot promise. Evaluated HERE, directly before the call it
+            # may replace: $script:_OERInteractiveCredential moves in this very function (an
+            # interactive Graph call below makes AzAuth hold the GRAPH credential, so the ARM step must
+            # read the tracker afresh). Every term on its own line and independently deletable, so
+            # each stays mutation-provable:
+            #   - Interactive, by the effective method: a device code, managed identity, client secret or
+            #     client certificate session never takes this path (DeviceCode's Force is its own single
+            #     owner, $DeviceCodeForced), and neither does a call that switches TO Interactive from
+            #     another method (the state's method differs, below).
+            #   - the state exists and is an interactive session: a first sign-in has nothing to renew
+            #     and no identity to compare a token with. Implied by $ArmIdentityUnchanged and the term
+            #     above; kept so the invariant reads here (an equivalent mutant if deleted).
+            #   - $ArmIdentityUnchanged: a renewal of the session's own tenant label, client and cloud.
+            #   - not -ReclaimGraphSession: Connect-OER is the operator's instruction to sign in, and it
+            #     signs in as before.
+            #   - no claims challenge: an ACRS step-up needs the user to answer the challenge.
+            #   - no Force (-ForceRefresh, a cloud switch, a device code): Force clears the credential
+            #     AzAuth holds (GetAzToken.cs:173-176), which the silent request depends on.
+            #   - the tracker names the client id and the tenant the interactive request below would
+            #     pass, compared ordinally. A credential another call built (the ARM one, a different
+            #     tenant) is not the one this request would use, and the stored credential is only used
+            #     for the tenant of the last token call (TokenManager.NonInteractive.cs:71).
+            #   - the session's object id and token tenant are GUIDs: the identity check has something
+            #     to compare with. A session without them is renewed interactively.
+            $GraphToken = $null
+            [bool]$SilentGraph = $EffectiveMethod -eq 'Interactive' -and
+                $script:_OERAuthState -and
+                $script:_OERAuthState.AuthMethod -eq 'Interactive' -and
+                $ArmIdentityUnchanged -and
+                -not $ReclaimGraphSession -and
+                -not $ClaimsChallenge -and
+                -not $TokenParams.ContainsKey('Force') -and
+                $script:_OERInteractiveCredential -and
+                $script:_OERInteractiveCredential.ClientId -ceq [string]$GraphParams.ClientId -and
+                $script:_OERInteractiveCredential.Tenant -ceq $GraphParams.Tenant -and
+                (Test-OERGuid -Value $script:_OERAuthState.SignedInObjectId) -and
+                (Test-OERGuid -Value $script:_OERAuthState.TokenTenantId)
+            if ($SilentGraph) {
+                # The interactive request's splat without -Interactive and -ClientId (this parameter set
+                # refuses -ClientId, GetAzToken.cs:203-216); Tenant, Resource and Scope as before.
+                # CredentialPrecedence Environment: the one allowed source that sends nothing unless
+                # AZURE_* variables are set (GetAzToken.cs:109-112).
+                $SilentGraphParams = $GraphParams.Clone()
+                $SilentGraphParams.Remove('Interactive')
+                $SilentGraphParams.Remove('ClientId')
+                $SilentGraphParams.CredentialPrecedence = @('Environment')
+                $GraphToken = Invoke-SilentRenewal -SilentParameter $SilentGraphParams
+            }
+
+            if ($null -eq $GraphToken) {
+                # SEC (A22): the tracker is cleared directly before every token request but the silent
+                # one -- AzAuth's credential is replaced by it (an interactive call builds a new one,
+                # TokenManager.Interactive.cs:43; any other type replaces the stored credential) -- and
+                # set again only after an interactive request returned a token. A request that throws
+                # leaves it cleared, so the next renewal is interactive.
+                $script:_OERInteractiveCredential = $null
+                $GraphToken = try {
+                    Invoke-AzTokenCall -TokenParameter $GraphParams -DeviceCodeFlow:($EffectiveMethod -eq 'DeviceCode')
+                } catch {
+                    # Security hygiene, uniform with the Graph and ARM transport wrappers: scrub first, then
+                    # report. A failed ClientSecret token call binds the plaintext secret into the request
+                    # this record describes.
+                    Remove-OERErrorRecord -Record $PSItem
+                    Write-CmdletError `
+                        -Message ([System.Exception]::new("Failed to acquire a Microsoft Graph token: $($PSItem.Exception.Message)")) `
+                        -InnerException $PSItem.Exception `
+                        -ErrorId 'GraphTokenAcquisitionFailed' `
+                        -Category AuthenticationError `
+                        -TargetObject $EffectiveTenant `
+                        -Cmdlet $PSCmdlet `
+                        -Terminating
+                }
+                if ($EffectiveMethod -eq 'Interactive') {
+                    $script:_OERInteractiveCredential = @{
+                        ClientId = [string]$GraphParams.ClientId
+                        Tenant   = $GraphParams.Tenant
+                    }
+                }
             }
 
             # SEC: what the token was GRANTED for, not what the caller ASKED for. AzAuth's AzToken
@@ -1275,21 +1464,63 @@ function Initialize-OERAuth {
             #     so nested objects (e.g. certificate) are safely shared without duplication.
             $ArmParams = $TokenParams.Clone()
             $ArmParams.Resource = $ArmResource
-            $ArmToken = try {
-                Invoke-AzTokenCall -TokenParameter $ArmParams -DeviceCodeFlow:($EffectiveMethod -eq 'DeviceCode')
-            } catch {
-                # Security hygiene, uniform with the Graph and ARM transport wrappers: scrub first, then
-                # report. A failed ClientSecret token call binds the plaintext secret into the request
-                # this record describes.
-                Remove-OERErrorRecord -Record $PSItem
-                Write-CmdletError `
-                    -Message ([System.Exception]::new("Failed to acquire an Azure Resource Manager token: $($PSItem.Exception.Message)")) `
-                    -InnerException $PSItem.Exception `
-                    -ErrorId 'ArmTokenAcquisitionFailed' `
-                    -Category AuthenticationError `
-                    -TargetObject $EffectiveTenant `
-                    -Cmdlet $PSCmdlet
-                return
+
+            # SEC (A22, BL-115): the same silent renewal for the Azure Resource Manager token, with the
+            # same terms as the Graph one above, each on its own line and independently deletable. The
+            # difference is the client id the interactive request would pass: none, since the ARM call
+            # carries no -ClientId (Interactive sets none on the shared splat), so the tracker must name
+            # the empty client id -- the ARM credential, not the Graph one an interactive Graph call just
+            # above this made AzAuth hold. Evaluated here, after that call, for exactly that reason. The
+            # session's object id and token tenant are read now: after a Graph rebuild above they come
+            # from the new Graph token, which the same user holds.
+            $ArmToken = $null
+            [bool]$SilentArm = $EffectiveMethod -eq 'Interactive' -and
+                $script:_OERAuthState -and
+                $script:_OERAuthState.AuthMethod -eq 'Interactive' -and
+                $ArmIdentityUnchanged -and
+                -not $ReclaimGraphSession -and
+                -not $ClaimsChallenge -and
+                -not $TokenParams.ContainsKey('Force') -and
+                $script:_OERInteractiveCredential -and
+                $script:_OERInteractiveCredential.ClientId -ceq [string]$ArmParams.ClientId -and
+                $script:_OERInteractiveCredential.Tenant -ceq $ArmParams.Tenant -and
+                (Test-OERGuid -Value $script:_OERAuthState.SignedInObjectId) -and
+                (Test-OERGuid -Value $script:_OERAuthState.TokenTenantId)
+            if ($SilentArm) {
+                # No Remove('ClientId') here, unlike the Graph request: an interactive ARM splat carries
+                # no ClientId (it is set for the Graph request only), so there is none to remove.
+                $SilentArmParams = $ArmParams.Clone()
+                $SilentArmParams.Remove('Interactive')
+                $SilentArmParams.CredentialPrecedence = @('Environment')
+                $ArmToken = Invoke-SilentRenewal -SilentParameter $SilentArmParams
+            }
+
+            if ($null -eq $ArmToken) {
+                # SEC (A22): cleared directly before every token request but the silent one, set again
+                # only after an interactive request returned a token; see the Graph call above.
+                $script:_OERInteractiveCredential = $null
+                $ArmToken = try {
+                    Invoke-AzTokenCall -TokenParameter $ArmParams -DeviceCodeFlow:($EffectiveMethod -eq 'DeviceCode')
+                } catch {
+                    # Security hygiene, uniform with the Graph and ARM transport wrappers: scrub first, then
+                    # report. A failed ClientSecret token call binds the plaintext secret into the request
+                    # this record describes.
+                    Remove-OERErrorRecord -Record $PSItem
+                    Write-CmdletError `
+                        -Message ([System.Exception]::new("Failed to acquire an Azure Resource Manager token: $($PSItem.Exception.Message)")) `
+                        -InnerException $PSItem.Exception `
+                        -ErrorId 'ArmTokenAcquisitionFailed' `
+                        -Category AuthenticationError `
+                        -TargetObject $EffectiveTenant `
+                        -Cmdlet $PSCmdlet
+                    return
+                }
+                if ($EffectiveMethod -eq 'Interactive') {
+                    $script:_OERInteractiveCredential = @{
+                        ClientId = [string]$ArmParams.ClientId
+                        Tenant   = $ArmParams.Tenant
+                    }
+                }
             }
 
             # SEC: the same granted-tenant check on the ARM token, against the same $ExpectedTenantId --

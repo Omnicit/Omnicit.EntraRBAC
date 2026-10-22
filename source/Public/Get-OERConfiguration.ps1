@@ -121,8 +121,11 @@ function Get-OERConfiguration {
             # profile schema, and an object emitted without it is the same wrong-tenant hazard as an
             # unparsable file, so it is refused here rather than handed to Connect-OER.
             if (-not $Data -or -not $Data.TenantId) {
+                # The alias in the repair example is quoted with every single-quote character doubled
+                # (CodeGeneration.EscapeSingleQuotedStringContent: the straight one and the curly ones the
+                # PowerShell tokenizer also reads as quotes), so the example stays valid as typed.
                 $EmptyErr = [System.Management.Automation.ErrorRecord]::new(
-                    [System.Exception]::new("Tenant Profile '$($File.BaseName)' at '$($File.FullName)' declares no TenantId and was skipped. Repair it with Set-OERConfiguration -TenantAlias '$($File.BaseName)' -TenantId <id>."),
+                    [System.Exception]::new("Tenant Profile '$($File.BaseName)' at '$($File.FullName)' declares no TenantId and was skipped. Repair it with Set-OERConfiguration -TenantAlias '$([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$File.BaseName))' -TenantId <id>."),
                     'TenantProfileMalformed', [System.Management.Automation.ErrorCategory]::InvalidData, $File.FullName
                 )
                 $PSCmdlet.WriteError($EmptyErr)
@@ -141,8 +144,9 @@ function Get-OERConfiguration {
                 try {
                     $null = Get-OERCloudEndpoint -Environment $Data.Environment
                 } catch {
+                    # The alias in the repair example is quoted as in the TenantId case above.
                     $CloudErr = [System.Management.Automation.ErrorRecord]::new(
-                        [System.Exception]::new("Tenant Profile '$($File.BaseName)' at '$($File.FullName)' declares an unsupported Environment value '$($Data.Environment)' and was skipped. Valid values are Global, USGov, USGovDoD and China. Repair it with Set-OERConfiguration -TenantAlias '$($File.BaseName)' -Environment <value>."),
+                        [System.Exception]::new("Tenant Profile '$($File.BaseName)' at '$($File.FullName)' declares an unsupported Environment value '$($Data.Environment)' and was skipped. Valid values are Global, USGov, USGovDoD and China. Repair it with Set-OERConfiguration -TenantAlias '$([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$File.BaseName))' -Environment <value>."),
                         'TenantProfileMalformed', [System.Management.Automation.ErrorCategory]::InvalidData, $File.FullName
                     )
                     $PSCmdlet.WriteError($CloudErr)

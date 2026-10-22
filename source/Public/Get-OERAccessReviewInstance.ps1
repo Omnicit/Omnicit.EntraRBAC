@@ -198,7 +198,10 @@ function Get-OERAccessReviewInstance {
                 Write-CmdletError `
                     -Message ([System.Exception]::new(
                         "Access review instance '$Instance' was not found on definition '$Definition'. " +
-                        "Run Get-OERAccessReviewInstance -Definition '$Definition' without -Instance to list the valid instance ids.")) `
+                        # The definition in the example is quoted with every single-quote character doubled
+                        # (CodeGeneration.EscapeSingleQuotedStringContent: the straight one and the curly ones
+                        # the PowerShell tokenizer also reads as quotes), so the example stays valid as typed.
+                        "Run Get-OERAccessReviewInstance -Definition '$([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$Definition))' without -Instance to list the valid instance ids.")) `
                     -ErrorId 'AccessReviewInstanceNotFound' `
                     -Category ObjectNotFound `
                     -TargetObject $Instance `

@@ -129,3 +129,39 @@ Describe 'Get-OERGroupPimPolicyCloseAdvice' {
         }
     }
 }
+
+Describe 'Get-OERGroupPimPolicyCloseAdvice: the command in the message (BL-113)' {
+    # The group id sits inside the command, which sits inside ONE single-quoted literal of the message:
+    # it is escaped twice, so the outer literal parses to the command and the command's own literal
+    # parses to the group id.
+    It 'shows a command in one literal that parses to a command giving the group id back for an id holding <Label>' -ForEach @(
+        @{ Label = 'a straight apostrophe (U+0027)'; GroupId = "g'1"; Escaped = "g''''1" }
+        @{ Label = 'a right single quotation mark (U+2019)'; GroupId = ('g' + [char]0x2019 + '1'); Escaped = ('g' + [char]0x2019 + [char]0x2019 + [char]0x2019 + [char]0x2019 + '1') }
+    ) {
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ GroupId = $GroupId; Escaped = $Escaped } {
+            $Advice = Get-OERGroupPimPolicyCloseAdvice -GroupId $GroupId -AccessType member
+            $Prefix = 'close it with '
+            $Suffix = ' if you do not intend to retry.'
+            $Advice.StartsWith($Prefix, [System.StringComparison]::Ordinal) | Should -BeTrue
+            $Advice.EndsWith($Suffix, [System.StringComparison]::Ordinal) | Should -BeTrue
+            $Literal = $Advice.Substring($Prefix.Length, $Advice.Length - $Prefix.Length - $Suffix.Length)
+            $Literal | Should -BeExactly ("'Set-OERGroupPimPolicy -Group ''" + $Escaped + "'' -AccessType member -AllowPermanentEligibility:`$false'")
+            $Tokens = $null
+            $ParseErrors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseInput($Literal, [ref]$Tokens, [ref]$ParseErrors)
+            @($ParseErrors).Count | Should -Be 0
+            @($Tokens).Count | Should -Be 2
+            $Tokens[0].Kind | Should -Be ([System.Management.Automation.Language.TokenKind]::StringLiteral)
+            $Inner = [string]$Tokens[0].Value
+            $InnerErrors = $null
+            $Ast = [System.Management.Automation.Language.Parser]::ParseInput($Inner, [ref]$null, [ref]$InnerErrors)
+            @($InnerErrors).Count | Should -Be 0
+            $Command = $Ast.Find({ param($Node) $Node -is [System.Management.Automation.Language.CommandAst] }, $true)
+            $Command.GetCommandName() | Should -BeExactly 'Set-OERGroupPimPolicy'
+            $Elements = @($Command.CommandElements)
+            $Elements[1].ParameterName | Should -BeExactly 'Group'
+            $Elements[2] | Should -BeOfType ([System.Management.Automation.Language.StringConstantExpressionAst])
+            $Elements[2].Value | Should -BeExactly $GroupId
+        }
+    }
+}

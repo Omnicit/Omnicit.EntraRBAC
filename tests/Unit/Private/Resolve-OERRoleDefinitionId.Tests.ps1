@@ -115,3 +115,36 @@ Describe 'Resolve-OERRoleDefinitionId' {
         }
     }
 }
+
+Describe 'Resolve-OERRoleDefinitionId: the example in the not-found message (BL-113)' {
+    It 'shows the Get-OERRoleDefinition example so it parses and gives the scope back for a scope holding <Label>' -ForEach @(
+        @{ Label = 'a straight apostrophe (U+0027)'; Scope = "/subscriptions/s1/resourceGroups/rg's"; Escaped = "/subscriptions/s1/resourceGroups/rg''s" }
+        @{ Label = 'a right single quotation mark (U+2019)'; Scope = ('/subscriptions/s1/resourceGroups/rg' + [char]0x2019 + 's'); Escaped = ('/subscriptions/s1/resourceGroups/rg' + [char]0x2019 + [char]0x2019 + 's') }
+    ) {
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ Scope = $Scope; Escaped = $Escaped } {
+            Mock Invoke-OERArmRequest { [PSCustomObject]@{ value = @() } }
+            $Caught = $null
+            try {
+                Resolve-OERRoleDefinitionId -Role 'Reeder' -Scope $Scope
+            } catch {
+                $Caught = $PSItem
+            }
+            $Caught | Should -Not -BeNullOrEmpty
+            $Message = $Caught.Exception.Message
+            $Start = $Message.IndexOf('. Run ', [System.StringComparison]::Ordinal)
+            $End = $Message.IndexOf(' without -Role', [System.StringComparison]::Ordinal)
+            $Start | Should -BeGreaterOrEqual 0
+            $End | Should -BeGreaterThan $Start
+            $Example = $Message.Substring($Start + 6, $End - $Start - 6)
+            $Example | Should -BeExactly "Get-OERRoleDefinition -Scope '$Escaped'"
+            $ParseErrors = $null
+            $Ast = [System.Management.Automation.Language.Parser]::ParseInput($Example, [ref]$null, [ref]$ParseErrors)
+            @($ParseErrors).Count | Should -Be 0
+            $Command = $Ast.Find({ param($Node) $Node -is [System.Management.Automation.Language.CommandAst] }, $true)
+            $Command.GetCommandName() | Should -BeExactly 'Get-OERRoleDefinition'
+            $Argument = @($Command.CommandElements)[2]
+            $Argument | Should -BeOfType ([System.Management.Automation.Language.StringConstantExpressionAst])
+            $Argument.Value | Should -BeExactly $Scope
+        }
+    }
+}

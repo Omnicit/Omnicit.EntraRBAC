@@ -8,7 +8,11 @@ function Export-OERConfiguration {
     data file (PSD1) that can be read back with Import-PowerShellDataFile. Nested hashtables such
     as Naming and Defaults are serialized recursively. The parent directory is created when it does
     not already exist. This private helper is the single owner of profile serialization and is
-    called by New-OERConfiguration and Set-OERConfiguration.
+    called by New-OERConfiguration and Set-OERConfiguration. Every key, list item and scalar is
+    written as a single-quoted string whose content is escaped by
+    CodeGeneration.EscapeSingleQuotedStringContent, which doubles each of the five characters
+    PowerShell reads as a single quote (U+0027, U+2018, U+2019, U+201A and U+201B), so a value
+    carrying any of them reads back unchanged and can never end its string early.
 
     .PARAMETER Configuration
     The Tenant Profile hashtable to serialize. Expected keys include TenantId, Naming, and Defaults.
@@ -41,17 +45,21 @@ function Export-OERConfiguration {
                 # -Naming and -Defaults with no key validation -- so an unquoted key containing a
                 # space or a quote wrote a profile Import-PowerShellDataFile cannot parse, leaving
                 # the alias unreadable. Quote and escape the key exactly as the values already are.
-                $SafeKey = "'" + ([string]$Key -replace "'", "''") + "'"
+                # EscapeSingleQuotedStringContent doubles every character the PowerShell tokenizer
+                # reads as a single quote (U+0027, U+2018, U+2019, U+201A, U+201B), not only the
+                # straight one: a curly quote left single ended the string early and the rest of the
+                # value became PSD1 text (an injected key, or a file that no longer parses).
+                $SafeKey = "'" + [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$Key) + "'"
                 $Lines.Add(('{0}{1} = {2}' -f $Pad, $SafeKey, $Inner))
             }
             $Lines.Add(("$ClosePad" + '}'))
             return ($Lines -join [System.Environment]::NewLine)
         }
         if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
-            $Items = @($Value | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" })
+            $Items = @($Value | ForEach-Object { "'" + [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$_) + "'" })
             return '@(' + ($Items -join ', ') + ')'
         }
-        return "'" + ($Value -replace "'", "''") + "'"
+        return "'" + [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$Value) + "'"
     }
 
     $ParentDir = Split-Path -Path $Path -Parent

@@ -726,7 +726,9 @@ TENANT PROFILE
     reports it, falling back to $HOME: the same directory as $env:USERPROFILE on
     Windows, and the user's home directory on Linux and macOS. Connect-OER
     -TenantAlias <alias> resolves the TenantId from it. Only TenantId is required;
-    every other section is optional.
+    every other section is optional. A key, a list item or a value that carries
+    an apostrophe, straight or curly, is written escaped, so it reads back
+    unchanged.
 
         @{
             TenantId = '00000000-0000-0000-0000-000000000000'
@@ -763,12 +765,17 @@ LONG RUNS
     rejected request is sent once more. What a renewal costs depends on the
     sign-in type:
 
-        Interactive         Every renewal opens the browser to sign in
-                            again, so a long run asks you to sign in about
-                            once an hour. The account picker lets you
-                            choose another account of the same tenant, and
-                            the command then carries on as that account:
-                            choose the account the session signed in with
+        Interactive         When a command starts near the token's expiry,
+                            first tries to renew without a prompt, from the
+                            interactive credential AzAuth already holds
+                            (see below); when that is not possible, and
+                            always for the renewal after a 401, the
+                            browser opens to sign in again, so a long run
+                            can still ask you to sign in. The account
+                            picker lets you choose another account of the
+                            same tenant, and the command then carries on as
+                            that account: choose the account the session
+                            signed in with
         Device code         Every renewal prints a new code to enter, about
                             once an hour, as every device code sign-in does:
                             see the known limitation under SWITCHING TENANTS
@@ -782,6 +789,41 @@ LONG RUNS
                             AppOnlySessionCredentialUnavailable, until you
                             run Connect-OER with the secret or certificate
                             again
+
+    The silent renewal of an interactive session. From AzAuth 2.11.0 the
+    module asks Get-AzToken to renew an interactive session without
+    -Interactive, so AzAuth answers from the interactive credential it
+    already holds. It does so only for the tenant, client and cloud the
+    session signed in with, and accepts the token only when it belongs to the
+    account and tenant the session already has; any other outcome is
+    discarded and the browser opens once, as before. It is not used for
+    Connect-OER itself, for the renewal after a request was rejected with
+    401 (which always signs in interactively), for a claims challenge, for a
+    cloud switch or for any sign-in type but interactive. Two limits. AzAuth
+    holds one interactive credential, the one the last interactive request
+    built. A renewal is silent only for the resource whose interactive
+    request came last, and -IncludeARM sign-ins request Azure Resource
+    Manager last, so a session that uses both resources alternates that
+    credential between the two and still prompts for each renewal; the
+    silent renewal helps a session that uses only Microsoft Graph (every
+    sign-in requests Graph first). And this is read from the
+    sources of AzAuth 2.11.0 and Azure.Identity 1.21.0, not measured against
+    a tenant: if the refresh inside the stored credential fails because it
+    needs the user, Azure.Identity opens the browser from that
+    non-interactive request, with no timeout the module can bound, and the
+    module then signs in interactively, which can be a second browser. So a
+    long interactive run still needs someone at the keyboard, though it may
+    be asked to sign in less often.
+
+    In a console started with pwsh -NonInteractive an interactive sign-in,
+    the silent renewal included, is refused with InteractiveSignInUnavailable
+    before any tenant lookup or token request; a session already held and
+    still valid is answered from the cache. Use a certificate, a client
+    secret, a managed identity or -DeviceCode there. Only the console host
+    started with -NonInteractive is detected: another host (an editor's
+    console, say), or a service or scheduled task that runs pwsh without
+    -NonInteractive, is not, and an interactive sign-in there is the
+    caller's to avoid.
 
     Before a long run, run Connect-OER -Force with the session's own
     sign-in (the same -TenantId, credential and -IncludeARM as the first
@@ -960,8 +1002,9 @@ GRAPH SDK SESSION
     in a loop over tenants no longer stands for the current session's
     tenant. New-OERConfiguration and Set-OERConfiguration store the tenant
     instead of signing in to it, so they also refuse a -TenantId of white
-    space only while PowerShell binds their parameters: a blank tenant can no
-    longer be entered into a profile through them. A profile already on disk
+    space and invisible formatting characters only (such as U+200B or U+FEFF)
+    while PowerShell binds their parameters: a blank tenant can no longer be
+    entered into a profile through them. A profile already on disk
     with one is still read as it is, and keeps it through an update that does
     not name -TenantId. On any other cmdlet, a -TenantId of spaces is looked
     up like any value that is not a tenant ID, and refused with
@@ -973,6 +1016,9 @@ GRAPH SDK SESSION
     under every error preference. The sign-in's own error reaches the caller,
     as a terminating error when the sign-in terminated, so a try around the
     export catches it and, outside a try, only that statement ends.
+    Get-OERInventory carries on after its own refused sign-in, but its
+    document then names no tenant (no tenantId): a session an earlier command
+    left is not the tenant it was read in.
 
     One OER pipeline works in one tenant with one identity. If commands in the
     same pipeline sign in to different tenants or identities, a command whose
@@ -983,10 +1029,12 @@ GRAPH SDK SESSION
     processes input, so that is usually the first command. A cmdlet that
     reports a failed lookup under an error of its own carries the refusal's
     message in that error instead -- New-OERGroup's GroupResolveFailed, for
-    one. A tenant counts by the tenant its token was issued for, so naming one
-    tenant by its GUID on one command and by its domain on another, or not
-    naming it at all, is not refused for that alone. But a command that names
-    the tenant differently from the session inherits nothing from it and
+    one, which names the refusal (SignInRefused or SignInSuperseded) and the
+    command it names, and carries the refusal's record as its inner
+    exception. A tenant counts by the tenant its token was issued for, so
+    naming one tenant by its GUID on one command and by its domain on
+    another, or not naming it at all, is not refused for that alone. But a
+    command that names the tenant differently from the session inherits nothing from it and
     signs in again -- interactively, when it names no credential, which on an
     app-only session means a browser prompt and another identity, and the
     pipeline is then refused as above. So name it the same way on every

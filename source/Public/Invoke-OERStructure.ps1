@@ -524,8 +524,8 @@ function Invoke-OERStructure {
     so -Prune removes every live entry in them (a group's service principals, every member of a
     group synchronized from on-premises, every group member PIM for Groups holds or makes eligible
     and, for a group that already existed, every member while its PIM for Groups state cannot be
-    read, all excepted, and, in the run that creates it, a group's membership of the unit it was
-    created into, as above):
+    read, all excepted, and, in the run that creates it (or finds it already existing in place of
+    creating it), a group's membership of the unit it was created into, as above):
     groups[].members, administrativeUnits[].members, administrativeUnits[].scopedRoles,
     catalogs[].resources and accessPackages[].resourceRoles. When
     -Prune is set, one warning lists every such omitted key in a section selected by -Include before

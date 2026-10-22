@@ -243,7 +243,10 @@ function Add-OERCatalogResource {
                     $Created = Resolve-OERCatalogResource -CatalogId $CatalogId -OriginId $OriginId
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
-                    Write-Warning ("Resource '$OriginId' was added to catalog '$CatalogId', but reading it back failed, so it is not returned: $($PSItem.Exception.Message) Read it with Get-OERCatalogResource -Catalog '$CatalogId'.")
+                    # The catalog in the example is quoted with every single-quote character doubled
+                    # (CodeGeneration.EscapeSingleQuotedStringContent: the straight one and the curly ones the
+                    # PowerShell tokenizer also reads as quotes), so the example stays valid as typed.
+                    Write-Warning ("Resource '$OriginId' was added to catalog '$CatalogId', but reading it back failed, so it is not returned: $($PSItem.Exception.Message) Read it with Get-OERCatalogResource -Catalog '$([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$CatalogId))'.")
                 }
                 if ($Created) { ConvertTo-OERCatalogResource -InputObject $Created -CatalogId $CatalogId }
             }

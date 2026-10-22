@@ -23,7 +23,7 @@ README summarises. `Get-OERRequiredScope` is authoritative for permissions -- se
 ## Requirements
 
 - **PowerShell 7.2 or later** (Core only; Windows PowerShell 5.x is not supported)
-- **AzAuth** >= 2.9.0 (`Get-AzToken` -- token acquisition for all credential types)
+- **AzAuth** >= 2.11.0 (`Get-AzToken` -- token acquisition for all credential types)
 - **Microsoft.Graph.Authentication** >= 2.36.0 (`Connect-MgGraph`)
 
 No Az PowerShell module is required. Azure Resource Manager calls are made directly with a token
@@ -159,6 +159,16 @@ Connect-OER -TenantAlias contoso
 Calling `Connect-OER` explicitly is optional -- all OER cmdlets call `Initialize-OERAuth`
 automatically on first use.
 
+A PowerShell started with `pwsh -NonInteractive` declares that nobody can answer a prompt, so the
+module does not start an interactive (browser) sign-in there: it refuses it with
+`InteractiveSignInUnavailable`, before any
+tenant lookup or token request, and so it refuses the silent renewal of an interactive session
+(see [Long runs](#long-runs)); a session already held and still valid is answered from the cache.
+Use a certificate, a client secret, a managed identity or `-DeviceCode` there. The module detects
+only the console host started with `-NonInteractive`: another host (an editor's console, say), or a
+service or scheduled task that runs `pwsh` without `-NonInteractive`, is not detected, and an
+interactive sign-in there is the caller's to avoid.
+
 ### Disconnect
 
 ```powershell
@@ -215,15 +225,18 @@ sign-in was refused. `Export-OERInventory` ends instead of carrying on: when its
 refused, or the Azure Resource Manager token it asked for cannot be acquired, it reads nothing,
 writes no bundle folder and returns no object, under every error preference. The sign-in's own
 error reaches the caller, as a terminating error when the sign-in terminated, so a `try` around the
-export catches it and, outside a `try`, only that statement ends. A `Connect-OER` whose parameters
+export catches it and, outside a `try`, only that statement ends. `Get-OERInventory` carries on
+after its own refused sign-in, but its document then names no tenant (no `tenantId`): a session an
+earlier command left is not the tenant it was read in. A `Connect-OER` whose parameters
 PowerShell cannot bind never runs, so it leaves nothing behind for the module to see. An empty
 `-TenantAlias`, typed or piped, is refused with `InvalidTenantAlias`, and an empty, whitespace or
 `$null` `-TenantId` with `InvalidTenantId`; both count as a refused sign-in. Every other cmdlet refuses an empty or `$null` `-TenantId` while
 PowerShell binds its parameters, so that command never runs and sends nothing: an empty cell in a
 loop over tenants no longer stands for the current session's tenant. `New-OERConfiguration` and
 `Set-OERConfiguration` store the tenant instead of signing in to it, so they also refuse a
-`-TenantId` of white space only while PowerShell binds their parameters: a blank tenant can no
-longer be entered into a profile through them. A profile already on disk with one is still read as
+`-TenantId` of white space and invisible formatting characters only (such as U+200B or U+FEFF)
+while PowerShell binds their parameters: a blank tenant can no longer be entered into a profile
+through them. A profile already on disk with one is still read as
 it is, and keeps it through an update that does not name `-TenantId`. On any other cmdlet, a
 `-TenantId` of spaces is looked up like any value that is not a tenant ID, and refused with
 `TenantResolutionFailed` when it names no tenant.
@@ -234,7 +247,9 @@ every request made while it runs is refused with `SignInSuperseded`, including t
 command that handles its output, a `ForEach-Object` script block among them. Most OER cmdlets sign
 in before any command in the pipeline processes input, so that is usually the first command. A
 cmdlet that reports a failed lookup under an error of its own carries the refusal's message in that
-error instead -- `New-OERGroup`'s `GroupResolveFailed`, for one. A tenant counts by the tenant its
+error instead -- `New-OERGroup`'s `GroupResolveFailed`, for one, which names the refusal
+(`SignInRefused` or `SignInSuperseded`) and the command it names, and carries the refusal's record
+as its inner exception. A tenant counts by the tenant its
 token was issued for, so naming one tenant by its GUID on one command and by its domain on another,
 or not naming it at all, is not refused for that alone. But a command that names the tenant
 differently from the session inherits nothing from it and signs in again -- interactively, when it
@@ -300,10 +315,29 @@ depends on the sign-in type:
 
 | Sign-in type | Renewal of the token |
 |---|---|
-| Interactive | Every renewal opens the browser to sign in again, so a long run asks you to sign in about once an hour. The account picker lets you choose another account of the same tenant, and the command then carries on as that account: choose the account the session signed in with |
+| Interactive | When a command starts near the token's expiry, first tries to renew without a prompt, from the interactive credential AzAuth already holds (see below); when that is not possible, and always for the renewal after a 401, the browser opens to sign in again, so a long run can still ask you to sign in. The account picker lets you choose another account of the same tenant, and the command then carries on as that account: choose the account the session signed in with |
 | Device code | Every renewal prints a new code to enter, about once an hour, as every device code sign-in does: see the known limitation under [Switching tenants](#switching-tenants) |
 | Managed identity | Renews with no prompt |
 | Client secret and certificate | Not renewed, since the module never keeps the secret or certificate: once the token has expired a request is refused with `AppOnlyTokenRefreshUnsatisfiable`, and a command that starts within five minutes of its expiry, or later, fails to sign in with `AppOnlySessionCredentialUnavailable`, until you run `Connect-OER` with the secret or certificate again |
+
+**The silent renewal of an interactive session.** From AzAuth 2.11.0 the module asks `Get-AzToken` to
+renew an interactive session without `-Interactive`, so AzAuth answers from the interactive
+credential it already holds. It does so only for the tenant, client and cloud the session signed in
+with, and accepts the token only when it belongs to the account and tenant the session already has;
+any other outcome is discarded and the browser opens once, as before. It is not used for
+`Connect-OER` itself, for the renewal after a request was rejected with 401 (which always signs in
+interactively), for a claims challenge, for a cloud switch or for any sign-in type but interactive.
+Two limits. AzAuth holds one interactive credential, the one the last interactive request built. A
+renewal is silent only for the resource whose interactive request came last, and `-IncludeARM`
+sign-ins request Azure Resource Manager last, so a session that uses both resources alternates that
+credential between the two and still prompts for each renewal; the silent renewal helps a session
+that uses only Microsoft Graph (every sign-in requests Graph first). And this is read from the sources of AzAuth 2.11.0 and Azure.Identity
+1.21.0, not measured against a tenant: if the refresh inside the stored credential fails because
+it needs the user, Azure.Identity opens the browser from that non-interactive request, with no
+timeout the module can bound, and the module then signs in interactively, which can be a second
+browser. So a long interactive run still needs someone at the keyboard, though it may be asked to
+sign in less often. In a console started with `pwsh -NonInteractive` the renewal is refused with
+`InteractiveSignInUnavailable`, as every interactive sign-in is (see [Connect](#connect)).
 
 Before a long run, run `Connect-OER -Force` with the session's own sign-in -- the same `-TenantId`,
 credential and `-IncludeARM` as the first `Connect-OER` -- so the run starts with a new token. A
@@ -406,7 +440,8 @@ current user's profile folder as .NET reports it (falling back to `$HOME`) -- th
 A profile may also carry an optional `Environment` key naming the sovereign cloud that tenant lives
 in -- `Global`, `USGov`, `USGovDoD` or `China`. `Connect-OER -TenantAlias` reads it automatically, so
 the cloud does not have to be repeated on every call; see [Sovereign Clouds](#sovereign-clouds). Only
-`TenantId` is required; every other key is optional.
+`TenantId` is required; every other key is optional. A key, a list item or a value that carries an
+apostrophe, straight or curly, is written to the profile file escaped, so it reads back unchanged.
 
 ```powershell
 # Create a new profile

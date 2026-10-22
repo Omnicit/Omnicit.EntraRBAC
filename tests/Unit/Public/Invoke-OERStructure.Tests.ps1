@@ -5150,7 +5150,11 @@ Describe 'Invoke-OERStructure stays in the home tenant''s subscriptions (BL-150,
         # policy cmdlets published for the same scope before the check, nor SubscriptionTenantMismatch.
         $Published = @($Err | Where-Object { $_.InvocationInfo.MyCommand.Name -eq 'Invoke-OERStructure' })
         $Published.Count | Should -Be 1
-        $Published[0].FullyQualifiedErrorId | Should -BeExactly "$Message,Invoke-OERStructure"
+        # BL-37: the resolver's record carries its own id (SubscriptionNotFound); before, a bare string throw gave
+        # it the whole message as its id.
+        $Published[0].FullyQualifiedErrorId | Should -BeExactly 'SubscriptionNotFound,Invoke-OERStructure'
+        $Published[0].CategoryInfo.Category | Should -Be 'ObjectNotFound'
+        $Published[0].Exception.Message | Should -BeExactly $Message
         $Published[0].FullyQualifiedErrorId | Should -Not -BeLike 'InvalidScope*'
         $Published[0].Exception.Message | Should -BeExactly $Message
         [object]::ReferenceEquals($Published[0].Exception, $script:StResolverErrors[0].Exception) | Should -BeTrue

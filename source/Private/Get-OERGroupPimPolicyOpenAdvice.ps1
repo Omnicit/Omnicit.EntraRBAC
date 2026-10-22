@@ -14,7 +14,9 @@ function Get-OERGroupPimPolicyOpenAdvice {
     Set-OERGroupPimPolicy -Group '<GroupId>' -AccessType <AccessType> -AllowPermanentEligibility.
     The command sits inside ONE single-quoted PowerShell string literal, so the quotes around the group
     id are doubled in the text, exactly as a message shows it; read as that literal, it is the command,
-    and it runs as typed.
+    and it runs as typed. The group id is escaped twice
+    (CodeGeneration.EscapeSingleQuotedStringContent), once for the command's own literal and once for
+    the outer one, so an id holding an apostrophe still parses; a GUID holds none and comes out unchanged.
 
     Why that command opens the policy: Set-OERGroupPimPolicy patches the Expiration_Admin_Eligibility
     rule when -EligibleDuration or -AllowPermanentEligibility is BOUND. -AllowPermanentEligibility binds
@@ -54,5 +56,9 @@ function Get-OERGroupPimPolicyOpenAdvice {
         [ValidateSet('member', 'owner')]
         [string]$AccessType
     )
-    "Run 'Set-OERGroupPimPolicy -Group ''$GroupId'' -AccessType $AccessType -AllowPermanentEligibility' with sufficient permissions, or grant a time-bound eligibility with -DurationDays."
+    # The group id sits inside the command, which sits inside the message's own single-quoted literal,
+    # so it is escaped twice (CodeGeneration.EscapeSingleQuotedStringContent: the straight single quote
+    # and the curly ones the PowerShell tokenizer also reads as quotes): once for the command's literal,
+    # once for the outer one. A GUID has none of them and comes out unchanged.
+    "Run 'Set-OERGroupPimPolicy -Group ''$([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($GroupId)))'' -AccessType $AccessType -AllowPermanentEligibility' with sufficient permissions, or grant a time-bound eligibility with -DurationDays."
 }

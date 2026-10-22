@@ -271,4 +271,109 @@ Describe 'Get-OERConfiguration' {
             $Path -like '*Omnicit.EntraRBAC*Profiles'
         }
     }
+
+    It 'reads back a profile written with <Label> in every position and lists it without an Environment (BL-113)' -ForEach @(
+        @{ Label = 'U+0027'; Code = 0x27 }
+        @{ Label = 'U+2018'; Code = 0x2018 }
+        @{ Label = 'U+2019'; Code = 0x2019 }
+        @{ Label = 'U+201A'; Code = 0x201A }
+        @{ Label = 'U+201B'; Code = 0x201B }
+    ) {
+        # The file is written by the module's own writer into $TestDrive (never the real profile folder);
+        # the characters are built from code points so this test file stays ASCII.
+        $Q = [string][char]$Code
+        $Inject = "x${Q}; Environment = ${Q}China"
+        $Base = Join-Path $TestDrive "QuoteGet$Code"
+        $Path = Join-Path $Base 'q.psd1'
+        InModuleScope $script:moduleName -Parameters @{ Path = $Path; Inject = $Inject; Q = $Q } {
+            param($Path, $Inject, $Q)
+            Export-OERConfiguration -Path $Path -Configuration @{
+                TenantId = $Inject
+                Naming   = @{ "Key${Q}One" = $Inject }
+                Defaults = @{ Scalar = $Inject; Items = @("a${Q}b", $Inject) }
+            }
+        }
+        $All = @(Get-OERConfiguration -BasePath $Base -ErrorAction Stop)
+        $All | Should -HaveCount 1
+        $All[0].Environment | Should -BeNullOrEmpty
+        $All[0].TenantId -ceq $Inject | Should -BeTrue
+        $All[0].Naming["Key${Q}One"] -ceq $Inject | Should -BeTrue
+        $All[0].Defaults.Scalar -ceq $Inject | Should -BeTrue
+        @($All[0].Defaults.Items)[0] -ceq "a${Q}b" | Should -BeTrue
+        @($All[0].Defaults.Items)[1] -ceq $Inject | Should -BeTrue
+    }
+}
+
+Describe 'Get-OERConfiguration: the repair examples in TenantProfileMalformed messages (BL-113)' {
+    BeforeAll {
+        # BL-113: a command shown in a message must parse as typed and give the value back. Zero parse
+        # errors is not enough on its own -- an unbalanced string can parse into the wrong tokens -- so
+        # the argument must also come back, as a string constant, exactly as the value was typed.
+        function Get-BL113Segment ([string]$Message, [string]$After, [string]$Before) {
+            $Start = $Message.IndexOf($After, [System.StringComparison]::Ordinal)
+            $Start | Should -BeGreaterOrEqual 0 -Because "the message holds '$After'"
+            $Start += $After.Length
+            $End = $Message.IndexOf($Before, $Start, [System.StringComparison]::Ordinal)
+            $End | Should -BeGreaterThan $Start -Because "the message holds '$Before' after '$After'"
+            $Message.Substring($Start, $End - $Start)
+        }
+        function Read-BL113Argument ([string]$Text, [string]$Command, [string]$Parameter) {
+            $ParseErrors = $null
+            $Ast = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$null, [ref]$ParseErrors)
+            $Found = $Ast.Find({
+                    param($Node)
+                    $Node -is [System.Management.Automation.Language.CommandAst] -and $Node.GetCommandName() -eq $Command
+                }, $true)
+            $IsConstant = $false
+            $Value = $null
+            if ($Found) {
+                $Elements = @($Found.CommandElements)
+                for ($I = 0; $I -lt $Elements.Count - 1; $I++) {
+                    if ($Elements[$I] -is [System.Management.Automation.Language.CommandParameterAst] -and $Elements[$I].ParameterName -eq $Parameter) {
+                        $IsConstant = $Elements[$I + 1] -is [System.Management.Automation.Language.StringConstantExpressionAst]
+                        if ($IsConstant) { $Value = $Elements[$I + 1].Value }
+                    }
+                }
+            }
+            [PSCustomObject]@{ ParseErrorCount = @($ParseErrors).Count; Found = [bool]$Found; IsConstant = $IsConstant; Value = $Value }
+        }
+        # The nested form: the command sits inside ONE single-quoted literal of the message. Read that
+        # literal first (one literal and the end of the input), then the command it holds, up to $CutAt.
+        function Read-BL113NestedArgument ([string]$Literal, [string]$CutAt, [string]$Command, [string]$Parameter) {
+            $Tokens = $null
+            $ParseErrors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseInput($Literal, [ref]$Tokens, [ref]$ParseErrors)
+            @($ParseErrors).Count | Should -Be 0 -Because "the literal in the message ($Literal) parses"
+            @($Tokens).Count | Should -Be 2 -Because "the text in the message ($Literal) is one string literal"
+            $Tokens[0].Kind | Should -Be ([System.Management.Automation.Language.TokenKind]::StringLiteral)
+            $Inner = [string]$Tokens[0].Value
+            if ($CutAt -and $Inner.Contains($CutAt)) { $Inner = $Inner.Substring(0, $Inner.IndexOf($CutAt, [System.StringComparison]::Ordinal)) }
+            Read-BL113Argument -Text $Inner -Command $Command -Parameter $Parameter
+        }
+    }
+
+    It 'shows the <Case> repair example so it parses and gives the alias back for a profile named with <Label>' -ForEach @(
+        @{ Case = 'TenantId'; Content = '@{ Naming = @{} }'; Cut = ' -TenantId <id>'; Label = 'a straight apostrophe (U+0027)'; Alias = "o'brien"; Escaped = "o''brien" }
+        @{ Case = 'TenantId'; Content = '@{ Naming = @{} }'; Cut = ' -TenantId <id>'; Label = 'a right single quotation mark (U+2019)'; Alias = ('o' + [char]0x2019 + 'brien'); Escaped = ('o' + [char]0x2019 + [char]0x2019 + 'brien') }
+        @{ Case = 'Environment'; Content = "@{ TenantId = 'x'; Environment = 'Mars' }"; Cut = ' -Environment <value>'; Label = 'a straight apostrophe (U+0027)'; Alias = "o'brien"; Escaped = "o''brien" }
+        @{ Case = 'Environment'; Content = "@{ TenantId = 'x'; Environment = 'Mars' }"; Cut = ' -Environment <value>'; Label = 'a right single quotation mark (U+2019)'; Alias = ('o' + [char]0x2019 + 'brien'); Escaped = ('o' + [char]0x2019 + [char]0x2019 + 'brien') }
+    ) {
+        # A profile written before Test-OERTenantAlias existed can carry such a basename; it is read
+        # with a warning, and the repair command in the TenantProfileMalformed message names it.
+        $Base = Join-Path $TestDrive "BL113-$Case-$([guid]::NewGuid().ToString('N'))"
+        New-Item -ItemType Directory -Path $Base -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $Base "$Alias.psd1") -Value $Content -Encoding utf8
+
+        $Err = $null
+        $Result = Get-OERConfiguration -BasePath $Base -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue
+        @($Result).Count | Should -Be 0
+        $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -ceq 'TenantProfileMalformed,Get-OERConfiguration' })
+        $Own.Count | Should -Be 1
+        $Example = Get-BL113Segment -Message $Own[0].Exception.Message -After 'Repair it with ' -Before $Cut
+        $Example | Should -BeExactly "Set-OERConfiguration -TenantAlias '$Escaped'"
+        $Read = Read-BL113Argument -Text $Example -Command 'Set-OERConfiguration' -Parameter 'TenantAlias'
+        $Read.ParseErrorCount | Should -Be 0
+        $Read.IsConstant | Should -BeTrue
+        $Read.Value | Should -BeExactly $Alias
+    }
 }

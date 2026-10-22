@@ -473,7 +473,7 @@ ordinally, never searched for. Under `-ErrorAction Ignore` or `$ErrorActionPrefe
 which add a record to no `-ErrorVariable`, the call is pinned to `SilentlyContinue`, under no other
 preference. A refused export asks for no tenant ID, reads nothing, writes no folder, returns no
 object, under every error preference. Every other command keeps the rule above; `Get-OERInventory`
-keeps its behaviour.
+keeps its behaviour, except that it names no tenant in its document after its own refused sign-in.
 `Why: docs/development/rationale.md#a-command-whose-sign-in-is-refused-sends-nothing`
 
 **A command sends nothing under a sign-in a later command replaced.** `Register-OERSignInIdentity`
@@ -548,7 +548,8 @@ empty, whitespace or `$null` is refused the same way, in `process` after the mar
 `[ValidateNotNullOrEmpty()]` on it; `tests/Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` holds both
 halves, `Connect-OER` the one named exception; a new public `-TenantId` takes the attribute.
 `New-OERConfiguration` and `Set-OERConfiguration`, whose `-TenantId` is stored rather than signed in
-to, also refuse a value of white space only at binding, with a `[ValidateScript()]` declared above
+to, also refuse a value of white space and invisible format (Cf) characters only at binding, with a
+`[ValidateScript()]` declared above
 that attribute; a stored blank `TenantId` is still read as it is, and an update naming no
 `-TenantId` keeps it. The `(BL-96)` Contexts of `tests/Unit/Public/New-OERConfiguration.Tests.ps1`
 and `Set-OERConfiguration.Tests.ps1` hold it.
@@ -611,6 +612,25 @@ bypass the cached return. `Why: docs/development/rationale.md#auth-state`,
 `docs/development/rationale.md#requested-tenant-vs-granted-tenant`,
 `docs/development/rationale.md#every-device-code-sign-in-is-forced`
 
+**An expired INTERACTIVE session is renewed silently first, in the same tenant** (A22, BL-115):
+`Initialize-OERAuth` sends one non-interactive `Get-AzToken` (no `-Interactive`, no `-ClientId`,
+`-CredentialPrecedence Environment`) when its tracker `$script:_OERInteractiveCredential` (client id
+and tenant of the interactive call AzAuth holds, never a token) matches, accepts the token only for the
+session's own object id and tenant, and otherwise runs exactly one interactive request. Never for
+`Connect-OER`, `-ForceRefresh`, a claims challenge, a cloud switch or another sign-in type. The tracker
+has one owner, `Initialize-OERAuth`; never add `-TokenCache`, a broker or a token on disk. It is READ
+from AzAuth 2.11.0 and Azure.Identity 1.21.0, not measured live: write "fewer prompts", never "no
+prompt" -- a failed refresh can open the browser inside AzAuth, and the tracker names ONE credential,
+so a renewal is silent only for the resource whose interactive request came last: every `-IncludeARM`
+sign-in requests ARM last, so a session using both resources gets no silent renewal (ruling R-3; the
+silent renewal helps a Graph-only session). `Why: docs/development/rationale.md#the-silent-renewal-of-an-interactive-session`
+
+**An interactive sign-in in a host started with `pwsh -NonInteractive` is refused** with the terminating
+`InteractiveSignInUnavailable`, silent renewal included, after the cached return and before any tenant
+lookup or token request (the command stays latched). Only the console host is detected; a service or
+task started without `-NonInteractive` is not.
+`Why: docs/development/rationale.md#an-interactive-sign-in-is-refused-in-a-non-interactive-host`
+
 ---
 
 ## Tenant Profile Config
@@ -633,7 +653,10 @@ A profile's optional `Environment` key names the sovereign cloud of that tenant 
 `Why: docs/development/rationale.md#tenant-profile-config`
 
 The private helper `Export-OERConfiguration` owns PSD1 serialization. Never inline the serialization
-logic in a public function -- always call the helper.
+logic in a public function -- always call the helper. It escapes every single quote PowerShell reads
+as one (U+0027, U+2018, U+2019, U+201A, U+201B) in keys, list items and scalars through
+`EscapeSingleQuotedStringContent`; never double only the straight one.
+`Why: docs/development/rationale.md#the-profile-file-is-written-escaped`
 
 ---
 
@@ -942,6 +965,12 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Invoke-OERStructure` refuses with `ConfirmationUnavailable`, before the sign-in, a document whose
   run would prompt. Never decide either elsewhere.
   `Why: docs/development/rationale.md#confirmation-unavailable`
+- **`Test-OERHostNonInteractive` is the single owner of whether the console host was started with
+  `-NonInteractive`** (a private field read by reflection; `$false` for every other host and on any
+  failure); only `Initialize-OERAuth` asks it. Never decide it elsewhere. Every unit test that reaches
+  the real `Initialize-OERAuth` with an interactive sign-in mocks it, since the tool host is
+  `-NonInteractive`.
+  `Why: docs/development/rationale.md#an-interactive-sign-in-is-refused-in-a-non-interactive-host`
 - **`Select-OERManagedDirectoryRoleAssignment` is the single owner of which live directory role
   assignment the apply engine may match or prune; `Get-OERTokenObjectId` of reading the signed-in
   identity's object id** (the token's `oid` claim, delegated and app-only alike; never `/me`). Never
@@ -1053,7 +1082,8 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   and message** (the refusal itself: see **Authentication Architecture**);
   **`Get-OERInventoryTenantId` is the single owner of which tenant an export's `inventory.json`
   names.** `Get-OERInventory` and `Export-OERInventory` call it in `begin`, directly after their own
-  sign-in (the export not at all when that sign-in was refused). `Invoke-OERStructure` calls the
+  sign-in, and neither calls it when that sign-in was refused (the export reads nothing then;
+  `Get-OERInventory` carries on and names no tenant). `Invoke-OERStructure` calls the
   comparison twice per document: before the sign-in whenever `-TenantId` is bound (keep that call's
   canonical-GUID test in the owner, never in the caller), and after the sign-in against
   `TokenTenantId` (and `ArmTokenTenantId` when ARM is used), directly after the snapshot is taken
@@ -1318,7 +1348,7 @@ with the team may be in Swedish.
 
 | Module | Floor | Purpose |
 |---|---|---|
-| `AzAuth` | 2.9.0 | Token acquisition for all auth methods via `Get-AzToken` |
+| `AzAuth` | 2.11.0 | Token acquisition for all auth methods via `Get-AzToken` |
 | `Microsoft.Graph.Authentication` | 2.36.0 | `Connect-MgGraph -AccessToken`, `Invoke-MgGraphRequest` (inside wrapper) and `Get-MgContext` (the Graph SDK session check) |
 
 That column is the **runtime FLOOR** declared in `source/Omnicit.EntraRBAC.psd1`: a manifest

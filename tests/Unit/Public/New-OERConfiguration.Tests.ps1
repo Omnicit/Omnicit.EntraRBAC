@@ -80,7 +80,7 @@ Describe 'New-OERConfiguration' {
     # -------------------------------------------------------------------------------------------
     Context 'refuses a white-space -TenantId at binding (BL-96)' {
         BeforeAll {
-            $script:BlankTenantMessage = 'The TenantId consists only of white space. Supply the tenant ID or a verified domain of the tenant.'
+            $script:BlankTenantMessage = 'The TenantId consists only of white space and invisible formatting characters. Supply the tenant ID or a verified domain of the tenant.'
             # The mock WRITES a file when it is called, so "no profile file" below is a real check
             # and not a restatement of the mock doing nothing.
             Mock -ModuleName Omnicit.EntraRBAC Export-OERConfiguration {
@@ -95,6 +95,13 @@ Describe 'New-OERConfiguration' {
             @{ Label = 'a tab'; Value = "`t" }
             @{ Label = 'a carriage return and a line feed'; Value = "`r`n" }
             @{ Label = 'a no-break space (U+00A0)'; Value = [string][char]0x00A0 }
+            # BL-111 point 7: format characters (category Cf) are not white space to .NET but print as nothing.
+            @{ Label = 'a zero-width space (U+200B)'; Value = [string][char]0x200B }
+            @{ Label = 'a byte order mark (U+FEFF)'; Value = [string][char]0xFEFF }
+            @{ Label = 'a word joiner (U+2060)'; Value = [string][char]0x2060 }
+            @{ Label = 'three zero-width spaces'; Value = ([string][char]0x200B) * 3 }
+            @{ Label = 'spaces, a zero-width space and a tab'; Value = ' ' + [char]0x200B + "`t" + [char]0xFEFF + '  ' }
+            @{ Label = 'a word joiner between two spaces'; Value = ' ' + [char]0x2060 + ' ' }
         ) {
             $Base = Join-Path $TestDrive ('bl96-new-' + [guid]::NewGuid().ToString('N'))
             $Caught = $null
@@ -138,6 +145,19 @@ Describe 'New-OERConfiguration' {
         $Result.TenantId | Should -BeExactly 'contoso.onmicrosoft.com'
         Test-Path -LiteralPath (Join-Path $Base 'oer-bl96.psd1') | Should -BeTrue
         (Get-OERConfiguration -TenantAlias 'oer-bl96' -BasePath $Base).TenantId | Should -BeExactly 'contoso.onmicrosoft.com'
+    }
+
+    It 'still accepts a -TenantId that holds a real character beside a format character (BL-111)' -ForEach @(
+        @{ Label = 'a trailing zero-width space'; Value = 'contoso.onmicrosoft.com' + [char]0x200B }
+        @{ Label = 'a leading byte order mark'; Value = [string][char]0xFEFF + 'contoso.onmicrosoft.com' }
+        @{ Label = 'a single letter between format characters'; Value = [string][char]0x2060 + 'x' + [char]0x200B }
+    ) {
+        # Only a value that is NOTHING BUT white space and format characters is refused; this one is stored
+        # as given, as it was before the refusal widened.
+        $Base = Join-Path $TestDrive ('bl111-new-' + [guid]::NewGuid().ToString('N'))
+        $Result = New-OERConfiguration -TenantAlias 'oer-bl111' -TenantId $Value -BasePath $Base -ErrorAction Stop
+        $Result.TenantId | Should -BeExactly $Value
+        Test-Path -LiteralPath (Join-Path $Base 'oer-bl111.psd1') | Should -BeTrue
     }
 
     # -------------------------------------------------------------------------------------------
@@ -213,5 +233,66 @@ Describe 'New-OERConfiguration' {
             -ErrorAction SilentlyContinue
         Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
         Should -Invoke -ModuleName Omnicit.EntraRBAC Export-OERConfiguration -Times 0
+    }
+
+    Context 'a value carrying a character PowerShell reads as a single quote (BL-113)' {
+        # PowerShell's tokenizer reads U+0027, U+2018, U+2019, U+201A and U+201B as single quotes. The file
+        # is built with the real writer into $TestDrive; the characters are built from code points so this
+        # test file stays ASCII.
+        It 'writes <Label> in TenantId, a key, a list item and a scalar and reads it back unchanged' -ForEach @(
+            @{ Label = 'U+0027'; Code = 0x27 }
+            @{ Label = 'U+2018'; Code = 0x2018 }
+            @{ Label = 'U+2019'; Code = 0x2019 }
+            @{ Label = 'U+201A'; Code = 0x201A }
+            @{ Label = 'U+201B'; Code = 0x201B }
+        ) {
+            $Q = [string][char]$Code
+            $Base = Join-Path $TestDrive "QuoteNew$Code"
+            $Tid = "ten${Q}ant"
+            $null = New-OERConfiguration -TenantAlias q -TenantId $Tid -BasePath $Base `
+                -Naming @{ "Key${Q}One" = "Val${Q}ue" } `
+                -Defaults @{ "Def${Q}Key" = "x${Q}y"; "List${Q}" = @("a${Q}b", $Q, 'plain') } `
+                -ErrorAction Stop
+            $Read = Get-OERConfiguration -TenantAlias q -BasePath $Base -ErrorAction Stop
+            $Read.TenantId -ceq $Tid | Should -BeTrue
+            @($Read.Naming.Keys) | Should -HaveCount 1
+            @($Read.Naming.Keys)[0] -ceq "Key${Q}One" | Should -BeTrue
+            $Read.Naming["Key${Q}One"] -ceq "Val${Q}ue" | Should -BeTrue
+            @($Read.Defaults.Keys | Sort-Object) | Should -HaveCount 2
+            $Read.Defaults["Def${Q}Key"] -ceq "x${Q}y" | Should -BeTrue
+            $List = @($Read.Defaults["List${Q}"])
+            $List | Should -HaveCount 3
+            $List[0] -ceq "a${Q}b" | Should -BeTrue
+            $List[1] -ceq $Q | Should -BeTrue
+            $List[2] -ceq 'plain' | Should -BeTrue
+        }
+
+        It 'never adds a key when <Label> is followed by PSD1 text in TenantId, a key, a list item or a scalar' -ForEach @(
+            @{ Label = 'U+0027'; Code = 0x27 }
+            @{ Label = 'U+2018'; Code = 0x2018 }
+            @{ Label = 'U+2019'; Code = 0x2019 }
+            @{ Label = 'U+201A'; Code = 0x201A }
+            @{ Label = 'U+201B'; Code = 0x201B }
+        ) {
+            $Q = [string][char]$Code
+            $Inject = "x${Q}; Environment = ${Q}China"
+            $Base = Join-Path $TestDrive "QuoteInject$Code"
+            $null = New-OERConfiguration -TenantAlias inj -TenantId $Inject -BasePath $Base `
+                -Naming @{ $Inject = 'n' } `
+                -Defaults @{ Scalar = $Inject; Items = @($Inject, 'b') } `
+                -ErrorAction Stop
+            $File = Join-Path $Base 'inj.psd1'
+            $Data = Import-PowerShellDataFile -Path $File -ErrorAction Stop
+            @($Data.Keys | Sort-Object) -join ',' | Should -Be 'Defaults,Naming,TenantId'
+            $Data.ContainsKey('Environment') | Should -BeFalse
+            @($Data.Defaults.Keys | Sort-Object) -join ',' | Should -Be 'Items,Scalar'
+            @($Data.Naming.Keys) | Should -HaveCount 1
+            $Read = Get-OERConfiguration -TenantAlias inj -BasePath $Base -ErrorAction Stop
+            $Read.Environment | Should -BeNullOrEmpty
+            $Read.TenantId -ceq $Inject | Should -BeTrue
+            $Read.Defaults.Scalar -ceq $Inject | Should -BeTrue
+            @($Read.Defaults.Items)[0] -ceq $Inject | Should -BeTrue
+            @($Read.Naming.Keys)[0] -ceq $Inject | Should -BeTrue
+        }
     }
 }

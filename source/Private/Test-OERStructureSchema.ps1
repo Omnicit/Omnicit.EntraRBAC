@@ -642,7 +642,20 @@ function Test-OERStructureSchema {
     if ($Document.PSObject.Properties.Name -contains 'tenantId' -and
         ($Document.tenantId -isnot [string] -or -not (Test-OERGuid -Value $Document.tenantId))) {
         $TenantIdFound = if ($Document.tenantId -is [string]) {
-            "found '$($Document.tenantId)'"
+            # Sprint 11 step 13 (BL-113): the value is quoted with every control, format and line or
+            # paragraph separator character escaped (\n, \r, \t or \uXXXX), so a GUID ending in a line feed
+            # reads as the one-line message it is, never as a message that breaks in two or hides the
+            # character that made the value invalid.
+            $TenantIdShown = [regex]::Replace([string]$Document.tenantId, '[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]', {
+                    param($Match)
+                    switch ($Match.Value) {
+                        "`n" { '\n' }
+                        "`r" { '\r' }
+                        "`t" { '\t' }
+                        default { '\u{0:x4}' -f [int][char]$Match.Value }
+                    }
+                })
+            "found '$TenantIdShown'"
         } elseif ($null -eq $Document.tenantId) {
             'found null'
         } else {

@@ -19,7 +19,8 @@ function New-OERConfiguration {
 
     .PARAMETER TenantId
     The Entra ID tenant GUID or verified domain stored in the profile. An empty value, or one of
-    white space only, is refused at parameter binding.
+    white space and invisible formatting characters only (such as U+200B or U+FEFF), is refused at
+    parameter binding.
 
     .PARAMETER Naming
     Optional hashtable of naming templates keyed by object kind, e.g. @{ Group = 'role_sec_{area}_{tier}' }.
@@ -53,10 +54,13 @@ function New-OERConfiguration {
         [Parameter(Mandatory)]
         # BL-96: a TenantId of white space only is refused here, at binding, as an empty one is. The
         # module supports PowerShell 7.2, which has no [ValidateNotNullOrWhiteSpace()] (7.4+), so the
-        # same test runs as a script. Declared ABOVE [ValidateNotNullOrEmpty()] on purpose: validation
-        # attributes run in reverse declaration order (measured), so an empty value still reads the
-        # NotNullOrEmpty message. That attribute stays: TenantIdNotEmpty.Cohort.Tests.ps1 requires it.
-        [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) }, ErrorMessage = 'The TenantId consists only of white space. Supply the tenant ID or a verified domain of the tenant.')]
+        # same test runs as a script. BL-111: Unicode format characters (category Cf: U+200B, U+FEFF,
+        # U+2060 ...) are not white space to .NET, yet print as nothing, so they are removed before the
+        # test and a value of only those and white space is refused too. Declared ABOVE
+        # [ValidateNotNullOrEmpty()] on purpose: validation attributes run in reverse declaration order
+        # (measured), so an empty value still reads the NotNullOrEmpty message. That attribute stays:
+        # TenantIdNotEmpty.Cohort.Tests.ps1 requires it.
+        [ValidateScript({ -not [string]::IsNullOrWhiteSpace(($_ -replace '\p{Cf}', '')) }, ErrorMessage = 'The TenantId consists only of white space and invisible formatting characters. Supply the tenant ID or a verified domain of the tenant.')]
         [ValidateNotNullOrEmpty()]
         [string]$TenantId,
         [hashtable]$Naming,

@@ -63,8 +63,11 @@ function Resolve-OERRoleDefinitionId {
             $Role)
     }
     if ($Candidates.Count -eq 0) {
+        # The scope in the example is quoted with every single-quote character doubled
+        # (CodeGeneration.EscapeSingleQuotedStringContent: the straight one and the curly ones the
+        # PowerShell tokenizer also reads as quotes), so the example stays valid as typed.
         throw ("Role definition '$Role' was not found at scope '$Scope'. " +
-            "Run Get-OERRoleDefinition -Scope '$Scope' without -Role to list the roles available " +
+            "Run Get-OERRoleDefinition -Scope '$([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent([string]$Scope))' without -Role to list the roles available " +
             'there, or supply the role definition GUID or its full ARM id.')
     }
     return [string]$Candidates[0].id
