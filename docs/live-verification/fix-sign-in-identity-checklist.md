@@ -175,7 +175,7 @@ function Write-S1113bResult {
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched. #type/subtask
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched. #type/subtask
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -194,13 +194,21 @@ worktree on this branch with 0 tracked changes; `True` on every mark.
 **Failure looks like:** `False` on the first line -- `OER_LIVE_REPO` is unset or names the main clone; a `False`
 mark -- build the worktree first.
 
-Result:
+Result: 2026-10-22 08:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Passed.
+[oer-s1113b] The module loads from a worktree that is not the main clone: True
+[oer-s1113b] Main clone: branch main
+[oer-s1113b] Worktree: branch fix/sign-in-identity; HEAD 16f4ceb docs: add the live checklist for the identity in the sign-in, and name the snapshot test right; tracked changes: 0
+[oer-s1113b] The branch build (1.3.1): Test-OERSessionUsable: True; SignInAccountId: True; SignInAccountChanged: True; OutsideCaller: True
+```
 
 ## 0. An ordinary run in one session is not refused
 
 ### 0.1. A sign-in and two reads; the identity carries the account
 
-- [ ] **0.1** After `Connect-OerLive -Arm` as oer-live-cc, the identity has five terms, its account term is the session's signed-in object, the account-change flag is off, and `Get-OERSubscription` and `Get-OERGroup` read with no error and no further token request. #type/subtask
+- [x] **0.1** After `Connect-OerLive -Arm` as oer-live-cc, the identity has five terms, its account term is the session's signed-in object, the account-change flag is off, and `Get-OERSubscription` and `Get-OERGroup` read with no error and no further token request. #type/subtask
 
 ```powershell
 $Res = Invoke-S1113bBlock -Name '0-1' -Body @'
@@ -227,11 +235,32 @@ Write-S1113bResult $Res
 requests.
 **Failure looks like:** four terms (the old build), an error id, or a token request (the session was not cached).
 
-Result:
+Result: 2026-10-22 08:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Passed. The sign-in lines are from the child process log, through the redactor.
+[oer-s1113b] Omnicit.EntraRBAC 1.3.1 loaded from REPO\.claude\worktrees\s11-steg13b\output\module\Omnicit.EntraRBAC\1.3.1.
+[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s1113b] Child process 0-1 ended with END: True
+[oer-s1113b] IdentityTerms: 5
+[oer-s1113b] AccountTermIsSignedInObject: True
+[oer-s1113b] AccountChangedFlag: False
+[oer-s1113b] SubscriptionsRead: True
+[oer-s1113b] GroupsRead: 93
+[oer-s1113b] Errors: []
+[oer-s1113b] Requests: Graph 1, ARM 1, writes 0, token requests 0
+```
 
 ### 0.2. A renewal as the same identity, -IncludeARM after a Microsoft Graph sign-in, and Connect-OER switching identity
 
-- [ ] **0.2** A renewal forced by moving `GraphTokenExpiry` into the five-minute window renews as oer-live-cc with one token request and no refusal, the identity unchanged and the ARM token kept; an ARM token acquired after a Graph-only `Connect-OER` is not refused; `Connect-OER` as oer-live-cc-noperm and back as oer-live-cc is not refused and moves the account term. #type/subtask
+- [x] **0.2** A renewal forced by moving `GraphTokenExpiry` into the five-minute window renews as oer-live-cc with one token request and no refusal, the identity unchanged and the ARM token kept; an ARM token acquired after a Graph-only `Connect-OER` is not refused; `Connect-OER` as oer-live-cc-noperm and back as oer-live-cc is not refused and moves the account term. #type/subtask
 
 ```powershell
 $Res = Invoke-S1113bBlock -Name '0-2' -Body @'
@@ -289,13 +318,37 @@ Write-S1113bResult $Res
 2 token requests, account term moved `True`, back `True`, flag `False`, groups read with no error; 0 writes.
 **Failure looks like:** `SignInSuperseded` on any line (a refusal of an ordinary run), or an ARM token not kept.
 
-Result:
+Result: 2026-10-22 08:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Passed.
+[oer-s1113b] Child process 0-2 ended with END: True
+[oer-s1113b] RenewalErrors: []
+[oer-s1113b] RenewalTokenRequests: 1
+[oer-s1113b] RenewalIdentityUnchanged: True
+[oer-s1113b] RenewalExpiryMoved: True
+[oer-s1113b] RenewalArmKept: True
+[oer-s1113b] RenewalAccountChangedFlag: False
+[oer-s1113b] ReadAfterRenewal: 93 groups; errors []
+[oer-s1113b] GraphOnlyHoldsArm: False
+[oer-s1113b] IncludeArmErrors: []
+[oer-s1113b] IncludeArmTokenRequests: 2
+[oer-s1113b] IncludeArmAcquired: True
+[oer-s1113b] ReadAfterIncludeArm: subscriptions read True; errors []
+[oer-s1113b] SwitchErrors: []
+[oer-s1113b] SwitchTokenRequests: 2
+[oer-s1113b] SwitchAccountTermMoved: True
+[oer-s1113b] SwitchBackAccountTerm: True
+[oer-s1113b] SwitchAccountChangedFlag: False
+[oer-s1113b] ReadAfterSwitch: 93 groups; errors []
+[oer-s1113b] Writes: 0
+```
 
 ## 1. -TenantId binds the tenant, not the identity (BL-90)
 
 ### 1.1. Invoke-OERStructure -TenantId -WhatIf in an unchanged session plans and is not refused
 
-- [ ] **1.1** As oer-live-cc, `Invoke-OERStructure -TenantId` the test tenant `-WhatIf` with the minimal document plans its group and is not refused, sending reads only. #type/subtask
+- [x] **1.1** As oer-live-cc, `Invoke-OERStructure -TenantId` the test tenant `-WhatIf` with the minimal document plans its group and is not refused, sending reads only. #type/subtask
 
 ```powershell
 $Res = Invoke-S1113bBlock -Name '1-1' -Body @'
@@ -316,11 +369,19 @@ plan of a create under `-WhatIf`; `Errors: []`; at least one Graph read, 0 write
 **Failure looks like:** `SignInSuperseded` (a refusal of an ordinary run), a write, or a validation error of the
 document.
 
-Result:
+Result: 2026-10-22 08:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Passed on run 2. Run 1 stopped at the checklist, not the module: it expected a create action, and the engine plans a create under -WhatIf as a Skipped row "would create group"; the block now prints the row.
+[oer-s1113b] Child process 1-1 ended with END: True
+[oer-s1113b] Rows: groups oer-s1113b-plan: Skipped (would create group oer-s1113b-plan)
+[oer-s1113b] Errors: []
+[oer-s1113b] Requests: Graph 1, writes 0, token requests 0
+```
 
 ### 1.2. The same command is refused when a later pipeline command signed in as another identity of the tenant
 
-- [ ] **1.2** In `Invoke-OERStructure -TenantId T -WhatIf | ForEach-Object -Begin { Connect-OER -TenantId T` as oer-live-cc-noperm `}`, the document is refused with `SignInSuperseded` (the document text), naming `Invoke-OERStructure`, and nothing is sent for it. #type/subtask
+- [x] **1.2** In `Invoke-OERStructure -TenantId T -WhatIf | ForEach-Object -Begin { Connect-OER -TenantId T` as oer-live-cc-noperm `}`, the document is refused with `SignInSuperseded` (the document text), naming `Invoke-OERStructure`, and nothing is sent for it. #type/subtask
 
 ```powershell
 $Res = Invoke-S1113bBlock -Name '1-2' -Body @'
@@ -344,11 +405,21 @@ Write-S1113bResult $Res
 session is the other identity `True`; 0 Graph requests, 0 writes, 1 token request (the other identity's sign-in).
 **Failure looks like:** planned rows or a Graph request (the defect: the document read under the other identity).
 
-Result:
+Result: 2026-10-22 08:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Passed.
+[oer-s1113b] Child process 1-2 ended with END: True
+[oer-s1113b] Rows: 0
+[oer-s1113b] Errors: [SignInSuperseded x1]
+[oer-s1113b] Superseded: Invoke-OERStructure (document text)
+[oer-s1113b] SessionIsTheOtherIdentity: True
+[oer-s1113b] Requests: Graph 0, writes 0, token requests 1
+```
 
 ### 1.3. With no session when the command began, a later sign-in in the tenant refuses the document
 
-- [ ] **1.3** In a process with no session, `Invoke-OERStructure -TenantId T -WhatIf | ForEach-Object -Begin { Connect-OER -TenantId T` as oer-live-cc `}` refuses the document with `SignInSuperseded`, sending nothing for it. #type/subtask
+- [x] **1.3** In a process with no session, `Invoke-OERStructure -TenantId T -WhatIf | ForEach-Object -Begin { Connect-OER -TenantId T` as oer-live-cc `}` refuses the document with `SignInSuperseded`, sending nothing for it. #type/subtask
 
 ```powershell
 $Res = Invoke-S1113bBlock -Name '1-3' -Body @'
@@ -371,11 +442,21 @@ Write-S1113bResult $Res
 `Superseded: Invoke-OERStructure (document text)`; 0 Graph requests, 0 writes, 1 token request.
 **Failure looks like:** planned rows (the document taken the later sign-in's session for its own).
 
-Result:
+Result: 2026-10-22 08:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Passed.
+[oer-s1113b] Child process 1-3 ended with END: True
+[oer-s1113b] NoSessionAtStart: True
+[oer-s1113b] Rows: 0
+[oer-s1113b] Errors: [SignInSuperseded x1]
+[oer-s1113b] Superseded: Invoke-OERStructure (document text)
+[oer-s1113b] Requests: Graph 0, writes 0, token requests 1
+```
 
 ### 1.4. A builder with -TenantId is refused the same way, and looks the name up without the switch
 
-- [ ] **1.4** `New-OERAccessPackageApprovalStage -TenantId T -User` a prefixed name piped into a `Connect-OER` as oer-live-cc-noperm in `-Begin` is refused with `SignInSuperseded` before any lookup; the same call as its own statement looks the name up (a Graph read) and reports the name as not found. #type/subtask
+- [x] **1.4** `New-OERAccessPackageApprovalStage -TenantId T -User` a prefixed name piped into a `Connect-OER` as oer-live-cc-noperm in `-Begin` is refused with `SignInSuperseded` before any lookup; the same call as its own statement looks the name up (a Graph read) and reports the name as not found. #type/subtask
 
 ```powershell
 $Res = Invoke-S1113bBlock -Name '1-4' -Body @'
@@ -405,11 +486,24 @@ requests; alone: 0 stages, a not-found error id of the lookup and no `SignInSupe
 0 writes.
 **Failure looks like:** a Graph request in the piped call (the lookup under the other identity).
 
-Result:
+Result: 2026-10-22 08:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Passed. The lookup of the name alone answers UserNotFound (the name matches no user), after one Graph read.
+[oer-s1113b] Child process 1-4 ended with END: True
+[oer-s1113b] PipedStages: 0
+[oer-s1113b] PipedErrors: [SignInSuperseded x1]
+[oer-s1113b] PipedSuperseded: New-OERAccessPackageApprovalStage
+[oer-s1113b] PipedGraph: 0
+[oer-s1113b] AloneStages: 0
+[oer-s1113b] AloneErrors: [UserNotFound x1]
+[oer-s1113b] AloneGraph: 1
+[oer-s1113b] Writes: 0
+```
 
 ### 1.5. A command naming the tenant differently from the session is not refused by BL-90: it signs in itself
 
-- [ ] **1.5** `Invoke-OERStructure -TenantId` the tenant's domain (the session names it by tenant ID) in the same pipeline as 1.2 is not refused with `SignInSuperseded`; it signs in itself, which the fence refuses, since that sign-in would be interactive. #type/subtask
+- [x] **1.5** `Invoke-OERStructure -TenantId` the tenant's domain (the session names it by tenant ID) in the same pipeline as 1.2 is not refused with `SignInSuperseded`; it signs in itself, which the fence refuses, since that sign-in would be interactive. #type/subtask
 
 ```powershell
 $Res = Invoke-S1113bBlock -Name '1-5' -Body @'
@@ -434,13 +528,22 @@ token requests (the other identity's sign-in and the refused one).
 **Failure looks like:** `SignInSuperseded` (BL-90 refusing a command that does not inherit the session), a Graph
 request, or a `Skipped (would create ...)` plan row.
 
-Result:
+Result: 2026-10-22 08:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Passed on run 2. Run 1 showed the same refusals and requests; the checklist expected 0 rows, and the latched command carries on past its refused sign-in and reports its group Failed, sending nothing (existing behaviour). The block now prints the row.
+[oer-s1113b] Child process 1-5 ended with END: True
+[oer-s1113b] Rows: groups oer-s1113b-plan: Failed
+[oer-s1113b] Errors: [GraphTokenAcquisitionFailed x1, SignInRefused x1]
+[oer-s1113b] Superseded: 
+[oer-s1113b] Requests: Graph 0, writes 0, token requests 2
+```
 
 ## 2. A sign-in nested under a superseded command (BL-91 b)
 
 ### 2.1. The second Connect-OER inside a superseded command's output is refused before any token request
 
-- [ ] **2.1** In `Get-OERRoleDefinition -Subscription S -TenantId T | Select-Object -First 2 | ForEach-Object { Connect-OER ... }`, the first `Connect-OER` (oer-live-cc-noperm) signs in and supersedes `Get-OERRoleDefinition`; the second (oer-live-cc) is refused with `SignInSuperseded` naming `Get-OERRoleDefinition`, with no token request. #type/subtask
+- [x] **2.1** In `Get-OERRoleDefinition -Subscription S -TenantId T | Select-Object -First 2 | ForEach-Object { Connect-OER ... }`, the first `Connect-OER` (oer-live-cc-noperm) signs in and supersedes `Get-OERRoleDefinition`; the second (oer-live-cc) is refused with `SignInSuperseded` naming `Get-OERRoleDefinition`, with no token request. #type/subtask
 
 ```powershell
 $Res = Invoke-S1113bBlock -Name '2-1' -Body @'
@@ -468,11 +571,21 @@ Write-S1113bResult $Res
 `Superseded: Get-OERRoleDefinition`; 0 writes.
 **Failure looks like:** token requests `1,2` (the nested sign-in reached `Get-AzToken`), or no refusal.
 
-Result:
+Result: 2026-10-22 08:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Passed.
+[oer-s1113b] Child process 2-1 ended with END: True
+[oer-s1113b] ItemsHandled: 2
+[oer-s1113b] TokenRequestsAfterEachItem: 1,1
+[oer-s1113b] Errors: [SignInSuperseded x1]
+[oer-s1113b] Superseded: Get-OERRoleDefinition
+[oer-s1113b] Writes: 0
+```
 
 ### 2.2. A nested read under an unchanged session is not refused
 
-- [ ] **2.2** In `Get-OERRoleDefinition -Subscription S -TenantId T | Select-Object -First 2 | ForEach-Object { Get-OERGroup ... }`, both nested reads run with no error and no token request. #type/subtask
+- [x] **2.2** In `Get-OERRoleDefinition -Subscription S -TenantId T | Select-Object -First 2 | ForEach-Object { Get-OERGroup ... }`, both nested reads run with no error and no token request. #type/subtask
 
 ```powershell
 $Res = Invoke-S1113bBlock -Name '2-2' -Body @'
@@ -494,7 +607,15 @@ Write-S1113bResult $Res
 requests.
 **Failure looks like:** `SignInSuperseded` (a refusal of an ordinary nested read).
 
-Result:
+Result: 2026-10-22 08:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Passed.
+[oer-s1113b] Child process 2-2 ended with END: True
+[oer-s1113b] NestedReads: True,True
+[oer-s1113b] Errors: []
+[oer-s1113b] Requests: Graph 2, ARM 1, writes 0, token requests 0
+```
 
 ## 3. A renewal never continues as another account (BL-119)
 
@@ -503,7 +624,7 @@ token of `oer-live-cc` is "another account" than the session's. Nothing is sent 
 
 ### 3.1. A Microsoft Graph renewal answered by another account is refused, and the session then needs Connect-OER
 
-- [ ] **3.1** With the session's object id moved and its Graph token in the renewal window, the renewal is refused with `SignInSuperseded` (the account text) after one token request; the session is then the token's account with the flag on and no ARM token; a read naming no tenant is refused (`SignInRefused`) and sends nothing; a bare `Connect-OER` answers from that session and keeps the flag, `Connect-OER -Force` signs in again and clears it, and a read follows. #type/subtask
+- [x] **3.1** With the session's object id moved and its Graph token in the renewal window, the renewal is refused with `SignInSuperseded` (the account text) after one token request; the session is then the token's account with the flag on and no ARM token; a read naming no tenant is refused (`SignInRefused`) and sends nothing; a bare `Connect-OER` answers from that session and keeps the flag, `Connect-OER -Force` signs in again and clears it, and a read follows. #type/subtask
 
 ```powershell
 $Res = Invoke-S1113bBlock -Name '3-1' -Body @'
@@ -547,11 +668,27 @@ no error; 0 writes.
 **Failure looks like:** no refusal (the renewal continued as another account), an ARM token kept, or a Graph request
 from the read naming no tenant.
 
-Result:
+Result: 2026-10-22 08:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Passed on run 2. Run 1 showed every refusal as expected; its last step expected a bare Connect-OER to clear the account flag, but a bare Connect-OER answers from the session the refused renewal left (0 token requests, flag kept), which is why the advice is Connect-OER -Force. The block now runs both.
+[oer-s1113b] Child process 3-1 ended with END: True
+[oer-s1113b] RenewalErrors: [SignInSuperseded x1]
+[oer-s1113b] RenewalSuperseded: a script block (account text)
+[oer-s1113b] RenewalTokenRequests: 1
+[oer-s1113b] SessionIsTheTokensAccount: True
+[oer-s1113b] AccountChangedFlag: True
+[oer-s1113b] ArmTokenDropped: True
+[oer-s1113b] ReadNamingNoTenant: 0 groups; errors [SignInRefused x2]; Graph 0
+[oer-s1113b] BareConnect: token requests 0; flag True
+[oer-s1113b] ForceConnect: token requests 1; flag False
+[oer-s1113b] ReadAfterConnect: True; errors []
+[oer-s1113b] Writes: 0
+```
 
 ### 3.2. A renewal's ARM token of another account is refused and not cached
 
-- [ ] **3.2** After a Graph-only `Connect-OER` and with the session's object id moved, an `-IncludeARM` renewal is refused with `SignInSuperseded` (the account text) after one token request (the ARM one), no ARM token is cached, and the session's object id is left as it was. #type/subtask
+- [x] **3.2** After a Graph-only `Connect-OER` and with the session's object id moved, an `-IncludeARM` renewal is refused with `SignInSuperseded` (the account text) after one token request (the ARM one), no ARM token is cached, and the session's object id is left as it was. #type/subtask
 
 ```powershell
 $Res = Invoke-S1113bBlock -Name '3-2' -Body @'
@@ -580,7 +717,19 @@ Write-S1113bResult $Res
 `False`; object id left `True`; flag `False`; 0 writes.
 **Failure looks like:** an ARM token cached (another account's token under the session's identity).
 
-Result:
+Result: 2026-10-22 08:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Passed.
+[oer-s1113b] Child process 3-2 ended with END: True
+[oer-s1113b] Errors: [SignInSuperseded x1]
+[oer-s1113b] Superseded: a script block (account text)
+[oer-s1113b] TokenRequests: 1
+[oer-s1113b] ArmTokenCached: False
+[oer-s1113b] ObjectIdLeftAsItWas: True
+[oer-s1113b] AccountChangedFlag: False
+[oer-s1113b] Writes: 0
+```
 
 ## B. Proved offline (class B)
 
@@ -607,7 +756,7 @@ Result:
 
 ### T.1. The step's raw folder is gone, and nothing was created in the tenant
 
-- [ ] **T.1** The raw folder `raw\s1113b\` (child scripts, results, logs) is deleted, and no object with the prefix exists in the tenant. #type/subtask
+- [x] **T.1** The raw folder `raw\s1113b\` (child scripts, results, logs) is deleted, and no object with the prefix exists in the tenant. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -621,4 +770,20 @@ Write-OerLiveStep "Raw folder gone: $(-not (Test-Path -LiteralPath $Raw))"
 **Expect:** 0 groups with the prefix; `Raw folder gone: True`.
 **Failure looks like:** a prefixed object (STOP: this file creates none) or the folder still there.
 
-Result:
+Result: 2026-10-22 08:19 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Passed.
+[oer-s1113b] Omnicit.EntraRBAC 1.3.1 loaded from REPO\.claude\worktrees\s11-steg13b\output\module\Omnicit.EntraRBAC\1.3.1.
+[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s1113b] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s1113b] Groups with the prefix: 0
+[oer-s1113b] Raw folder gone: True
+```
