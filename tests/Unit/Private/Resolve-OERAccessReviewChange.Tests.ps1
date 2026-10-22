@@ -895,29 +895,30 @@ Describe 'Resolve-OERAccessReviewChange' {
             }
         }
 
-        It 'does not apply the A19 rule to a live interval 1 or 3 declared Monthly' {
-            InModuleScope $script:moduleName {
-                # Live interval 1 declared Monthly with a drifted start date: an ordinary start-date write.
+        # One It per live interval, so a rule that wrongly fires for one of them names it in the report.
+        It 'does not apply the A19 rule to a live interval <Interval> declared Monthly: <Label>' -ForEach @(
+            # Declared with a drifted start date: an ordinary start-date write.
+            @{ Label = 'a drifted start date'; Interval = 1; StartDate = '2026-02-01'; ExpectedStart = '2026-02-01' }
+            # Declared with no start date: a cadence write on the live start date.
+            @{ Label = 'no start date'; Interval = 3; StartDate = $null; ExpectedStart = '2026-01-01' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Interval = $Interval; StartDate = $StartDate; ExpectedStart = $ExpectedStart } {
+                param($Interval, $StartDate, $ExpectedStart)
                 $Current = [PSCustomObject]@{
                     DisplayName = 'R'
                     Recurrence  = [PSCustomObject]@{
-                        pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 1; dayOfMonth = 1 }
+                        pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = $Interval; dayOfMonth = 1 }
                         range   = [PSCustomObject]@{ type = 'noEnd'; startDate = '2026-01-01' }
                     }
                     Settings    = @{}
                 }
-                $Declared = [PSCustomObject]@{ displayName = 'R'; recurrence = 'Monthly'; startDate = '2026-02-01' }
-                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
-                $Change.SetParams.Recurrence | Should -BeExactly 'Monthly'
-                $Change.SetParams.StartDate  | Should -Be ([datetime]'2026-02-01')
-                @($Change.NotApplied)        | Should -BeNullOrEmpty
-
-                # Live interval 3 declared Monthly with no start date: a cadence write on the live start date.
-                $Current.Recurrence.pattern.interval = 3
                 $Declared = [PSCustomObject]@{ displayName = 'R'; recurrence = 'Monthly' }
+                if ($null -ne $StartDate) {
+                    $Declared | Add-Member -NotePropertyName startDate -NotePropertyValue $StartDate
+                }
                 $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
                 $Change.SetParams.Recurrence | Should -BeExactly 'Monthly'
-                $Change.SetParams.StartDate  | Should -Be ([datetime]'2026-01-01')
+                $Change.SetParams.StartDate  | Should -Be ([datetime]$ExpectedStart)
                 @($Change.NotApplied)        | Should -BeNullOrEmpty
             }
         }

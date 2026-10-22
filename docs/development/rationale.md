@@ -14475,7 +14475,11 @@ its own "names every exported cmdlet" check, but both matched the whole FILE, so
 only in a Quick Start snippet passed while missing from the roster. This gate scopes the roster to
 `## Available Cmdlets` and `COMMAND COHORTS`, checks each `### Cohort (N)` count against the cmdlets
 that cohort is the FIRST to name, and requires the two documents to agree word for word on the
-tenant-switch verdict per sign-in type and on the device-code known limitation. It also holds every
+tenant-switch verdict per sign-in type and on the device-code known limitation. The four rows of the
+Long runs table (what a renewal costs per sign-in type) are bound the same way, word for word once
+pipes, backticks, links and line wrapping are normalised; the one cross-reference to the SWITCHING
+TENANTS section is compared ignoring case, since the about topic names a section in capitals. A row
+missing from either document fails on its own (Sprint 11 step 15, BL-119). It also holds every
 sentence in either whole document that says "all N cmdlets" or "all N exported cmdlets" -- README's
 introduction and `## Available Cmdlets`, the about topic's LONG DESCRIPTION -- to the count of
 `FunctionsToExport`, with a floor on the matches so a reworded sentence cannot make it vacuous; a

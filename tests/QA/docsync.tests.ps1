@@ -271,6 +271,118 @@ BeforeAll {
 
         return $Verdict
     }
+
+    # The four rows of the Long runs table, by the label each opens with. A closed set on purpose,
+    # like $script:SignInTypes: the about topic writes "Client secret" and "and certificate" on two
+    # lines, so the label of the fourth row is only whole after the lines are joined.
+    $script:LongRunsRowLabels = @('Interactive', 'Device code', 'Managed identity', 'Client secret and certificate')
+
+    function ConvertTo-DocSyncLongRunsText {
+        <#
+            .SYNOPSIS
+                Normalises one Long runs row for a word-for-word comparison.
+
+            .DESCRIPTION
+                Applies ConvertTo-DocSyncComparableText, then two more steps that only this table
+                needs. A Markdown link is replaced by its text, since the README writes
+                [Switching tenants](#switching-tenants) where the about topic, which has no links,
+                writes the section name. And that one cross-reference, to the SWITCHING TENANTS
+                section, is compared case-insensitively: the topic names a section in capitals, the
+                README in a heading's case. That is the medium, as with the known-limitation
+                paragraph above; every other word is still compared ordinally by the caller.
+        #>
+        [OutputType([string])]
+        param (
+            [Parameter(Mandatory = $true)]
+            [AllowEmptyString()]
+            [string]$Text
+        )
+
+        $Result = $Text -replace '\[([^\]]+)\]\([^)]*\)', '$1'
+        $Result = ConvertTo-DocSyncComparableText -Text $Result
+
+        return ($Result -replace '(?i)\bswitching tenants\b', 'Switching tenants')
+    }
+
+    function Get-DocSyncLongRunsRow {
+        <#
+            .SYNOPSIS
+                Returns an ordered map of Long runs row label -> normalised row text (label included).
+
+            .DESCRIPTION
+                $Medium is 'Readme' (a Markdown table: one row per line, after the separator) or
+                'About' (indented plain text: a row opens at a line whose label starts the column and
+                runs until the next row or the blank line that ends the table). Rows whose label is
+                not in $script:LongRunsRowLabels cannot be keyed and are returned under their own
+                text, so an extra row makes the key sets differ and the caller fails on that. A
+                label whose row is absent is simply not a key; the caller fails on that too.
+        #>
+        [OutputType([System.Collections.Specialized.OrderedDictionary])]
+        param (
+            [Parameter(Mandatory = $true)]
+            [AllowEmptyCollection()]
+            [AllowEmptyString()]
+            [string[]]$Line,
+
+            [Parameter(Mandatory = $true)]
+            [ValidateSet('Readme', 'About')]
+            [string]$Medium
+        )
+
+        $Rows = [System.Collections.Generic.List[string]]::new()
+
+        if ($Medium -eq 'Readme') {
+            $InTable = $false
+            foreach ($Entry in $Line) {
+                if ($Entry -match '^\|\s*---') {
+                    $InTable = $true
+                    continue
+                }
+                if ($InTable) {
+                    if ($Entry -notmatch '^\|') { break }
+                    $Rows.Add($Entry)
+                }
+            }
+        } else {
+            # The topic's table has two columns at fixed positions: the label from column 8, the
+            # text from column 28. A wrapped label ("Client secret" / "and certificate") shares its
+            # lines with the text, so the two columns are read apart and joined separately.
+            $Started = $false
+            $Label = ''
+            $Body = ''
+            foreach ($Entry in $Line) {
+                if ($Entry -match '^ {8}(Interactive|Device code|Managed identity|Client secret)\b') {
+                    if ($Started) { $Rows.Add($Label + ' ' + $Body) }
+                    $Started = $true
+                    $Label = ''
+                    $Body = ''
+                } elseif (-not $Started) {
+                    continue
+                } elseif ([string]::IsNullOrWhiteSpace($Entry)) {
+                    break
+                }
+                $Padded = $Entry.PadRight(28)
+                $Label += ' ' + $Padded.Substring(8, 20)
+                $Body += ' ' + $Padded.Substring(28)
+            }
+            if ($Started) { $Rows.Add($Label + ' ' + $Body) }
+        }
+
+        $Result = [ordered]@{}
+        foreach ($Row in $Rows) {
+            $Text = ConvertTo-DocSyncLongRunsText -Text $Row
+            $Key = $Text
+            foreach ($Label in $script:LongRunsRowLabels) {
+                if ($Text.StartsWith($Label + ' ', [System.StringComparison]::Ordinal)) {
+                    $Key = $Label
+                    break
+                }
+            }
+            $Result[$Key] = $Text
+        }
+
+        return $Result
+    }
 }
 
 Describe 'README and about topic stay in step' -Tags 'helpQuality' {
@@ -494,6 +606,44 @@ Describe 'README and about topic stay in step' -Tags 'helpQuality' {
 
         $Disagreement | Should -BeNullOrEmpty -Because (
             'README.md and the about topic must give the same tenant-switch verdict for each sign-in type; they differ for: {0}. Edit both, or neither -- these two rows are the claim a reader acts on' -f ($Disagreement -join ', '))
+    }
+
+    It 'Should give the same Long runs renewal row for every sign-in type in both documents' {
+        <#
+            README '### Long runs' and the about topic's LONG RUNS carry the same four-row table of
+            what a renewal costs per sign-in type. The rows are held word for word once pipes,
+            backticks, links and line wrapping are normalised away (see ConvertTo-DocSyncLongRunsText
+            for the one case-insensitive cross-reference). A row missing from either document fails
+            on its own, so two documents that both lost a row are not reported as agreeing.
+        #>
+        $ReadmeSection = Get-DocSyncMarkdownSection -Line $script:ReadmeLines -Heading '### Long runs'
+        $AboutSection = Get-DocSyncAboutSection -Line $script:AboutLines -Heading 'LONG RUNS'
+
+        $ReadmeSection | Should -Not -BeNullOrEmpty -Because 'README.md must carry a "### Long runs" section; if it was renamed this check measures nothing'
+        $AboutSection | Should -Not -BeNullOrEmpty -Because 'the about topic must carry a "LONG RUNS" section; if it was renamed this check measures nothing'
+
+        $ReadmeRow = Get-DocSyncLongRunsRow -Line $ReadmeSection -Medium Readme
+        $AboutRow = Get-DocSyncLongRunsRow -Line $AboutSection -Medium About
+
+        $AbsentInReadme = @($script:LongRunsRowLabels | Where-Object { -not $ReadmeRow.Contains($_) })
+        $AbsentInAbout = @($script:LongRunsRowLabels | Where-Object { -not $AboutRow.Contains($_) })
+        $AbsentInReadme | Should -BeNullOrEmpty -Because ('README.md ### Long runs must carry a row for every sign-in type; absent: {0}' -f ($AbsentInReadme -join ', '))
+        $AbsentInAbout | Should -BeNullOrEmpty -Because ('the about topic LONG RUNS must carry a row for every sign-in type; absent: {0}' -f ($AbsentInAbout -join ', '))
+
+        # A row outside the closed set is keyed by its own text; it must not exist in either medium.
+        $ReadmeRow.Count | Should -Be $script:LongRunsRowLabels.Count -Because 'README.md ### Long runs carries a row this check cannot key by a sign-in type'
+        $AboutRow.Count | Should -Be $script:LongRunsRowLabels.Count -Because 'the about topic LONG RUNS carries a row this check cannot key by a sign-in type'
+
+        $Disagreement = @(
+            foreach ($Label in $script:LongRunsRowLabels) {
+                if (-not [string]::Equals($ReadmeRow[$Label], $AboutRow[$Label], [System.StringComparison]::Ordinal)) {
+                    $Label
+                }
+            }
+        )
+
+        $Disagreement | Should -BeNullOrEmpty -Because (
+            'README.md and the about topic must give the same Long runs row for each sign-in type; they differ for: {0}. Edit both, or neither' -f ($Disagreement -join ', '))
     }
 
     It 'Should state the device-code known limitation identically in both documents' {

@@ -109,7 +109,9 @@ Describe 'access review recurrence vocabulary cohort' {
     # held beside them. A cadence added to one and not the others is accepted by validation and then
     # refused (or silently dropped) at write time, so each site is read straight out of the source
     # tree (the AST for the four code sites, the rendered text for the prompt and the schema) and
-    # compared with the canonical list, order included.
+    # compared with the canonical list, order included. The [ValidateSet()] sites are DERIVED from
+    # every .ps1 under source/ (BL-117), with the three named ones kept as a floor; the array literal,
+    # the prompt and the schema are still read from their one known place.
     BeforeAll {
         # Three hops from tests/Unit/Private to the repository root. Forward slashes resolve on every OS.
         $script:cohortRepoRoot = (Resolve-Path -Path (Join-Path -Path $PSScriptRoot -ChildPath '../../..')).Path
@@ -129,25 +131,82 @@ Describe 'access review recurrence vocabulary cohort' {
             $Ast
         }
 
-        # The strings of the [ValidateSet()] on one parameter, in declaration order. Throws, rather than
-        # returning an empty list that a caller might compare to nothing, when anything is missing.
-        function Get-CohortValidateSet {
-            param([string]$RelativePath, [string]$ParameterName)
-            $Ast = Read-CohortAst -RelativePath $RelativePath
-            $ParamAst = $Ast.FindAll({
-                    param($Node)
-                    $Node -is [System.Management.Automation.Language.ParameterAst] -and
-                    $Node.Name.VariablePath.UserPath -eq $ParameterName
-                }, $true) | Select-Object -First 1
-            if (-not $ParamAst) { throw "no -$ParameterName parameter in '$RelativePath'" }
-            $SetAst = $ParamAst.Attributes | Where-Object {
-                $_ -is [System.Management.Automation.Language.AttributeAst] -and $_.TypeName.Name -eq 'ValidateSet'
-            } | Select-Object -First 1
-            if (-not $SetAst) { throw "-$ParameterName in '$RelativePath' carries no [ValidateSet()]" }
-            $Values = @($SetAst.PositionalArguments | ForEach-Object { $_.SafeGetValue() })
-            if ($Values.Count -eq 0) { throw "the [ValidateSet()] of -$ParameterName in '$RelativePath' is empty" }
-            $Values
+        # Every recurrence parameter under one source root, derived rather than listed by hand
+        # (BL-117): each ParameterAst, in EVERY .ps1 file, that is named Recurrence OR carries a
+        # [ValidateSet()] containing OneTime. All of them per file -- a file that declares two (a
+        # second function or a nested scriptblock) is two sites, never "the first one". A site is
+        # { File (relative, forward slashes); Parameter; Sets }, Sets holding one entry per
+        # [ValidateSet()] attribute on it, each the comma-joined strings in declaration order.
+        # A file that does not parse throws: a cohort that skips what it cannot read proves nothing.
+        function Get-CohortRecurrenceSite {
+            param([string]$SourceRoot)
+            if (-not (Test-Path -LiteralPath $SourceRoot -PathType Container)) {
+                throw "cohort source root '$SourceRoot' does not exist"
+            }
+            $Root = (Resolve-Path -LiteralPath $SourceRoot).Path
+            foreach ($File in (Get-ChildItem -LiteralPath $Root -Filter '*.ps1' -Recurse -File | Sort-Object -Property FullName)) {
+                # Cheap pre-filter: a file naming neither word cannot hold a site, and parsing every file
+                # of the tree would cost seconds. The ParameterAst walk below is the decision.
+                if ([System.IO.File]::ReadAllText($File.FullName) -notmatch 'Recurrence|OneTime') { continue }
+                $Errors = $null
+                $Ast = [System.Management.Automation.Language.Parser]::ParseFile($File.FullName, [ref]$null, [ref]$Errors)
+                if ($Errors -and $Errors.Count -gt 0) {
+                    throw "cohort file '$($File.FullName)' does not parse: $($Errors[0].Message)"
+                }
+                $Relative = [System.IO.Path]::GetRelativePath($Root, $File.FullName) -replace '\\', '/'
+                $ParameterAsts = $Ast.FindAll({
+                        param($Node)
+                        $Node -is [System.Management.Automation.Language.ParameterAst]
+                    }, $true)
+                foreach ($ParameterAst in $ParameterAsts) {
+                    $Sets = [System.Collections.Generic.List[string[]]]::new()
+                    foreach ($Attribute in $ParameterAst.Attributes) {
+                        if ($Attribute -isnot [System.Management.Automation.Language.AttributeAst] -or $Attribute.TypeName.Name -ne 'ValidateSet') { continue }
+                        $Sets.Add([string[]]@($Attribute.PositionalArguments | ForEach-Object { [string]$_.SafeGetValue() }))
+                    }
+                    $Name = $ParameterAst.Name.VariablePath.UserPath
+                    $HoldsOneTime = $false
+                    foreach ($Set in $Sets) { if ($Set -ccontains 'OneTime') { $HoldsOneTime = $true } }
+                    if ($Name -eq 'Recurrence' -or $HoldsOneTime) {
+                        [PSCustomObject]@{ File = $Relative; Parameter = $Name; Sets = $Sets }
+                    }
+                }
+            }
         }
+
+        # The findings of the derived cohort, as text: a site without a [ValidateSet()], a set that is
+        # not the canonical list in order, and a floor site (one of the three named ValidateSet sites)
+        # the derivation did not find. An empty result with an empty derivation cannot happen: the floor
+        # fails then. $Floor is a list of 'relative/path.ps1' entries naming a -Recurrence parameter.
+        function Test-CohortRecurrenceSite {
+            param([string]$SourceRoot, [string[]]$Canonical, [string[]]$Floor)
+            $Sites = @(Get-CohortRecurrenceSite -SourceRoot $SourceRoot)
+            $Problems = [System.Collections.Generic.List[string]]::new()
+            foreach ($FloorFile in $Floor) {
+                if (-not @($Sites | Where-Object { $_.File -ceq $FloorFile -and $_.Parameter -eq 'Recurrence' }).Count) {
+                    $Problems.Add("floor site not found by the derivation: -Recurrence in '$FloorFile'")
+                }
+            }
+            foreach ($Site in $Sites) {
+                if ($Site.Sets.Count -eq 0) {
+                    $Problems.Add("-$($Site.Parameter) in '$($Site.File)' carries no [ValidateSet()]")
+                    continue
+                }
+                foreach ($Set in $Site.Sets) {
+                    if (-not [string]::Equals(($Set -join ','), ($Canonical -join ','), [System.StringComparison]::Ordinal)) {
+                        $Problems.Add("-$($Site.Parameter) in '$($Site.File)' lists '$($Set -join ',')' instead of '$($Canonical -join ',')'")
+                    }
+                }
+            }
+            # Elements, not a wrapped array: every caller wraps the call in @().
+            $Problems.ToArray()
+        }
+
+        $script:cohortFloor = @(
+            'Private/New-OERAccessReviewRecurrence.ps1'
+            'Public/New-OERAccessReviewDefinition.ps1'
+            'Public/Set-OERAccessReviewDefinition.ps1'
+        )
 
         # The string elements of the array literal assigned to one variable, in order.
         function Get-CohortArrayLiteral {
@@ -191,17 +250,71 @@ Describe 'access review recurrence vocabulary cohort' {
         $Canonical | Should -Contain 'SemiAnnually'
     }
 
+    It 'every recurrence parameter found in source lists the canonical set, in order (derived, not listed)' {
+        # BL-117: the ValidateSet sites are DERIVED from the whole source tree -- every parameter named
+        # Recurrence or carrying a [ValidateSet()] with OneTime, every one per file -- so a fourth
+        # cmdlet, or a second -Recurrence in a file that already has one, cannot go unchecked. The
+        # three named ValidateSet sites are the floor: a derivation that found nothing fails on them.
+        $Canonical = @(InModuleScope $script:moduleName { Resolve-OERStructureEnumCasing -EnumName 'accessReviewRecurrence' -List })
+        $Problems = @(Test-CohortRecurrenceSite -SourceRoot $script:cohortSourceRoot -Canonical $Canonical -Floor $script:cohortFloor)
+        $Problems.Count | Should -Be 0 -Because ('every recurrence parameter must list the canonical set in order: {0}' -f ($Problems -join '; '))
+        @(Get-CohortRecurrenceSite -SourceRoot $script:cohortSourceRoot).Count | Should -BeGreaterOrEqual $script:cohortFloor.Count -Because 'the derivation must find at least the three named sites'
+    }
+
+    It 'names each problem of a derived site, and fails on an empty derivation (known-answer trees)' {
+        $Canonical = @('OneTime', 'Weekly', 'Monthly', 'Quarterly', 'SemiAnnually', 'Annually')
+        $Good = "[ValidateSet('OneTime','Weekly','Monthly','Quarterly','SemiAnnually','Annually')]"
+        $Short = "[ValidateSet('OneTime','Weekly','Monthly')]"
+        $Tree = Join-Path -Path $TestDrive -ChildPath 'cohort-tree'
+        $Write = {
+            param($Name, $Text)
+            $Path = Join-Path -Path $Tree -ChildPath $Name
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
+            Set-Content -LiteralPath $Path -Value $Text -Encoding ascii
+        }
+
+        # A tree holding nothing: the derivation is empty, so the floor reports all three sites.
+        New-Item -ItemType Directory -Force -Path $Tree | Out-Null
+        $Empty = Test-CohortRecurrenceSite -SourceRoot $Tree -Canonical $Canonical -Floor $script:cohortFloor
+        @($Empty).Count | Should -Be 3
+        @($Empty)[0] | Should -BeLike 'floor site not found by the derivation*'
+
+        # All three floor files correct: clean.
+        foreach ($File in $script:cohortFloor) {
+            & $Write $File "function F { param($Good [string]`$Recurrence) }"
+        }
+        @(Test-CohortRecurrenceSite -SourceRoot $Tree -Canonical $Canonical -Floor $script:cohortFloor).Count | Should -Be 0
+
+        # A SECOND -Recurrence in a file that already has a good one: only the first-in-file reading
+        # would miss it.
+        & $Write 'Public/Set-OERAccessReviewDefinition.ps1' "function F { param($Good [string]`$Recurrence) }`nfunction G { param($Short [string]`$Recurrence) }"
+        $Second = @(Test-CohortRecurrenceSite -SourceRoot $Tree -Canonical $Canonical -Floor $script:cohortFloor)
+        $Second.Count | Should -Be 1
+        $Second[0] | Should -BeLike "-Recurrence in 'Public/Set-OERAccessReviewDefinition.ps1' lists 'OneTime,Weekly,Monthly'*"
+        & $Write 'Public/Set-OERAccessReviewDefinition.ps1' "function F { param($Good [string]`$Recurrence) }"
+
+        # A NEW file with a ValidateSet containing OneTime but missing SemiAnnually, under a name that
+        # is not Recurrence.
+        & $Write 'Private/Some-NewCadenceCmdlet.ps1' "function H { param($("[ValidateSet('OneTime','Weekly','Monthly','Quarterly','Annually')]") [string]`$Cadence) }"
+        $New = @(Test-CohortRecurrenceSite -SourceRoot $Tree -Canonical $Canonical -Floor $script:cohortFloor)
+        $New.Count | Should -Be 1
+        $New[0] | Should -BeLike "-Cadence in 'Private/Some-NewCadenceCmdlet.ps1' lists*"
+        Remove-Item -LiteralPath (Join-Path $Tree 'Private/Some-NewCadenceCmdlet.ps1')
+
+        # A -Recurrence with no ValidateSet at all is a finding.
+        & $Write 'Private/Plain.ps1' 'function P { param([string]$Recurrence) }'
+        $Plain = @(Test-CohortRecurrenceSite -SourceRoot $Tree -Canonical $Canonical -Floor $script:cohortFloor)
+        $Plain.Count | Should -Be 1
+        $Plain[0] | Should -BeExactly "-Recurrence in 'Private/Plain.ps1' carries no [ValidateSet()]"
+    }
+
     It '<Site> lists the canonical recurrence set, in order' -ForEach @(
-        @{ Site = 'the ValidateSet of New-OERAccessReviewRecurrence -Recurrence'; Kind = 'ValidateSet'; File = 'Private/New-OERAccessReviewRecurrence.ps1' }
-        @{ Site = 'the ValidateSet of New-OERAccessReviewDefinition -Recurrence'; Kind = 'ValidateSet'; File = 'Public/New-OERAccessReviewDefinition.ps1' }
-        @{ Site = 'the ValidateSet of Set-OERAccessReviewDefinition -Recurrence'; Kind = 'ValidateSet'; File = 'Public/Set-OERAccessReviewDefinition.ps1' }
         @{ Site = 'ValidRecurrenceValues in Sync-OERStructureAccessReview'; Kind = 'Array'; File = 'Private/Sync-OERStructureAccessReview.ps1' }
         @{ Site = 'the accessReviews recurrence list in the exported prompt'; Kind = 'Prompt'; File = '' }
         @{ Site = 'the accessReviews recurrence enum in the schema'; Kind = 'Schema'; File = '' }
     ) {
         $Canonical = @(InModuleScope $script:moduleName { Resolve-OERStructureEnumCasing -EnumName 'accessReviewRecurrence' -List })
         $Actual = @(switch ($Kind) {
-                'ValidateSet' { Get-CohortValidateSet -RelativePath $File -ParameterName 'Recurrence' }
                 'Array' { Get-CohortArrayLiteral -RelativePath $File -VariableName 'ValidRecurrenceValues' }
                 'Prompt' { Get-CohortPromptList }
                 'Schema' { Get-CohortSchemaEnum }
@@ -213,9 +326,7 @@ Describe 'access review recurrence vocabulary cohort' {
     }
 
     It 'fails, rather than passing vacuously, when a site cannot be read' {
-        { Get-CohortValidateSet -RelativePath 'Private/NoSuchFile.ps1' -ParameterName 'Recurrence' } | Should -Throw '*does not exist*'
-        { Get-CohortValidateSet -RelativePath 'Private/New-OERAccessReviewRecurrence.ps1' -ParameterName 'NoSuchParameter' } | Should -Throw '*no -NoSuchParameter parameter*'
-        { Get-CohortValidateSet -RelativePath 'Private/New-OERAccessReviewRecurrence.ps1' -ParameterName 'StartDate' } | Should -Throw '*carries no*ValidateSet*'
+        { Get-CohortRecurrenceSite -SourceRoot (Join-Path -Path $TestDrive -ChildPath 'NoSuchRoot') | Out-Null } | Should -Throw '*does not exist*'
         { Get-CohortArrayLiteral -RelativePath 'Private/Sync-OERStructureAccessReview.ps1' -VariableName 'NoSuchVariable' } | Should -Throw '*no assignment*'
         { Get-CohortArrayLiteral -RelativePath 'Private/NoSuchFile.ps1' -VariableName 'ValidRecurrenceValues' } | Should -Throw '*does not exist*'
     }
