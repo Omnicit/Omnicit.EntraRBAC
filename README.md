@@ -543,9 +543,9 @@ Connect-OER -TenantAlias contoso-govhigh -IncludeARM   # signs in to USGov autom
 spell it, so a later call naming a tenant the session was not established for inherits nothing from
 it -- including the same tenant written as a GUID one time and as a domain the next, and a
 `Connect-OER -Environment USGov` with no `-TenantId` at all while the module holds no session, which
-records the tenant as `organizations` rather than as your tenant (with a session, it takes that
-session's tenant). The cloud then resets to `Global` and that call signs in
-at the commercial authority. Its token and its endpoints stay consistent with each other, so nothing
+records the tenant as `organizations` rather than as your tenant. The cloud then resets to `Global`
+and that call signs in at the commercial authority. (With a session, such a `Connect-OER` takes that
+session's tenant instead.) Its token and its endpoints stay consistent with each other, so nothing
 crosses a cloud boundary, but the sign-in fails at the authority with an error that names the tenant
 and never the cloud, which makes it easy to misread. (A tenant named by domain is looked up at that
 same authority first, and may be refused there instead, with `TenantResolutionFailed`, whose message
@@ -1051,9 +1051,10 @@ send the same update again, since Microsoft Graph can still answer a read with t
 the write; the update changes nothing more, but its row reads `Updated` again.
 
 `Test-OERStructure -NamingStandard` checks the names in a document, or in an exported
-`inventory.json`, against a naming standard file. A name gets one `Warning` for each rule it breaks,
-with `Section`, `Item`, `Path` and a message that says which rule the name breaks and what was
-expected. `Valid` does not change, and `Invoke-OERStructure`, which takes no naming standard, applies
+`inventory.json`, against a naming standard file. A name gets one `Warning` for each rule it breaks, a
+segment rule (values, pattern or case) once for each segment that breaks it, with `Section`, `Item`,
+`Path` and a message that says which rule the name breaks and what was expected. `Valid` does not
+change, and `Invoke-OERStructure`, which takes no naming standard, applies
 the document as before. The warnings are the list a rename map is written from. The check covers the
 groups `inventory.json` holds: by default the RBAC-relevant security groups (a role-assignable group,
 one with PIM eligibility, one with a `pimPolicy`). `Export-OERInventory -AllGroupsDetailed` keeps every

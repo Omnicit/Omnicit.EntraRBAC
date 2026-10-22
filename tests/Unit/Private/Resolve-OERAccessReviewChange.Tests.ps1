@@ -688,7 +688,7 @@ Describe 'Resolve-OERAccessReviewChange' {
         # vocabulary (1/3/6/12). Its collapsed cadence is 'Monthly' (the same default the inventory
         # projection uses), so the declared 'Monthly' does not even look like drift -- only the
         # startDate change forces the recurrence unit to be considered at all. Rebuilding the
-        # recurrence from 'Monthly' here would silently downgrade the live bi-monthly review.
+        # recurrence from 'Monthly' here would silently rewrite the live bi-monthly review.
         InModuleScope $script:moduleName {
             $Current = [PSCustomObject]@{
                 DisplayName = 'R'

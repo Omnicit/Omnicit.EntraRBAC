@@ -36,7 +36,8 @@ function Resolve-OERAccessReviewChange {
     absoluteMonthly interval 2, a bi-weekly weekly interval 2, ...) cannot be reproduced.
     Rebuilding the recurrence object in that case would silently replace the live pattern with a
     cadence the module can emit -- the declared one, or the one the live pattern collapses onto
-    (Weekly or Monthly) -- while reporting Updated. The
+    (Weekly or Monthly, or OneTime for a pattern type that is neither weekly nor absoluteMonthly) --
+    while reporting Updated. The
     recurrence/startDate/endDate/occurrences unit is therefore suppressed and reported in
     NotApplied instead whenever the live pattern is not representable, even when some other field
     in the same unit legitimately differs.
@@ -440,7 +441,8 @@ function Resolve-OERAccessReviewChange {
             }
             elseif (-not $CurrentPatternRepresentable) {
                 # Rebuilding the recurrence object here would send a cadence the emitter can write (the
-                # declared one, or the Weekly or Monthly the live pattern collapses onto) in place of a live
+                # declared one, or the cadence the live pattern collapses onto: Weekly, Monthly, or OneTime
+                # for any other pattern type) in place of a live
                 # pattern it cannot reproduce (e.g. absoluteMonthly interval 2, or a weekly interval other than
                 # 1) -- silently rewriting a bi-monthly or n-weekly review
                 # while reporting Updated. Suppress the whole unit (Recurrence, StartDate, EndDate,

@@ -175,8 +175,10 @@ function Get-OERInventory {
     absoluteMonthly interval other than 1, 3, 6 or 12) is exported as the first cadence of its
     pattern type -- Monthly for any such absoluteMonthly interval, Weekly for a weekly interval
     other than 1, so a bi-monthly review reads as the more frequent Monthly -- with a warning naming
-    the true pattern and the cadence written, rather than silently. A live absoluteMonthly interval 6
-    is exported as SemiAnnually; an export made before 1.1.4 wrote it as Monthly, and when a
+    the true pattern and the cadence written, rather than silently; a pattern type that is neither
+    weekly nor absoluteMonthly is exported as OneTime, with the same warning. A live
+    absoluteMonthly interval 6 is exported as SemiAnnually; an export made before 1.1.4 wrote it as
+    Monthly, and when a
     document declares such a review Monthly, Invoke-OERStructure leaves its recurrence, start date
     and range untouched (reported as skipped, with the reason) rather than make it monthly.
     durationInDays is emitted only when the live settings.instanceDurationInDays is an integer the
@@ -2362,7 +2364,8 @@ function Get-OERInventory {
                     $Interval = [int]$Rec.pattern.interval
                     # New-OERAccessReviewRecurrence can only emit weekly interval 1 and absoluteMonthly
                     # interval 1/3/6/12, so every other live interval collapses onto the first cadence of its
-                    # pattern type (Weekly or Monthly), which is not the nearest one.
+                    # pattern type (Weekly or Monthly), which is not always the nearest one; a pattern type
+                    # that is neither reads as OneTime.
                     # Get-OERAccessReviewCadence owns that table, shared with Resolve-OERAccessReviewChange,
                     # and says both which cadence the pattern reads as and whether it is representable.
                     # Warn before the collapse rather than exporting a bi-monthly or n-weekly review as

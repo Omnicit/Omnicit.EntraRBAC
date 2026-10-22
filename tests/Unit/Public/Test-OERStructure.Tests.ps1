@@ -245,7 +245,8 @@ Describe 'Test-OERStructure help documents the tenantId (BL-88, A14)' {
 
 Describe 'Test-OERStructure -NamingStandard (Sprint 11 step 7)' {
     # -NamingStandard names a naming standard file. Test-OERStructure reads it ONCE, in begin, and hands
-    # the object to Test-OERStructureSchema, which adds one Warning per object and broken rule (Rule 17)
+    # the object to Test-OERStructureSchema, which adds one Warning for each rule a name breaks, a
+    # segment rule once for each segment that breaks it (Rule 17)
     # and never makes a document invalid. A standard that cannot be read is refused with
     # InvalidNamingStandard, once, and nothing is read or validated after it. The rules themselves are
     # held by Test-OERNamingStandardName.Tests.ps1 and Test-OERStructureSchema.Tests.ps1. The check is
@@ -374,7 +375,7 @@ Describe 'Test-OERStructure -NamingStandard (Sprint 11 step 7)' {
             Should -Invoke -ModuleName $script:moduleName Test-OERStructureSchema -Exactly -Times 2
         }
 
-        It 'checks the shipped docs/examples/example-structure.json against docs/examples/naming-standard.json: still Valid, with one Warning per name and broken rule' {
+        It 'checks the shipped docs/examples/example-structure.json against docs/examples/naming-standard.json: still Valid, with one Warning for each rule a name breaks' {
             # The two shipped examples are neutral and were written apart: the apply example uses the
             # names of an older demo, so the example standard has something to say about each of its six
             # names (OER-AU-Demo breaks two rules, which makes seven Warnings).
@@ -681,8 +682,8 @@ Describe 'Test-OERStructure help documents -NamingStandard (Sprint 11 step 7)' {
         $script:NsParameterHelp | Should -Not -Match 'its row says so'
     }
 
-    It 'words the example as one Warning for each rule a name breaks' {
-        $script:NsExamples | Should -Match ([regex]::Escape('adds one Warning for each rule a name breaks'))
+    It 'words the example as one Warning for each rule a name breaks, a segment rule once for each segment' {
+        $script:NsExamples | Should -Match ([regex]::Escape('adds one Warning for each rule a name breaks, a segment rule (values, pattern or case) once for each segment that breaks it'))
         $script:NsExamples | Should -Not -Match 'one Warning for each name'
     }
 

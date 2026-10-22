@@ -1379,8 +1379,9 @@ Behaviour that follows from this design:
   silence; a single request stays outside it and is unchanged.
 - **The resource group list ignores `$top` (measured live in Sprint 11 step 12, BL-162).** At
   api-version `2021-04-01` the Microsoft.Resources resource group list did not limit its page to
-  `$top`, so `$top` cannot force a second page there for a paging test. The module's own list
-  (`Get-OERResourceGroup`, api-version `2025-04-01`) sends no `$top`, so nothing it does depends on it.
+  `$top`, so `$top` cannot force a second page there for a paging test. The module's resource group lists
+  (`Get-OERResourceGroup` and the Azure Lighthouse read in `Get-OERInventoryLighthouseDelegation`,
+  api-version `2025-04-01`) send no `$top`, so nothing they do depends on it.
 - Pinned api-versions: managementGroups `2020-05-01` (its list paging property is `@nextLink`, not
   `nextLink`), Entities - List `2020-05-01` (a POST to `/providers/Microsoft.Management/getEntities`
   with `$view=GroupsOnly`, see [#management-group-parents](#management-group-parents)),
@@ -2932,7 +2933,7 @@ module can name -- an `absoluteMonthly` interval other than 1, 3, 6 or 12 as `Mo
 interval other than 1 as `Weekly`, any other pattern type as `OneTime` -- with a warning that names
 the true pattern. `Resolve-OERAccessReviewChange` refuses to rebuild it: the recurrence, start date
 and range unit is suppressed and reported in `NotApplied`, never written, since rebuilding it from
-the collapsed cadence would downgrade a live review while reporting `Updated`. None of that
+the collapsed cadence would rewrite a live review while reporting `Updated`. None of that
 changed, and no new ErrorId or parameter came with `SemiAnnually`, nor any value other than
 `SemiAnnually` itself (A8).
 
@@ -5964,7 +5965,7 @@ used as a template, which is not the architect's decision: A11 parked it for Phi
 and the apply refuses another one. The export writes a new top-level `tenantId`, the tenant the
 Microsoft Graph token was issued for; `tenantAlias` does not change. The apply reads it only to find
 the Tenant Profile whose `PrimaryApprovers` and `EscalationApprovers` defaults an access package's
-assignment policy falls back to, for an approval stage that names neither a manager nor an approver,
+assignment policy falls back to, for an approval stage that names no approver (no user, group, manager or sponsor),
 when `Sync-OERStructureAccessPackage` builds the policy's parts (it is not used for naming templates;
 Sprint 11 step 14, BL-139). The apply compares the document's tenant with the session's after its
 sign-in and refuses the whole document with the new `DocumentTenantMismatch` before any section is
@@ -13434,8 +13435,8 @@ What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule
 ## naming-standard
 
 Sprint 11 step 7 (A6, A9) made the naming standard data. `Test-OERStructure -NamingStandard` reads a JSON
-file and adds one Warning per object and broken rule to the validation of a document or of an exported
-`inventory.json`; `Invoke-OERStructure` never receives one, so applying a document is unchanged. The
+file and adds one Warning for each rule a name breaks (a segment rule once for each segment that breaks
+it) to the validation of a document or of an exported `inventory.json`; `Invoke-OERStructure` never receives one, so applying a document is unchanged. The
 only new public parameter is `-NamingStandard` and the only new ErrorId is `InvalidNamingStandard`.
 Four functions own the pieces (CLAUDE.md, Code Style): `Test-OERNamingStandardName` the rules, their
 order and their Detail texts, `Read-OERNamingStandard` reading and refusing the file,
@@ -13547,7 +13548,7 @@ the real locked file, which those Its skip where the platform does not enforce t
 `tests/Unit/Public/Export-OERInventory.Tests.ps1` ("the exported inventory.json is checked against a
 naming standard") reads a bundle back through the real `Test-OERStructure`. Held end to end for the
 shipped examples by `tests/Unit/Public/Test-OERStructure.Tests.ps1` (the apply example against the
-example standard: still Valid, one Warning per name and broken rule).
+example standard: still Valid, one Warning for each rule a name breaks).
 
 **Known limits.** (a) `ConvertFrom-Json` turns a string that holds an ISO 8601 date and time into a
 `DateTime`, so such a string anywhere in the naming standard file is refused as not a string. Measured

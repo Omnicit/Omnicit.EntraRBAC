@@ -6732,7 +6732,7 @@ Describe 'Test-OERStructureSchema warns about PIM for Groups in a restricted man
 
 Describe 'Test-OERStructureSchema (Rule 17, naming standard, Sprint 11 step 7)' {
     # Rule 17 checks the names of the sections a naming standard lists, only when -NamingStandard is
-    # given, and reports each name that breaks it as a Warning (per object and rule). It never makes a
+    # given, and reports each name that breaks it as a Warning (one for each rule it breaks). It never makes a
     # document invalid. The rules themselves belong to Test-OERNamingStandardName.
     BeforeAll {
         $script:NsExampleJson = @'

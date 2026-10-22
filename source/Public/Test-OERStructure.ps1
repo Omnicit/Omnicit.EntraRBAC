@@ -110,8 +110,9 @@ function Test-OERStructure {
     session, while Invoke-OERStructure does and refuses a document that names another tenant.
 
     A naming standard, given with -NamingStandard, is held against the document as well: the names of
-    the sections the standard lists are checked, and each name that breaks it is a Warning, one per
-    object and broken rule, never an Error. Valid does not change, and Invoke-OERStructure, which takes
+    the sections the standard lists are checked, and each name that breaks it is a Warning, one for
+    each rule a name breaks (a segment rule -- values, pattern or case -- once for each segment that
+    breaks it), never an Error. Valid does not change, and Invoke-OERStructure, which takes
     no naming standard, applies the document as it always did. The -NamingStandard parameter describes
     the file, the rules and what happens to a file that cannot be read.
 
@@ -135,8 +136,9 @@ function Test-OERStructure {
 
     .PARAMETER NamingStandard
     Path to a naming standard file (JSON). The document's names are then checked against it as well
-    as validated: one Warning per object and broken rule, with Section, Item, Path and a Message that
-    says which rule the name breaks and what was expected. A name never makes a document invalid
+    as validated: one Warning for each rule a name breaks, a segment rule (values, pattern or case)
+    once for each segment that breaks it, with Section, Item, Path and a Message that says which rule
+    the name breaks and what was expected. A name never makes a document invalid
     (Valid does not change), and a previousDisplayName is never checked.
 
     The file's keys are version ("1.0"), separator, maxLength, sections (the ones to check:
@@ -186,7 +188,7 @@ function Test-OERStructure {
 
     .EXAMPLE
     Test-OERStructure -Path ./exports/oer-inventory-contoso-20261018-120000/inventory.json -NamingStandard ./naming-standard.json
-    Validates the exported inventory and adds one Warning for each rule a name breaks, saying which rule it is.
+    Validates the exported inventory and adds one Warning for each rule a name breaks, a segment rule (values, pattern or case) once for each segment that breaks it, saying which rule it is.
     #>
     [OutputType([PSCustomObject])]
     [CmdletBinding(DefaultParameterSetName = 'Path')]

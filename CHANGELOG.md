@@ -46,9 +46,9 @@ refused before it requests a token. A renewal answered by another account is ref
 `SignInSuperseded` and its token is not used: the session stays the account it was until
 `Connect-OER`.
 
-Messages now say what the module does: `PolicyOpenFailed` from `New-OERActiveRoleAssignment` and
-`New-OEREligibleRoleAssignment` gives a command that runs as typed, `Export-OERInventory`'s
-`InventoryPartial` is shorter, and a review cadence the module cannot write names the one exported.
+Messages now say what the module does: `PolicyOpenFailed` gives a command that runs as typed,
+`Export-OERInventory`'s `InventoryPartial` is shorter, `SignInSuperseded` no longer calls every account change
+a renewal, and a warning for a review cadence the module cannot write names the cadence exported.
 
 ## [1.3.0] - 2026-10-19
 
