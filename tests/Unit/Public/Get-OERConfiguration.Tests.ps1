@@ -105,7 +105,7 @@ Describe 'Get-OERConfiguration' {
         # Import-PowerShellDataFile fails NON-terminatingly on an unparsable file and returns $null.
         # Outside a guard that produced a normal-looking TenantConfiguration with an EMPTY TenantId,
         # which Connect-OER treats as a successful alias lookup -- so the sign-in silently fell back
-        # to the operator's home tenant instead of the customer tenant.
+        # to the operator's home tenant instead of the profile's tenant.
         $Base = Join-Path $TestDrive 'UnparsableProfiles'
         New-Item -ItemType Directory -Path $Base -Force | Out-Null
         Set-Content -Path (Join-Path $Base 'broken.psd1') -Value "@{ Tenant Id = 'x' }" -Encoding utf8

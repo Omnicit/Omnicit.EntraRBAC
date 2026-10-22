@@ -347,7 +347,7 @@ function Test-OERStructureSchema {
     Returns a StructureValidation describing any schema problems in the document.
     .EXAMPLE
     Test-OERStructureSchema -Document ($json | ConvertFrom-Json) -NamingStandard (Read-OERNamingStandard -Path ./naming-standard.json)
-    Returns the same StructureValidation with a Warning for every name that does not follow the standard.
+    Returns the same StructureValidation with one Warning for each object and each rule of the standard its name breaks.
     #>
     [OutputType([PSCustomObject])]
     [CmdletBinding()]

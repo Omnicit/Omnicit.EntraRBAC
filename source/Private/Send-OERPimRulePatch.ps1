@@ -28,8 +28,8 @@ function Send-OERPimRulePatch {
 
     The helper writes no warning, error or host output. It returns its messages instead, in the
     order they arose, so the caller writes them only after the last PATCH and the put-back were
-    sent: a caller running with -WarningAction Stop, or $WarningPreference set to Stop, can never be
-    stopped half-way through the rule set or between a rejected rule and its put-back.
+    sent: a caller running with -WarningAction Stop, or a global $WarningPreference set to Stop, can
+    never be stopped half-way through the rule set or between a rejected rule and its put-back.
 
     Returns exactly one object with Accepted (the accepted rule ids, without a rule that was put
     back), Failed (the rejected rule ids), Restored (the rule id put back, or $null), RestoreError

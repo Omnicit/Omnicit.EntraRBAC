@@ -139,8 +139,8 @@ Describe 'Get-OERManagementGroup' {
     # silently empty.
     Context 'the parent of every listed group (A10)' {
         BeforeAll {
-            # Four groups on three levels: the tenant root t (its name equals its tenant id), mg-a
-            # under the root, mg-b under mg-a and mg-c under mg-b.
+            # Four groups in one chain, the tenant root and three levels below it: the tenant root t (its
+            # name equals its tenant id), mg-a under the root, mg-b under mg-a and mg-c under mg-b.
             $MgList = [PSCustomObject]@{ value = @(
                     foreach ($Pair in @(@('t', 'Tenant Root Group'), @('mg-a', 'MG A'), @('mg-b', 'MG B'), @('mg-c', 'MG C'))) {
                         [PSCustomObject]@{

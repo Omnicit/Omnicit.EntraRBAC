@@ -17,8 +17,8 @@ function Get-OERConfiguration {
     TenantProfileMalformed error naming the file, and enumeration continues with the remaining
     profiles. Such a file is never returned as a TenantConfiguration object with an empty TenantId,
     because Connect-OER -TenantAlias would accept that as a successful lookup and sign in against the
-    operator's home tenant rather than the intended customer tenant. An unrecognized Environment value
-    is likewise never let through as though the profile had named no cloud at all, because Connect-OER
+    operator's home tenant rather than the tenant the profile was meant for. An unrecognized
+    Environment value is likewise never let through as though the profile had named no cloud at all, because Connect-OER
     treats absence as an instruction to fall back to Global -- silently applying that same fallback to
     a value that WAS stored, just wrong, would sign in against the wrong cloud boundary.
 
@@ -102,7 +102,7 @@ function Get-OERConfiguration {
             # EMPTY TenantId (-TenantId is not mandatory on ConvertTo-OERTenantConfiguration), which
             # Connect-OER accepts as a successful alias lookup -- Initialize-OERAuth then falls back
             # to 'organizations' and signs in against the OPERATOR'S HOME TENANT instead of the
-            # customer tenant. -ErrorAction Stop routes the parse failure into the catch below.
+            # profile's tenant. -ErrorAction Stop routes the parse failure into the catch below.
             $Data = $null
             try {
                 $Data = Import-PowerShellDataFile -Path $File.FullName -ErrorAction Stop
