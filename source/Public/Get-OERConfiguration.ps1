@@ -18,9 +18,10 @@ function Get-OERConfiguration {
     profiles. Such a file is never returned as a TenantConfiguration object with an empty TenantId,
     because Connect-OER -TenantAlias would accept that as a successful lookup and sign in against the
     operator's home tenant rather than the tenant the profile was meant for. An unrecognized
-    Environment value is likewise never let through as though the profile had named no cloud at all, because Connect-OER
-    treats absence as an instruction to fall back to Global -- silently applying that same fallback to
-    a value that WAS stored, just wrong, would sign in against the wrong cloud boundary.
+    Environment value is likewise never let through as though the profile had named no cloud at all,
+    because Connect-OER treats absence as an instruction to fall back to Global -- silently applying
+    that same fallback to a value that WAS stored, just wrong, would sign in against the wrong cloud
+    boundary.
 
     .PARAMETER TenantAlias
     Optional alias to return a single profile. When omitted, all profiles are returned. The alias
