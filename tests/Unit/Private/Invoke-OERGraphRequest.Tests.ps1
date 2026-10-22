@@ -93,8 +93,8 @@ Describe 'Invoke-OERGraphRequest' {
         InModuleScope $script:moduleName {
             (Invoke-OERGraphRequest -Uri 'v1.0/groups').value | Should -Be 'after-stepup'
         }
-        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -ParameterFilter { $ClaimsChallenge }
-        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 2
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $ClaimsChallenge }
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 2 -Exactly
     }
 
     It 'forwards the cached ClientId on the ACRS claims-challenge step-up call' {
@@ -144,7 +144,7 @@ Describe 'Invoke-OERGraphRequest' {
         InModuleScope $script:moduleName {
             (Invoke-OERGraphRequest -Uri 'v1.0/groups').value | Should -Be 'after-refresh'
         }
-        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -ParameterFilter { $ForceRefresh }
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $ForceRefresh }
     }
 
     It 'forwards the cached ClientId when force-refreshing after a 401' {

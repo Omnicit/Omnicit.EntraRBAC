@@ -91,8 +91,8 @@ Describe 'Get-OERRoleManagementPolicy' {
             $Policies.Count | Should -Be 5
             $Policies[0].PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.RoleManagementPolicy'
             # Each curated display name is translated to an ARM id (the resolve step) before the policy read.
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId -Times 5
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERRoleManagementPolicyId -Times 5
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId -Times 5 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERRoleManagementPolicyId -Times 5 -Exactly
         }
 
         It 'warns and continues when one role has no policy, returning the rest' {
@@ -129,7 +129,7 @@ Describe 'Get-OERRoleManagementPolicy' {
 
         It 'reads every role policy from a single scope list call' {
             $Policies = @(Get-OERRoleManagementPolicy -AllRolesAtScope -Subscription 'Prod')
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERRoleManagementPolicyForScope -Times 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERRoleManagementPolicyForScope -Times 1 -Exactly
             $Policies.Count | Should -Be 2
             $Policies[0].PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.RoleManagementPolicy'
             $Policies[0].RoleName | Should -Be 'Reader'

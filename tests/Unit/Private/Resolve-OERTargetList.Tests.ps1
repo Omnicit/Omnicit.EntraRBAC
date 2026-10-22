@@ -31,7 +31,7 @@ Describe 'Resolve-OERTargetList' {
         InModuleScope $script:moduleName {
             $null = Resolve-OERTargetList -User 'anna.berg@contoso.com'
         }
-        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly
     }
 
     It 'resolves a user name to a singleUser approver object' {

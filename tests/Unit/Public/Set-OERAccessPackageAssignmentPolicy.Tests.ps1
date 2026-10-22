@@ -118,7 +118,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy' {
             (-not $Method -or $Method -eq 'GET') -and
             $Uri -ceq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/pol-1?$expand=accessPackage,customExtensionStageSettings($expand=customExtension)'
         }
-        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -ParameterFilter {
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
             $Method -eq 'PUT' -and $Body.accessPackage.id -eq 'ap-99'
         }
     }

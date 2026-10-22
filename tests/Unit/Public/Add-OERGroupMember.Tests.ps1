@@ -75,7 +75,7 @@ Describe 'Add-OERGroupMember' {
         # distinguish "the cmdlet wrote one error" from "the cmdlet swallowed it silently".
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Request_BadRequest,Add-OERGroupMember' }).Count |
             Should -Be 1
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -ParameterFilter {
             $Body['@odata.id'] -match '11111111'
         }
@@ -200,16 +200,16 @@ Describe 'Add-OERGroupMember' {
             Add-OERGroupMember -Group 'role_sec_team' `
                 -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' `
                 -User 'anna.berg@contoso.com' -GroupPrincipal 'Sales Team' -Confirm:$false
-            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 3 -ParameterFilter {
+            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 3 -Exactly -ParameterFilter {
                 $Method -eq 'POST'
             }
-            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 1 -ParameterFilter {
+            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 1 -Exactly -ParameterFilter {
                 $Body['@odata.id'] -eq 'https://graph.microsoft.com/v1.0/directoryObjects/aaaa0000-0000-0000-0000-000000000001'
             }
-            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 1 -ParameterFilter {
+            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 1 -Exactly -ParameterFilter {
                 $Body['@odata.id'] -eq 'https://graph.microsoft.com/v1.0/directoryObjects/bbbb0000-0000-0000-0000-000000000002'
             }
-            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 1 -ParameterFilter {
+            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 1 -Exactly -ParameterFilter {
                 $Body['@odata.id'] -eq 'https://graph.microsoft.com/v1.0/directoryObjects/cccc0000-0000-0000-0000-000000000003'
             }
         }

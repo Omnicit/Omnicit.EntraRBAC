@@ -135,7 +135,7 @@ Describe 'Get-OERInventory' {
 
     It 'authenticates once via Initialize-OERAuth' {
         Get-OERInventory -Include Groups | Out-Null
-        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly
     }
 
     It 'has a registered format view for the Inventory type' {

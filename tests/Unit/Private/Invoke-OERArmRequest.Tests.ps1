@@ -306,8 +306,8 @@ Describe 'Invoke-OERArmRequest' {
 
             @($Result.value).Count | Should -Be 2
             @($Result.value.id)    | Should -Be @('a', 'b')
-            Should -Invoke Initialize-OERAuth -Times 1 -ParameterFilter { $ForceRefresh -and $IncludeARM }
-            Should -Invoke Invoke-WebRequest -Times 3
+            Should -Invoke Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $ForceRefresh -and $IncludeARM }
+            Should -Invoke Invoke-WebRequest -Times 3 -Exactly
         }
     }
 

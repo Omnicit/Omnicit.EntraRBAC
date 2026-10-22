@@ -122,7 +122,7 @@ Describe 'Get-OERAccessPackageResourceRole' {
 
         It 'reads the catalog resources once, keyed by the package catalog id' {
             Get-OERAccessPackageResourceRole -AccessPackage 'AP-Sales' | Out-Null
-            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -ParameterFilter {
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly -ParameterFilter {
                 $Catalog -eq 'cat-1'
             }
         }

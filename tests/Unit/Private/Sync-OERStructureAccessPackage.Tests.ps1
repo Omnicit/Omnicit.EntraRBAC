@@ -1254,7 +1254,7 @@ Describe 'Sync-OERStructureAccessPackage' {
             # requestorScope (SpecificDirectoryUsers + a user), so -RequestorScope must be forwarded
             # to Set-OERAccessPackageAssignmentPolicy with the specific-directory-users scope -- proving
             # the declared branch still works, as a counterpart to the "undeclared -> omitted" test.
-            Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 1 -ParameterFilter {
+            Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter {
                 $Id -eq 'pol-1' -and
                 $null -ne $RequestorScope -and
                 $RequestorScope.AllowedTargetScope -eq 'specificDirectoryUsers'

@@ -27,7 +27,7 @@ Describe 'Get-OERRoleManagementPolicyForScope' {
             $r[0].Scope | Should -Be '/s'
             @($r[0].EffectiveRules).Count | Should -Be 1
             $r[1].RoleName | Should -Be 'Owner'
-            Should -Invoke Invoke-OERArmRequest -Times 1 -ParameterFilter {
+            Should -Invoke Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
                 $Path -like '*/providers/Microsoft.Authorization/roleManagementPolicyAssignments?api-version=2020-10-01' -and $Path -notlike '*$filter*' -and $All -eq $true
             }
         }

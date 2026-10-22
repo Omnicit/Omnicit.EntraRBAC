@@ -78,7 +78,7 @@ Describe 'Add-OERAccessPackageResourceRole' {
     It 'calls Initialize-OERAuth once' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'scope-1' } } -ParameterFilter { $Method -eq 'POST' }
         Add-OERAccessPackageResourceRole -AccessPackage 'AP-Sales' -Catalog 'cat-1' -ResourceOriginId 'grp-guid' -Role 'Member' | Out-Null
-        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly
     }
 
     It 'returns the created object with the id from the Graph response' {

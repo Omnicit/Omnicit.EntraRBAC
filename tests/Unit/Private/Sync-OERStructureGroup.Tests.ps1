@@ -743,7 +743,7 @@ Describe 'Sync-OERStructureGroup' {
                 owner  = [pscustomobject]@{ activationMaxHours = 1 }
             } }
             Invoke-SyncGroupViaCaller -Item $Item | Out-Null
-            Should -Invoke Set-OERGroupPimPolicy -Times 1 -ParameterFilter { $AccessType -eq 'owner' }
+            Should -Invoke Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter { $AccessType -eq 'owner' }
             Should -Invoke Set-OERGroupPimPolicy -Times 0 -ParameterFilter { $AccessType -eq 'member' }
         }
     }

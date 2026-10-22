@@ -76,7 +76,7 @@ Describe 'Enable-OERGroupPermanentEligibility' {
 
             $Caught | Should -Not -BeNullOrEmpty
             $Caught.FullyQualifiedErrorId | Should -Match 'Authorization_RequestDenied'
-            Should -Invoke Remove-OERErrorRecord -Times 1
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
         }
     }
 
@@ -100,7 +100,7 @@ Describe 'Enable-OERGroupPermanentEligibility' {
             }
 
             $Caught.FullyQualifiedErrorId | Should -Match 'Request_BadRequest'
-            Should -Invoke Remove-OERErrorRecord -Times 1
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
         }
     }
 }

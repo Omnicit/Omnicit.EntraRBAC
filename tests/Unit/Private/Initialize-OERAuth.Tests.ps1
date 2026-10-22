@@ -136,7 +136,7 @@ Describe 'Initialize-OERAuth' {
             Initialize-OERAuth -TenantId 'contoso' -AuthMethod 'Interactive'
             Initialize-OERAuth -TenantId 'contoso' -AuthMethod 'Interactive'
         }
-        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
     }
 
     # -- Existing test 3: ClientSecret params forwarded (updated to pass SecureString) -------------
@@ -423,7 +423,7 @@ Describe 'Initialize-OERAuth' {
             Initialize-OERAuth -TenantId 'contoso' -AuthMethod 'Interactive' -IncludeARM
             $script:_OERAuthState.ArmToken | Should -BeOfType [System.Security.SecureString]
         }
-        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly
     }
 
     It 'reuses an existing session when no AuthMethod is explicitly passed' {
