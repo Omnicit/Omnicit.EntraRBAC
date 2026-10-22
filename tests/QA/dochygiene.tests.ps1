@@ -176,7 +176,15 @@ BeforeAll {
     # its bounds read as decimal numbers, and a row that names ONE placeholder covers exactly its
     # own tail, letters included. That is how '...0aa' and '...abc' are registered, and why a tail
     # such as '...00a' is not covered by '...000' - '...045'. The register's checks against itself
-    # still order ids as HEX, which is where '...0aa' and '...abc' take their place among the others.
+    # ask the SAME question through the same helper (Test-DocHygieneSharedCoverage): two rows
+    # overlap when some id is covered by both, and a taken row collides with the FREE row when
+    # some id is covered by both. The numbers the reader stores for ids are KEYS that name a tail
+    # (its three characters read as one hex number, so '...0aa' and '...abc' have a key at all); a
+    # key is compared for equality and never used to say what a row covers, since that was the
+    # second reading the helper replaced: under it '...0a0' fell inside '...090' - '...100',
+    # which a range row never covers.
+    # The sample carries a known answer for it: the range '...050' - '...060' beside the single
+    # '...05a'.
     # =====================================================================================
     $script:DocHygieneSampleRegister = @'
 Text before the register is not part of it.
@@ -194,6 +202,8 @@ Prose before the tables is read too, and holds nothing the reader takes.
 | `...099` | a deliberately non-existent object id | taken |
 | `...0aa` | an assignment target principal id | taken |
 | `...abc` | an administrative unit id | taken |
+| `...050` - `...060` | a numbered block registered as a range | taken |
+| `...05a` | a lettered stand-in beside that block | taken |
 
 Addresses follow the same global rule:
 
@@ -651,7 +661,12 @@ from `person46`, and add a row here in the same commit that uses them.
                 - Table: Id or Address, from the kind of the first token in the cell.
                 - Intervals: one [Start, End] pair per comma-separated part of the first cell -- a
                   single token, an 'A - B' range, or 'A and up', whose End is [int]::MaxValue. An
-                  id is its three characters read as HEX; an address is its number.
+                  address is its number. An id is a KEY: its three characters read as one hex
+                  number, which names the tail (so a tail with a letter has one too) and is
+                  compared for equality; the keys of a tail made of three decimal digits also
+                  sort as those digits do, which is all the reversed-range test and the choice of
+                  a FREE row's first key use. What an interval covers is never read off the keys:
+                  Test-DocHygieneSharedCoverage owns that, the way the usage scan reads it.
                 - Unreadable: true when any part of the first cell is none of those three shapes,
                   when the cell mixes ids and addresses, when a range ends before it starts, or when
                   the row has fewer than three cells. Such a row is REPORTED, never skipped: a
@@ -689,6 +704,7 @@ from `person46`, and add a row here in the same commit that uses them.
             $Bare = $Text.Trim('`')
 
             if ($Bare.StartsWith('...')) {
+                # The tail's key (see the .DESCRIPTION), never a number to order or range.
                 return [PSCustomObject]@{ Kind = 'Id'; Value = [Convert]::ToInt32($Bare.Substring(3), 16) }
             }
 
@@ -870,6 +886,97 @@ from `person46`, and add a row here in the same commit that uses them.
         }
     }
 
+    function Test-DocHygieneSharedCoverage {
+        <#
+            .SYNOPSIS
+                Tells whether two register intervals of one table cover an id in common.
+
+            .DESCRIPTION
+                The single reading of what a register interval covers, used by the register's
+                checks against itself (overlapping rows, a taken row against the FREE row) and by
+                the usage scan (a tail against a taken row, as the interval [key, key]).
+
+                Addresses: an interval covers the numbers from its start to its end.
+
+                Ids, where an interval is a key pair (see Get-DocHygienePlaceholderRegister):
+
+                - Start equal to End is ONE placeholder and covers exactly its own tail, letters
+                  included.
+                - Otherwise it is a RANGE and covers only tails made of three decimal digits,
+                  within its bounds read as decimal numbers, an open end ('and up') reaching 999.
+                  A range with a bound that has a letter in it has no decimal reading and covers
+                  nothing.
+
+                Two intervals share an id when one tail is in both: two single tails when their keys
+                are equal, a single tail and a range when the tail is three decimal digits inside
+                the range, two ranges when their decimal bounds meet.
+        #>
+        [OutputType([bool])]
+        param (
+            [Parameter(Mandatory = $true)]
+            [ValidateSet('Id', 'Address')]
+            [string]$Table,
+
+            [Parameter(Mandatory = $true)]
+            [int[]]$First,
+
+            [Parameter(Mandatory = $true)]
+            [int[]]$Second
+        )
+
+        if ($Table -eq 'Address') {
+            return ($First[0] -le $Second[1] -and $Second[0] -le $First[1])
+        }
+
+        # A key as a decimal number: the key is written back as its three characters and read again
+        # as decimal. An open end stays open, and a key with a letter in it has no decimal reading.
+        $Decimal = {
+            param ($Key)
+
+            if ($Key -eq [int]::MaxValue) {
+                return [long]$Key
+            }
+
+            $Characters = '{0:x3}' -f $Key
+            if ($Characters -notmatch '^[0-9]{3}$') {
+                return $null
+            }
+
+            return [long]$Characters
+        }
+
+        $FirstIsOne = $First[0] -eq $First[1]
+        $SecondIsOne = $Second[0] -eq $Second[1]
+
+        if ($FirstIsOne -and $SecondIsOne) {
+            return ($First[0] -eq $Second[0])
+        }
+
+        if ($FirstIsOne -or $SecondIsOne) {
+            $Tail = $(if ($FirstIsOne) { $First[0] } else { $Second[0] })
+            $Range = $(if ($FirstIsOne) { $Second } else { $First })
+
+            $TailValue = & $Decimal $Tail
+            $Low = & $Decimal $Range[0]
+            $High = & $Decimal $Range[1]
+
+            return ($null -ne $TailValue -and $null -ne $Low -and $null -ne $High -and $TailValue -ge $Low -and $TailValue -le $High)
+        }
+
+        $FirstLow = & $Decimal $First[0]
+        $FirstHigh = & $Decimal $First[1]
+        $SecondLow = & $Decimal $Second[0]
+        $SecondHigh = & $Decimal $Second[1]
+
+        if ($null -eq $FirstLow -or $null -eq $FirstHigh -or $null -eq $SecondLow -or $null -eq $SecondHigh) {
+            return $false
+        }
+
+        # Both bounds are tails of at most 999, so the overlap's start is one the ranges share
+        # whenever it does not pass the nearer end.
+        return ([Math]::Max($FirstLow, $SecondLow) -le [Math]::Min($FirstHigh, $SecondHigh))
+    }
+
     function Get-DocHygieneRegisterFinding {
         <#
             .SYNOPSIS
@@ -880,15 +987,19 @@ from `person46`, and add a row here in the same commit that uses them.
                 A register is defective when:
 
                 - a row's placeholder cell cannot be read (such a row takes part in no other check);
-                - two taken or reserved intervals of the same table overlap;
+                - two taken or reserved intervals of the same table overlap, which is to say some
+                  id is covered by both (Test-DocHygieneSharedCoverage reads the coverage, the one
+                  way the usage scan reads it);
                 - two rows that are not FREE share a slot description, compared trimmed, with each
                   run of whitespace read as one space, and ignoring case, where '--' is no
                   description and is never compared;
                 - a table has not exactly one FREE row;
                 - the Allocate sentence names an id or an address other than the start of its
                   table's FREE row, or is missing;
-                - a taken or reserved id at or above the Id table's FREE start is not one of the
-                  outliers, or a taken or reserved address is at or above the Address table's.
+                - a taken or reserved id covers an id the Id table's FREE row covers and is not
+                  one of the outliers, or a taken or reserved address is at or above the Address
+                  table's FREE start. (A single row with a letter in its tail is covered by no
+                  FREE row, so it is never at or above the FREE start.)
 
                 The last two need exactly one FREE row to compare against; a table without one is
                 reported by the check before them instead. A finding names placeholder tokens
@@ -971,7 +1082,7 @@ from `person46`, and add a row here in the same commit that uses them.
                     $A = $Flat[$First].Interval
                     $B = $Flat[$Second].Interval
 
-                    if ($A[0] -le $B[1] -and $B[0] -le $A[1]) {
+                    if (Test-DocHygieneSharedCoverage -Table $Table -First $A -Second $B) {
                         $Findings.Add(('{0}: the {1} interval {2} overlaps {3} on line {4}' -f $Flat[$Second].Line, $Table, (& $FormatInterval $Table $B), (& $FormatInterval $Table $A), $Flat[$First].Line))
                     }
                 }
@@ -1000,7 +1111,15 @@ from `person46`, and add a row here in the same commit that uses them.
 
             foreach ($Row in $TableHeld) {
                 foreach ($Interval in $Row.Intervals) {
-                    if ($Interval[1] -lt $FreeStart) {
+                    # Held "at or above the FREE start": the row covers an id the FREE row covers.
+                    $UnderFree = $false
+                    foreach ($FreeInterval in $Free[0].Intervals) {
+                        if (Test-DocHygieneSharedCoverage -Table $Table -First $Interval -Second $FreeInterval) {
+                            $UnderFree = $true
+                        }
+                    }
+
+                    if (-not $UnderFree) {
                         continue
                     }
 
@@ -1071,48 +1190,16 @@ from `person46`, and add a row here in the same commit that uses them.
             return $false
         }
 
-        # A range bound as a decimal number: the reader holds each id as its three characters read
-        # as hex, so the bound is written back as those characters and read again as decimal. An
-        # open end stays open, and a bound with a letter in it has no decimal reading ($null).
-        $DecimalBound = {
-            param ($Value)
-
-            if ($Value -eq [int]::MaxValue) {
-                return [long]$Value
-            }
-
-            $Characters = '{0:x3}' -f $Value
-            if ($Characters -notmatch '^[0-9]{3}$') {
-                return $null
-            }
-
-            return [long]$Characters
-        }
-
+        # A tail is covered when some taken row shares an id with it: the tail is the interval
+        # [key, key], one placeholder, and the helper reads the coverage as the register's own
+        # checks do.
         $IsTakenId = {
             param ($Slot)
 
-            $HexValue = [Convert]::ToInt32($Slot, 16)
+            $Key = [Convert]::ToInt32($Slot, 16)
 
             foreach ($Interval in $TakenId) {
-                if ($Interval[0] -eq $Interval[1]) {
-                    # One placeholder: exactly its own tail, letters included.
-                    if ($HexValue -eq $Interval[0]) {
-                        return $true
-                    }
-
-                    continue
-                }
-
-                # A range: only three decimal digits, within its bounds read as decimal.
-                if ($Slot -notmatch '^[0-9]{3}$') {
-                    continue
-                }
-
-                $Low = & $DecimalBound $Interval[0]
-                $High = & $DecimalBound $Interval[1]
-
-                if ($null -ne $Low -and $null -ne $High -and [long]$Slot -ge $Low -and [long]$Slot -le $High) {
+                if (Test-DocHygieneSharedCoverage -Table Id -First @($Key, $Key) -Second $Interval) {
                     return $true
                 }
             }
@@ -1472,8 +1559,9 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
         $Correct = @($script:DocHygieneSampleRegister -split '\r?\n')
         $Register = Get-DocHygienePlaceholderRegister -Line $Correct
 
-        # The reader, field by field. Ids are HEX: '...045' is 69, '...0aa' 170 and '...abc' 2748.
-        # 'up' is an 'and up' row's open end. The row after the section's end (line 31) must not
+        # The reader, field by field. An id is a KEY, its tail read as hex: '...045' is 69, '...0aa'
+        # 170 and '...abc' 2748. What a row covers is the helper's to say, and has its own It below.
+        # 'up' is an 'and up' row's open end. The row after the section's end (line 33) must not
         # be here, and neither must the two header rows of each table.
         $RowText = @(
             foreach ($Row in $Register.Rows) {
@@ -1488,7 +1576,7 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
         )
 
         ($RowText -join '; ') |
-            Should -Be '9:Id:Taken:0-69; 10:Id:Taken:70-70; 11:Id:Taken:71-71; 12:Id:Free:102-up; 13:Id:Taken:153-153; 14:Id:Taken:170-170; 15:Id:Taken:2748-2748; 21:Address:Taken:1-13,15-45; 22:Address:Reserved:14-14; 23:Address:Free:46-up' -Because 'the reader must return every register row with its table, status and intervals, ids read as hex, and stop at the next heading'
+            Should -Be '9:Id:Taken:0-69; 10:Id:Taken:70-70; 11:Id:Taken:71-71; 12:Id:Free:102-up; 13:Id:Taken:153-153; 14:Id:Taken:170-170; 15:Id:Taken:2748-2748; 16:Id:Taken:80-96; 17:Id:Taken:90-90; 23:Address:Taken:1-13,15-45; 24:Address:Reserved:14-14; 25:Address:Free:46-up' -Because 'the reader must return every register row with its table, status and intervals, ids as keys, and stop at the next heading'
 
         @($Register.Rows | Where-Object { $_.Unreadable }).Count |
             Should -Be 0 -Because 'every placeholder cell in the correct sample is well formed'
@@ -1498,7 +1586,7 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
 
         $Register.AllocateId | Should -Be 102 -Because 'the Allocate sentence names ...066 for object ids, read as hex, across a line break'
         $Register.AllocateAddress | Should -Be 46 -Because 'the Allocate sentence names person46 for addresses, on the line after the one it starts on'
-        $Register.AllocateLine | Should -Be 26 -Because 'the Allocate sentence starts on line 26'
+        $Register.AllocateLine | Should -Be 28 -Because 'the Allocate sentence starts on line 28'
 
         ((@($Register.Outliers) | Sort-Object) -join ',') |
             Should -Be '153,170,2748' -Because 'the outliers are the three ids named in the sentence about the counting sequence, which wraps over two lines'
@@ -1522,9 +1610,9 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
                 # Line 15: the description of line 14, in another case, with other spacing around
                 # it and a double space inside it.
                 , @('| an administrative unit id |', '|  An Assignment  Target Principal ID  |')
-                # Line 21: person14 marked FREE too, so the Address table has two FREE rows.
+                # Line 23: person14 marked FREE too, so the Address table has two FREE rows.
                 , @('| allocated and never used; left reserved, do not reuse |', '| **FREE.** |')
-                # Line 26: the Allocate sentence disagrees with the Id table's FREE row.
+                # Line 28: the Allocate sentence disagrees with the Id table's FREE row.
                 , @('object ids from `...066`', 'object ids from `...067`')
             )) {
             $Defective = $Defective.Replace($Edit[0], $Edit[1])
@@ -1535,8 +1623,8 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
             '11: the Id interval ...040 overlaps ...000 - ...045 on line 9'
             '13: the Id slot ...099 is held at or above the FREE start ...066 and is not a named outlier'
             '15: the slot description repeats the one on line 14'
-            '21: the Address table has 2 FREE rows, not exactly one'
-            '26: the Allocate sentence names ...067 for the Id table, whose FREE row starts at ...066'
+            '23: the Address table has 2 FREE rows, not exactly one'
+            '28: the Allocate sentence names ...067 for the Id table, whose FREE row starts at ...066'
         )
 
         $Findings = @(Get-DocHygieneRegisterFinding -Register (Get-DocHygienePlaceholderRegister -Line @($Defective -split '\r?\n')))
@@ -1549,17 +1637,17 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
         # Address halves against. This sample keeps the Id table correct and breaks only those.
         $AddressDefective = $script:DocHygieneSampleRegister
         foreach ($Edit in @(
-                # Line 22: a reserved address at or above the FREE start person46.
+                # Line 24: a reserved address at or above the FREE start person46.
                 , @('| `person14` |', '| `person50` |')
-                # Line 26 (the sentence's first line): the address it names is not the FREE start.
+                # Line 28 (the sentence's first line): the address it names is not the FREE start.
                 , @('from `person46`, and add', 'from `person47`, and add')
             )) {
             $AddressDefective = $AddressDefective.Replace($Edit[0], $Edit[1])
         }
 
         $AddressExpected = @(
-            '22: the Address slot person50 is held at or above the FREE start person46'
-            '26: the Allocate sentence names person47 for the Address table, whose FREE row starts at person46'
+            '24: the Address slot person50 is held at or above the FREE start person46'
+            '28: the Allocate sentence names person47 for the Address table, whose FREE row starts at person46'
         )
 
         $AddressFindings = @(Get-DocHygieneRegisterFinding -Register (Get-DocHygienePlaceholderRegister -Line @($AddressDefective -split '\r?\n')))
@@ -1576,7 +1664,7 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
                 , @('| a subscription id in the worked example | taken |', '| a subscription id in the worked example |')
                 # Line 11: a range that ends before it starts.
                 , @('| `...047` |', '| `...047` - `...046` |')
-                # Line 22: an address and an id in one cell.
+                # Line 24: an address and an id in one cell.
                 , @('| `person14` |', '| `person14`, `...0ff` |')
             )) {
             $UnreadableDefective = $UnreadableDefective.Replace($Edit[0], $Edit[1])
@@ -1585,13 +1673,85 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
         $UnreadableExpected = @(
             "10: the placeholder cell cannot be read as tokens, ranges and 'and up' of one kind"
             "11: the placeholder cell cannot be read as tokens, ranges and 'and up' of one kind"
-            "22: the placeholder cell cannot be read as tokens, ranges and 'and up' of one kind"
+            "24: the placeholder cell cannot be read as tokens, ranges and 'and up' of one kind"
         )
 
         $UnreadableFindings = @(Get-DocHygieneRegisterFinding -Register (Get-DocHygienePlaceholderRegister -Line @($UnreadableDefective -split '\r?\n')))
 
         ((@($UnreadableFindings) | Sort-Object) -join ' | ') |
             Should -Be ((@($UnreadableExpected) | Sort-Object) -join ' | ') -Because 'a row with fewer than three cells, a reversed range and a cell mixing an id and an address must each be reported as a cell that cannot be read, and nothing else'
+    }
+
+    It 'Should read the placeholder register in one number base for overlap and the FREE start (known answer)' {
+        # No skip guard, like the known answer above: it reads only the sample and the helper.
+        # Hex and decimal disagree wherever a tail has a letter. The sample carries the range
+        # '...050' - '...060' (line 16) beside the single '...05a' (line 17): read as hex the
+        # single lies inside the range (0x5a is between 0x50 and 0x60), read as the usage scan reads
+        # a row (a range covers three-decimal-digit tails within its bounds, a single row only its
+        # own tail) the two share no id.
+        $Sample = Get-DocHygienePlaceholderRegister -Line @($script:DocHygieneSampleRegister -split '\r?\n')
+
+        $Sample.Rows[7].Line | Should -Be 16 -Because 'the range row of the known answer is on line 16 of the sample'
+        $Sample.Rows[8].Line | Should -Be 17 -Because 'the single row of the known answer is on line 17 of the sample'
+
+        Test-DocHygieneSharedCoverage -Table Id -First $Sample.Rows[7].Intervals[0] -Second $Sample.Rows[8].Intervals[0] |
+            Should -BeFalse -Because 'the range ...050 - ...060 covers three-decimal-digit tails only, so it does not cover ...05a'
+
+        # The helper's verdicts, key pairs written as the reader stores them (three characters read
+        # as hex). Every pair is asked in both orders.
+        $Cases = @(
+            , @('range and a lettered single inside it as hex', @(0x050, 0x060), @(0x05a, 0x05a), $false)
+            , @('the task example, ...090 - ...100 beside ...0a0',@(0x090, 0x100), @(0x0a0, 0x0a0), $false)
+            , @('range and a decimal single inside it', @(0x050, 0x060), @(0x055, 0x055), $true)
+            , @('range and a decimal single outside it', @(0x050, 0x060), @(0x061, 0x061), $false)
+            , @('two equal singles with a letter', @(0x05a, 0x05a), @(0x05a, 0x05a), $true)
+            , @('two different singles', @(0x05b, 0x05b), @(0x05a, 0x05a), $false)
+            , @('two ranges that meet', @(0x050, 0x060), @(0x060, 0x070), $true)
+            , @('two ranges that do not', @(0x050, 0x060), @(0x061, 0x070), $false)
+            , @('a range and an open range after it', @(0x050, 0x060), @(0x066, [int]::MaxValue), $false)
+            , @('a range and an open range it reaches', @(0x060, 0x070), @(0x066, [int]::MaxValue), $true)
+            , @('a single below an open range', @(0x065, 0x065), @(0x066, [int]::MaxValue), $false)
+            , @('a decimal single inside an open range', @(0x099, 0x099), @(0x066, [int]::MaxValue), $true)
+            , @('a lettered single against an open range', @(0x0aa, 0x0aa), @(0x066, [int]::MaxValue), $false)
+            , @('a range with a lettered bound covers nothing', @(0x0a0, 0x0b0), @(0x0a5, 0x0a5), $false)
+            , @('a range with a lettered bound against a range', @(0x0a0, 0x0b0), @(0x090, 0x100), $false)
+        )
+
+        $Wrong = [System.Collections.Generic.List[string]]::new()
+        foreach ($Case in $Cases) {
+            if ((Test-DocHygieneSharedCoverage -Table Id -First $Case[1] -Second $Case[2]) -ne $Case[3]) {
+                $Wrong.Add($Case[0])
+            }
+
+            if ((Test-DocHygieneSharedCoverage -Table Id -First $Case[2] -Second $Case[1]) -ne $Case[3]) {
+                $Wrong.Add(('{0} (reversed)' -f $Case[0]))
+            }
+        }
+
+        ($Wrong -join '; ') | Should -BeNullOrEmpty -Because 'every id pair must give the verdict the usage scan would give for a tail in both rows'
+
+        # Addresses have one reading: the numbers between the bounds.
+        Test-DocHygieneSharedCoverage -Table Address -First @(1, 13) -Second @(13, 20) | Should -BeTrue -Because 'two address intervals that meet share an address'
+        Test-DocHygieneSharedCoverage -Table Address -First @(1, 13) -Second @(14, 20) | Should -BeFalse -Because 'two address intervals that do not meet share none'
+
+        # Through the register's own check. The correct sample is clean (the known answer above
+        # asserts the count); here the two edits that make each reading's difference visible.
+        $Findings = @(Get-DocHygieneRegisterFinding -Register $Sample)
+        @($Findings | Where-Object { $_ -match '^1[67]:' }) |
+            Should -BeNullOrEmpty -Because 'the range and the lettered single of the known answer do not overlap, and the single is not held at or above the FREE start'
+
+        # A decimal single that IS inside the range overlaps it.
+        $Overlapping = $script:DocHygieneSampleRegister.Replace('| `...05a` |', '| `...055` |')
+        $OverlapFindings = @(Get-DocHygieneRegisterFinding -Register (Get-DocHygienePlaceholderRegister -Line @($Overlapping -split '\r?\n')))
+        ($OverlapFindings -join ' | ') |
+            Should -Be '17: the Id interval ...055 overlaps ...050 - ...060 on line 16' -Because 'a single row inside the decimal bounds of a range row is the overlap, and the only finding'
+
+        # The FREE start, same question: a range that reaches it is held at or above it, and a
+        # lettered single whose hex value lies above it is not, since the FREE row does not cover it.
+        $AtFree = $script:DocHygieneSampleRegister.Replace('| `...050` - `...060` |', '| `...060` - `...070` |').Replace('| `...05a` |', '| `...06a` |')
+        $AtFreeFindings = @(Get-DocHygieneRegisterFinding -Register (Get-DocHygienePlaceholderRegister -Line @($AtFree -split '\r?\n')))
+        ($AtFreeFindings -join ' | ') |
+            Should -Be '16: the Id slot ...060 - ...070 is held at or above the FREE start ...066 and is not a named outlier' -Because 'only the range covers an id the FREE row covers; ...06a lies above ...066 as hex but is covered by no range or FREE row'
     }
 
     It 'Should keep the placeholder register in docs/live-verification/README.md consistent' {

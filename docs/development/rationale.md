@@ -461,6 +461,30 @@ must carry `NOT-A-REAL-TOKEN` inside the VALUE; `REDACTED` works the same way.
   by calling the bare form vacuous.
   `Why: docs/development/rationale.md#bearer-scrub-tests`
 
+### The placeholder register is checked in one number base (Sprint 11 step 15, BL-61)
+
+What changed: before this step the register's checks against itself (overlap between rows, a taken
+row at or above the FREE start) ordered the three characters after `...` as hexadecimal, while the
+usage scan read a range row's bounds as decimal and let it cover only tails of three decimal digits.
+Two readings of one register: a range `...090` - `...100` beside a single row `...0a0` overlapped
+under the first (0xa0 lies between 0x90 and 0x100) and did not under the second, so a register could
+be refused for a collision no placeholder could have, or a collision could pass the one check while
+failing the other.
+
+`Test-DocHygieneSharedCoverage` in `tests/QA/dochygiene.tests.ps1` is now the single reading, and both
+the self-checks and the usage scan ask it: a range covers only three-decimal-digit tails within its
+bounds read as decimal (a range with a letter in a bound covers nothing), and a single row covers
+exactly its own tail, letters included. Two rows overlap when some id is covered by both, and a taken
+row is "at or above the FREE start" when it covers an id the FREE row covers. The numbers the reader
+stores for an id remain the tail read as one hex number, but only as a KEY: it names a tail, so
+`...0aa` and `...abc` have one, and it is compared for equality; the Allocate sentence and the
+outliers are keys too. One consequence is deliberate: a single row with a letter in its tail is never
+at or above the FREE start, since the FREE row does not cover it, so it needs no outlier entry to be
+accepted. The real register's verdicts did not change. The sample register carries the known answer
+(the range `...050` - `...060` beside the single `...05a`), held by the second `It` over the
+register in `dochygiene.tests.ps1`; a copy with the overlap check or the FREE-start check back on
+hex bounds fails it.
+
 ## writeerror-deposit
 
 Sprint 8 step 4 (BL-27). Comments in several `source/` files each describe part of this mechanism,
