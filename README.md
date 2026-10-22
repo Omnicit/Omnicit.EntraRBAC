@@ -200,8 +200,10 @@ or use a new PowerShell process. If the session is closed with `Disconnect-MgGra
 `Connect-OER` with the secret or certificate.
 
 Runspaces in one process -- `ForEach-Object -Parallel` and `Start-ThreadJob` -- share one Graph SDK
-session, so a parallel fan-out across tenants in one process gets `GraphSessionChanged`; run each
-tenant in its own process instead, with `Start-Job` or a separate PowerShell process.
+session. A runspace that connects as the same identity to the same tenant as another is not
+refused, since each reads the other's connection as its own session; a parallel fan-out across
+tenants or identities in one process gets `GraphSessionChanged`. Run each tenant in its own process
+instead, with `Start-Job` or a separate PowerShell process.
 
 A sign-in that fails or is refused usually leaves the module's session as it was -- the previous
 tenant's, or none -- and a script carries on past the error. From then on the module sends nothing
@@ -438,9 +440,9 @@ came from the old tenant or was refused outright. This is the
 module's own view: a `Get-AzToken` call made outside the module does not update it, and it resets
 only when Omnicit.EntraRBAC itself is re-imported.
 
-The warning does not stop the sign-in, but under `-WarningAction Stop` (or
-`$WarningPreference = 'Stop'`) it does, before any token is requested -- the same safe direction as
-the module's existing ambient `AZURE_AUTHORITY_HOST` warning.
+The warning does not stop the sign-in, but under `-WarningAction Stop` (or a
+global `$WarningPreference = 'Stop'`) it does, before any token is requested -- the same safe
+direction as the module's existing ambient `AZURE_AUTHORITY_HOST` warning.
 
 `Disconnect-OER` clears this module's own session state and closes the Graph SDK session the module
 connected; it does not clear the credential AzAuth keeps for the process. `Connect-OER -Force` is
@@ -540,8 +542,9 @@ Connect-OER -TenantAlias contoso-govhigh -IncludeARM   # signs in to USGov autom
 **Name the tenant explicitly and consistently.** The session is keyed on the tenant exactly as you
 spell it, so a later call naming a tenant the session was not established for inherits nothing from
 it -- including the same tenant written as a GUID one time and as a domain the next, and a
-`Connect-OER -Environment USGov` with no `-TenantId` at all, which records the tenant as
-`organizations` rather than as your tenant. The cloud then resets to `Global` and that call signs in
+`Connect-OER -Environment USGov` with no `-TenantId` at all while the module holds no session, which
+records the tenant as `organizations` rather than as your tenant (with a session, it takes that
+session's tenant). The cloud then resets to `Global` and that call signs in
 at the commercial authority. Its token and its endpoints stay consistent with each other, so nothing
 crosses a cloud boundary, but the sign-in fails at the authority with an error that names the tenant
 and never the cloud, which makes it easy to misread. (A tenant named by domain is looked up at that
