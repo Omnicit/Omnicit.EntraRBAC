@@ -41,7 +41,8 @@ BeforeAll {
           gallery/<version>/   the files of a published version folder
           github.json          tags (name -> commit), annotated (tag name -> tag object sha, for an
                                annotated tag) and releases (name -> commit, prerelease)
-          <name>.log           one line per call, for the assertions
+          <name>.log           one line per call, for the assertions (find.log holds the -Version
+                               each Find-PSResource call was given, as given)
           publish-answers-500  the next publish arrives, and the call fails with a 500 (one-shot)
           gh-create-fails      the next gh release create fails (one-shot)
           gh-api-fails         every gh api call except the compare fails with exit 1 (standing)
@@ -50,6 +51,12 @@ BeforeAll {
                                with exit 1; matching-refs still answers (standing)
           save-fails           every Save-PSResource fails with a 503 (standing)
           save-nothing         every Save-PSResource returns without saving anything (standing)
+
+        Find-PSResource answers as PSGallery did under PSResourceGet 1.0.1 when measured on
+        2026-10-09: the exact prerelease version given in range brackets, '[1.1.4-preview0006]',
+        found NOTHING, while the same version given bare was read as exactly that version and
+        found. (0.5.22 and 1.2.0 found both forms; 1.0.1 is the strictest of the three, so the
+        stand-in plays it, and a workflow that works against it works against all three.)
 
         Save-PSResource answers as PSGallery did under PSResourceGet 1.2.0 when measured on
         2026-10-09: the exact prerelease version given in range brackets, '[1.1.4-preview0006]',
@@ -62,6 +69,16 @@ function Find-PSResource
 {
     [CmdletBinding()]
     param ($Name, $Version, [switch] $Prerelease, $Repository)
+
+    Add-Content -LiteralPath (Join-Path -Path $env:OER_FAKE_ROOT -ChildPath 'find.log') -Value $Version
+
+    # A bracketed prerelease version finds nothing, as under PSResourceGet 1.0.1. A bracketed STABLE
+    # version was not measured, so it is still read as the version inside. A regex, not -like, whose
+    # [ ] would be a character class (rationale.md#bearer-scrub-tests).
+    if ($Version -match '^\[.+-.+\]$')
+    {
+        return
+    }
 
     $Plain = $Version.Trim('[', ']')
 
@@ -302,9 +319,11 @@ function gh
 
     function New-TestRoot
     {
-        # A fresh directory, always in the long path form. On Windows, Resolve-Path keeps an 8.3 short
-        # component (RUNNER~1) while Get-ChildItem returns the long one, which would break the relative
-        # paths PublishArtefact.ps1 records; Get-Item's FullName is the long form.
+        # A fresh directory, always in the long path form, so every path a test builds or a failure
+        # message prints is the one on disk. The suite does not work around PublishArtefact.ps1 with
+        # it: the script reads the prefix of the paths it records with Get-Item's FullName, which is
+        # the long form however the folder is addressed. The 8.3 test below hands the script's hash
+        # function a short path on purpose.
         param ([Parameter(Mandatory = $true)] [string] $Name)
 
         $script:RootCount++
@@ -703,6 +722,104 @@ Describe 'PublishArtefact.ps1 -Verify, with the comparison in Compare-FileHashSe
     }
 }
 
+Describe 'PublishArtefact.ps1 -Record, the file names it records' {
+    BeforeAll {
+        $script:RecordBuild = New-TestBuild -Sha $script:ShaA -Version '1.1.4-preview0003' -Body 'A'
+        $script:RecordMeta = Get-Content -LiteralPath (Join-Path -Path $script:RecordBuild -ChildPath 'publish-meta.json') -Raw | ConvertFrom-Json
+
+        # Get-ArtefactFileHash lives inside the script, which has no mode that calls it with a path
+        # of its own choosing (every mode hands it a folder Get-ChildItem returned). So its
+        # definition is cut out of the script by AST and defined here, under the strict mode the
+        # script runs in. Throws unless the function is found exactly once.
+        $Errors = $null
+        $Tokens = $null
+        $Parsed = [System.Management.Automation.Language.Parser]::ParseFile($script:ScriptPath, [ref]$Tokens, [ref]$Errors)
+        $Found = @($Parsed.FindAll({ param ($Node) $Node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $Node.Name -ceq 'Get-ArtefactFileHash' }, $true))
+
+        if ($Found.Count -ne 1)
+        {
+            throw ("Expected one Get-ArtefactFileHash in '{0}', found {1}." -f $script:ScriptPath, $Found.Count)
+        }
+
+        . ([scriptblock]::Create($Found[0].Extent.Text))
+
+        function Get-ArtefactFileHashStrict
+        {
+            param ([Parameter(Mandatory = $true)] [string] $VersionFolder)
+
+            & {
+                param ($Folder)
+                Set-StrictMode -Version 3.0
+                Get-ArtefactFileHash -VersionFolder $Folder
+            } $VersionFolder
+        }
+    }
+
+    It 'records exactly the relative paths of the version folder, with forward slashes, sorted' {
+        $Recorded = @($script:RecordMeta.Files | ForEach-Object -Process { $_.Path })
+
+        ($Recorded -join '|') | Should -BeExactly 'en-US/about_Omnicit.EntraRBAC.help.txt|Omnicit.EntraRBAC.psd1|Omnicit.EntraRBAC.psm1'
+    }
+
+    It 'reads the same relative paths from a version folder addressed by its 8.3 short path' -Skip:(-not $IsWindows) {
+        $Long = Get-TestVersionFolder -Build $script:RecordBuild
+        $FileSystem = New-Object -ComObject 'Scripting.FileSystemObject'
+        $Short = $FileSystem.GetFolder($Long).ShortPath
+
+        if ($Short -ceq $Long -or $Short -notlike '*~*')
+        {
+            Set-ItResult -Skipped -Because 'this volume gives the version folder no 8.3 short name, so there is no short path to hand the script'
+            return
+        }
+
+        $Short | Should -Not -BeExactly $Long
+        $FromLong = @(Get-ArtefactFileHashStrict -VersionFolder $Long)
+        $FromShort = @(Get-ArtefactFileHashStrict -VersionFolder $Short)
+
+        $FromShort.Count | Should -Be 3
+        ($FromShort.Path -join '|') | Should -BeExactly ($FromLong.Path -join '|')
+        ($FromShort.Path -join '|') | Should -BeExactly 'en-US/about_Omnicit.EntraRBAC.help.txt|Omnicit.EntraRBAC.psd1|Omnicit.EntraRBAC.psm1'
+        ($FromShort.Sha256 -join '|') | Should -BeExactly ($FromLong.Sha256 -join '|')
+    }
+}
+
+Describe 'The Find-PSResource stand-in, which answers as PSGallery did under PSResourceGet 1.0.1' {
+    BeforeEach {
+        $script:World = New-FakeWorld
+        $env:OER_FAKE_ROOT = $script:World
+        $null = Publish-ToFakeGallery -Build (New-TestBuild -Sha $script:ShaA -Version '1.1.4-preview0006' -Body 'A') -World $script:World
+    }
+
+    AfterEach {
+        Remove-Item -Path 'Env:OER_FAKE_ROOT' -ErrorAction 'SilentlyContinue'
+    }
+
+    It 'finds nothing for an exact prerelease version given in range brackets, as PSGallery found nothing for 1.1.4-preview0006' {
+        @(Find-PSResource -Name 'Omnicit.EntraRBAC' -Repository 'PSGallery' -Version '[1.1.4-preview0006]' -Prerelease -ErrorAction 'SilentlyContinue').Count | Should -Be 0
+    }
+
+    It 'finds exactly the version given bare' {
+        # A later preview on the Gallery too: "at least this one" would find it as well.
+        $null = Publish-ToFakeGallery -Build (New-TestBuild -Sha $script:ShaB -Version '1.1.4-preview0007' -Body 'B') -World $script:World
+
+        $Found = @(Find-PSResource -Name 'Omnicit.EntraRBAC' -Repository 'PSGallery' -Version '1.1.4-preview0006' -Prerelease -ErrorAction 'SilentlyContinue')
+
+        $Found.Count | Should -Be 1
+        $Found[0].Version | Should -BeExactly '1.1.4-preview0006'
+    }
+
+    It 'finds nothing for a bare version that is not there' {
+        @(Find-PSResource -Name 'Omnicit.EntraRBAC' -Repository 'PSGallery' -Version '1.1.4-preview0000' -Prerelease -ErrorAction 'SilentlyContinue').Count | Should -Be 0
+    }
+
+    It 'logs the version as it was given' {
+        $null = Find-PSResource -Name 'Omnicit.EntraRBAC' -Repository 'PSGallery' -Version '[1.1.4-preview0006]' -Prerelease -ErrorAction 'SilentlyContinue'
+        $null = Find-PSResource -Name 'Omnicit.EntraRBAC' -Repository 'PSGallery' -Version '1.1.4-preview0006' -Prerelease -ErrorAction 'SilentlyContinue'
+
+        @(Get-FakeLog -World $script:World -Name 'find') | Should -Be @('[1.1.4-preview0006]', '1.1.4-preview0006')
+    }
+}
+
 Describe 'The Save-PSResource stand-in, which answers as PSGallery did under PSResourceGet 1.2.0' {
     BeforeEach {
         $script:World = New-FakeWorld
@@ -799,7 +916,9 @@ Describe 'PublishArtefact.ps1 -Compare' {
         $Message | Should -BeLike '*NOTHING has been tagged and no release was created.*'
         $Message | Should -BeLike '*git tag v1.1.4-preview0003 <commit>, then git push origin v1.1.4-preview0003*'
         $Message | Should -BeLike '*If v1.1.4-preview0003 already exists on another commit*git push origin :refs/tags/v1.1.4-preview0003*'
-        $Message | Should -BeLike '*re-run ALL jobs of this run, not only the failed ones*'
+        $Message | Should -BeLike '*re-run ALL jobs of this run, not only the failed ones: the new build is expected to count up from that tag and publish bbbb* as the next preview, but that has not been seen on a real re-run*'
+        $Message | Should -BeLike "*so confirm in the re-run's log that its publish step names the next preview and not 1.1.4-preview0003 before relying on it. If it names 1.1.4-preview0003 again, the run is refused again and nothing is tagged wrongly.*"
+        $Message | Should -Not -BeLike '*counts up from that tag and publishes*' -Because 'the count-up of a re-run of all jobs is expected, not established'
         $Message | Should -BeLike '*re-run all jobs of the newest one only*'
         @(Get-FakeLog -World $script:World -Name 'save').Count | Should -Be 1 -Because 'the refusal comes from the comparison, after the read'
     }
@@ -989,6 +1108,7 @@ Describe 'The publish job, run step by step against a fake Gallery and a fake Gi
 
         $Job.Failed | Should -BeNullOrEmpty -Because ('the job runs green; its log follows:{0}{1}' -f [System.Environment]::NewLine, $Job.Output)
         @(Get-FakeLog -World $World -Name 'publish') | Should -Be @($script:V3)
+        @(Get-FakeLog -World $World -Name 'find') | Should -Be @($script:V3, $script:V3) -Because 'the publish step and the Confirm step each ask for the version bare, which every PSResourceGet measured reads as exactly that version (the bracketed form found nothing under 1.0.1)'
         @(Get-FakeLog -World $World -Name 'save').Count | Should -Be 1 -Because 'an ordinary merge is compared too, before it is tagged'
         @(Get-FakeLog -World $World -Name 'gh' | Where-Object -FilterScript { $_ -ceq "api repos/Omnicit/Omnicit.EntraRBAC/git/matching-refs/tags/v$($script:V3)" }).Count | Should -Be 1 -Because 'an ordinary merge asks whether the tag already names another commit'
         $GitHub = Get-FakeGitHub -World $World
@@ -1031,6 +1151,7 @@ Describe 'The publish job, run step by step against a fake Gallery and a fake Gi
         $JobForB.Output | Should -BeLike '*SKIPPING THE PUBLISH*'
         $JobForB.Output | Should -BeLike "*git tag v$($script:V3) <commit>*"
         $JobForB.Output | Should -BeLike '*re-run ALL jobs of this run*'
+        $JobForB.Output | Should -BeLike '*that has not been seen on a real re-run*'
         @(Get-FakeLog -World $World -Name 'publish') | Should -Be @($script:V3) -Because 'B published nothing'
         $GitHub = Get-FakeGitHub -World $World
         $GitHub['tags'].Count | Should -Be 0

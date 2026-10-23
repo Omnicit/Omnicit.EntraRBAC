@@ -1519,7 +1519,8 @@ BeforeAll {
         may read or write in.
         Every row of $script:transportGateOwners is enforced by the It that reads the table as a whole
         (BL-101): for each row, no caller outside its owners and every owner really calling it, with
-        at least fourteen rows, one row per command, and a call found for every row's command. So a
+        exactly the fourteen commands that It lists (a row added or removed edits that list in the
+        same change), one row per command, and a call found for every row's command. So a
         row added without an It of its own is enforced all the same -- before BL-101 such a row was
         inert, since each row was asserted only by its own It. The per-row Its below still assert
         their own row and carry that row's reason: a new row still gets one, for its explanation, but
@@ -4294,23 +4295,47 @@ rest on, so fix it rather than the case; a case is changed only when the rule it
             that row's reason; this one asserts every row, so a row added to $script:transportGateOwners
             without an It of its own is enforced all the same. Measured in Sprint 9 step 6b, before this
             It existed: the Get-OERDocumentTenantMismatch row alone, with its owner list emptied, left
-            the gate green, since nothing read the row. Non-vacuity: the table holds at least the
-            fourteen rows it holds since the Get-OERSubscriptionHomeTenant row was added (BL-150; it
-            held thirteen when this It was written). A row deleted from the table is seen by its own It
-            only where that It also asserts the row's call count (Get-MgContext, Lock-OERSignIn,
-            Unlock-OERSignIn, Invoke-MgGraphRequest, Invoke-WebRequest, Invoke-RestMethod,
-            Get-OERSubscriptionHomeTenant), which then reads $null; the Its of the other seven rows read
-            those rows only through the violation and stale lists, whose missing key joins to an empty
-            string, and stay green (all thirteen measured, BL-101, and the fourteenth in Sprint 11 step
-            6c). For those seven only this count sees a deletion, and not when a new row is added in the
-            same edit, so the floor moves with every row added. One row per command (a second row for a
+            the gate green, since nothing read the row. Non-vacuity: the table holds EXACTLY the
+            fourteen commands listed below, compared as a sorted set (BL-124 point 5, Sprint 11 step
+            15). Until then a floor of fourteen held it (since the Get-OERSubscriptionHomeTenant row
+            was added, BL-150; it held thirteen when this It was written), and a floor sees a row
+            removed and a new one added in the same edit as no change at all. A row deleted from the
+            table is seen by its own It only where that It also asserts the row's call count
+            (Get-MgContext, Lock-OERSignIn, Unlock-OERSignIn, Invoke-MgGraphRequest,
+            Invoke-WebRequest, Invoke-RestMethod, Get-OERSubscriptionHomeTenant), which then reads
+            $null; the Its of the other seven rows read those rows only through the violation and
+            stale lists, whose missing key joins to an empty string, and stay green (all thirteen
+            measured, BL-101, and the fourteenth in Sprint 11 step 6c). For those seven only this
+            set sees a deletion. A row added or removed is a rule change, so it edits the list in
+            this It in the same change. One row per command (a second row for a
             command replaces the first one's owners in the scan above), and the owners of every row
             really call its command, so no row is a rule over nothing. That last check is the only one
             that sees a row with no owner at all for a command nothing calls: such a row reports neither
             a foreign caller nor a stale owner.
         #>
-        @($script:transportGateOwners).Count | Should -BeGreaterOrEqual 14 -Because (
-            'the owner table holds fourteen rows since the Get-OERSubscriptionHomeTenant row was added (BL-150); fewer means a rule was dropped, and a new row is enforced here without a further edit')
+        $ExpectedCommands = @(
+            'Get-MgContext'
+            'Get-OERDocumentTenantMismatch'
+            'Get-OERSignInIdentity'
+            'Get-OERSignInRefusal'
+            'Get-OERSignInSupersession'
+            'Get-OERSubscriptionHomeTenant'
+            'Invoke-MgGraphRequest'
+            'Invoke-RestMethod'
+            'Invoke-WebRequest'
+            'Lock-OERSignIn'
+            'Register-OERSignInIdentity'
+            'Resolve-OERTenantDomain'
+            'Set-OERSessionUncertain'
+            'Unlock-OERSignIn'
+        )
+        $ActualCommands = [string[]]@($script:transportGateOwners | ForEach-Object { $_.Command })
+        [System.Array]::Sort($ActualCommands, [System.StringComparer]::Ordinal)
+        $Missing = @($ExpectedCommands | Where-Object { $_ -notin $ActualCommands })
+        $Extra = @($ActualCommands | Where-Object { $_ -notin $ExpectedCommands })
+        ($ActualCommands -join ', ') | Should -BeExactly ($ExpectedCommands -join ', ') -Because (
+            'the owner table must hold exactly the commands this It lists, so a row added or removed is a rule change that edits this list in the same change; missing from the table: [{0}]; not in this list: [{1}]' -f
+                ($Missing -join ', '), ($Extra -join ', '))
         $Commands = @($script:transportGateOwners | ForEach-Object { $_.Command })
         $Duplicates = @($Commands | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { $_.Name })
         $Duplicates -join ', ' | Should -BeNullOrEmpty -Because (

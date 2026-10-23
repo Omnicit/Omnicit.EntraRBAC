@@ -237,8 +237,9 @@ used in `source/`, `tests/`, `docs/examples/` or `docs/development/` -- an all-z
 as unregistered. A row that names a range, such as `...000` - `...045`, covers only a tail made of
 three decimal digits, within its bounds read as decimal numbers, so `...00a` is not covered by it;
 a row that names one placeholder covers exactly that tail, letters included, which is how `...0aa`
-and `...abc` are registered. Where it checks the register against itself, it orders the three
-characters after `...` as hexadecimal. It reads a status cell as FREE when it says FREE, as taken
+and `...abc` are registered. It checks the register against itself the same way: two rows overlap
+when some placeholder falls in both, and a taken row is at or above a FREE start when it covers a
+placeholder the FREE row covers. It reads a status cell as FREE when it says FREE, as taken
 when it starts with "taken", and as reserved otherwise. A row it reads only partly is reported. A
 row whose first cell holds no well-formed backticked `...` or `person` token is taken for a header
 row and grants nothing, and a table left without its FREE row is reported.

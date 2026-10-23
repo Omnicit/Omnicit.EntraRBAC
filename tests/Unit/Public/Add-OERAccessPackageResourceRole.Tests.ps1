@@ -78,7 +78,7 @@ Describe 'Add-OERAccessPackageResourceRole' {
     It 'calls Initialize-OERAuth once' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'scope-1' } } -ParameterFilter { $Method -eq 'POST' }
         Add-OERAccessPackageResourceRole -AccessPackage 'AP-Sales' -Catalog 'cat-1' -ResourceOriginId 'grp-guid' -Role 'Member' | Out-Null
-        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly
     }
 
     It 'returns the created object with the id from the Graph response' {
@@ -332,7 +332,7 @@ Describe 'Add-OERAccessPackageResourceRole' {
         $Result | Should -BeNullOrEmpty
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Request_BadRequest,Add-OERAccessPackageResourceRole' }).Count |
             Should -Be 1
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 
     It 'still falls back to a composed tagged object when the confirmation read throws a Graph error record' {
@@ -356,7 +356,7 @@ Describe 'Add-OERAccessPackageResourceRole' {
         $Result.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.AccessPackageResourceRole'
         $Result.ResourceRoleScopeId | Should -Be 'scope-1'
         $Result.RoleName | Should -Be 'Member'
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 }
 

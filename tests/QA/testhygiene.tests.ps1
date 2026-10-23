@@ -182,6 +182,260 @@ BeforeAll {
             }
         }
     }
+
+    # =====================================================================================
+    # A DEFAULT MOCK BESIDE EVERY FILTERED MOCK, HELD BY A RATCHET.
+    #
+    # A call that no -ParameterFilter of a mock matches, with no default mock beside them, calls the
+    # original on Pester 5.7.1 (now the tripwire) and throws "No mock for command ... matched the
+    # call" on 6.x, inside module code where a catch can swallow it (the happy path silently
+    # replaced by the failure path). The remedy is a default mock beside every filtered mock.
+    # Why: docs/development/rationale.md#bearer-scrub-tests
+    #
+    # The rule, read statically from the text of every unit test file (nothing imported, no module
+    # code run): a Mock call carrying -ParameterFilter needs, in the SAME script block, a Mock of
+    # the same command with the same -ModuleName text (or none on both) and no -ParameterFilter.
+    # "Same block" is the innermost script block holding the Mock call: an It, BeforeAll,
+    # BeforeEach or AfterEach body, a Context or Describe body, or a nested script block. A default
+    # in an enclosing or a nested block does not count -- stricter than Pester's own fallback, on
+    # purpose, and the ratchet below absorbs the sites that predate the rule.
+    #
+    # A Mock whose command cannot be matched by name is Kind 'Unresolvable', never a violation: a
+    # filtered Mock whose command is not a string literal (a variable), and ANY splatted Mock, since
+    # a splat can carry the command, the -ModuleName and the -ParameterFilter alike. The ratchet pins
+    # the unresolvable sites in a second exact table (file -> count), so a new one fails and a removed
+    # one must lower the table. An unfiltered Mock of a variable command is no site: it is neither a
+    # filtered mock nor a splat. What the gate cannot see inside a splat -- whether its filter has a
+    # default beside it -- stays a review matter.
+    #
+    # The table is keyed on Mock statements only: a later edit of a Should -Invoke line moves
+    # nothing in it.
+    # =====================================================================================
+
+    function Get-TestHygieneMockArgument {
+        <#
+        .SYNOPSIS
+        Returns the command name, module name text and filter flag of one parsed Mock call.
+        .DESCRIPTION
+        Reads the call's elements by Pester's own parameter names (a unique prefix is accepted, as
+        PowerShell binds it): -CommandName, -MockWith, -ModuleName and -ParameterFilter take a value,
+        -Verifiable, -RemoveParameterType and -RemoveParameterValidation do not take one as a switch
+        and so consume nothing; the first positional value is the command name when -CommandName is
+        not named. CommandName is $null when it is not a string literal or the call is splatted.
+        ModuleName is the literal text, or the argument's source text when it is not a literal, and
+        $null when absent.
+        #>
+        [OutputType([pscustomobject])]
+        param(
+            [Parameter(Mandatory)]
+            [System.Management.Automation.Language.CommandAst]$Command
+        )
+        $ValueParameters = 'CommandName', 'MockWith', 'ModuleName', 'ParameterFilter', 'RemoveParameterType', 'RemoveParameterValidation'
+        $SwitchParameters = 'Verifiable'
+        $Named = @{}
+        $Positional = [System.Collections.Generic.List[System.Management.Automation.Language.Ast]]::new()
+        $Splatted = $false
+        $Elements = @($Command.CommandElements | Select-Object -Skip 1)
+        for ($Index = 0; $Index -lt $Elements.Count; $Index++) {
+            $Element = $Elements[$Index]
+            if ($Element -is [System.Management.Automation.Language.CommandParameterAst]) {
+                $Candidates = @($ValueParameters + $SwitchParameters | Where-Object { $_.StartsWith($Element.ParameterName, [System.StringComparison]::OrdinalIgnoreCase) })
+                $Exact = @($Candidates | Where-Object { $_ -eq $Element.ParameterName })
+                if ($Exact.Count -eq 1) { $Candidates = $Exact }
+                if ($Candidates.Count -ne 1) { continue }
+                $Resolved = $Candidates[0]
+                if ($Resolved -in $SwitchParameters) { continue }
+                if ($null -ne $Element.Argument) {
+                    $Named[$Resolved] = $Element.Argument
+                } elseif ($Index + 1 -lt $Elements.Count) {
+                    $Named[$Resolved] = $Elements[$Index + 1]
+                    $Index++
+                }
+                continue
+            }
+            if ($Element -is [System.Management.Automation.Language.VariableExpressionAst] -and $Element.Splatted) {
+                $Splatted = $true
+                continue
+            }
+            $Positional.Add($Element)
+        }
+
+        $NameAst = $null
+        if ($Named.ContainsKey('CommandName')) {
+            $NameAst = $Named['CommandName']
+        } elseif ($Positional.Count -gt 0) {
+            $NameAst = $Positional[0]
+        }
+        $CommandName = $null
+        if (-not $Splatted -and $NameAst -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+            $CommandName = $NameAst.Value
+        }
+        $ModuleName = $null
+        if ($Named.ContainsKey('ModuleName')) {
+            $ModuleAst = $Named['ModuleName']
+            $ModuleName = if ($ModuleAst -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $ModuleAst.Value } else { $ModuleAst.Extent.Text }
+        }
+        [pscustomobject]@{
+            CommandName = $CommandName
+            ModuleName  = $ModuleName
+            Filtered    = $Named.ContainsKey('ParameterFilter')
+            Splatted    = $Splatted
+        }
+    }
+
+    function Get-TestHygieneMockDefaultFinding {
+        <#
+        .SYNOPSIS
+        Returns one record per Mock call that carries -ParameterFilter or is splatted, with whether it is a violation.
+        .DESCRIPTION
+        Parses the text and looks at every command named Mock. For each that carries -ParameterFilter
+        or is splatted, the innermost script block holding it is found (the first ScriptBlockAst up its parents); the
+        filtered mock is a violation unless that same block also holds a Mock of the same command
+        name (ignoring case) and the same -ModuleName text (or none on both) with no
+        -ParameterFilter. A Mock inside an if or a loop of the block counts as in the block; one in
+        a nested or an enclosing script block does not. A filtered Mock whose command name is not a
+        literal, and every splatted Mock (filtered or not), gets Kind 'Unresolvable' and is never a
+        violation. Each record has Kind ('Violation', 'Unresolvable', 'Covered' or
+        'Unparsable'), Line and Command. Returns the single record 'Unparsable' for text that does
+        not parse, which the ratchet counts as a violation. Returns nothing for a file with no
+        filtered or splatted Mock.
+        #>
+        [OutputType([pscustomobject])]
+        param(
+            [Parameter(Mandatory)]
+            [string]$Text
+        )
+        $Tokens = $null
+        $Errors = $null
+        $Ast = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$Tokens, [ref]$Errors)
+        if (@($Errors).Count -gt 0) {
+            [pscustomobject]@{ Kind = 'Unparsable'; Line = 0; Command = '' }
+            return
+        }
+        $Mocks = @($Ast.FindAll({
+                    param($Node)
+                    $Node -is [System.Management.Automation.Language.CommandAst] -and $Node.GetCommandName() -eq 'Mock'
+                }, $true))
+        $Parsed = foreach ($Mock in $Mocks) {
+            $Block = $Mock.Parent
+            while ($null -ne $Block -and $Block -isnot [System.Management.Automation.Language.ScriptBlockAst]) { $Block = $Block.Parent }
+            $Argument = Get-TestHygieneMockArgument -Command $Mock
+            [pscustomobject]@{
+                Ast         = $Mock
+                Block       = $Block
+                CommandName = $Argument.CommandName
+                ModuleName  = $Argument.ModuleName
+                Filtered    = $Argument.Filtered
+                Splatted    = $Argument.Splatted
+            }
+        }
+        foreach ($Item in @($Parsed | Where-Object { $_.Filtered -or $_.Splatted })) {
+            $Line = $Item.Ast.Extent.StartLineNumber
+            if ($null -eq $Item.CommandName) {
+                [pscustomobject]@{ Kind = 'Unresolvable'; Line = $Line; Command = '' }
+                continue
+            }
+            $Defaults = @($Parsed | Where-Object {
+                    -not $_.Filtered -and
+                    [object]::ReferenceEquals($_.Block, $Item.Block) -and
+                    $null -ne $_.CommandName -and
+                    $_.CommandName -eq $Item.CommandName -and
+                    (($null -eq $_.ModuleName -and $null -eq $Item.ModuleName) -or ($null -ne $_.ModuleName -and $null -ne $Item.ModuleName -and $_.ModuleName -eq $Item.ModuleName))
+                })
+            [pscustomobject]@{
+                Kind    = if ($Defaults.Count -gt 0) { 'Covered' } else { 'Violation' }
+                Line    = $Line
+                Command = $Item.CommandName
+            }
+        }
+    }
+
+    # File (relative path) -> count of filtered Mock calls with no default beside them in the same
+    # script block, measured on 2026-10-22. A file not listed is held to 0. Lower a number in the
+    # same change that adds the default mock; a higher count is a new violation and fails.
+    $script:MockDefaultRatchet = [ordered]@{
+        'tests/Unit/Private/ConvertTo-OERManagementGroup.Tests.ps1' = 3
+        'tests/Unit/Private/Enable-OERGroupPermanentEligibility.Tests.ps1' = 7
+        'tests/Unit/Private/Get-OERDirectoryRoleNameMap.Tests.ps1' = 7
+        'tests/Unit/Private/Get-OERGroupPimPolicyCloseAdvice.Tests.ps1' = 2
+        'tests/Unit/Private/Get-OERGroupPimPolicyOpenAdvice.Tests.ps1' = 2
+        'tests/Unit/Private/Get-OERGroupRelation.Tests.ps1' = 22
+        'tests/Unit/Private/Get-OERRoleAssignableState.Tests.ps1' = 1
+        'tests/Unit/Private/Get-OERSubscriptionHomeTenant.Tests.ps1' = 2
+        'tests/Unit/Private/Read-OERGroupCollection.Tests.ps1' = 6
+        'tests/Unit/Private/Resolve-OERCatalogResource.Tests.ps1' = 3
+        'tests/Unit/Private/Resolve-OERDirectoryRoleId.Tests.ps1' = 13
+        'tests/Unit/Private/Resolve-OERInventoryScopeTree.Tests.ps1' = 2
+        'tests/Unit/Private/Resolve-OERScope.Tests.ps1' = 33
+        'tests/Unit/Private/Resolve-OERStructurePrincipal.Tests.ps1' = 2
+        'tests/Unit/Private/Sync-OERStructureAccessPackage.Tests.ps1' = 45
+        'tests/Unit/Private/Sync-OERStructureAccessReview.Tests.ps1' = 7
+        'tests/Unit/Private/Sync-OERStructureAdministrativeUnit.Tests.ps1' = 34
+        'tests/Unit/Private/Sync-OERStructureCatalog.Tests.ps1' = 42
+        'tests/Unit/Private/Sync-OERStructureDirectoryRoleAssignment.Tests.ps1' = 5
+        'tests/Unit/Private/Sync-OERStructureDirectoryRoleManagementPolicy.Tests.ps1' = 3
+        'tests/Unit/Private/Sync-OERStructureGroup.Tests.ps1' = 14
+        'tests/Unit/Private/Sync-OERStructureRoleManagementPolicy.Tests.ps1' = 3
+        'tests/Unit/Public/Add-OERAccessPackageResourceRole.Tests.ps1' = 16
+        'tests/Unit/Public/Add-OERAdministrativeUnitMember.Tests.ps1' = 4
+        'tests/Unit/Public/Add-OERAdministrativeUnitScopedRole.Tests.ps1' = 5
+        'tests/Unit/Public/Add-OERCatalogResource.Tests.ps1' = 12
+        'tests/Unit/Public/Add-OERGroupMember.Tests.ps1' = 2
+        'tests/Unit/Public/Enable-OEREligibleRoleAssignment.Tests.ps1' = 13
+        'tests/Unit/Public/Export-OERInventory.Tests.ps1' = 20
+        'tests/Unit/Public/Get-OERAccessPackage.Tests.ps1' = 6
+        'tests/Unit/Public/Get-OERAccessPackageAssignmentPolicy.Tests.ps1' = 3
+        'tests/Unit/Public/Get-OERActiveRoleAssignment.Tests.ps1' = 1
+        'tests/Unit/Public/Get-OERAdministrativeUnit.Tests.ps1' = 21
+        'tests/Unit/Public/Get-OERAdministrativeUnitScopedRole.Tests.ps1' = 6
+        'tests/Unit/Public/Get-OERCatalog.Tests.ps1' = 4
+        'tests/Unit/Public/Get-OERCatalogResource.Tests.ps1' = 3
+        'tests/Unit/Public/Get-OEREligibleRoleAssignment.Tests.ps1' = 1
+        'tests/Unit/Public/Get-OERGroup.Tests.ps1' = 64
+        'tests/Unit/Public/Get-OERGroupMember.Tests.ps1' = 6
+        'tests/Unit/Public/Get-OERGroupPimPolicy.Tests.ps1' = 10
+        'tests/Unit/Public/Get-OERInventory.Tests.ps1' = 44
+        'tests/Unit/Public/Get-OERManagementGroup.Tests.ps1' = 10
+        'tests/Unit/Public/Get-OERRoleAssignment.Tests.ps1' = 12
+        'tests/Unit/Public/Get-OERSubscription.Tests.ps1' = 6
+        'tests/Unit/Public/Invoke-OERAccessReviewInstanceDecision.Tests.ps1' = 2
+        'tests/Unit/Public/Invoke-OERStructure.Tests.ps1' = 6
+        'tests/Unit/Public/New-OERAccessPackage.Tests.ps1' = 13
+        'tests/Unit/Public/New-OERAccessPackageAssignment.Tests.ps1' = 5
+        'tests/Unit/Public/New-OERAccessPackageAssignmentPolicy.Tests.ps1' = 6
+        'tests/Unit/Public/New-OERAdministrativeUnit.Tests.ps1' = 6
+        'tests/Unit/Public/New-OERCatalog.Tests.ps1' = 7
+        'tests/Unit/Public/New-OEREligibleRoleAssignment.Tests.ps1' = 1
+        'tests/Unit/Public/New-OERGroup.Tests.ps1' = 16
+        'tests/Unit/Public/New-OERRoleAssignment.Tests.ps1' = 2
+        'tests/Unit/Public/Remove-OERAccessPackageAssignment.Tests.ps1' = 3
+        'tests/Unit/Public/Remove-OERAccessReviewDefinition.Tests.ps1' = 22
+        'tests/Unit/Public/Remove-OERActiveDirectoryRoleAssignment.Tests.ps1' = 4
+        'tests/Unit/Public/Remove-OERAdministrativeUnit.Tests.ps1' = 1
+        'tests/Unit/Public/Remove-OERAdministrativeUnitMember.Tests.ps1' = 2
+        'tests/Unit/Public/Remove-OERAdministrativeUnitScopedRole.Tests.ps1' = 25
+        'tests/Unit/Public/Remove-OERCatalogResource.Tests.ps1' = 7
+        'tests/Unit/Public/Remove-OEREligibleDirectoryRoleAssignment.Tests.ps1' = 4
+        'tests/Unit/Public/Remove-OERGroupEligibility.Tests.ps1' = 1
+        'tests/Unit/Public/Set-OERAccessPackage.Tests.ps1' = 6
+        'tests/Unit/Public/Set-OERAccessPackageAssignmentPolicy.Tests.ps1' = 44
+        'tests/Unit/Public/Set-OERAccessReviewDefinition.Tests.ps1' = 2
+        'tests/Unit/Public/Set-OERAdministrativeUnit.Tests.ps1' = 10
+        'tests/Unit/Public/Set-OERCatalog.Tests.ps1' = 1
+        'tests/Unit/Public/Set-OERDirectoryRoleManagementPolicy.Tests.ps1' = 7
+        'tests/Unit/Public/Set-OERGroup.Tests.ps1' = 22
+        'tests/Unit/Public/Set-OERGroupPimPolicy.Tests.ps1' = 13
+        'tests/Unit/Public/Set-OERResourceGroup.Tests.ps1' = 2
+        'tests/Unit/Public/Set-OERRoleManagementPolicy.Tests.ps1' = 25
+        'tests/Unit/Public/Stop-OERAccessReviewInstance.Tests.ps1' = 1
+    }
+
+    # File (relative path) -> count of unresolvable Mock calls (a filtered Mock whose command is not
+    # a string literal, or any splatted Mock), measured on 2026-10-22. A file not listed is held to
+    # 0. A higher count is a new site the gate cannot read; a lower one must lower the number.
+    $script:MockUnresolvableRatchet = [ordered]@{
+        'tests/Unit/Public/AmbiguousName.Guard.Tests.ps1' = 2
+    }
 }
 
 Describe 'Unit test hygiene' -Tags 'TestHygiene' {
@@ -324,5 +578,248 @@ Describe 'x' { It 'y' { 1 | Should -Be 1 } }
         @(Get-TestHygieneTripwireFinding -Text $NoAfterAll) | Should -Be @('no root AfterAll')
         @(Get-TestHygieneTripwireFinding -Text $NoTryFinally) | Should -Be @($AfterAllReason)
         @(Get-TestHygieneTripwireFinding -Text $CatchSwallows) | Should -Be @($AfterAllReason)
+    }
+
+    It 'Should hold a default mock beside every filtered mock, with no new violation (ratchet)' {
+        $UnitRoot = Join-Path -Path $script:ProjectPath -ChildPath 'tests/Unit'
+        $Files = @(Get-ChildItem -Path $UnitRoot -Recurse -Filter '*.Tests.ps1' -File)
+        $Files.Count | Should -BeGreaterThan 0 -Because 'the gate must measure at least one unit test file; zero files means the enumeration failed and the check ran on nothing'
+
+        $Counts = [ordered]@{}
+        $Filtered = 0
+        $UnresolvableCounts = [ordered]@{}
+        $UnresolvableTotal = 0
+        foreach ($File in $Files) {
+            $Relative = [System.IO.Path]::GetRelativePath($script:ProjectPath, $File.FullName).Replace('\', '/')
+            $Violations = 0
+            $UnresolvableHere = 0
+            $Text = [System.IO.File]::ReadAllText($File.FullName)
+            if ($Text -notmatch 'ParameterFilter|\bMock\b') { continue }
+            foreach ($Finding in @(Get-TestHygieneMockDefaultFinding -Text $Text)) {
+                $Filtered++
+                if ($Finding.Kind -eq 'Unresolvable') {
+                    $UnresolvableHere++
+                } elseif ($Finding.Kind -ne 'Covered') {
+                    $Violations++
+                }
+            }
+            if ($Violations -gt 0) { $Counts[$Relative] = $Violations }
+            if ($UnresolvableHere -gt 0) {
+                $UnresolvableCounts[$Relative] = $UnresolvableHere
+                $UnresolvableTotal += $UnresolvableHere
+            }
+        }
+        $Filtered | Should -BeGreaterThan 0 -Because 'the unit suite holds filtered mocks; zero means the scan read nothing'
+
+        $Differences = [System.Collections.Generic.List[string]]::new()
+        foreach ($Relative in $Counts.Keys) {
+            $Allowed = if ($script:MockDefaultRatchet.Contains($Relative)) { [int]$script:MockDefaultRatchet[$Relative] } else { 0 }
+            if ($Counts[$Relative] -ne $Allowed) {
+                $Differences.Add(('{0}: {1} found, {2} in the table' -f $Relative, $Counts[$Relative], $Allowed))
+            }
+        }
+        foreach ($Relative in $script:MockDefaultRatchet.Keys) {
+            if (-not $Counts.Contains($Relative)) {
+                $Differences.Add(('{0}: 0 found, {1} in the table' -f $Relative, $script:MockDefaultRatchet[$Relative]))
+            }
+        }
+
+        foreach ($Relative in $UnresolvableCounts.Keys) {
+            $Allowed = if ($script:MockUnresolvableRatchet.Contains($Relative)) { [int]$script:MockUnresolvableRatchet[$Relative] } else { 0 }
+            if ($UnresolvableCounts[$Relative] -ne $Allowed) {
+                $Differences.Add(('{0}: {1} unresolvable Mock calls found, {2} in the unresolvable table' -f $Relative, $UnresolvableCounts[$Relative], $Allowed))
+            }
+        }
+        foreach ($Relative in $script:MockUnresolvableRatchet.Keys) {
+            if (-not $UnresolvableCounts.Contains($Relative)) {
+                $Differences.Add(('{0}: 0 unresolvable Mock calls found, {1} in the unresolvable table' -f $Relative, $script:MockUnresolvableRatchet[$Relative]))
+            }
+        }
+
+        $Sum = 0
+        foreach ($Value in $Counts.Values) { $Sum += $Value }
+        @($Differences).Count | Should -Be 0 -Because ('every Mock that carries -ParameterFilter needs a Mock of the same command and -ModuleName without one in the same script block, so a call the filters stop matching falls back to it; a higher count is a new violation (add the default mock), a lower one a fixed site (lower the number in the table in the same change). A filtered Mock whose command is not a literal and every splatted Mock cannot be read by name; they are pinned in a second table, so a new one fails (write the Mock with a literal command, or add the site to the table with a reason) and a removed one lowers it. Found {0} violations in {1} files of {2} scanned, {3} Mock calls read, {4} unresolvable. Differences: {5}' -f $Sum, $Counts.Count, $Files.Count, $Filtered, $UnresolvableTotal, ($Differences -join '; '))
+    }
+
+    It 'Should keep the default-mock ratchet table sorted, with every entry a unit test file and a positive count' {
+        $Keys = @($script:MockDefaultRatchet.Keys)
+        $Keys.Count | Should -BeGreaterThan 0 -Because 'the table holds the sites that predate the rule; an empty table means it was lost'
+        $Sorted = [string[]]$Keys.Clone()
+        [System.Array]::Sort($Sorted, [System.StringComparer]::Ordinal)
+        ($Keys -join '; ') | Should -Be ($Sorted -join '; ') -Because 'the table is kept sorted by path (ordinal), so a merge conflict or a duplicate is visible'
+        foreach ($Relative in $Keys) {
+            Test-Path -LiteralPath (Join-Path -Path $script:ProjectPath -ChildPath $Relative) | Should -BeTrue -Because ('a table entry must name a unit test file that exists: {0}' -f $Relative)
+            $Relative | Should -Match '^tests/Unit/.+\.Tests\.ps1$'
+            $script:MockDefaultRatchet[$Relative] | Should -BeGreaterThan 0 -Because ('a count of zero is not an entry, so delete the line: {0}' -f $Relative)
+        }
+        foreach ($Relative in $script:MockUnresolvableRatchet.Keys) {
+            Test-Path -LiteralPath (Join-Path -Path $script:ProjectPath -ChildPath $Relative) | Should -BeTrue -Because ('an unresolvable table entry must name a unit test file that exists: {0}' -f $Relative)
+            $Relative | Should -Match '^tests/Unit/.+\.Tests\.ps1$'
+            $script:MockUnresolvableRatchet[$Relative] | Should -BeGreaterThan 0 -Because ('a count of zero is not an entry, so delete the line: {0}' -f $Relative)
+        }
+    }
+
+    It 'Should tell a filtered mock with a default beside it from one without (known answer)' {
+        $Violations = {
+            param([string]$Text)
+            @(Get-TestHygieneMockDefaultFinding -Text $Text | Where-Object { $_.Kind -eq 'Violation' }).Count
+        }
+        $WithDefault = @'
+Describe 'x' {
+    It 'y' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { 1 } -ParameterFilter { $Uri -eq 'a' }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { 2 }
+    }
+}
+'@
+        $FilteredOnly = @'
+Describe 'x' {
+    It 'y' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { 1 } -ParameterFilter { $Uri -eq 'a' }
+    }
+}
+'@
+        $EnclosingOnly = @'
+Describe 'x' {
+    BeforeAll {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { 2 }
+    }
+    It 'y' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { 1 } -ParameterFilter { $Uri -eq 'a' }
+    }
+}
+'@
+        $NestedOnly = @'
+Describe 'x' {
+    It 'y' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { 1 } -ParameterFilter { $Uri -eq 'a' }
+        & {
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { 2 }
+        }
+    }
+}
+'@
+        $OtherModule = @'
+Describe 'x' {
+    It 'y' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { 1 } -ParameterFilter { $Uri -eq 'a' }
+        Mock -ModuleName Other.Module Invoke-OERGraphRequest { 2 }
+    }
+}
+'@
+        $NoModuleOnDefault = @'
+Describe 'x' {
+    It 'y' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { 1 } -ParameterFilter { $Uri -eq 'a' }
+        Mock Invoke-OERGraphRequest { 2 }
+    }
+}
+'@
+        $OtherCommand = @'
+Describe 'x' {
+    It 'y' {
+        Mock Invoke-OERGraphRequest { 1 } -ParameterFilter { $Uri -eq 'a' }
+        Mock Invoke-OERArmRequest { 2 }
+    }
+}
+'@
+        $Named = @'
+Describe 'x' {
+    It 'y' {
+        Mock -CommandName Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -MockWith { 1 } -ParameterFilter { $Uri -eq 'a' }
+        Mock -CommandName 'Invoke-OERGraphRequest' -ModuleName 'Omnicit.EntraRBAC' -MockWith { 2 }
+    }
+}
+'@
+        $NamedFilteredOnly = @'
+Describe 'x' {
+    It 'y' {
+        Mock -CommandName Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -MockWith { 1 } -ParameterFilter { $Uri -eq 'a' }
+    }
+}
+'@
+        $InsideIf = @'
+Describe 'x' {
+    It 'y' {
+        Mock Invoke-OERGraphRequest { 1 } -ParameterFilter { $Uri -eq 'a' }
+        if ($true) { Mock Invoke-OERGraphRequest { 2 } }
+    }
+}
+'@
+        $TwoFiltered = @'
+Describe 'x' {
+    It 'y' {
+        Mock Invoke-OERGraphRequest { 1 } -ParameterFilter { $Uri -eq 'a' }
+        Mock Invoke-OERGraphRequest { 2 } -ParameterFilter { $Uri -eq 'b' }
+    }
+}
+'@
+        $Unfiltered = @'
+Describe 'x' {
+    It 'y' {
+        Mock Invoke-OERGraphRequest { 1 }
+        Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq 'a' }
+    }
+}
+'@
+        $Variable = @'
+Describe 'x' {
+    It 'y' {
+        $Name = 'Invoke-OERGraphRequest'
+        Mock $Name { 1 } -ParameterFilter { $Uri -eq 'a' }
+    }
+}
+'@
+
+        & $Violations $WithDefault | Should -Be 0 -Because 'a filtered mock with a default beside it in the same block is covered'
+        & $Violations $FilteredOnly | Should -Be 1 -Because 'a filtered mock alone has nothing to fall back to'
+        & $Violations $EnclosingOnly | Should -Be 1 -Because 'a default in an enclosing block only does not count: the rule is the same block'
+        & $Violations $NestedOnly | Should -Be 1 -Because 'a default in a nested block does not count either'
+        & $Violations $OtherModule | Should -Be 1 -Because 'a default for another -ModuleName is another mock'
+        & $Violations $NoModuleOnDefault | Should -Be 1 -Because 'a default with no -ModuleName beside a filtered mock with one is another mock'
+        & $Violations $OtherCommand | Should -Be 1 -Because 'a default for another command does not cover it'
+        & $Violations $Named | Should -Be 0 -Because 'the -CommandName and -MockWith named form is read like the positional one'
+        & $Violations $NamedFilteredOnly | Should -Be 1 -Because 'the -CommandName named form is recognised as a filtered mock'
+        & $Violations $InsideIf | Should -Be 0 -Because 'a default inside an if of the same block is in the block'
+        & $Violations $TwoFiltered | Should -Be 2 -Because 'two filtered mocks and no default are two violations'
+        & $Violations $Unfiltered | Should -Be 0 -Because 'a Should -Invoke filter and an unfiltered mock are no filtered Mock'
+
+        # A filtered Mock whose command is not a literal, and any splatted Mock, cannot be matched by
+        # name: Kind Unresolvable (pinned in its own table by the ratchet), never a violation.
+        $Splatted = @'
+Describe 'x' {
+    It 'y' {
+        $Args = @{ CommandName = 'Invoke-OERGraphRequest'; ModuleName = 'Omnicit.EntraRBAC'; ParameterFilter = { $Uri -eq 'a' } }
+        Mock @Args -MockWith { 1 }
+    }
+}
+'@
+        $SplattedNoFilter = @'
+Describe 'x' {
+    It 'y' {
+        Mock @MockArguments
+    }
+}
+'@
+        $UnfilteredVariable = @'
+Describe 'x' {
+    It 'y' {
+        $Name = 'Invoke-OERGraphRequest'
+        Mock $Name { 1 }
+    }
+}
+'@
+        $Found = @(Get-TestHygieneMockDefaultFinding -Text $Variable)
+        $Found.Count | Should -Be 1
+        $Found[0].Kind | Should -Be 'Unresolvable' -Because 'a filtered Mock of a variable command cannot be matched by name, so it is counted apart from the violations'
+        $Found = @(Get-TestHygieneMockDefaultFinding -Text $Splatted)
+        $Found.Count | Should -Be 1
+        $Found[0].Kind | Should -Be 'Unresolvable' -Because 'a splatted Mock, with its filter inside the splat, is counted nowhere unless every splatted Mock is Unresolvable'
+        $Found = @(Get-TestHygieneMockDefaultFinding -Text $SplattedNoFilter)
+        $Found.Count | Should -Be 1
+        $Found[0].Kind | Should -Be 'Unresolvable' -Because 'any splatted Mock is Unresolvable, filter named or not'
+        @(Get-TestHygieneMockDefaultFinding -Text $UnfilteredVariable).Count | Should -Be 0 -Because 'an unfiltered Mock of a variable command is neither a filtered mock nor a splat'
+        & $Violations $Splatted | Should -Be 0 -Because 'an unresolvable site is never a violation'
+        @(Get-TestHygieneMockDefaultFinding -Text 'Describe "x" {').Kind | Should -Be @('Unparsable') -Because 'text that does not parse is reported, which the ratchet counts as a violation'
     }
 }

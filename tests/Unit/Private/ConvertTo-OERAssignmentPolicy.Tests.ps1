@@ -362,7 +362,7 @@ Describe 'ConvertTo-OERAssignmentPolicy (full normalizer)' {
                 expiration = @{ type = 'afterDuration'; duration = 'not-a-duration' }
             } -AccessPackageId 'ap'
             $Out.DurationInDays | Should -BeNullOrEmpty
-            Should -Invoke Remove-OERErrorRecord -Times 1
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
         }
     }
 }

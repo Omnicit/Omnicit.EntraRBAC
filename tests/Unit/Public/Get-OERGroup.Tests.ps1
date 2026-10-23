@@ -58,7 +58,7 @@ Describe 'Get-OERGroup' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw 'transport failure' }
         Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
         Get-OERGroup -Group 'role_sec_team' -ErrorAction SilentlyContinue | Out-Null
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 
     It 'includes members when -IncludeMembers is set' {

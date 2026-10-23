@@ -891,7 +891,7 @@ Describe 'Sync-OERStructureAccessReview' {
                 recurrence        = 'Monthly'
             }) -ErrorAction SilentlyContinue)
             ($r | Where-Object Action -eq 'Failed').Count | Should -BeGreaterThan 0
-            Should -Invoke Remove-OERErrorRecord -Times 1
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
         }
     }
 

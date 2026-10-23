@@ -377,6 +377,6 @@ Describe 'Get-OERAdministrativeUnit bearer-token hygiene' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw 'transport failure' }
         Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
         $null = Get-OERAdministrativeUnit -DisplayName 'au_hr' -ErrorAction SilentlyContinue
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 }

@@ -139,7 +139,7 @@ Describe 'Get-OERConfiguration' {
         Set-Content -Path (Join-Path $Base 'broken.psd1') -Value "@{ Tenant Id = 'x' }" -Encoding utf8
 
         $null = Get-OERConfiguration -BasePath $Base -ErrorAction SilentlyContinue
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
     }
 
     It 'continues enumerating after one unparsable profile' {

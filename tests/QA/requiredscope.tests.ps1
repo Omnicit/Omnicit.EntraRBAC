@@ -331,9 +331,29 @@ BeforeAll {
         }
         @{
             Endpoint = 'identity/conditionalAccess/authenticationContextClassReferences'
-            Match    = 'identity/conditionalAccess'
+            Match    = 'identity/conditionalAccess/authenticationContextClassReferences'
             Read     = '^(AuthenticationContext\.(Read|ReadWrite)\.All|Policy\.(Read|ReadWrite)\.ConditionalAccess)$'
             Write    = '^(AuthenticationContext\.ReadWrite\.All|Policy\.ReadWrite\.ConditionalAccess)$'
+        }
+        @{
+            <#
+                Every OTHER identity/conditionalAccess path (BL-138, Sprint 11 step 15): the policies,
+                namedLocations and the rest of the conditional access resources, none of which the module
+                reads today. A cautious rule, so a future cmdlet that reaches one is held to the policy
+                permissions and never to the authentication context ones, which do not cover it.
+                Microsoft Learn (read 2026-10-22): "List policies" -- least privileged Policy.Read.All,
+                delegated and application; "Create policy" -- Policy.Read.All AND
+                Policy.ReadWrite.ConditionalAccess. So a write is an array of two patterns: each element
+                is a separate requirement (the per-cmdlet It loops over every pattern the function
+                returns), and a cmdlet that declares only one of the two fails. The read pattern is the
+                least privileged permission alone, as the other rules do. The authentication context
+                path is excluded: it has its own rule above.
+            #>
+            Endpoint = 'identity/conditionalAccess/* (except authenticationContextClassReferences)'
+            Match    = 'identity/conditionalAccess'
+            NotMatch = 'authenticationContextClassReferences'
+            Read     = '^Policy\.Read\.All$'
+            Write    = @('^Policy\.Read\.All$', '^Policy\.ReadWrite\.ConditionalAccess$')
         }
         @{
             Endpoint = 'identityGovernance/accessReviews/*'
@@ -823,6 +843,125 @@ Describe 'Required scope table' -Tags 'helpQuality' {
 
             $calls.Count | Should -Be (($expected.Values | Measure-Object -Sum).Sum) -Because (
                 'every literal of Get-OERServicePrincipalAccess is one of the roots counted above; found: {0}' -f (($calls.Uri) -join ' | '))
+        }
+
+        <#
+            BL-138 (Sprint 11 step 15): the authentication context rule owns only its own path; every
+            other identity/conditionalAccess path has the cautious rule after it. Microsoft Learn (read
+            2026-10-22): List authenticationContextClassReferences -- least privileged
+            AuthenticationContext.Read.All, higher AuthenticationContext.ReadWrite.All,
+            Policy.Read.ConditionalAccess, Policy.ReadWrite.ConditionalAccess; List policies -- least
+            privileged Policy.Read.All; Create policy -- Policy.Read.All and
+            Policy.ReadWrite.ConditionalAccess.
+        #>
+        It 'Should hold an authentication context class reference read to exactly one rule that AuthenticationContext.Read.All satisfies' {
+            $patterns = @(Get-RequiredScopePattern -Uri 'v1.0/identity/conditionalAccess/authenticationContextClassReferences' -Write $false)
+
+            $patterns.Count | Should -Be 1 -Because (
+                'an authenticationContextClassReferences read must map to exactly one permission rule, its own; {0} matched' -f $patterns.Count)
+
+            foreach ($pattern in $patterns)
+            {
+                'AuthenticationContext.Read.All' | Should -Match $pattern -Because (
+                    'AuthenticationContext.Read.All is the least privileged permission Microsoft Learn names for this read; pattern {0}' -f $pattern)
+                'Policy.Read.ConditionalAccess' | Should -Match $pattern
+                'User.Read.All' | Should -Not -Match $pattern
+            }
+        }
+
+        It 'Should hold a conditional access policies read to Policy.Read.All, which AuthenticationContext.Read.All does not satisfy' {
+            $patterns = @(Get-RequiredScopePattern -Uri 'v1.0/identity/conditionalAccess/policies' -Write $false)
+
+            $patterns.Count | Should -Be 1 -Because (
+                'a conditionalAccess policies read must map to exactly one permission rule, the cautious one; {0} matched' -f $patterns.Count)
+
+            foreach ($pattern in $patterns)
+            {
+                'Policy.Read.All' | Should -Match $pattern -Because (
+                    'Policy.Read.All is the least privileged permission Microsoft Learn names for listing policies; pattern {0}' -f $pattern)
+                foreach ($narrow in 'AuthenticationContext.Read.All', 'AuthenticationContext.ReadWrite.All', 'Policy.Read.ConditionalAccess')
+                {
+                    $narrow | Should -Not -Match $pattern -Because (
+                        'Microsoft Learn does not name {0} for a read of the conditional access policies, so it must not satisfy it; pattern {1}' -f $narrow, $pattern)
+                }
+            }
+        }
+
+        It 'Should hold a conditional access policies write to two separate requirements, Policy.Read.All and Policy.ReadWrite.ConditionalAccess' {
+            $patterns = @(Get-RequiredScopePattern -Uri 'v1.0/identity/conditionalAccess/policies' -Write $true)
+
+            $patterns.Count | Should -Be 2 -Because (
+                'Microsoft Learn asks for Policy.Read.All and Policy.ReadWrite.ConditionalAccess together, so the write is two requirements, each one a pattern; {0} matched' -f $patterns.Count)
+
+            foreach ($permission in 'Policy.Read.All', 'Policy.ReadWrite.ConditionalAccess')
+            {
+                @($patterns | Where-Object { $permission -match $_ }).Count | Should -Be 1 -Because (
+                    'exactly one of the two requirements is met by {0}, so a cmdlet declaring that alone leaves the other unmet' -f $permission)
+            }
+            foreach ($permission in 'AuthenticationContext.ReadWrite.All', 'Policy.ReadWrite.All', 'Directory.ReadWrite.All')
+            {
+                @($patterns | Where-Object { $permission -match $_ }).Count | Should -Be 0 -Because (
+                    '{0} is named by neither requirement of a policy write' -f $permission)
+            }
+        }
+    }
+
+    Context 'Every derived Graph literal asks for a permission' {
+        It 'Should match every Graph URI literal the scan derives against at least one endpoint rule, except the named computed paths' {
+            <#
+                The per-cmdlet It accepts a literal no rule matches, since such a literal asks for
+                nothing: a deleted rule, or a rule whose Match drifted off the path it was written
+                for (BL-138: the conditional access rule matched a prefix), leaves the literal
+                unchecked and the table green. This It holds the other direction: the union of the
+                literals the scan derives per cmdlet ($script:derived[*].GraphUri, every transitive
+                helper included) matches at least one rule, through Get-RequiredScopePattern.
+
+                Private functions that no exported cmdlet reaches are not in that derivation, and
+                their literals are not judged here (the scan derives per cmdlet and this It reuses
+                it, as a second scanner would be a second place to keep right).
+
+                Only a literal the derivation reads is judged, and it reads only the ones that start
+                with v1.0/ or beta/ (or one of the two PIM roots, see the GraphUri block above). Any
+                other literal is never derived, so never judged here: a path that starts with a
+                variable, such as "$Base/groups", is not seen at all.
+
+                The exceptions are an EXACT list: each names a literal the scan reads that is not a
+                path at run time, with its reason. An entry that matches no literal, or that a rule
+                now matches, fails as well, so the list shrinks when a rule is added and cannot
+                outlive its literal.
+            #>
+            $Exceptions = @(
+                [PSCustomObject]@{
+                    # Test-OERDirectoryRoleAssignmentGone: the collection name is chosen at run time
+                    # from -Kind (roleEligibilitySchedules or roleAssignmentSchedules), so the text the
+                    # scan reads holds the variable, not a path. Both collections have their own rule
+                    # in the map; only this one literal cannot be matched against them.
+                    Uri    = 'v1.0/roleManagement/directory/$Path?$filter=$Filter'
+                    Reason = 'built from the schedule collection chosen at run time'
+                }
+            )
+
+            $Literals = @($script:derived.Values | ForEach-Object { $_.GraphUri } | ForEach-Object { $_.Uri } | Sort-Object -Unique)
+
+            <#
+                Non-vacuity: 97 distinct literals when this It was written (the same 97 whether read per
+                cmdlet or per function, so no private function outside every cmdlet's reach holds one).
+                The floor sits just under, so a derivation that lost a few files is still seen.
+            #>
+            $Literals.Count | Should -BeGreaterThan 94 -Because (
+                'the derivation holds 97 distinct Graph literals; fewer than 95 means the scan lost source files, and this check would pass over what it no longer reads; found {0}' -f $Literals.Count)
+
+            $Unmatched = @($Literals | Where-Object { -not @(Get-RequiredScopePattern -Uri $_ -Write $false).Count })
+            $Unexplained = @($Unmatched | Where-Object { $_ -notin $Exceptions.Uri })
+            $Stale = @($Exceptions | Where-Object { $_.Uri -notin $Literals })
+            $NowMatched = @($Exceptions | Where-Object { $_.Uri -in $Literals -and $_.Uri -notin $Unmatched })
+
+            $Unexplained | Should -BeNullOrEmpty -Because (
+                'every Graph literal must match an endpoint rule, or be a named computed path; add a rule for the path, or name the literal with its reason. Unmatched: {0}' -f ($Unexplained -join ' | '))
+            $Stale.Uri | Should -BeNullOrEmpty -Because (
+                'an exception that names no literal the scan derives is stale; remove it: {0}' -f ($Stale.Uri -join ' | '))
+            $NowMatched.Uri | Should -BeNullOrEmpty -Because (
+                'an exception that a rule now matches is stale; remove it: {0}' -f ($NowMatched.Uri -join ' | '))
         }
     }
 }

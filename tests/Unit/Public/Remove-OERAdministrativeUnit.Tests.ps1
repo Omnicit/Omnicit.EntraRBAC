@@ -190,7 +190,7 @@ Describe 'Remove-OERAdministrativeUnit ambiguous display name' {
         Remove-OERAdministrativeUnit -DisplayName 'Dup' -Confirm:$false -WarningAction SilentlyContinue `
             -ErrorAction SilentlyContinue -ErrorVariable Err
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'DELETE' }
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AdministrativeUnitResolveFailed,Remove-OERAdministrativeUnit' }).Count | Should -Be 1
         $Reported = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AdministrativeUnitResolveFailed,Remove-OERAdministrativeUnit' })[0]
         $Reported.Exception.Message | Should -Match '11111111-1111-1111-1111-111111111111'

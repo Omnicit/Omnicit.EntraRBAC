@@ -70,7 +70,7 @@ Describe 'Get-OERAccessPackageResourceRole' {
         $Result | Should -BeNullOrEmpty
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,Get-OERAccessPackageResourceRole' }).Count |
             Should -Be 1
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 
     Context 'ResourceDisplayName join against the catalog resources' {
@@ -122,7 +122,7 @@ Describe 'Get-OERAccessPackageResourceRole' {
 
         It 'reads the catalog resources once, keyed by the package catalog id' {
             Get-OERAccessPackageResourceRole -AccessPackage 'AP-Sales' | Out-Null
-            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -ParameterFilter {
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly -ParameterFilter {
                 $Catalog -eq 'cat-1'
             }
         }

@@ -80,6 +80,51 @@ Adding `-Exactly` at zero is harmless and clearer, but justifying it by calling 
 vacuously true is simply wrong -- that false justification was written into two test comments before
 being caught on 2026-09-21, which is why it is recorded here rather than just deleted.
 
+**Which bare `-Times N` assertions mean "exactly N" (Sprint 11 step 15, BL-30).** The trap above is
+only a defect where the test means exactly N, and many `-Times 1` assertions do not: they prove a
+call happened, or happened with particular arguments. So the rule is a heuristic, not a blanket
+`-Exactly`, with one deliberate blanket inside it (scrub guards, below). A *candidate* is a `Should -Invoke` (or `Assert-MockCalled`) with `-Times N`, N a
+literal of 1 or more, and no `-Exactly`, found by an AST walk over `tests/Unit/**/*.Tests.ps1`
+(single-line or multi-line; a `-Times` taking a variable is not a candidate). A candidate is *real*
+(the test means exactly N) when any of these holds, and is otherwise *at least N by intent* and left
+alone:
+
+- the It title, the `-Because` text or a comment within the three lines above names a count
+  ("once", "one", "twice", "two", "exactly", "only", "single", "N times", "no second", "never
+  again", "not again", "a single"). The word has to count calls or objects: a hit such as "single
+  quote" or "only exists on the second page" is not a count;
+- N is the count the scenario itself fixes and the assertion exists to show that no further call
+  happens (a retry, a refusal, an idempotent second call, a cached reuse, one token request per
+  sign-in), and in particular N is the number of piped or listed inputs (one call per input) or of
+  live objects a prune test's mocked state holds: a duplicate would be a double write. A
+  `-ParameterFilter` that only selects the call type (`$Method -eq 'POST'`) does not make such a site
+  an argument check;
+- the shape is the documented one for a bare-throw re-throw scrub guard, `Mock Remove-OERErrorRecord`
+  plus `-Times 1 -Exactly` (first section of this anchor). That extends to every scrub guard
+  (`Should -Invoke Remove-OERErrorRecord -Times N`): a bare count is satisfied by ANY scrub, so
+  another catch's scrub can stand in for this one while this one is deleted. That is the multi-catch
+  trap, and it is why a scrub guard is the one blanket in the rule.
+
+Where the class is not clear from the title, the `-Because` text or a comment, the It body decides,
+and when it is still unclear the site stays at least N: adding `-Exactly` on a guess would pin a
+number nobody chose. Measured on the step's base: 5,985 `Should -Invoke` assertions under
+`tests/Unit`, 703 candidates (682 with N of 1, 15 with 2, 4 with 3, 2 with 5). 171 are real and
+fixed with `-Exactly`: 30 by a named count, 6 by the no-further-call scenario, 16 by one call per
+input or per live object, 3 by the documented bare-throw shape and 116 scrub guards. 532 are left at
+least N: 442 whose filter selects arguments (the URI, the body, a parameter value), 63 with no filter
+that prove a call happened, and 27 whose filter only selects the call type and which prove a call
+happened (the single-input write tests; they are not argument checks). One scrub guard went red
+under a bare `-Exactly` at the same N (`Remove-OERAccessReviewDefinition.Tests.ps1`, the Graph DELETE
+failure test, `Remove-OERErrorRecord -Times 1`, called 2 times by the scenario): the scenario scrubs
+twice, once in the catch around the definition read that decides the scope warning and once in the
+catch around the DELETE, which a bare count cannot tell from one. It was first restored and left, and
+in the final review of the step corrected to `-Times 2 -Exactly`. No other fixed site went red, so
+none of the other 170 had hidden an extra call. The per-site table is in the pull request
+description; the AST scan was a read-only helper kept outside the repository. A new
+`Should -Invoke -Times N` that means exactly N therefore carries `-Exactly` when it is written, and a
+new scrub guard always does: nothing gates it, since the heuristic needs a reader to tell the two
+meanings apart.
+
 **A `-Because` string containing the word "because"** is the same family with a different mechanism:
 the assertion works, the explanation it prints does not.
 `output/RequiredModules/Pester/5.7.1/Pester.psm1` line 8285 formats the reason as
@@ -361,9 +406,23 @@ in the final review of Sprint 8 step 4: a test that mocks `Invoke-OERGraphReques
 `-ErrorAction SilentlyContinue`, passed on Pester 6.2.0 with no hit, while the module's catch
 swallowed 13 "No mock for command" records; on 5.7.1 the same file failed its container on one hit,
 `Invoke-MgGraphRequest` from `Invoke-OERGraphRequest.ps1`. The real transport was reached on
-neither version. This is the inert shape that remains, recorded here and not gated: the remedy is a
-default mock beside every filtered mock, so a call the filters stop matching falls back to it
-instead of throwing.
+neither version. The remedy is a default mock beside every filtered mock, so a call the filters stop
+matching falls back to it instead of throwing. Gated since Sprint 11 step 15 (BL-59) by
+`tests/QA/testhygiene.tests.ps1`, which reads every unit test file statically, importing nothing:
+for each `Mock` carrying `-ParameterFilter`, the SAME script block (the innermost one holding the
+call: an `It`, `BeforeAll` or `BeforeEach` body, a `Context` or `Describe` body, an `InModuleScope`
+block) must also hold a `Mock` of the same command and the same `-ModuleName` text, or none on both,
+without `-ParameterFilter`. A default in an enclosing or a nested block does not count: that is
+stricter than Pester's own fallback, on purpose, and the sites that predate the rule are absorbed by
+a ratchet, a literal table of violations per file in the gate. The table is keyed on `Mock`
+statements only, so an edit of a `Should -Invoke` line moves nothing in it. A count above the table
+is a new violation; a count below it is a fixed site, and the same change lowers the number. A filtered
+`Mock` whose command is a variable, and every splatted `Mock` (a splat can carry the command, the
+`-ModuleName` and the `-ParameterFilter`), cannot be matched by name: each is classed Unresolvable,
+never a violation, and pinned in a second literal table of the gate (file to count; today 2, both in
+`AmbiguousName.Guard.Tests.ps1`), so a new one fails and a removed one lowers the table. Whether a
+filter inside a splat has a default beside it stays a review matter. The first measurement (2026-10-22) found 931 filtered mocks in 324 unit test
+files: 793 without a default in the same block, in 74 files, and 138 with one.
 
 **The traps, measured on PowerShell 7.6 with a throwaway module.**
 
@@ -460,6 +519,30 @@ must carry `NOT-A-REAL-TOKEN` inside the VALUE; `REDACTED` works the same way.
   therefore sound negative proofs -- do not "fix" them, and never justify adding `-Exactly` at zero
   by calling the bare form vacuous.
   `Why: docs/development/rationale.md#bearer-scrub-tests`
+
+### The placeholder register is checked in one number base (Sprint 11 step 15, BL-61)
+
+What changed: before this step the register's checks against itself (overlap between rows, a taken
+row at or above the FREE start) ordered the three characters after `...` as hexadecimal, while the
+usage scan read a range row's bounds as decimal and let it cover only tails of three decimal digits.
+Two readings of one register: a range `...090` - `...100` beside a single row `...0a0` overlapped
+under the first (0xa0 lies between 0x90 and 0x100) and did not under the second, so a register could
+be refused for a collision no placeholder could have, or a collision could pass the one check while
+failing the other.
+
+`Test-DocHygieneSharedCoverage` in `tests/QA/dochygiene.tests.ps1` is now the single reading, and both
+the self-checks and the usage scan ask it: a range covers only three-decimal-digit tails within its
+bounds read as decimal (a range with a letter in a bound covers nothing), and a single row covers
+exactly its own tail, letters included. Two rows overlap when some id is covered by both, and a taken
+row is "at or above the FREE start" when it covers an id the FREE row covers. The numbers the reader
+stores for an id remain the tail read as one hex number, but only as a KEY: it names a tail, so
+`...0aa` and `...abc` have one, and it is compared for equality; the Allocate sentence and the
+outliers are keys too. One consequence is deliberate: a single row with a letter in its tail is never
+at or above the FREE start, since the FREE row does not cover it, so it needs no outlier entry to be
+accepted. The real register's verdicts did not change. The sample register carries the known answer
+(the range `...050` - `...060` beside the single `...05a`), held by the second `It` over the
+register in `dochygiene.tests.ps1`; a copy with the overlap check or the FREE-start check back on
+hex bounds fails it.
 
 ## writeerror-deposit
 
@@ -812,7 +895,8 @@ owner must really call its command, so a rule cannot hold
 over nothing and a stale owner is a failure. Two of those lists were widened by one owner each in
 Sprint 9 step 2, each widening justified in the gate's own text. Every row of the owner table is
 enforced by one `It` that reads the table as a whole (Sprint 10 step 10, BL-101): for each row, no
-caller outside its owners and every owner really calling it, with at least fourteen rows (thirteen
+caller outside its owners and every owner really calling it, with exactly the fourteen commands the
+`It` lists (since Sprint 11 step 15, BL-124 point 5; until then a floor of fourteen, and thirteen
 until Sprint 11 step 6c added the `Get-OERSubscriptionHomeTenant` row and raised the floor with it),
 one row per command (the scan keys its counts on the command, so a second row would replace the
 first one's owners) and a call by its owners found for every row's command. So a row added without an
@@ -829,12 +913,20 @@ stay green: `Register-OERSignInIdentity`, `Get-OERSignInRefusal`, `Get-OERSignIn
 `Get-OERSignInIdentity`, `Resolve-OERTenantDomain`, `Set-OERSessionUncertain` and
 `Get-OERDocumentTenantMismatch` (all thirteen measured, BL-101, each row deleted with a valid row
 added; the fourteenth, Sprint 11 step 6c, deleted from a scratch copy turns its own `It` red, since
-that `It` asserts the call count first). For those seven the row floor is what sees a deletion, and
-a deletion made in the same edit as a new row keeps the count, so nothing sees it. So the floor
-moves with every row added: when Sprint 11 step 6c added the fourteenth row, a floor left at
-thirteen would have let one of those seven rows be deleted unseen, and at fourteen deleting the
-`Get-OERDocumentTenantMismatch` row from a scratch copy turns the whole-table `It` red (mutation
-R1G4 in [#home-tenant-subscriptions](#home-tenant-subscriptions)).
+that `It` asserts the call count first). For those seven the whole-table `It` is what sees a
+deletion. The row floor it used to be saw a deletion only while the count fell: a deletion made in
+the same edit as a new row keeps the count, so nothing saw it, and the floor had to move with every
+row added (when Sprint 11 step 6c added the fourteenth row, a floor left at thirteen would have let
+one of those seven rows be deleted unseen; at fourteen, deleting the
+`Get-OERDocumentTenantMismatch` row from a scratch copy turned the whole-table `It` red, mutation
+R1G4 in [#home-tenant-subscriptions](#home-tenant-subscriptions)). BL-124 point 5 (Sprint 11 step
+15) replaced the floor with an exact set: the sorted command names of the table, compared
+ordinally, must equal the literal list of the fourteen in the `It`, and its message says a row added
+or removed is a rule change that edits that list in the same change. Measured on a scratch copy with
+the `Get-OERSignInRefusal` row removed and a `Checkpoint-OERSignIn` row added (the count stays
+fourteen, and every owner of the new row really calls it): the floor was green on that copy, and the
+exact set is red, naming the row missing from the table and the row missing from the list. The
+duplicate check stays, since a second row for one command would also show as a fifteenth name.
 The per-row `It`s stay and carry each row's reason; a new row still gets one for its explanation,
 but no longer needs one to be enforced.
 `Initialize-OERAuth` reads the latch once, before `Lock-OERSignIn`, to refuse a SIGN-IN under a
@@ -1006,7 +1098,10 @@ names the text of its value, not
 where a variable it names got its value; the guard walk climbs from the site to the top of the file,
 across function and script-block boundaries ("at any depth"), so an `if ($TenantId)` around a nested
 function or a script block guards a site inside it, though that code may run where the test no
-longer holds; it cannot see a splat built outside the function that calls the command (in another
+longer holds; a guard that stands in another function than the site (a caller that tests the tenant
+and hands it to a helper that forwards it unguarded) is not seen, so that site reads as a violation
+and needs an exemption (accepted limit, BL-124 point 6, Sprint 11 step 15, as are the abbreviated
+key, the second variable and the positional binding listed in this paragraph); it cannot see a splat built outside the function that calls the command (in another
 function, or handed in as a parameter), a key merged in from another variable (`$A += $Other`), a
 hashtable literal wrapped in a cast or `[ordered]`, a key or a parameter name built at run time, an
 abbreviated key in a splat (`@{ Tenant = $T }`; an abbreviated parameter is seen), a tenant
@@ -1024,6 +1119,37 @@ switch list reads no `[Alias()]` declared on a switch and no `-WhatIf` or `-Conf
 after either would be read as its value; and a function that reaches a sign-in only through a
 module-qualified call of another module function gets no call edge for that call, so the fixed point
 leaves it out of the set.
+
+**The `requiredscope` endpoint map** (Sprint 11 step 15, BL-138). `tests/QA/requiredscope.tests.ps1`
+holds each cmdlet's declared permissions against a small endpoint map, one rule per Graph path with a
+`Match`, an optional `NotMatch` and a `Read` and `Write` pattern; `Get-RequiredScopePattern` is the one
+place a literal is matched against it, and a `Write` that is an array is several requirements, each
+a separate pattern the per-cmdlet case must find a declared permission for. Two changes. First, the
+authentication context rule matched the whole prefix `identity/conditionalAccess`, so a future
+conditional access policies read would have been satisfied by `AuthenticationContext.Read.All`,
+which Microsoft Learn does not name for it. The rule now matches
+`identity/conditionalAccess/authenticationContextClassReferences` only, and a cautious rule takes every
+other `identity/conditionalAccess` path: a read needs `Policy.Read.All` (Microsoft Learn, "List
+policies", read 2026-10-22: least privileged, delegated and application) and a write needs BOTH
+`Policy.Read.All` and `Policy.ReadWrite.ConditionalAccess` ("Create policy"). The module reads no
+such path today, so the rule changes no cmdlet's table row; the known answers hold it (an
+authentication context read is one rule and `AuthenticationContext.Read.All` satisfies it; a policies
+read is one rule and `AuthenticationContext.Read.All` does not satisfy it; a policies write is two
+requirements). Second, the per-cmdlet case accepts a literal that no rule matches, since such a
+literal asks for nothing, so a deleted rule or a `Match` that drifted left the literal unchecked and
+the table green. An `It` now holds that every Graph URI literal the scan derives (the union of
+`$script:derived[*].GraphUri`, 97 distinct literals when it was written, with a non-vacuity floor of
+95; the same 97 are found per function, so no private function outside every cmdlet's reach holds one)
+matches at least one rule through `Get-RequiredScopePattern`, except an exact list of computed paths:
+today the one literal of `Test-OERDirectoryRoleAssignmentGone`, whose schedule collection is chosen at
+run time. An exception that names no literal, or that a rule now matches, fails too. Its limit: it
+judges the literals the scan derives, and the scan derives only a literal that starts with `v1.0/` or
+`beta/` (or one of the two PIM-for-Groups and role management policy roots), so any other literal, for
+example `"$Base/groups"`, is never derived and not seen at all, and a
+literal is matched by any rule, not by the right one, which the known answers cover for the rules
+they name. Measured on scratch copies: the prefix restored turns the two policies known answers red;
+a deleted `roleDefinitions` rule leaves every other case green and turns only the new `It` red, naming
+its two literals; a stale exception, and one a rule now matches, each turn it red.
 
 Every gate asserts its own non-vacuity (per-root file counts, named control files, catch-clause and
 token counts, region-content checks) so a detection bug fails loudly instead of passing over an
@@ -8283,23 +8409,45 @@ another version would be refused here, never compared as if it were the version 
 package with no manifest at all is left to the file comparison, which names the missing file, as it
 did before this check existed.
 
-**The publish step's idempotence check and the Confirm step keep `Find-PSResource "[$Version]"`.**
-The runner answered that form (run 37913219972 logged "SKIPPING THE PUBLISH" and "Confirmed on the
-Gallery"), and so did PSResourceGet 1.2.0 when measured, so they were left as they are. Under
-PSResourceGet 1.0.1 the same `Find` answers nothing: on a runner carrying 1.0.1 every publish would
-time out in the Confirm step after ten minutes, and a re-run would then try to publish a version that
-is already there, which the Gallery does not accept. Both would fail red, not silently. The bare
-form answers in all three versions measured.
+**The publish step's idempotence check and the Confirm step name the version bare too (Sprint 11
+step 15, BL-118).** Until then they kept `Find-PSResource "[$Version]"`: the runner answered that
+form (run 37913219972 logged "SKIPPING THE PUBLISH" and "Confirmed on the Gallery"), and so did
+PSResourceGet 1.2.0 when measured, so they were left as they were. Under PSResourceGet 1.0.1 the
+same `Find` answers nothing (the table above): on a runner carrying 1.0.1 every publish would time
+out in the Confirm step after ten minutes, and a re-run would then try to publish a version that is
+already there, which the Gallery does not accept. Both would fail red, not silently, but the failure
+was avoidable, since the bare form answers in all three versions measured. Both calls now pass
+`-Version $Version`. The offline suite holds it: the ordinary-merge test reads `find.log`, which the
+`Find-PSResource` stand-in writes (the `-Version` each call was given, as given), and asserts that
+both calls passed the bare version. With the brackets put back in the publish step only, that test
+goes red at once on the log; with them put back in both steps the Confirm step never finds the
+version, and the harness stops it after three minutes.
 
-**The offline suite plays PSGallery under PSResourceGet 1.2.0.** Its `Save-PSResource` stand-in
-refuses a bracketed prerelease with the measured message and saves the bare version, and three tests
-of the stand-in itself hold that model. With the brackets put back in `-Compare`, 27 of the suite's
-42 tests go red, every shape that tags among them. With the version check removed, or moved after
+**The offline suite plays PSGallery under PSResourceGet 1.0.1 for `Find` and 1.2.0 for `Save`.**
+Its `Find-PSResource` stand-in finds nothing for a bracketed prerelease version and exactly that
+version for a bare one (a bracketed STABLE version is unmeasured and is read as the version inside),
+its `Save-PSResource` stand-in refuses a bracketed prerelease with the measured message and saves
+the bare version, and three tests of the Save stand-in and four of the Find stand-in hold that
+model. With the brackets put back in `-Compare`, 27 of the suite's 42 tests go red (the suite as
+it stood when the Save stand-in was written), every shape that tags among them. With the version check removed, or moved after
 the file comparison, the four version-check cases go red: the file comparison still refuses those
 packages, but with its own message, so the tests pin which check refused. Removing either half of
 the check, or comparing without regard to case, turns the cases that half covers red. Reading the
 manifest of a package that has none, or checking a version that was not read, turns the
 missing-manifest test red.
+
+**The recorded paths are cut by `Get-Item`'s `FullName` (Sprint 11 step 15, BL-118).**
+`Get-ArtefactFileHash` records each file's path relative to the version folder, cut from the file's
+`FullName` by the length of a prefix. The prefix came from `Resolve-Path`. Measured on Windows for a
+folder addressed by its 8.3 short path: `Resolve-Path` keeps the short component, the `FullName` of
+the files `Get-ChildItem -Recurse` returns carries the long form, and so does `Get-Item`'s
+`FullName`; a short prefix cut from a long path yields wrong relative names. The prefix is now
+`(Get-Item -LiteralPath ...).FullName`. This hardens, it does not repair: no mode of the script hands
+the function a short path today, since every caller passes the `FullName` of an item
+`Get-ChildItem` returned (long, measured). The all-OS test holds the recorded names exactly as
+they were; the Windows-only test cuts the function out of the script by AST, hands it the short
+path, and goes red against the `Resolve-Path` line (Skipped on a volume that gives the folder no 8.3
+name).
 
 **What was not chosen, and why.**
 
@@ -8341,7 +8489,7 @@ text in `pwsh`, wrapped the way `shell: pwsh` wraps it, against a fake Gallery a
 | The next merge, after a tag step that failed or a 500 nobody re-ran | skips the publish and tags ITS OWN commit over the previous commit's package | refused when its build differs, nothing tagged, the repair in the message |
 | The next merge, byte-identical build | skips the publish, tags that commit too | tags its commit (its build IS the package) |
 | Re-run of only the failed jobs after that | (the tag was already wrong) | refused again, also after the repair tag, also with a release made by hand |
-| Repair tag on the publishing commit, then all jobs re-run | -- | counts up, publishes and tags the refused commit |
+| Repair tag on the publishing commit, then all jobs re-run | -- | expected to count up, publish and tag the refused commit (the offline suite plays the rebuilt artefact; not seen on a real re-run) |
 | Re-run after a preview tag was pushed by hand onto another commit | attached the release to that commit | refused, nothing created, the repair in the message |
 | A rebuild of the published commit on a later day | tagged the right commit with another build's package | refused; the tag by hand on that commit is the whole repair |
 | A read of the Gallery that fails | (no read) | refused, then tags on a re-run that can read |
@@ -8354,8 +8502,11 @@ directory that holds a mutated copy of `.github/` for such a run; it is never se
 **Repair.** For a refused run: push the missing tag by hand onto the commit that published the
 version (`git tag v<version> <commit>` and `git push origin v<version>`), then re-run ALL jobs of
 the newest refused run (it carries the older ones' changes; an older one re-run after it is
-refused against the newer package). Its rebuild counts up from that tag and publishes it as the
-next preview. A preview tag carries a hyphen, so the `Stable Version` ruleset does not cover it.
+refused against the newer package). Its rebuild is EXPECTED to count up from that tag and publish it
+as the next preview, but a re-run of all jobs has not been seen on a real run (see Known limits):
+confirm in the re-run's log that its publish step names the next preview, not the refused version,
+before relying on it; if it names the refused version again, the run is refused again and nothing
+is tagged wrongly. A preview tag carries a hyphen, so the `Stable Version` ruleset does not cover it.
 The run that published can instead be repaired by re-running its own failed job, which matches and
 tags.
 
@@ -8375,6 +8526,13 @@ tags.
 - **The count-up after the repair tag is GitVersion's measured behaviour** (the measured table
   under "The tag after each publish is the mechanism, not bookkeeping"), not something the offline
   suite runs: the suite plays the rebuilt artefact.
+- **A re-run of ALL jobs is unmeasured on a real run.** The repair relies on the re-run's publish
+  job receiving the artefact of the NEW attempt (the artefact download taking the newest attempt's
+  upload), which has never been measured on a real re-run, and on the count-up in the bullet above.
+  The offline suite plays the rebuilt artefact, so it cannot show either. If the re-run were handed
+  the old attempt's artefact, its publish step would name the refused version again and the run
+  would be refused again, with nothing tagged wrongly: the guard fails closed. The refusal message,
+  the workflow comment and CLAUDE.md say to confirm that in the re-run's log first.
 
 #### CLAUDE.md text for the-tag-step-tags-only-the-build-that-was-published
 
@@ -9441,8 +9599,12 @@ calls it for every comparison. The generic arguments of those calls are inferred
 never written out: an explicit type argument on a generic method call (`::OrderBy[object, string](...)`) is
 syntax PowerShell has only since 7.3, which fails to parse under the module's 7.2 floor and with it the whole
 merged module, and no gate runs 7.2 (CI runs a current PowerShell, and PSScriptAnalyzer's compatible syntax
-rule reports nothing for it), so the helper's test file parses the helper's own source and refuses any call
-that carries generic type arguments. Measured offline with plain PowerShell on the development
+rule reports nothing for it), so the helper's test file parses every `.ps1` under `source/` (Sprint 11 step 15,
+BL-157; until then the helper's own source only, though the same syntax in any other file would have failed the
+merged module just as hard) and refuses any call that carries generic type arguments. A parse error counts as a
+finding, and the scan asserts it read as many files as the tree holds and more than 250 (314 today), so a
+partial tree cannot pass. The rest of the 7.2 floor point -- CI runs one current PowerShell only, so nothing runs
+the module on 7.2 -- is closed by reference to GitHub issue #66, which raises the floor. Measured offline with plain PowerShell on the development
 machine, 50,000 texts: about 0.4 s through LINQ and about 7 s through `List.Sort`, and 5,000 texts about 0.8 s
 through `List.Sort` with the comparison inline, and about 1.9 s when it calls a function. Cost if wrong: put the
 comparison inline per file, which costs a second copy and the time above for a group with thousands of
@@ -14495,6 +14657,21 @@ any of them as an orphan when auditing the one-test-file-per-function invariant:
 - `Unit/TestHelpers/OERTransportTripwire.Tests.ps1` -- the transport tripwire's known-answer suite:
   the six names, resolution from the module scope, parameter parity, mock precedence, the record
   and the refusal, a re-import, the `AfterAll` check, the answering runspace and the uninstall.
+
+### Long runs bound by docsync (Sprint 11 step 15, BL-119)
+
+The quote above is what CLAUDE.md said before step 11b and is left as it was.
+`docsync.tests.ps1` also binds the four rows of the Long runs table (what a renewal costs per
+sign-in type) in README's `### Long runs` and the about topic's `LONG RUNS`, word for word. Pipes,
+backticks, bold, links and line wrapping are normalised away first. The about topic's table has two columns at fixed
+positions, so its wrapped label ("Client secret" over "and certificate") is read apart from the text
+column and joined as one label. The one cross-reference, to the SWITCHING TENANTS section, needs case
+folded, since the about topic names a section in capitals and README in a heading's case; the
+normaliser folds every occurrence of the phrase `switching tenants` in a row (it does not tell the
+cross-reference from another use of those two words, so the phrase is compared ignoring case
+wherever it stands), and every other word is compared ordinally. A row missing from either document fails on its own,
+so two documents that both lost a row are not reported as agreeing. Known limit: a Markdown link is
+reduced to its text, so its anchor target is not compared.
 
 ## build-and-test-commands
 

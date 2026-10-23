@@ -37,7 +37,7 @@ Describe 'Add-OERGroupMember' {
     It 'processes multiple principals' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}
         Add-OERGroupMember -Group 'gid-1' -PrincipalId '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333'
-        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 3 -ParameterFilter { $Method -eq 'POST' }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 3 -Exactly -ParameterFilter { $Method -eq 'POST' }
     }
 
     It 'does not POST under -WhatIf' {
@@ -75,11 +75,11 @@ Describe 'Add-OERGroupMember' {
         # distinguish "the cmdlet wrote one error" from "the cmdlet swallowed it silently".
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Request_BadRequest,Add-OERGroupMember' }).Count |
             Should -Be 1
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
-        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -ParameterFilter {
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
             $Body['@odata.id'] -match '11111111'
         }
-        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -ParameterFilter {
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
             $Body['@odata.id'] -match '33333333'
         }
     }
@@ -200,16 +200,16 @@ Describe 'Add-OERGroupMember' {
             Add-OERGroupMember -Group 'role_sec_team' `
                 -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' `
                 -User 'anna.berg@contoso.com' -GroupPrincipal 'Sales Team' -Confirm:$false
-            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 3 -ParameterFilter {
+            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 3 -Exactly -ParameterFilter {
                 $Method -eq 'POST'
             }
-            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 1 -ParameterFilter {
+            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 1 -Exactly -ParameterFilter {
                 $Body['@odata.id'] -eq 'https://graph.microsoft.com/v1.0/directoryObjects/aaaa0000-0000-0000-0000-000000000001'
             }
-            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 1 -ParameterFilter {
+            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 1 -Exactly -ParameterFilter {
                 $Body['@odata.id'] -eq 'https://graph.microsoft.com/v1.0/directoryObjects/bbbb0000-0000-0000-0000-000000000002'
             }
-            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 1 -ParameterFilter {
+            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 1 -Exactly -ParameterFilter {
                 $Body['@odata.id'] -eq 'https://graph.microsoft.com/v1.0/directoryObjects/cccc0000-0000-0000-0000-000000000003'
             }
         }
@@ -231,7 +231,7 @@ Describe 'Add-OERGroupMember' {
                 -PrincipalId 'anna.berg@contoso.com', 'aaaa0000-0000-0000-0000-000000000001' `
                 -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
             $Err.Count | Should -Be 1
-            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 1 -ParameterFilter {
+            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 1 -Exactly -ParameterFilter {
                 $Body['@odata.id'] -eq 'https://graph.microsoft.com/v1.0/directoryObjects/aaaa0000-0000-0000-0000-000000000001'
             }
         }

@@ -100,7 +100,7 @@ Describe 'Remove-OERGroupMember' {
         Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
         Remove-OERGroupMember -Group 'gid-1' -PrincipalId '11111111-1111-1111-1111-111111111111' `
             -Confirm:$false -ErrorAction SilentlyContinue
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 
     Context 'friendly principal input' {
@@ -155,18 +155,18 @@ Describe 'Remove-OERGroupMember' {
             Remove-OERGroupMember -Group 'role_sec_team' `
                 -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' `
                 -User 'anna.berg@contoso.com' -GroupPrincipal 'Sales Team' -Confirm:$false
-            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 3 -ParameterFilter {
+            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 3 -Exactly -ParameterFilter {
                 $Method -eq 'DELETE'
             }
-            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 1 -ParameterFilter {
+            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 1 -Exactly -ParameterFilter {
                 $Method -eq 'DELETE' -and
                 $Uri -eq 'v1.0/groups/gggg0000-0000-0000-0000-00000000000a/members/aaaa0000-0000-0000-0000-000000000001/$ref'
             }
-            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 1 -ParameterFilter {
+            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 1 -Exactly -ParameterFilter {
                 $Method -eq 'DELETE' -and
                 $Uri -eq 'v1.0/groups/gggg0000-0000-0000-0000-00000000000a/members/bbbb0000-0000-0000-0000-000000000002/$ref'
             }
-            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 1 -ParameterFilter {
+            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 1 -Exactly -ParameterFilter {
                 $Method -eq 'DELETE' -and
                 $Uri -eq 'v1.0/groups/gggg0000-0000-0000-0000-00000000000a/members/cccc0000-0000-0000-0000-000000000003/$ref'
             }
@@ -189,7 +189,7 @@ Describe 'Remove-OERGroupMember' {
                 -PrincipalId 'anna.berg@contoso.com', 'aaaa0000-0000-0000-0000-000000000001' `
                 -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
             $Err.Count | Should -Be 1
-            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 1 -ParameterFilter {
+            Should -Invoke Invoke-OERGraphRequest -ModuleName Omnicit.EntraRBAC -Times 1 -Exactly -ParameterFilter {
                 $Method -eq 'DELETE' -and
                 $Uri -eq 'v1.0/groups/gggg0000-0000-0000-0000-00000000000a/members/aaaa0000-0000-0000-0000-000000000001/$ref'
             }

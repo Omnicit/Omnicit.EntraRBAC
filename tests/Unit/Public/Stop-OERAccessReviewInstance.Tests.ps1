@@ -107,7 +107,7 @@ Describe 'Stop-OERAccessReviewInstance' {
         $Result = Stop-OERAccessReviewInstance -Definition 'Q3' -Instance 'i1' -Confirm:$false `
             -ErrorAction SilentlyContinue -ErrorVariable Err
         $Result | Should -BeNullOrEmpty
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,Stop-OERAccessReviewInstance' }).Count |
             Should -Be 1
     }
@@ -133,7 +133,7 @@ Describe 'Stop-OERAccessReviewInstance' {
         $Result = Stop-OERAccessReviewInstance -Definition 'Q3' -Instance 'i1' -Confirm:$false `
             -ErrorAction SilentlyContinue -ErrorVariable Err
         $Result | Should -BeNullOrEmpty
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AccessReviewDefinitionResolveFailed,Stop-OERAccessReviewInstance' }).Count |
             Should -Be 1

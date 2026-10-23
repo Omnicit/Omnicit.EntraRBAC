@@ -140,12 +140,13 @@ Describe 'Get-OEROrderedInventoryEntry (Sprint 11 step 10, BL-121, R-16)' {
         # arguments ([System.Linq.Enumerable]::OrderBy[object, string](...)) is syntax PowerShell has only
         # since 7.3 (about_Calling_Generic_Methods). Under the 7.2 grammar it is an index expression followed
         # by a parenthesis, a parse error, so the whole merged module would fail to load. CI runs a current
-        # PowerShell only and PSScriptAnalyzer's PSUseCompatibleSyntax reports nothing for it, so the helper's
-        # own source is read with the parser instead: no InvokeMemberExpressionAst in it may carry generic
-        # type arguments, and a parser that refuses the file (the 7.2 case) is a finding too. The checker has
-        # a known-answer test of its own, so it cannot pass for nothing.
+        # PowerShell only and PSScriptAnalyzer's PSUseCompatibleSyntax reports nothing for it, so every .ps1
+        # under source/ is read with the parser instead (Sprint 11 step 15, BL-157: it was the helper's own
+        # file alone): no InvokeMemberExpressionAst in any of them may carry generic type arguments, and a
+        # parser that refuses the file (the 7.2 case) is a finding too. The checker has a known-answer test
+        # of its own, so it cannot pass for nothing, and the scan asserts it read every file it should.
         BeforeAll {
-            $script:HelperSourcePath = (Resolve-Path -Path (Join-Path -Path $PSScriptRoot -ChildPath '../../../source/Private/Get-OEROrderedInventoryEntry.ps1')).Path
+            $script:SourceRoot = (Resolve-Path -Path (Join-Path -Path $PSScriptRoot -ChildPath '../../../source')).Path
 
             function script:Get-GenericTypeArgumentUse {
                 param([string]$Path, [string]$Text)
@@ -177,9 +178,21 @@ Describe 'Get-OEROrderedInventoryEntry (Sprint 11 step 10, BL-121, R-16)' {
             @($Inferred).Count | Should -Be 0
         }
 
-        It 'has no method call with explicit generic type arguments, which PowerShell 7.2 cannot parse' {
-            $Uses = Get-GenericTypeArgumentUse -Path $script:HelperSourcePath
-            @($Uses).Count | Should -Be 0 -Because "the module declares PowerShell 7.2 as its floor and an explicit generic type argument on a method call is syntax of 7.3 and later, so the merged module would not load there: $(@($Uses) -join ' | ')"
+        It 'has no method call with explicit generic type arguments in any file under source, which PowerShell 7.2 cannot parse' {
+            $Files = @(Get-ChildItem -Path $script:SourceRoot -Recurse -File -Filter '*.ps1')
+            $Findings = [System.Collections.Generic.List[string]]::new()
+            $Scanned = 0
+            foreach ($File in $Files) {
+                $Scanned++
+                $FileUses = Get-GenericTypeArgumentUse -Path $File.FullName
+                foreach ($Use in $FileUses) {
+                    $Findings.Add("$($File.FullName.Substring($script:SourceRoot.Length + 1)) $Use")
+                }
+            }
+            # Non-vacuity: the scan read every .ps1 the tree holds, and the tree is not a near-empty one.
+            $Scanned | Should -Be @(Get-ChildItem -Path $script:SourceRoot -Recurse -File -Filter '*.ps1').Count
+            $Scanned | Should -BeGreaterThan 250 -Because 'the module holds over three hundred source files, so a smaller count means a partial tree, which is what this floor catches'
+            $Findings.Count | Should -Be 0 -Because "the module declares PowerShell 7.2 as its floor and an explicit generic type argument on a method call is syntax of 7.3 and later, so the merged module would not load there: $($Findings -join ' | ')"
         }
     }
 

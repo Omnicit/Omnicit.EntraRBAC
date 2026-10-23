@@ -78,7 +78,7 @@ Describe 'Convert-ArmHttpException' {
                 Content    = 'Some wrapper text {"code":"BadRequest","message":"Broken."} trailing'
             }
             $null = Convert-ArmHttpException -Response $Response -Path '/subscriptions/x'
-            Should -Invoke Remove-OERErrorRecord -Times 1
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
         }
     }
 

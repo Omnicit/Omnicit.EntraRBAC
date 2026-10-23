@@ -118,7 +118,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy' {
             (-not $Method -or $Method -eq 'GET') -and
             $Uri -ceq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/pol-1?$expand=accessPackage,customExtensionStageSettings($expand=customExtension)'
         }
-        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -ParameterFilter {
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
             $Method -eq 'PUT' -and $Body.accessPackage.id -eq 'ap-99'
         }
     }
@@ -301,7 +301,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy' {
         $Result | Should -BeNullOrEmpty
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,Set-OERAccessPackageAssignmentPolicy' }).Count |
             Should -Be 1
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 
     It 'surfaces a Graph failure as a non-terminating error on the PUT and emits nothing' {
@@ -326,7 +326,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy' {
         $Result | Should -BeNullOrEmpty
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Request_BadRequest,Set-OERAccessPackageAssignmentPolicy' }).Count |
             Should -Be 1
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 }
 

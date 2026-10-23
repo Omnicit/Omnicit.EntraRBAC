@@ -92,7 +92,7 @@ Describe 'Resolve-OERReviewerScope ambiguity handling' {
             $R.FailedErrorId | Should -Be 'AmbiguousGroupName'
             $R.FailedMessage | Should -Match 'aaa-1'
             $R.FailedMessage | Should -Match 'bbb-2'
-            Should -Invoke Remove-OERErrorRecord -Times 1
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
         }
     }
 

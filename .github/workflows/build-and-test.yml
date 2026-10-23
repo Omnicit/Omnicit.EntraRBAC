@@ -457,12 +457,12 @@ jobs:
           # IDEMPOTENCE. A re-run after a partial failure must be able to carry on instead of dying
           # on a version that is already out there: a publish that succeeded while the tag step did
           # not, or an upload the Gallery accepted while answering with an error -- on 2026-10-08 it
-          # answered 500 to an upload that had arrived, and this step failed. "[$Version]" asks for
-          # exactly this version, and so would the bare version: PSResourceGet reads a bare version
-          # as exact, not as "at least this one" (measured on 2026-10-09). Find answered the
-          # bracketed form here in run 37913219972, and under PSResourceGet 1.2.0 when measured;
-          # Save did not, which is why PublishArtefact.ps1 -Compare names the version bare. See
-          # docs/development/rationale.md#publish-on-merge.
+          # answered 500 to an upload that had arrived, and this step failed. The version is named
+          # BARE: PSResourceGet reads a bare version as exact, not as "at least this one", in all
+          # three versions measured (0.5.22, 1.0.1 and 1.2.0, on 2026-10-09). The bracketed form
+          # "[$Version]", which this step used until Sprint 11 step 15, found nothing under 1.0.1
+          # and Save refused it under 1.0.1 and 1.2.0, which is why PublishArtefact.ps1 -Compare
+          # names the version bare too. See docs/development/rationale.md#publish-on-merge.
           #
           # A version that is already there is NOT proof that this commit published it. When no tag
           # follows a publish, nothing moves GitVersion's base, so the NEXT merge to main computes
@@ -470,7 +470,7 @@ jobs:
           # cannot be republished. Except on a v-tag run, whether this commit may then be tagged is
           # the tag step's call: it compares the package on the Gallery with this run's tested
           # build first.
-          $Existing = @(Find-PSResource -Name $ModuleName -Repository 'PSGallery' -Version "[$Version]" -Prerelease -ErrorAction SilentlyContinue)
+          $Existing = @(Find-PSResource -Name $ModuleName -Repository 'PSGallery' -Version $Version -Prerelease -ErrorAction SilentlyContinue)
 
           if ($Existing.Count -gt 0) {
               Write-Host "SKIPPING THE PUBLISH: $ModuleName $Version is already on the PowerShell Gallery, and a version cannot be republished or deleted. Except on a v-tag run, the tag step tags $env:GITHUB_SHA only if the package there is this run's tested build."
@@ -496,7 +496,7 @@ jobs:
 
           while ($true) {
               $Attempt++
-              $Found = @(Find-PSResource -Name $ModuleName -Repository 'PSGallery' -Version "[$Version]" -Prerelease -ErrorAction SilentlyContinue)
+              $Found = @(Find-PSResource -Name $ModuleName -Repository 'PSGallery' -Version $Version -Prerelease -ErrorAction SilentlyContinue)
               if ($Found.Count -gt 0) { break }
               if ((Get-Date) -ge $Deadline) { break }
               Write-Host "Attempt $Attempt : $Version is not indexed yet. Waiting 20 seconds."
@@ -539,7 +539,11 @@ jobs:
         #     jobs; a later merge whose build is byte-identical (normally: no change under source/
         #     or in CHANGELOG.md, built the same day) IS the package, and is tagged;
         #   - the repair is the tag pushed by hand onto the commit that published the version,
-        #     then a re-run of ALL jobs of the newest refused run, which counts up and publishes it.
+        #     then a re-run of ALL jobs of the newest refused run, which is EXPECTED to rebuild,
+        #     count up from that tag and publish the next preview. That has not been seen on a
+        #     real run: the offline suite plays the rebuilt artefact. If the re-run's publish
+        #     step names the refused version again, the run is refused again and nothing is
+        #     tagged wrongly.
         #
         # The comparison runs BEFORE the release lookup, so a run whose build is not the package
         # stays red even when a release for the tag already exists on another commit. So does a

@@ -118,7 +118,7 @@ Describe 'Set-OERConfiguration' {
 
         Set-OERConfiguration -TenantAlias broken -Defaults @{ ActivationMaxHours = 4 } -BasePath $Base `
             -ErrorAction SilentlyContinue | Out-Null
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
     }
 
     It 'leaves an unparsable profile byte-unchanged even when -TenantId is supplied' {

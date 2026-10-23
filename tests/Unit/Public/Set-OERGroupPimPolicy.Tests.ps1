@@ -29,8 +29,8 @@ Describe 'Set-OERGroupPimPolicy' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}
         $Result = Set-OERGroupPimPolicy -Id 'gid-1' -ActivationMaxHours 8 -Confirm:$false
         $Result.Applied | Should -BeTrue
-        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -ParameterFilter { $Method -eq 'PATCH' }
-        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -ParameterFilter { $Method -eq 'PATCH' -and $Uri -match 'Expiration_EndUser_Assignment' }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PATCH' }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PATCH' -and $Uri -match 'Expiration_EndUser_Assignment' }
     }
 
     It 'resolves the owner policy id when -AccessType owner' {
@@ -373,9 +373,9 @@ Describe 'Set-OERGroupPimPolicy' {
             $Result.ActivationMaxHours | Should -Be 8
             $Result.ActiveEnabledRules | Should -Contain 'MultiFactorAuthentication'
             $Result.Applied | Should -BeTrue
-            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -ParameterFilter { $Uri -match 'Expiration_EndUser_Assignment' }
-            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -ParameterFilter { $Uri -match 'Enablement_Admin_Assignment' }
-            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 2
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -match 'Expiration_EndUser_Assignment' }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -match 'Enablement_Admin_Assignment' }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 2 -Exactly
         }
 
         It 'sends nothing and reports nothing when every rule is declined via -WhatIf' {

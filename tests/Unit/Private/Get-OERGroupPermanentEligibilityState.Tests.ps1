@@ -144,7 +144,7 @@ Describe 'Get-OERGroupPermanentEligibilityState' {
             $Caught | Should -Not -BeNullOrEmpty
             $Caught.FullyQualifiedErrorId | Should -Match '^Authorization_RequestDenied'
 
-            Should -Invoke Remove-OERErrorRecord -Times 1
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
         }
     }
     It 'still reports PermanentAllowed from the rule when the read succeeds' {

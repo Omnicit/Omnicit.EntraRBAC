@@ -247,7 +247,7 @@ Describe 'New-OERAccessReviewDefinition' {
             -Recurrence OneTime -StartDate ([datetime]'2026-07-05') `
             -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
         $Result | Should -BeNullOrEmpty
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,New-OERAccessReviewDefinition' }).Count |
             Should -Be 1
     }
@@ -454,7 +454,7 @@ Describe 'New-OERAccessReviewDefinition ambiguous reviewer group' {
         # An ambiguity is a bad argument, not a missing object.
         $Reported.CategoryInfo.Category | Should -Be 'InvalidArgument'
         # The mandatory bearer-hygiene line inside the helper's resolver catch.
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -ParameterFilter { $Method -eq 'POST' } -Times 0
     }
 

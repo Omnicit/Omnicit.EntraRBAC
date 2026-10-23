@@ -121,7 +121,7 @@ Describe 'Remove-OERGroupEligibility' {
         Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
         Remove-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid -Confirm:$false `
             -WarningAction SilentlyContinue -ErrorAction SilentlyContinue | Out-Null
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
     }
 
     Context 'friendly principal input' {

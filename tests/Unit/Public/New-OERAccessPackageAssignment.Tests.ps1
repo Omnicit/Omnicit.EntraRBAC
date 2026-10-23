@@ -163,7 +163,7 @@ Describe 'New-OERAccessPackageAssignment' {
         $Result | Should -BeNullOrEmpty
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Request_BadRequest,New-OERAccessPackageAssignment' }).Count |
             Should -Be 1
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
     }
 
     It 'binds -AccessPackage and -Policy from a piped real Assignment object, never the assignment''s own Id' {

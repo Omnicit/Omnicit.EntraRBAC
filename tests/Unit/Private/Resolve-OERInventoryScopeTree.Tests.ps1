@@ -103,7 +103,7 @@ Describe 'Resolve-OERInventoryScopeTree' {
             $Tree.Scopes | Should -Contain '/providers/Microsoft.Management/managementGroups/Platform'
             $Tree.Scopes | Should -Contain '/subscriptions/2222'
         }
-        Should -Invoke -ModuleName $script:moduleName Get-OERSubscription -Times 1 -ParameterFilter { $ManagementGroup -eq 'Platform' }
+        Should -Invoke -ModuleName $script:moduleName Get-OERSubscription -Times 1 -Exactly -ParameterFilter { $ManagementGroup -eq 'Platform' }
         Should -Invoke -ModuleName $script:moduleName Get-OERManagementGroup -Times 1 -Exactly -ParameterFilter { $Name -eq 'Platform' }
         Should -Invoke -ModuleName $script:moduleName Get-OERManagementGroupList -Times 0
     }

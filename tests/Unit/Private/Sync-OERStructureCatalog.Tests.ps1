@@ -362,7 +362,7 @@ Describe 'Sync-OERStructureCatalog' {
             Mock Remove-OERErrorRecord { }
             $r = @(Invoke-SyncCatViaCaller -Item ([PSCustomObject]@{ displayName = 'CAT-IT' }) -ErrorAction SilentlyContinue)
             ($r | Where-Object Action -eq 'Failed').Count | Should -BeGreaterThan 0
-            Should -Invoke Remove-OERErrorRecord -Times 1
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
         }
     }
 
@@ -493,7 +493,7 @@ Describe 'Sync-OERStructureCatalog' {
                 Mock Initialize-OERAuth { }
                 $Item = '{ "displayName": "CAT-IT", "resources": [] }' | ConvertFrom-Json
                 $null = Invoke-SyncCatViaCaller -Item $Item -Prune
-                Should -Invoke Remove-OERCatalogResource -Times 2
+                Should -Invoke Remove-OERCatalogResource -Times 2 -Exactly
             }
         }
     }

@@ -114,7 +114,7 @@ Describe 'New-OERActiveRoleAssignment' {
             Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
             $null = New-OERActiveRoleAssignment -Role 'Reader' -User 'anna@contoso.com' -Subscription 'Prod' -DurationDays 30 -Confirm:$false -ErrorAction SilentlyContinue
             Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId -Times 1
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         }
     }
     Context 'validation' {

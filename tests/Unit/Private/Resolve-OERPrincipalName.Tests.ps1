@@ -77,7 +77,7 @@ Describe 'Resolve-OERPrincipalName' {
             Mock Invoke-OERGraphRequest { throw 'transport failure' }
             Mock Remove-OERErrorRecord { }
             $null = Resolve-OERPrincipalName -Id @('u-1')
-            Should -Invoke Remove-OERErrorRecord -Times 1
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
         }
     }
 

@@ -176,8 +176,14 @@ function Get-ArtefactFileHash
         Paths are recorded RELATIVE to the version folder and with forward slashes, so the record a
         Linux runner writes is the record a Linux runner reads, and neither carries a
         runner-specific absolute prefix that would make every comparison fail for the wrong reason.
+
+        The prefix is Get-Item's FullName, never Resolve-Path's Path: for a folder addressed by its
+        8.3 short name (RUNNER~1) Resolve-Path keeps the short component, while the FullName of the
+        files Get-ChildItem returns carries the long one, and cutting a long path by a short
+        prefix's length yields wrong relative paths. Get-Item's FullName is the long form (measured
+        on Windows for a short path).
     #>
-    $Prefix = (Resolve-Path -LiteralPath $VersionFolder).Path.TrimEnd('/', '\')
+    $Prefix = (Get-Item -LiteralPath $VersionFolder).FullName.TrimEnd('/', '\')
 
     Get-ChildItem -LiteralPath $VersionFolder -Recurse -File |
         ForEach-Object -Process {
@@ -521,7 +527,7 @@ if ($Differences.Count -gt 0)
         ('So it was published from another commit, or from another build of this one, and tagging {0} as v{1} would name a package that does not hold this commit''s build. {2}' -f $Sha, $Version, $Nothing)
         ("To repair: find the run on main that published {0} -- its 'Publish to the PowerShell Gallery' step logged 'Publishing {1} {0}', not 'SKIPPING THE PUBLISH' -- and push the tag onto that run's commit by hand: git tag v{0} <commit>, then git push origin v{0}." -f $Version, $ModuleName)
         ("If v{0} already exists on another commit -- pushed there by mistake -- delete it first with git push origin :refs/tags/v{0}." -f $Version)
-        ('Then re-run ALL jobs of this run, not only the failed ones: the new build counts up from that tag and publishes {0} as the next preview. Re-running only the failed jobs reuses this run''s build, which carries {1}, and is refused again. If several runs were refused, re-run all jobs of the newest one only: it carries the older ones'' changes, and an older one re-run after it is refused against the newer package.' -f $Sha, $Version)
+        ('Then re-run ALL jobs of this run, not only the failed ones: the new build is expected to count up from that tag and publish {0} as the next preview, but that has not been seen on a real re-run, so confirm in the re-run''s log that its publish step names the next preview and not {1} before relying on it. If it names {1} again, the run is refused again and nothing is tagged wrongly. Re-running only the failed jobs reuses this run''s build, which carries {1}, and is refused again. If several runs were refused, re-run all jobs of the newest one only: it carries the older ones'' changes, and an older one re-run after it is refused against the newer package.' -f $Sha, $Version)
         ('If the commit that published {0} is {1} itself, the tag by hand is the whole repair.' -f $Version, $Sha)
     ) -join ' '
 

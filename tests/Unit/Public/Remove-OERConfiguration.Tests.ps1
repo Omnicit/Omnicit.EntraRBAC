@@ -80,6 +80,6 @@ Describe 'Remove-OERConfiguration' {
         New-Item -ItemType Directory -Path $Base -Force | Out-Null
         Remove-OERConfiguration -TenantAlias '..\..\evil' -BasePath $Base -Confirm:$false `
             -ErrorAction SilentlyContinue
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
     }
 }

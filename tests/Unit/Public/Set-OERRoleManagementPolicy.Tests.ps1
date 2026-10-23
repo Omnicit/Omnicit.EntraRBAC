@@ -889,6 +889,6 @@ Describe 'Set-OERRoleManagementPolicy bearer-token hygiene' {
         Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
         $null = Set-OERRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol1' -AllowPermanentEligibility $true -Confirm:$false -ErrorAction SilentlyContinue
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -ParameterFilter { $Method -eq 'PATCH' }
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
     }
 }

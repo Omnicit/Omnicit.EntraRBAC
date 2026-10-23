@@ -71,7 +71,7 @@ Describe 'Add-OERGroupEligibility' {
         $Result = Add-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid `
             -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
         $Result | Should -BeNullOrEmpty
-        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Request_BadRequest,Add-OERGroupEligibility' }).Count |
             Should -Be 1
     }

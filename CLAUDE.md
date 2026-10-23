@@ -137,7 +137,9 @@ tenant object ids, tenant domains outside an allowlist, non-documentation email 
 credentials in tracked files, and no angle bracket GitHub would render as a tag in tracked
 Markdown); `docsync.tests.ps1` (binds `README.md` to the about topic, and both to the manifest's
 cmdlet count); and `testhygiene.tests.ps1` (every unit test file that imports the module installs,
-checks and uninstalls the transport tripwire; read statically, importing nothing).
+checks and uninstalls the transport tripwire, and no NEW `Mock` with `-ParameterFilter` lacks a default
+`Mock` of the same command in the same block -- the older sites are held by a per-file ratchet that may
+only fall; read statically, importing nothing).
 
 **`dochygiene.tests.ps1` applies TWO object-id rules, split by what the file is.** `docs/` and
 `specs/`: a GUID is prose and must be a `00000000-0000-0000-0000-0000000000NN` placeholder.
@@ -272,8 +274,11 @@ publish it.
     of that same run (it reuses the tested artefact, matches and tags).
   - **Run refused** (a later merge, same version, different build; a byte-identical build IS the
     package and is tagged): push the missing tag by hand onto the commit that published the
-    version, then re-run ALL jobs of the newest refused run (it counts up from that tag and
-    publishes it); re-running only its failed jobs reuses its own build and is refused again. The
+    version, then re-run ALL jobs of the newest refused run. That is EXPECTED to rebuild, count up
+    from the tag and publish the next preview, but it has not been seen on a real run: confirm in
+    the re-run's log that its publish step names the next preview, not the refused version, before
+    relying on it (naming the refused version again means the run is refused again, nothing tagged
+    wrongly). Re-running only its failed jobs reuses its own build and is refused again. The
     refusal names the steps. A preview tag on the wrong commit is named in either refusal -- by
     the tag check when the run's own build is the package, and in the comparison's repair text
     otherwise: delete it with `git push origin :refs/tags/v<version>` before tagging the right
@@ -1020,7 +1025,8 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   in:** a group's `members`, `owners`, `eligibility` and an administrative unit's `members`.
   `Get-OERInventoryGroup` orders the three group lists, `Get-OERInventory` the unit members; never
   order such a list elsewhere. Its LINQ calls take generic arguments by INFERENCE, never written out;
-  nothing but the helper's own test (an AST check of its file) would show a written one.
+  nothing but the helper's own test (an AST check of every `.ps1` under `source/`) would show a
+  written one.
   `Why: docs/development/rationale.md#export-group-selection`
 - **`Read-OERGroupCollection` is the single owner of the three per-group collection reads
   `Get-OERGroup` attaches and the inventory's group reader uses** (members, owners, PIM eligibility)
@@ -1295,6 +1301,11 @@ only if a `Justification` string is provided. Never suppress a rule that hides a
 - **A `Mock -ModuleName` covers only calls made from inside the module.** A command the test body
   calls itself runs for real unless it has its own test-scope `Mock`. No test may reach the real
   profile directory: a test of a `-BasePath` default intercepts `Test-Path` in module scope instead.
+  `Why: docs/development/rationale.md#bearer-scrub-tests`
+- **A `Mock` with `-ParameterFilter` has a default `Mock` of the same command and `-ModuleName`,
+  without a filter, in the SAME script block.** A call the filters stop matching throws on Pester 6.x
+  inside module code, where a catch can swallow it. `tests/QA/testhygiene.tests.ps1` holds it with a
+  per-file ratchet of the older sites: add the default mock, and lower the table when you fix a site.
   `Why: docs/development/rationale.md#bearer-scrub-tests`
 - **Pin `-ErrorAction` on any call whose non-terminating error the test observes or has to survive**
   (module code reads the GLOBAL `$ErrorActionPreference`; a test-local one does not pin it).

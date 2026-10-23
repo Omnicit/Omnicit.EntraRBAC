@@ -1804,7 +1804,7 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
         # and the scope silently contributes nothing -- exactly the defect.
         Mock -ModuleName $script:moduleName Get-OERInventory {
             param($Include, $Scope, $AllRolesAtScope, $ErrorAction)
-            $Ea = if ($ErrorAction) { $ErrorAction } else { 'Continue' }
+            $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
             Write-Error 'non-terminating failure' -ErrorAction $Ea
         }
         $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'c') -Include RoleAssignments `
@@ -1882,7 +1882,7 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
         # body without one, so the mock could not honour it and the test would prove nothing.
         Mock -ModuleName $script:moduleName Get-OERConfiguration {
             param($TenantAlias, $BasePath, $ErrorAction)
-            $Ea = if ($ErrorAction) { $ErrorAction } else { 'Continue' }
+            $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
             Write-Error -Message "Tenant Profile 'broken' could not be parsed and was skipped." `
                 -ErrorId 'TenantProfileMalformed' -Category InvalidData -ErrorAction $Ea
         }
@@ -2024,7 +2024,7 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
         # group read reports its own unread collection beside it, through the reader's Unread list.
         Mock -ModuleName $script:moduleName Get-OERInventory {
             param($Include, $ErrorAction)
-            $Ea = if ($ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
+            $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
             Write-Error -Message 'This inventory is PARTIAL: administrativeUnits/AU-One scopedRoles could not be read.' `
                 -ErrorId 'InventoryPartial' -Category LimitsExceeded `
                 -TargetObject 'administrativeUnits/AU-One/scopedRoles' -ErrorAction $Ea
@@ -9420,7 +9420,7 @@ Describe 'Export-OERInventory (the inner Get-OERInventory partial reaches the er
         Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
         Mock -ModuleName $script:moduleName Get-OERInventory {
             param($Include, $ErrorAction)
-            $Ea = if ($ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
+            $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
             Write-Error -Message 'This inventory is PARTIAL: administrativeUnits/AU-One scopedRoles could not be read.' `
                 -ErrorId 'InventoryPartial' -Category LimitsExceeded -TargetObject 'administrativeUnits/AU-One/scopedRoles' -ErrorAction $Ea
             $Inv = [PSCustomObject]@{

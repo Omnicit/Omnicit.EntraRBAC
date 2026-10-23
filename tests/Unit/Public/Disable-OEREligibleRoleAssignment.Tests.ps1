@@ -204,7 +204,7 @@ Describe 'Disable-OEREligibleRoleAssignment' {
             Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
             Disable-OEREligibleRoleAssignment -Role 'Reader' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' `
                 -Scope '/subscriptions/s1' -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         }
     }
 
