@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No changes to the module since 1.3.1. A preview published from this point differs from 1.3.1 only
+in documentation, tests or the build.
+
+## [1.3.1] - 2026-10-23
+
 More failed inventory reads are now reported. `Get-OERInventory` names a failed role assignment or
 role management policy read as unread through `InventoryPartial` (a `-CommonRoles` role it cannot
 read is still skipped with a warning). An empty, `$null` or white space `-Scope`, `-Subscription`
