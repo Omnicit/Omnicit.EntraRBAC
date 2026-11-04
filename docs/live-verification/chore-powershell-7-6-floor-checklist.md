@@ -101,7 +101,9 @@ gate runs.
 
 Result:
 
-### 1. The module imports on PowerShell 7.6
+## 1. The module imports on PowerShell 7.6
+
+### 1.1. Import-Module of the build in a fresh pwsh -NoProfile
 
 - [ ] **1.1** In a fresh `pwsh -NoProfile` on 7.6, `Import-Module` of the build's manifest succeeds, and the loaded module declares `PowerShellVersion` 7.6.
 
@@ -255,7 +257,7 @@ $All = @(Connect-OER -TenantId $Cfg.UserDomain -ClientId $Cfg.AppId -Certificate
 $Watch.Stop()
 $Ids = @($All | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { ([string]$_.FullyQualifiedErrorId -split ',')[0] })
 $S = & $Module { $script:_OERAuthState }
-Write-OerLiveStep ("3.1 Connect-OER by domain: errors: {0}; lookups: {1}; parameters bound: {2}; token requests: {3}; the Graph token was issued for the test tenant: {4}; the client is oer-live-cc: {5}; the service principal is the token's signed-in object: {6}; seconds: {7}" -f
+Write-OerLiveStep ("3.1 Connect-OER by domain: errors: {0}; lookups: {1}; parameters bound: {2}; token requests: {3}; the Graph token was issued for the test tenant: {4}; the client is oer-live-cc: {5}; the state carries a signed-in object id: {6}; seconds: {7}" -f
     $(if ($Ids) { $Ids -join ', ' } else { 'none' }), $global:S122Lookup, $global:S122Params, $global:S122Token,
     ([string]$S.TokenTenantId -eq $Cfg.TenantId), ([string]$S.ClientId -eq $Cfg.AppId), [bool]$S.SignedInObjectId,
     $Watch.Elapsed.TotalSeconds.ToString('0.00', [cultureinfo]::InvariantCulture))
@@ -291,15 +293,15 @@ $Cfg = Import-OerLiveConfig -Prefix 'oer-s122-' -ConfigDirectory $VaultDir
 $Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s122'
 if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
 Connect-OerLive
-$Left = @(Find-OerLivePrefixed)
-Write-OerLiveStep "T.1 objects carrying the prefix: $($Left.Count)"
+$Left = @(Find-OerLivePrefixed -Quiet)
+Write-OerLiveStep "T.1 objects carrying the prefix: $(@($Left | Where-Object { $_.Kind -ne 'unread' }).Count); collections that could not be read: $(@($Left | Where-Object { $_.Kind -eq 'unread' }).Count)"
 Disconnect-OerLive
 Write-OerLiveStep "T.1 the module holds a session after Disconnect-OerLive: $([bool](& (Get-Module -Name Omnicit.EntraRBAC) { $script:_OERAuthState }))"
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
 Write-OerLiveStep "T.1 main clone: branch $(([string]($List | Where-Object { $_ -like 'branch *' -or $_ -eq 'detached' } | Select-Object -First 1)) -replace '^branch refs/heads/', '')"
 ```
 
-**Expect:** `objects carrying the prefix: 0`; `the module holds a session after Disconnect-OerLive:
+**Expect:** `objects carrying the prefix: 0; collections that could not be read: 0`; `the module holds a session after Disconnect-OerLive:
 False`; the main clone on `main`.
 **Failure looks like:** a count above 0 -- this file creates nothing, so an object with the prefix is
 not this run's: STOP.
