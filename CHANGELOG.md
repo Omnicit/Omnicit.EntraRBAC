@@ -14,6 +14,13 @@ tenant named by domain is looked up before any token is requested, and that look
 after 30 seconds when the authority sends its response headers and then stalls, failing with
 `TenantResolutionFailed` instead of waiting until it is interrupted.
 
+A read that fails is now an error record and leaves `$null` where an empty value stood; the object
+is still returned: `RoleAssignments` (`Get-OERResource`, `Get-OERResourceGroup`), `Stages` and
+`Decisions` (`Get-OERAccessReviewInstance`), `RoleName` (`Get-OERDirectoryRoleManagementPolicy`).
+`Get-OERRoleManagementPolicy` and `Set-OERRoleManagementPolicy` publish a failed lookup as itself;
+`RoleDefinitionNotFound` and `PolicyNotFound` mean a real miss. A role `-CommonRoles` cannot read is
+an error, not a warning.
+
 ## [1.3.1] - 2026-10-23
 
 More failed inventory reads are now reported. `Get-OERInventory` names a failed role assignment or
