@@ -944,9 +944,10 @@ remembered ones -- a second identity builder there is the drift the rule exists 
 callers get no row: the snapshot is a value a command keeps in its own variable, never a gate in
 front of a request. The tenant lookup (Sprint 9 step 3, BL-12) is held tighter than an owner rule
 alone: `Resolve-OERTenantDomain` holds exactly one `Invoke-RestMethod` call, with no splat, and that
-call names only `-Uri`, `-Method`, `-TimeoutSec` and `-ErrorAction`. Two lists read the call's own
+call names only `-Uri`, `-Method`, `-TimeoutSec`, `-OperationTimeoutSeconds` and `-ErrorAction`
+(the fourth added in Sprint 12 step 2, with the 7.6 floor). Two lists read the call's own
 parameter names: a denied list of every credential-carrying parameter of the cmdlet (`-Headers`,
-`-Authentication`, `-Token`, `-Credential` and the rest), and an allowed list of those four, since
+`-Authentication`, `-Token`, `-Credential` and the rest), and an allowed list of those five, since
 PowerShell binds an abbreviated name (`-Head` for `-Headers`) and a parameter added to the cmdlet
 later is on no list. A known-answer table of eleven miniatures runs that checker in every run. The
 session-uncertain marker (Sprint 9 step 3, A10) is held the same way: `$script:_OERSessionUncertain`
@@ -1198,7 +1199,8 @@ statically, importing nothing).
   `Get-OERDocumentTenantMismatch` only in `Invoke-OERStructure`, and
   `Get-OERSubscriptionHomeTenant` only in `Resolve-OERInventoryScopeTree`, `Invoke-OERStructure` and
   `Get-OERInventory`, every listed owner really calling it; the tenant lookup's one `Invoke-RestMethod` call carrying only
-  `-Uri`, `-Method`, `-TimeoutSec` and `-ErrorAction`, with no splat; `$script:_OERSessionUncertain`
+  `-Uri`, `-Method`, `-TimeoutSec`, `-OperationTimeoutSeconds` and `-ErrorAction`, with no splat;
+  `$script:_OERSessionUncertain`
   read and written only in `Set-OERSessionUncertain`, and in `Initialize-OERAuth` exactly three
   `Set-OERSessionUncertain` calls -- the statement directly after the `Lock-OERSignIn` assignment and
   the statement directly after each `Register-OERSignInIdentity`; the name `ReclaimGraphSession`
@@ -4358,8 +4360,8 @@ through `Resolve-OERTenantDomain`, the single owner of the module's one network 
 Microsoft Graph and Azure Resource Manager transports, and its one deliberately unauthenticated
 call. It sends one GET of `{AuthorityHost}{domain}/v2.0/.well-known/openid-configuration` to the
 cloud's Microsoft Entra ID authority, the host read from `Get-OERCloudEndpoint`, through
-`Invoke-RestMethod` with `-Uri`, `-Method Get`, `-TimeoutSec 30` and `-ErrorAction Stop` and nothing
-else: no `Authorization` header and no credential of any kind. (The ARM wrapper's documented
+`Invoke-RestMethod` with `-Uri`, `-Method Get`, `-TimeoutSec 30`, `-OperationTimeoutSeconds 30` and
+`-ErrorAction Stop` and nothing else: no `Authorization` header and no credential of any kind. (The ARM wrapper's documented
 no-auth-state fallback also sends a request without a token, by accident of state rather than by
 design, which is why this is the one DELIBERATELY unauthenticated call.) It reads the tenant ID
 from the first path segment of the document's `issuer`. The lookup runs after the cached return -- a session that
@@ -4429,9 +4431,17 @@ tenant (A13), both under [Requested tenant vs granted tenant](#requested-tenant-
 - PowerShell 7.4 and later bind `-TimeoutSec` to `ConnectionTimeoutSeconds` (MEASURED on 7.6.6 for
   the lookup helper's commit: the cmdlet resolves the name to that parameter), so there the 30-second
   bound covers establishing the connection.
-- **A response whose body stalls after the headers is NOT bounded (BL-93, MEASURED 2026-10-21, decision
-  A28: a documented known limit, accepted as known; no bound, no new parameter).** pwsh 7.6.6 on Windows, the call
-  exactly as written (`-Uri`, `-Method Get`, `-TimeoutSec 30`, `-ErrorAction Stop`), each case in its
+- **Sprint 12 step 2: the call now also carries `-OperationTimeoutSeconds 30`, which the 7.6 floor
+  makes available.** A connection accepted but never answered (30 s), an address that never answers
+  (the operating system's connect timeout, measured 21 s) and a body that stalls after the headers
+  (`-OperationTimeoutSeconds`, about 30.4 s measured on 7.6.6, 2026-10-21, see the measurement below)
+  all end with `TenantResolutionFailed`. The parameter as now written in the call has not been
+  measured by a run of the module. A body that trickles in a byte at a time is still not bounded
+  (known limit; issue #66 keeps it open as a separate decision).
+- **History: before Sprint 12 step 2, a response whose body stalls after the headers was NOT bounded
+  (BL-93, MEASURED 2026-10-21, decision A28: a documented known limit, accepted as known; no bound, no
+  new parameter).** pwsh 7.6.6 on Windows, the call as it was then written (`-Uri`, `-Method Get`,
+  `-TimeoutSec 30`, `-ErrorAction Stop`), each case in its
   own process, no tenant, a local listener or an unroutable address standing in for the authority:
   a listener that accepts the connection and never answers ends after 30.4 s with a
   `TaskCanceledException` (the `HttpClient.Timeout` of 30 seconds); an address that never answers
@@ -4555,7 +4565,8 @@ or the credential checks, and never exempt another non-GUID value the way `organ
   Microsoft Graph and Azure Resource Manager transports** -- the deliberately unauthenticated OpenID
   discovery lookup of a tenant named by domain at the cloud's Microsoft Entra ID authority, the host
   read from `Get-OERCloudEndpoint` -- and the only caller of `Invoke-RestMethod`.
-  The call carries `-Uri`, `-Method`, `-TimeoutSec` and `-ErrorAction` and nothing else: never a
+  The call carries `-Uri`, `-Method`, `-TimeoutSec`, `-OperationTimeoutSeconds` and `-ErrorAction`
+  and nothing else: never a
   header, a credential or a splat, never a second sender. It caches a tenant ID per cloud and
   lower-cased domain for the process and never caches a failure.
   `Why: docs/development/rationale.md#switching-tenants-in-one-process`

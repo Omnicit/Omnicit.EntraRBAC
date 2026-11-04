@@ -1126,7 +1126,8 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 - **`Resolve-OERTenantDomain` is the single owner of the module's one network call outside the
   Microsoft Graph and Azure Resource Manager transports** -- the deliberately unauthenticated OpenID
   discovery lookup of a tenant named by domain -- and the only caller of `Invoke-RestMethod`. The
-  call carries `-Uri`, `-Method`, `-TimeoutSec` and `-ErrorAction` and nothing else: never a header,
+  call carries `-Uri`, `-Method`, `-TimeoutSec`, `-OperationTimeoutSeconds` and `-ErrorAction` and
+  nothing else: never a header,
   a credential or a splat, never a second sender. It caches a tenant ID, never a failure. Its place
   in the sign-in and the refusals: see **Authentication Architecture**.
   `Why: docs/development/rationale.md#switching-tenants-in-one-process`
