@@ -33,8 +33,7 @@ site was actually scrubbing. See also SECURITY rule 6 in CLAUDE.md and
 
 ### CLAUDE.md text for bearer-scrub
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **Every Graph or ARM `catch` block** must call `Remove-OERErrorRecord -Record $PSItem` as its
   **first** statement. The raw `HttpRequestMessage` in `$Error` carries the bearer token in plain
@@ -457,8 +456,7 @@ hit.
 
 ### CLAUDE.md text for bearer-scrub-tests
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 **`dochygiene.tests.ps1` applies TWO object-id rules, split by what the file is.** Under `docs/` and
 `specs/` a GUID is prose, so it must be a `00000000-0000-0000-0000-0000000000NN` placeholder. Under
@@ -947,7 +945,7 @@ callers get no row: the snapshot is a value a command keeps in its own variable,
 front of a request. The tenant lookup (Sprint 9 step 3, BL-12) is held tighter than an owner rule
 alone: `Resolve-OERTenantDomain` holds exactly one `Invoke-RestMethod` call, with no splat, and that
 call names only `-Uri`, `-Method`, `-TimeoutSec`, `-OperationTimeoutSeconds` and `-ErrorAction`
-(the fourth added in Sprint 12 step 2, with the 7.6 floor). Two lists read the call's own
+(`-OperationTimeoutSeconds`, added in Sprint 12 step 2 with the 7.6 floor). Two lists read the call's own
 parameter names: a denied list of every credential-carrying parameter of the cmdlet (`-Headers`,
 `-Authentication`, `-Token`, `-Credential` and the rest), and an allowed list of those five, since
 PowerShell binds an abbreviated name (`-Head` for `-Headers`) and a parameter added to the cmdlet
@@ -1160,8 +1158,7 @@ empty collection.
 
 ### CLAUDE.md text for static-source-gates
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 **The seven QA gates** (`tests/QA/`): `module.tests.ps1` (manifest, changelog, help, README,
 per-function PSScriptAnalyzer, and a unit test file for every exported function),
@@ -1271,8 +1268,7 @@ on an API version because of it.
 
 ### CLAUDE.md text for pim-beta-pin
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 **PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint.** All seventeen call sites, in twelve
 source files, route through the private `Get-OERPimGroupsGraphPath`, which owns the version constant.
@@ -1398,8 +1394,7 @@ state to build from: without one the original Graph error is thrown after one re
 
 ### CLAUDE.md text for graph-wrapper
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 **All Graph calls go through `Invoke-OERGraphRequest`.** The only place that calls raw
 `Invoke-MgGraphRequest` is the wrapper itself (with `-Verbose:$false -ErrorAction Stop`). Never call
@@ -1600,8 +1595,7 @@ an existing api-version is bumped -- do not hand-edit the counts without re-runn
 
 ### CLAUDE.md text for arm-transport
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 `roleDefinitionId` in a role assignment body is always the FULL ARM resource id, never a bare GUID.
 Pinned api-versions, paging behaviour and retry semantics:
@@ -1785,8 +1779,7 @@ now branches on the parameter set, not on `$Name`, so an empty name would be sen
 
 ### CLAUDE.md text for management-group-parents
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 **`Get-OERManagementGroupParent` is the single owner of the Entities - List call**
 (`POST /providers/Microsoft.Management/getEntities`, api-version `2020-05-01`, `$view=GroupsOnly`,
@@ -2757,8 +2750,7 @@ commit's.
 
 ### CLAUDE.md text for home-tenant-subscriptions
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`Get-OERSubscriptionHomeTenant` is the single owner of whether a subscription's home tenant is
   the session's tenant (A19, BL-150)** -- ARM's subscription `tenantId` (Subscriptions - Get or List,
@@ -2894,8 +2886,7 @@ Two standing risks, recorded rather than resolved:
 
 ### CLAUDE.md text for sovereign-clouds
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 Common optional: `-IncludeARM` (acquire ARM token and connect to Azure); `-Environment` (the
 sovereign cloud -- `Global` (default), `USGov`, `USGovDoD` or `China`). The cloud joins tenant and
@@ -2948,8 +2939,7 @@ close them; the guard is the post-read `securityEnabled` check
 
 ### CLAUDE.md text for odata-escaping
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`ConvertTo-OERODataFilterValue` is the single owner of OData filter-value escaping.** Any Graph
   display-name lookup interpolating a caller-supplied value into a `$filter=... eq '...'` URL must
@@ -3165,8 +3155,7 @@ shows Graph accepts.
 
 ### CLAUDE.md text for access-review-cadence
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`Get-OERAccessReviewCadence` is the single owner of the access review cadence table** (Sprint 11
   step 11, BL-117 third point): each cadence's Graph pattern type and interval (`Weekly` weekly 1;
@@ -3283,8 +3272,7 @@ alias to any of these five converters.
 
 ### CLAUDE.md text for property-naming
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **Property naming:** an identifier is `<Noun>Id`, a display name is `<Noun>DisplayName`. A bare
   noun must never hold a display name. Keep a historical spelling as an `AliasProperty`
@@ -3322,8 +3310,7 @@ point the same way -- the generic `Id` is always the fallback, never the thing t
 
 ### CLAUDE.md text for alias-declaration-order
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **Alias declaration order:** in a parameter's `[Alias()]` list, the specific `<Noun>Id` form comes
   before the generic `Id`. `ValueFromPipelineByPropertyName` resolves the parameter NAME first, then
@@ -3365,8 +3352,7 @@ composed from friendly parts, which is the job the friendly properties already d
 
 ### CLAUDE.md text for scope-pipeline-binding
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`-Scope` binds from the pipeline only where the piped OBJECT is assignment-shaped, never where
   it is scope-DEFINING** -- this is a split by object shape, not a blanket rule per cmdlet.
@@ -3410,8 +3396,7 @@ same unit ([#restricted-unit-pim](#restricted-unit-pim)).
 
 ### CLAUDE.md text for guid-predicate
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`Test-OERGuid` is the single GUID predicate.** Never re-implement the canonical GUID regex
   inline. The wider `-as [guid]` cast in `Get-OERInventory` and `New-OERGroup` is a deliberate
@@ -3665,8 +3650,7 @@ which is the safe direction.
 
 #### CLAUDE.md text for a-set-cmdlets-own-read-decides-a-written-value
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **A public `Set-OER*` cmdlet's own read that decides a written value refuses the call when it fails
   or answers without the value** (Sprint 11 step 11, A24): never fall back to a parameter default, a
@@ -3734,8 +3718,7 @@ cmdlet's single policy id lookup is enough: no defect, and no code changed.
 
 ### CLAUDE.md text for mfa-authcontext-exclusion
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`Resolve-OERPimActivationConflict` is the single owner of the MFA / authentication-context
   mutual-exclusion rule.** An enabled authentication context and `MultiFactorAuthentication` on
@@ -3850,8 +3833,7 @@ asymmetry recorded in the section above, which was measured live; the put-back i
 
 ### CLAUDE.md text for pim-rule-pair-put-back
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`Send-OERPimRulePatch` is the single owner of sending a Microsoft Graph PIM rule set, one PATCH
   per rule.** That covers the pair put-back -- when Graph accepts the first rule of the MFA /
@@ -3892,8 +3874,7 @@ cannot see it. Audit PR3 (#27) learned that completers cannot be verified by moc
 
 ### CLAUDE.md text for completers
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 1. **Never attach a `ValidateSet`.** Completion is purely additive -- free text, GUIDs and custom
    role names must keep binding. A curated list is a hint, not a constraint.
@@ -4472,7 +4453,7 @@ tenant (A13), both under [Requested tenant vs granted tenant](#requested-tenant-
   connection and for the response headers and do not bound the reading of the body: an authority that
   sends its headers and then stalls leaves the sign-in waiting, with no `TenantResolutionFailed`,
   until the operator interrupts it. Bounding the body needs `-OperationTimeoutSeconds` on the call, a
-  parameter of PowerShell 7.4 and later, while the module supports 7.2, and the rule above allows no
+  parameter of PowerShell 7.4 and later, while the module then supported 7.2, and the rule then allowed no
   other parameter on that call. That parameter alone does not suffice (measured earlier with a
   30-second value): it ends a stalled body after about 30.4 s but not a body that trickles in a byte
   at a time, so issue #66 is not to be planned on the assumption that it alone closes the limit. The limit is accepted as known; its future handling, together with a
@@ -4565,8 +4546,7 @@ rules and the call's parameters.
 
 #### CLAUDE.md text for switching-tenants-in-one-process
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 **A tenant named by domain is looked up before any token request, and checked like a GUID
 (BL-12).** `Initialize-OERAuth` resolves every requested tenant that is neither a GUID nor
@@ -5277,8 +5257,7 @@ gate in its own test file (Describes `Invoke-OERGraphRequest sign-in latch gate 
 
 #### CLAUDE.md text for a-command-whose-sign-in-is-refused-sends-nothing
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 **`Export-OERInventory` stops on a refused sign-in and writes nothing -- the one public cmdlet that
 does (Sprint 11 step 10, BL-101).** It writes files, and used to carry on past the refusal into a
@@ -6422,8 +6401,7 @@ And gate 10: the row with its owner list emptied left the gate green until the r
 
 #### CLAUDE.md text for a-document-names-the-tenant-it-was-exported-from
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`Get-OERDocumentTenantMismatch` is the single owner of the comparison of a structure document's
   `tenantId`** with the tenant `Invoke-OERStructure` acts in, and of the `DocumentTenantMismatch` id
@@ -6636,10 +6614,12 @@ creation -- and leaves H4 green.
   `[ValidateNotNullOrEmpty()]` and nothing more (A12, above). It names a tenant that is not the
   session's and is looked up like any value that is not a tenant ID, and refused with
   `TenantResolutionFailed` when the authority resolves it to no tenant. That path ends in a refusal,
-  so decision A12's attribute stands as decided for those cmdlets: PowerShell 7.4's
-  `[ValidateNotNullOrWhiteSpace()]` does not exist on 7.2, which the module supports, and a
+  so decision A12's attribute stands as decided for those cmdlets: at the time PowerShell 7.4's
+  `[ValidateNotNullOrWhiteSpace()]` did not exist on 7.2, which the module supported, and a
   `[ValidatePattern()]` or `[ValidateScript()]` that refused spaces at binding on 7.2 would replace
-  the attribute A12 names on every one of them for a value that is already refused.
+  the attribute A12 names on every one of them for a value that is already refused. Sprint 12 step 2:
+  the floor is now PowerShell 7.6, so `[ValidateNotNullOrWhiteSpace()]` exists, and the decision
+  stands for the other reason above: such a value is already refused with `TenantResolutionFailed`.
 - **`New-OERConfiguration` and `Set-OERConfiguration` refuse a `-TenantId` of white space only at
   binding** (Sprint 10 step 3, BL-96). They store the tenant and look nothing up, so such a value was
   written to the profile and refused only later, when a `Connect-OER -TenantAlias` read it back at its
@@ -6655,9 +6635,10 @@ creation -- and leaves H4 green.
   message (`The argument is null or empty`), a blank one reads the script's, and both carry
   `ParameterArgumentValidationError,<cmdlet>`. Declared the other way round, an empty value would
   read the white-space message, which is wrong for it. The attribute stays, since
-  `TenantIdNotEmpty.Cohort.Tests.ps1` requires it on every carrier but `Connect-OER`. Sprint 12 step 2: on the 7.6 floor `[ValidateNotNullOrWhiteSpace()]`
-  exists, but the scripts stay: they keep the message above, which is published behaviour, and in these two
-  cmdlets also refuse the invisible format (Cf) characters (BL-111) that the attribute would not.
+  `TenantIdNotEmpty.Cohort.Tests.ps1` requires it on every carrier but `Connect-OER`. Sprint 12 step 2: on the 7.6 floor
+  `[ValidateNotNullOrWhiteSpace()]` exists, but the scripts stay: they keep the message above, which
+  is published behaviour, and in these two cmdlets also refuse the invisible format (Cf) characters
+  (BL-111) that the attribute would not.
   `Set-OERConfiguration` binds `-TenantId` from the pipeline, so a piped profile object whose
   `TenantId` is blank is refused per input object, at binding, and the next object is still
   processed. That is the safe direction, since the write would otherwise keep a blank tenant; the
@@ -6813,8 +6794,7 @@ Unicode white space as the .NET method does.
 
 #### CLAUDE.md text for a-refused-sign-in-leaves-the-session-uncertain
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 **A refused sign-in leaves the session uncertain (A10, BL-89).** A sign-in that fails or is refused
 leaves the previous tenant's session in place, and outside any `try` the script carries on: the next
@@ -7261,8 +7241,7 @@ record rather than from the text. The id is the first comma segment of the recor
 
 ### CLAUDE.md text for auth-state
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 Every public cmdlet that calls Graph or Azure invokes `Initialize-OERAuth` at the start of its
 `begin`/`process` block, passing `-IncludeARM` when it needs ARM. `Connect-OER` is an optional
@@ -7492,8 +7471,7 @@ the invisible formatting characters.
 
 ### CLAUDE.md text for profile-path
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 Per-tenant configuration is stored as PSD1 files under
 `<home>/.config/Omnicit.EntraRBAC/Profiles/<alias>.psd1`. Never write `$env:USERPROFILE` to build
@@ -7663,8 +7641,7 @@ Do not add other `Microsoft.Graph.*` SDK modules. The module intentionally uses 
 
 ### CLAUDE.md text for dependencies
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 **Under `latest`, a local `output/RequiredModules` goes stale and LOCAL GREEN IS NOT CI GREEN.**
 `RequiredModules.psd1` asks for the newest release of every module
@@ -7861,8 +7838,7 @@ test shapes that look like guards but are not, in
 
 ### CLAUDE.md text for changelog-budget
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **Write `[Unreleased]` in release-note voice** -- product-level and user-visible: what this
   version is, and what changed for someone consuming the module. Budget **4,000 characters**,
@@ -8236,8 +8212,7 @@ is automated, and it lives in the workflow rather than in `build.yaml`. See
 
 ### CLAUDE.md text for version-cap
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 **The computed module version is held in the `1.x` line.** Issue #55 capped it below `1.0.0`;
 issue #62 lifted the cap to `1.0.0` on 2026-09-13 for the first public release. The two levers are
@@ -8580,8 +8555,7 @@ tags.
 
 #### CLAUDE.md text for the-tag-step-tags-only-the-build-that-was-published
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **The tag step tags only the commit whose tested build IS the package on the Gallery (A16,
   BL-114).** On every run but a `v` tag run it first runs `PublishArtefact.ps1 -Compare`, which
@@ -8846,8 +8820,7 @@ compared whole instead of by a 400-character tail -- is under [#changelog-budget
 
 ### CLAUDE.md text for publish-on-merge
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **Publishing lives in `.github/workflows/build-and-test.yml`, in its `publish` job.** That job
   is the only thing in this repository that can publish. `./build.ps1 -Tasks publish` is
@@ -9142,8 +9115,7 @@ at all.
 
 ### CLAUDE.md text for directory-role-assignments
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`Select-OERManagedDirectoryRoleAssignment` is the single owner of which live directory role
   assignment the apply engine may match or prune** (tenant scope, `memberType` Direct, Active only
@@ -9362,8 +9334,7 @@ path and is asked like any other existing group.
 
 ### CLAUDE.md text for pim-in-use-criterion
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`Test-OERGroupPimInUse` is the single owner of whether a group uses PIM for Groups** -- PIM
   eligibility, or a PIM-for-Groups policy with a non-empty `lastModifiedDateTime`, `lastModifiedBy.id`
@@ -9678,8 +9649,7 @@ and a space). Cost if wrong: sentences in those texts.
 
 ### CLAUDE.md text for export-group-selection
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`Get-OERInventoryGroup` is the single reader of the inventory's Groups section.**
   `Get-OERInventory` calls it in its full mode (one `Get-OERGroup` call carrying the three include
@@ -10126,8 +10096,7 @@ of two help sentences. The lines are those of the source after the round.
 
 ### CLAUDE.md text for export-role-policy-selection
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`Test-OERRolePolicyModified` is the single owner of whether an Azure role management policy has
   been changed** -- the list row's `policyAssignmentProperties.policy` (carried as `PolicyMetadata`
@@ -10807,8 +10776,7 @@ as itself, nothing is created or planned, and the prune pass for that scope does
 
 ### CLAUDE.md text for role-assignment-key
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`ConvertTo-OERCanonicalScope` is the single owner of how a document scope is compared, and
   `ConvertTo-OERScopeSplat` of the `sub:`/`subscription:`/`mg:` scope syntax** -- never re-implement
@@ -10956,8 +10924,7 @@ reports `Failed` for a change Graph would have accepted, and nothing is sent.
 
 ### CLAUDE.md text for approver-lookup
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **A resolver on the cohort's list publishes its failure as itself and an ambiguous name as
   `Ambiguous*`, never as `*NotFound` -- a COHORT check holds that, not a helper.** The principal
@@ -11270,8 +11237,7 @@ record would be published as `<command>,<caller>`. That is unreachable today, si
 
 ### CLAUDE.md text for failed-schedule-request
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`Test-OERScheduleRequestFailed` is the single owner of which PIM schedule request status is an
   error: the Failed family, meaning `Failed`, `FailedAsResourceIsLocked` and any later status that
@@ -11432,8 +11398,7 @@ run makes inside `Add-OERGroupEligibility` anyway, so the permissions it needs a
 
 ### CLAUDE.md text for warning-before-confirmation
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **A warning about a deletion or about widened access stands BEFORE the cmdlet's own
   `$PSCmdlet.ShouldProcess`**, so `-WhatIf` shows it and a `-Confirm` prompt is answered with it on
@@ -11589,8 +11554,7 @@ applied as before; the group itself is not written.
 
 ### CLAUDE.md text for synced-groups
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`Test-OERGroupOnPremisesSynced` is the single owner of whether a live group is synchronized from
   on-premises** -- `OnPremisesSyncEnabled` (Graph's `onPremisesSyncEnabled`, carried by
@@ -11810,8 +11774,7 @@ documents and the standing shape that was measured.
 
 ### CLAUDE.md text for pim-activation-is-not-membership
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`Get-OERGroupPimHeldAccess` is the single owner of which PIM-for-Groups instance holds a member's
   or owner's access**: held unless `assignmentType` is `assigned` (any letter case) AND `endDateTime`
@@ -11959,8 +11922,7 @@ the wire. Everything above was derived from the code and proven with mocked test
 
 ### CLAUDE.md text for root-scope-is-not-in-the-document
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`Test-OERAzureRootScope` is the single owner of whether an Azure role assignment scope addresses
   the root scope `/` (any spelling the ARM transport sends there)**, and
@@ -12337,8 +12299,7 @@ declare. A `previousDisplayName` that is an object id, and a template-based grou
 
 ### CLAUDE.md text for mail-nickname
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`Get-OERDerivedMailNickname` is the single owner of the mail alias `New-OERGroup` derives from a
   display name** (every character outside A-Z, a-z, 0-9, '.', '_' and '-' removed). `New-OERGroup`
@@ -12964,8 +12925,7 @@ a subscription is not walked and not named unread.
 
 ### CLAUDE.md text for roster-identity-and-shared-names
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`Get-OERGroupNameIndex` is the single owner of which groups in the tenant carry a display
   name**: from the groups given (`-Group`, the export's roster) with no request, or from ONE paged
@@ -13132,8 +13092,7 @@ object id, which is exact and leaves nothing unread, and the verbose line of R-3
 
 ### CLAUDE.md text for export-run-context
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`Export-OERInventory` is the only command that sets and clears the export run context
   (`$script:_OERInventoryRunContext`)**, the one object its `Get-OERInventory` calls share (the
@@ -13406,8 +13365,7 @@ of the deleted items read that the call kept in the run context, which are facts
 
 ### CLAUDE.md text for unresolved-principals
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`Get-OERDeletedPrincipalStatus` is the single read of `directory/deletedItems`, and
   `Resolve-OERPrincipalName -Detailed` the lookup that tells a principal the directory returned from
@@ -13557,8 +13515,7 @@ validator cannot see the export's case (above), which is why the export warns on
 
 ### CLAUDE.md text for restricted-unit-pim
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **A group that uses PIM for Groups in a restricted management administrative unit is a Warning,
   never an Error or a refusal**: `Export-OERInventory` warns before its `ShouldProcess` (with `Groups`
@@ -13649,8 +13606,7 @@ package by its object id.
 
 ### CLAUDE.md text for review-package-in-the-same-run
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`Resolve-OERStructureRename` is the single owner of the keys of the run's rename map, and every
   `accessPackages` entry registers its package there, not only a rename** (BL-147): an entry that
@@ -13813,8 +13769,7 @@ about 1.5 s at 24 characters, growing exponentially). The check is offline and s
 
 ### CLAUDE.md text for naming-standard
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 The rules a name must follow are a separate matter, held in a naming standard file that
 `Test-OERStructure -NamingStandard` checks offline; `Test-OERNamingStandardName` owns them (see **Code
@@ -14050,8 +14005,7 @@ each one names. Every mutant turned at least one test red.
 
 ### CLAUDE.md text for service-principal-access
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`Get-OERServicePrincipalAccess` is the single reader of what `servicePrincipalAccess.json`
   holds** (Sprint 11 step 8, A7): the service principal list with `$expand=appRoleAssignments` (the
@@ -14325,8 +14279,7 @@ beside the two helpers' own test files.
 
 ### CLAUDE.md text for confirmation-unavailable
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **`Test-OERHostCanConfirm` is the single owner of whether the host can show a confirmation prompt
   that is decidable beforehand, and `Test-OERConfirmPromptFailure` of whether a caught record is a
@@ -14488,8 +14441,7 @@ row that overstates the second run.
 
 This section records the CLAUDE.md preamble as it stood before step 11b.
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 Working rules for this repo. This file carries **rules**; the history behind them lives in
 [docs/development/rationale.md](docs/development/rationale.md), linked per rule as
@@ -14500,8 +14452,7 @@ obvious simplification was already tried here and silently failed.
 
 This section records the CLAUDE.md text on the branch policy and the merge requirements on `main` as it stood before step 11b.
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 **`main` is protected on GitHub and a direct push to it is REJECTED BY THE SERVER.** That is
 deliberate. It is not a lock to be worked around, and "continue on the current branch" is no longer
@@ -14549,8 +14500,7 @@ reaches `main` through a pull request.
 
 This section records the CLAUDE.md text on what the module is and which clone is canonical as it stood before step 11b.
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 `Omnicit.EntraRBAC` is a PowerShell 7.6+ (Core-only) module built and maintained by Omnicit AB. MIT
 licensed and **published on the public PowerShell Gallery for anyone to use**: 1.0.0 went out by
@@ -14574,8 +14524,7 @@ for what each release delivered.
 
 This section records the CLAUDE.md text on the module layout tree, the Classes sentence and the roster as it stood before step 11b.
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 ```
 source/
@@ -14625,8 +14574,7 @@ cmdlet; `Get-OERRequiredScope` reports the Graph/Azure permissions each one need
 
 This section records the CLAUDE.md text on why the build-and-test job condition is wired to the merge gate, and why the matrix matters, as it stood before step 11b.
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 **The build-and-test job's `if:` condition is now wired to the merge gate -- do not read it as a
 billing guard alone, and do not reason about it from GitHub's general rule for skipped jobs.** The
@@ -14660,8 +14608,7 @@ required checks something a skipped job cannot satisfy.
 
 This section records the CLAUDE.md text on the Markdown, docsync and cross-cutting test suite gates as it stood before step 11b.
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 **`dochygiene.tests.ps1` also reads Markdown the way GitHub renders it.** In every tracked `.md`
 under `docs/` and `specs/`, and in `README.md` and `CHANGELOG.md` at the root, no angle bracket
@@ -14765,8 +14712,7 @@ reduced to its text, so its anchor target is not compared.
 
 This section records the CLAUDE.md text on the build and test commands, with the measured coverage, as it stood before step 11b.
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 ```powershell
 # Bootstrap build dependencies (first time or after a clean clone)
@@ -14801,8 +14747,7 @@ gate is running.
 
 This section records the wording CLAUDE.md carried, before it was cut to the rules, for the Publishing rules that link no other anchor.
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **A merge that changes only documentation publishes a new preview too.** The workflow has no
   path filter and must not be given one. Accepted in Decision 4 -- a preview per merge is the
@@ -14823,8 +14768,7 @@ removed in Sprint 12 step 2, see above):
 
 This section records the wording CLAUDE.md carried, before it was cut to the rules, for the Tenant Profile Config rules that link no other anchor.
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 A profile's optional `Environment` key names the sovereign cloud that tenant lives in (`Global`,
 `USGov`, `USGovDoD` or `China`). `Connect-OER -TenantAlias` reads it automatically when the command
@@ -14836,8 +14780,7 @@ on the command line always overrides it.
 
 This section records the wording CLAUDE.md carried, before it was cut to the rules, for the ASCII-Only Source Files rules that link no other anchor.
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 Authored `.ps1` files are UTF-8 **without BOM**. They **must contain only ASCII characters** --
 no em-dashes, no box-drawing characters, no smart quotes, no curly apostrophes.
@@ -14855,8 +14798,7 @@ and `"` only.
 
 This section records the wording CLAUDE.md carried, before it was cut to the rules, for the Error Handling rules that link no other anchor.
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **Non-terminating errors** in public functions: `$PSCmdlet.WriteError()` followed by `return` (in
   a `process` block) or `continue` (inside a `foreach` loop over multiple items). Never use bare
@@ -14896,8 +14838,7 @@ removed in Sprint 12 step 2, see above):
 
 This section records the wording CLAUDE.md carried, before it was cut to the rules, for the ARM Requests rules that link no other anchor.
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 **All ARM calls go through `Invoke-OERArmRequest`.** The module deliberately does NOT use
 `Connect-AzAccount`/`Invoke-AzRestMethod`: Az.Accounts cannot reliably reuse an externally acquired
@@ -14930,8 +14871,7 @@ a second header read added elsewhere is itself a guard-shaped-but-inert test. Ke
 
 This section records the wording CLAUDE.md carried, before it was cut to the rules, for the PSScriptAnalyzer rules that link no other anchor.
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 The QA gate requires **0 findings** per function file. Targeted suppressions are acceptable for
 known false positives (e.g. `PSReviewUnusedParameter` on parameter-set discriminator switches)
@@ -14942,8 +14882,7 @@ bug.
 
 This section records the wording CLAUDE.md carried, before it was cut to the rules, for the Testing Conventions rules that link no other anchor.
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 - **Tests are written in Pester 5 syntax** under `tests/Unit/{Private,Public}/`. The build resolves
   the newest Pester, and CI resolves it afresh on every run, so no version is a standing fact here;
@@ -14981,8 +14920,7 @@ removed in Sprint 12 step 2, see above):
 
 This section records the wording CLAUDE.md carried, before it was cut to the rules, for the SECURITY rules that link no other anchor.
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 6. **Never log or write access tokens.** The `Remove-OERErrorRecord -Record $PSItem` call in every
    Graph catch block is mandatory, not optional. It replaces the older `$null =
@@ -14996,8 +14934,7 @@ removed in Sprint 12 step 2, see above):
 
 This section records the wording CLAUDE.md carried, before it was cut to the rules, for the Dependencies rules that link no other anchor.
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
-removed in Sprint 12 step 2, see above):
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
 **No Az module is a dependency of this module, and no Az cmdlet is invoked at run time at all.**
 ARM is called directly with an AzAuth token (`Invoke-OERArmRequest`). `Az.Resources` was declared in

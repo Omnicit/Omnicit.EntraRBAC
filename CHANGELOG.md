@@ -8,11 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 Omnicit.EntraRBAC now requires PowerShell 7.6 or later. PowerShell 7.4 and 7.5 reach end of support
-on 10 November 2026, and 7.6 is the current long-term support release, so the module's floor is now
-a PowerShell that Microsoft supports; Windows, Linux and macOS are supported as before, and no
-command changes. A tenant named by domain is looked up before any token is requested, and that
-lookup now also ends after 30 seconds when the authority sends its response headers and then
-stalls, failing with `TenantResolutionFailed` instead of waiting until it is interrupted.
+on 10 November 2026, and 7.6 is the current long-term support release; a host on 7.4 or 7.5 can
+keep using 1.3.1. Windows, Linux and macOS are supported as before, and no command changes. A
+tenant named by domain is looked up before any token is requested, and that lookup now also ends
+after 30 seconds when the authority sends its response headers and then stalls, failing with
+`TenantResolutionFailed` instead of waiting until it is interrupted.
 
 ## [1.3.1] - 2026-10-23
 

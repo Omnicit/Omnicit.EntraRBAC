@@ -1010,7 +1010,6 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `docs/examples/naming-standard.schema.json` is the schema function's output, held identical by a
   test, never edited by hand. Never re-implement a rule, a Detail text or the file's validation
   elsewhere. `Why: docs/development/rationale.md#naming-standard`
-
 - **`Test-OERHostCanConfirm` is the single owner of whether the host can show a confirmation prompt
   that is decidable beforehand; `Test-OERConfirmPromptFailure` of whether a caught record is a
   `ShouldProcess` that failed because the host could not ask.** When the first answers false,
@@ -1121,9 +1120,9 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   Microsoft Graph and Azure Resource Manager transports** -- the deliberately unauthenticated OpenID
   discovery lookup of a tenant named by domain -- and the only caller of `Invoke-RestMethod`. The
   call carries `-Uri`, `-Method`, `-TimeoutSec`, `-OperationTimeoutSeconds` and `-ErrorAction` and
-  nothing else: never a header,
-  a credential or a splat, never a second sender. It caches a tenant ID, never a failure. Its place
-  in the sign-in and the refusals: see **Authentication Architecture**.
+  nothing else: never a header, a credential or a splat, never a second sender. It caches a tenant
+  ID, never a failure. Its place in the sign-in and the refusals: see **Authentication
+  Architecture**.
   `Why: docs/development/rationale.md#switching-tenants-in-one-process`
 - **`Set-OERSessionUncertain` is the single owner of the session-uncertain marker**
   (`$script:_OERSessionUncertain`), called only by `Initialize-OERAuth`, `Connect-OER` and

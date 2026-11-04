@@ -7083,7 +7083,7 @@ Describe 'Test-OERStructureSchema (Rule 17, naming standard, Sprint 11 step 7)' 
             $Hit[0].Message | Should -Not -BeLike "*does not follow*"
         }
 
-        It 'says so for a date displayName too (the date Error is beside it), and names its type' {
+        It 'says so for a date displayName too, and names its type' {
             $V = Invoke-NsValidation -Standard (Get-NsStandard) -Json '{ "version": "1.0", "groups": [ { "displayName": "2026-01-01T10:00:00" } ] }'
             $Hit = @(Get-NsFinding -Validation $V)
             $Hit.Count | Should -Be 1

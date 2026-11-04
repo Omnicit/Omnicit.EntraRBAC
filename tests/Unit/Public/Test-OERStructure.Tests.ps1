@@ -175,6 +175,16 @@ Describe 'Test-OERStructure' {
         $Hit[0].Severity | Should -BeExactly 'Warning'
         $Hit[0].Path | Should -BeExactly 'accessPackages[0].assignmentPolicies[0].approvalStages'
     }
+    It 'reads a document as written: a time stamp in expirationDateTime and in a displayName stays text and is no Error (BL-154)' {
+        # The published claim, end to end: a string that holds an ISO 8601 date and time with seconds is
+        # never turned into a date by the read, so a displayName that looks like a time stamp is still
+        # the string it was written as and expirationDateTime stays the text written.
+        $Json = '{ "version": "1.0", "accessPackages": [ { "displayName": "2026-07-01T10:00:00", "catalog": "cat1", "assignmentPolicies": [ { "displayName": "p1", "expirationDateTime": "2027-01-01T00:00:00Z" } ] } ] }'
+        $V = Test-OERStructure -Json $Json
+        $V.Valid | Should -BeTrue
+        @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0
+        @($V.Errors | Where-Object { $_.Message -match 'not a string' }).Count | Should -Be 0
+    }
     It 'surfaces the omitted-collection Warning for an omitted group members key without flipping Valid to false' {
         # An omitted members key is still reconciled against an empty declared set, so
         # Invoke-OERStructure -Prune removes every live member; the offline validator must say so.

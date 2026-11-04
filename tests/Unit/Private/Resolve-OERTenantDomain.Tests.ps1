@@ -66,7 +66,7 @@ Describe 'Resolve-OERTenantDomain' {
         [string]$script:CapturedBound['ErrorAction'] | Should -Be 'Stop'
     }
 
-    It 'bounds the body as well as the connection: the call is sent with OperationTimeoutSeconds 30 and TimeoutSec 30' {
+    It 'sends OperationTimeoutSeconds 30 beside TimeoutSec 30' {
         Mock -ModuleName Omnicit.EntraRBAC Invoke-RestMethod {
             [pscustomobject]@{ issuer = 'https://login.microsoftonline.com/aaaaaaaa-1111-1111-1111-111111111111/v2.0' }
         }

@@ -1020,11 +1020,10 @@ id.
 `Test-OERStructure` and `Invoke-OERStructure` read a document as written: a string that holds an
 ISO 8601 date and time with seconds, such as an assignment policy's `expirationDateTime` of
 `2027-01-01T00:00:00Z`, stays the text written, as does a date alone, such as `2026-07-01`, or a
-time without seconds, such as `2026-07-01T10:00`. A `displayName`
-that is not a string is an `Error` too, and so is a group `template` that cannot be turned into a
-name with its `tokens`, which used to be that group's `Failed` row and now refuses the whole document
-before anything is read or written. A token's value is inserted as text, so a `$` in it stays as
-written.
+time without seconds, such as `2026-07-01T10:00`. A `displayName` that is not a string is an `Error`,
+and so is a group `template` that cannot be turned into a name with its `tokens`, which used to be
+that group's `Failed` row and now refuses the whole document before anything is read or written. A
+token's value is inserted as text, so a `$` in it stays as written.
 
 `Invoke-OERStructure` writes nothing for a policy whose live read fails or returns nothing: a
 `roleManagementPolicies` entry, or a group's `pimPolicy` for that access type, is `Failed` with the

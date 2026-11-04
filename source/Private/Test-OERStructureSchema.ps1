@@ -2874,8 +2874,9 @@ function Test-OERStructureSchema {
 
     # A displayName that is not a string is never checked: a Warning says so (BL-154), at the node's
     # displayName path with the node's own path as Item, instead of leaving the object out without a word.
-    # The type Error is the section rule's (Add-DisplayNameTypeFinding), and a date displayName has the
-    # date Error besides; this row only tells the operator that the standard was not applied to the name.
+    # The type Error is the section rule's (Add-DisplayNameTypeFinding), and a date displayName gets it
+    # too, since a date is not a string; this row only tells the operator that the standard was not
+    # applied to the name.
     function Add-NamingNotStringFinding {
         param([string]$Section, [string]$Path, [object]$Value)
         Add-Finding -Section $Section -Item $Path -Path "$Path.displayName" -Severity 'Warning' `

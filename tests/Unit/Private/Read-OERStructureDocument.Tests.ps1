@@ -589,6 +589,7 @@ Describe 'Read-OERStructureDocument keeps a date-and-time string as written (BL-
             $Doc.groups[0].description | Should -BeExactly $Written
         }
     }
+
     It 'parses with the module-qualified cmdlet, so a function of the same name in the session is never the one called' {
         InModuleScope $script:moduleName {
             # The parse must call Microsoft.PowerShell.Utility\ConvertFrom-Json by its qualified name, or a
