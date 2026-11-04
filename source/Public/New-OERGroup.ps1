@@ -242,16 +242,10 @@ function New-OERGroup {
         # Refused here, before the administrative unit lookup and the create, instead of sending it. An
         # existing group was returned above and needs no alias; an explicit -MailNickname is sent as given.
         $Nick = if ($MailNickname) { $MailNickname } else { Get-OERDerivedMailNickname -DisplayName $ResolvedName }
-        if (-not $MailNickname -and ($Nick.Length -eq 0 -or $Nick.Length -gt 64)) {
-            $Why = if ($Nick.Length -eq 0) {
-                'is empty (the name has no character A-Z, a-z, 0-9, ''.'', ''_'' or ''-'')'
-            } else {
-                "is $($Nick.Length) characters long"
-            }
+        $NickProblem = if (-not $MailNickname) { Get-OERDerivedMailNicknameProblem -DisplayName $ResolvedName }
+        if ($NickProblem) {
             Write-CmdletError `
-                -Message ([System.Exception]::new(
-                    "The mail alias derived from the group name '$ResolvedName' $Why; Microsoft Graph accepts 1 to 64 characters. " +
-                    'Nothing was sent. Pass -MailNickname with the alias the group should carry.')) `
+                -Message ([System.Exception]::new($NickProblem)) `
                 -ErrorId 'DerivedMailNicknameInvalid' `
                 -Category InvalidArgument `
                 -TargetObject $ResolvedName `

@@ -1112,7 +1112,8 @@ validator warns when a renamed group keeps the alias derived from its old name o
 space or a tab is an `Error`, since Microsoft Graph was measured to refuse each of them; the
 validator refuses any other white space or control character too, which was not measured.
 `New-OERGroup` refuses to derive an alias that would be empty or longer than 64 characters
-(`DerivedMailNicknameInvalid`).
+(`DerivedMailNicknameInvalid`), and `Invoke-OERStructure` refuses the same group in the plan and
+the run alike when the entry declares no `mailNickname`.
 
 A scope written as a path is an `Error` too when it holds a `.` or `..` segment, a `%`, a `\`, a `?`
 or a `#`, white space at the start or end of the scope or of a segment, white space other than a

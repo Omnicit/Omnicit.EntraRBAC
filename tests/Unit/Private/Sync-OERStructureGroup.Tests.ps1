@@ -2447,6 +2447,127 @@ $Item = '{ "displayName": "grp-luo", "owners": [ "person2@example.com" ] }' | Co
         }
     }
 
+    Context 'the alias the creation would derive is checked in the plan and the run (BL-143b)' {
+        # Get-OERDerivedMailNicknameProblem owns the condition and the text; New-OERGroup publishes the
+        # same text. The plan must not promise a create the run refuses.
+        It 'refuses under -WhatIf a name whose alias derives empty: one Failed row, the error in -ErrorVariable, no create row' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = $DisplayName } }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{ displayName = '!!!'; members = @('person1@example.com') }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -WhatIf -ErrorVariable Ev -ErrorAction SilentlyContinue)
+                $Msg = Get-OERDerivedMailNicknameProblem -DisplayName '!!!'
+                $Msg | Should -Not -BeNullOrEmpty
+                $r.Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "group not created: $Msg"
+                @($r | Where-Object { $_.Detail -like 'would create group*' }).Count | Should -Be 0
+                $Own = @($Ev | Where-Object { $_.FullyQualifiedErrorId -like 'DerivedMailNicknameInvalid*' })
+                $Own.Count | Should -Be 1
+                $Own[0].Exception.Message | Should -BeExactly $Msg
+                $Own[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidArgument)
+                $Own[0].TargetObject | Should -BeExactly '!!!'
+                Should -Invoke New-OERGroup -Times 0
+            }
+        }
+
+        It 'refuses the same in a real run: an identical row, no New-OERGroup call' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = $DisplayName } }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{ displayName = '!!!'; members = @('person1@example.com') }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -Confirm:$false -ErrorVariable Ev -ErrorAction SilentlyContinue)
+                $Msg = Get-OERDerivedMailNicknameProblem -DisplayName '!!!'
+                $r.Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "group not created: $Msg"
+                @($Ev | Where-Object { $_.FullyQualifiedErrorId -like 'DerivedMailNicknameInvalid*' }).Count | Should -Be 1
+                Should -Invoke New-OERGroup -Times 0
+            }
+        }
+
+        It 'refuses a name whose alias derives 65 characters' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = $DisplayName } }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $r = @(Invoke-SyncGroupViaCaller -Item ([PSCustomObject]@{ displayName = ('g' * 65) }) -WhatIf -ErrorAction SilentlyContinue)
+                $r.Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeLike 'group not created: *is 65 characters long*'
+                Should -Invoke New-OERGroup -Times 0
+            }
+        }
+
+        It 'plans the create when a mailNickname is declared, whatever the display name derives' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = $DisplayName } }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $r = @(Invoke-SyncGroupViaCaller -Item ([PSCustomObject]@{ displayName = '!!!'; mailNickname = 'declared.alias' }) -WhatIf -ErrorAction SilentlyContinue)
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq 'would create group !!!' }).Count | Should -Be 1
+                @($r | Where-Object Action -eq 'Failed').Count | Should -Be 0
+                Should -Invoke New-OERGroup -Times 0
+            }
+        }
+
+        It 'converges: a valid new group is Created in run 1 and only Unchanged in run 2' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Get-OERGroupPimPolicy { $null }
+                $Item = [PSCustomObject]@{ displayName = 'role_sec_x' }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x' } }
+                Mock Get-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; Members = @(); PimEligibility = @() } }
+                $Run1 = @(Invoke-SyncGroupViaCaller -Item $Item -Confirm:$false)
+                @($Run1 | Where-Object Action -eq 'Created').Count | Should -BeGreaterThan 0
+                Should -Invoke New-OERGroup -Times 1 -Exactly
+                Mock Resolve-OERGroupId { 'g-1' }
+                $Run2 = @(Invoke-SyncGroupViaCaller -Item $Item -Confirm:$false)
+                $Run2.Count | Should -BeGreaterThan 0
+                @($Run2 | Where-Object { $_.Action -ne 'Unchanged' }).Count | Should -Be 0
+                Should -Invoke New-OERGroup -Times 1 -Exactly
+            }
+        }
+    }
+
     Context 'dynamic at group creation (site 175)' {
         It 'creates the group with -Dynamic when declared true' {
             InModuleScope $script:moduleName {

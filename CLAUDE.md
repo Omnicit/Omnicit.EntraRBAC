@@ -1007,8 +1007,11 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   **ARM Requests**). `tests/QA/sourcehygiene.tests.ps1` machine-checks it like the other single-owner
   rules above. `Why: docs/development/rationale.md#sovereign-clouds`
 - **`Get-OERDerivedMailNickname` is the single owner of the mail alias `New-OERGroup` derives from a
-  display name.** `New-OERGroup` refuses an empty derived alias, or one over 64 characters, with
-  `DerivedMailNicknameInvalid`. Never re-implement the derivation inline.
+  display name;** `Get-OERDerivedMailNicknameProblem` **is the single owner of the refusal's
+  condition and text** (alias empty or over 64 characters). `New-OERGroup` publishes it as
+  `DerivedMailNicknameInvalid`, and `Sync-OERStructureGroup` asks it for a group it would create
+  with no declared `mailNickname`, so the plan and the run both refuse it. Never re-implement
+  either inline.
   `Why: docs/development/rationale.md#mail-nickname`
 - **`Test-OERNamingStandardName` is the single owner of the naming rules, their order and Detail
   texts; `Read-OERNamingStandard` of reading and refusing the naming standard file;

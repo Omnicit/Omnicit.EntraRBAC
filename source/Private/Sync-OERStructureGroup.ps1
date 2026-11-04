@@ -271,6 +271,13 @@ function Sync-OERStructureGroup {
     empty array) -- an omitted eligibility key leaves live eligibility alone entirely, unlike an
     omitted members key, which still reconciles against an empty declared set.
 
+    A group whose name derives an unusable mail alias (BL-143b): when the entry to create declares no
+    non-empty mailNickname, the handler asks Get-OERDerivedMailNicknameProblem (the owner of the
+    condition and text New-OERGroup publishes) before ShouldProcess. An alias that is empty or over
+    64 characters refuses the entry in the plan and in the run alike: the non-terminating error
+    DerivedMailNicknameInvalid and one Failed row ("group not created: ..."), New-OERGroup not
+    called and no member, owner, eligibility or pimPolicy row.
+
     A group created into an administrative unit (BL-07): administrativeUnit is passed to New-OERGroup
     -AdministrativeUnit when the group is created and never round-trips, so the unit's own
     administrativeUnits[] entry need not list the group. Right after New-OERGroup returns the group,
@@ -642,6 +649,26 @@ function Sync-OERStructureGroup {
                     return
                 }
                 if ($UnitTarget) { $UnitRef = $UnitTarget.Id }
+            }
+
+            # BL-143b: the alias New-OERGroup would derive from the name must be one Microsoft Graph
+            # accepts, in the plan as in the run, so the plan never promises a create the run refuses.
+            # Get-OERDerivedMailNicknameProblem owns the condition and the text; a declared, non-empty
+            # mailNickname is sent as given and is not checked here.
+            $DeclaredNick = $null
+            if (Test-OERDeclaredProperty -Node $Item -Name 'mailNickname') { $DeclaredNick = $Item.mailNickname }
+            if (-not $DeclaredNick) {
+                $NickProblem = Get-OERDerivedMailNicknameProblem -DisplayName $Name
+                if ($NickProblem) {
+                    $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new($NickProblem),
+                        'DerivedMailNicknameInvalid',
+                        [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                        $Name)
+                    $Caller.WriteError($ErrRec)
+                    ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "group not created: $NickProblem" -ErrorRecord $ErrRec
+                    return
+                }
             }
 
             if (-not $Caller.ShouldProcess($Name, 'Create group')) {

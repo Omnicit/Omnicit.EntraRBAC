@@ -549,7 +549,9 @@ RENAMES, MAIL ALIASES AND SCOPE SPELLING
     validator refuses any other white space or control character too, which
     was not measured. New-OERGroup refuses to derive an alias that would be
     empty or longer than 64 characters (DerivedMailNicknameInvalid), creating
-    nothing: pass -MailNickname for such a name.
+    nothing: pass -MailNickname for such a name. Invoke-OERStructure refuses
+    the same group in the plan and the run alike when the entry declares no
+    mailNickname.
 
     A roleAssignments or roleManagementPolicies scope written as a path is an
     Error too, beside the existing rule against a trailing or doubled '/',
