@@ -6655,7 +6655,9 @@ creation -- and leaves H4 green.
   message (`The argument is null or empty`), a blank one reads the script's, and both carry
   `ParameterArgumentValidationError,<cmdlet>`. Declared the other way round, an empty value would
   read the white-space message, which is wrong for it. The attribute stays, since
-  `TenantIdNotEmpty.Cohort.Tests.ps1` requires it on every carrier but `Connect-OER`.
+  `TenantIdNotEmpty.Cohort.Tests.ps1` requires it on every carrier but `Connect-OER`. Sprint 12 step 2: on the 7.6 floor `[ValidateNotNullOrWhiteSpace()]`
+  exists, but the scripts stay: they keep the message above, which is published behaviour, and in these two
+  cmdlets also refuse the invisible format (Cf) characters (BL-111) that the attribute would not.
   `Set-OERConfiguration` binds `-TenantId` from the pipeline, so a piped profile object whose
   `TenantId` is blank is refused per input object, at binding, and the next object is still
   processed. That is the safe direction, since the write would otherwise keep a blank tenant; the
@@ -9656,6 +9658,12 @@ through `List.Sort` with the comparison inline, and about 1.9 s when it calls a 
 comparison inline per file, which costs a second copy and the time above for a group with thousands of
 members.
 
+**Sprint 12 step 2: the generic-argument guard is gone.** The floor is now PowerShell 7.6, and an explicit
+generic argument on a method call is valid syntax from 7.3, so there is no newer syntax left to guard against: the
+context in the helper's test file that parsed every `.ps1` under `source/` for one was removed, with its
+known-answer test and its CLAUDE.md sentence. The helper's code is unchanged (the arguments stay inferred); the
+paragraph above is the history of the guard.
+
 **The texts (BL-48, Sprint 11 step 10, the text task).** A dynamic group's null `members` is told to the reader
 of a bundle in every text that explains a null, each saying that it is no unread collection: the schema
 description of `groups[].members`, the bundle README (the roster bullet and "Unread collections"), the prompt
@@ -9704,7 +9712,7 @@ removed in Sprint 12 step 2, see above):
   order such a list anywhere else. Its LINQ calls take their generic arguments by INFERENCE and never
   write them out: an explicit type argument on a generic method call is PowerShell 7.3 syntax, a parse
   error under the module's 7.2 floor that fails the whole merged module, and CI runs a current
-  PowerShell only, so nothing but the helper's own test (an AST check of its file) would show it.
+  PowerShell only, so nothing but the helper's own test (an AST check of its file) would show it. Sprint 12 step 2: the floor is 7.6, so that guard and its test were removed.
   `Why: docs/development/rationale.md#export-group-selection`
 
 - **`Read-OERGroupCollection` is the single owner of the three per-group collection reads

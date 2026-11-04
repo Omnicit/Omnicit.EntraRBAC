@@ -53,8 +53,8 @@ function New-OERConfiguration {
         [string]$TenantAlias,
         [Parameter(Mandatory)]
         # BL-96: a TenantId of white space only is refused here, at binding, as an empty one is. The
-        # module supports PowerShell 7.2, which has no [ValidateNotNullOrWhiteSpace()] (7.4+), so the
-        # same test runs as a script. BL-111: Unicode format characters (category Cf: U+200B, U+FEFF,
+        # [ValidateNotNullOrWhiteSpace()] exists on the 7.6 floor, but the test stays a script: it keeps
+        # this binding message, which is published behaviour. BL-111: Unicode format characters (category Cf: U+200B, U+FEFF,
         # U+2060 ...) are not white space to .NET, yet print as nothing, so they are removed before the
         # test and a value of only those and white space is refused too. Declared ABOVE
         # [ValidateNotNullOrEmpty()] on purpose: validation attributes run in reverse declaration order

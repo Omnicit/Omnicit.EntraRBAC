@@ -512,8 +512,8 @@ function Get-OERInventory {
         # -GroupFilter and New-OERConfiguration's -TenantId). Before this, '   ' passed the sections' own
         # `if ($Scope)` tests (a string of spaces is true) and reached the Azure readers, while the
         # subscription check and the sign-in's ARM term treat it as no scope at all, so one parameter was
-        # given and not given at once. The module supports PowerShell 7.2, which has no
-        # [ValidateNotNullOrWhiteSpace()] (7.4+), so the same test runs as a script. Declared ABOVE
+        # given and not given at once. [ValidateNotNullOrWhiteSpace()] exists on the 7.6 floor, but the
+        # test stays a script: it keeps its own binding message (published behaviour). Declared ABOVE
         # [ValidateNotNullOrEmpty()] on purpose: validation attributes run in reverse declaration order
         # (measured), so an empty or null value still reads the NotNullOrEmpty message and white space reads
         # this one. No parameter moves: positional binding follows declaration order.
