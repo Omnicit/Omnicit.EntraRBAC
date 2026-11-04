@@ -1133,7 +1133,11 @@ without `-RequestorScope` of a policy whose `allowedTargetScope` reads as `unkno
 Microsoft Graph names a scope this module cannot read that way, and an update that sent the
 placeholder back was measured to store it as the policy's scope. Pass `-RequestorScope` to set the
 scope; `Invoke-OERStructure` reports such a policy `Failed` whatever its entry declares, a
-`requestorScope` included, since the engine has no such escape. Given `-DisplayName` and no other
+`requestorScope` included, since the engine has no such escape. It refuses, with `AssignmentPolicyValueUnknown` and also under
+its own `-WhatIf`, an update of a policy whose read succeeds but has no `expiration` or no
+`requestApprovalSettings` unless the call names every value that block holds (an expiration
+parameter; `-ApprovalStage`, `-RequireRequestorJustification` and `-RequireApprovalForUpdate`),
+since the full update would otherwise write a default in its place; nothing is sent. Given `-DisplayName` and no other
 property to update, it renames the policy when the name differs from the live one, carrying
 everything else forward, and reports `NothingToUpdate` after one read when it is the live name,
 compared ignoring case. A `-WhatIf` plan reports an access package declared in a catalog the same

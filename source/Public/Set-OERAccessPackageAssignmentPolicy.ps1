@@ -368,7 +368,13 @@ function Set-OERAccessPackageAssignmentPolicy {
                 $Remedy += '-ApprovalStage (or -RequireApproval), -RequireRequestorJustification and -RequireApprovalForUpdate'
             }
             $Names = $MissingKey -join ' and '
-            $WhatIsHeld = if ($MissingKey.Count -gt 1) { 'every value they hold' } elseif ($ApprovalUnknown) { 'every value it holds' } else { 'the value' }
+            if ($MissingKey.Count -gt 1) {
+                $WhatIsHeld = 'every value they hold'
+            } elseif ($ApprovalUnknown) {
+                $WhatIsHeld = 'every value it holds'
+            } else {
+                $WhatIsHeld = 'the value'
+            }
             Write-CmdletError `
                 -Message ([System.Exception]::new(
                     "Microsoft Graph returned assignment policy '$Id' without $Names, and this update does not " +

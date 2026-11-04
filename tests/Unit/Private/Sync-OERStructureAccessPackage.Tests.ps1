@@ -6740,6 +6740,33 @@ Describe 'Sync-OERStructureAccessPackage -- assignment policies renamed through 
             $Body.automaticRequestSettings.gracePeriodBeforeAccessRemoval | Should -BeExactly 'P7D'
         }
 
+        It 'refuses an update through the real Set when the live policy read has no expiration: one Failed row carrying AssignmentPolicyValueUnknown, the record written once, no PUT (BL-161a)' {
+            $Raw = @{
+                id                      = 'pol-noexp'
+                displayName             = 'POL-Old'
+                description             = 'live description'
+                accessPackage           = @{ id = 'ap-1' }
+                allowedTargetScope      = 'allMemberUsers'
+                requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }
+            }
+            # A rename names no expiration, so the full update would write a default in its place.
+            $Item = [PSCustomObject]@{
+                displayName        = 'AP'
+                catalog            = 'CAT'
+                assignmentPolicies = @([PSCustomObject]@{ displayName = 'POL-New'; previousDisplayName = 'POL-Old' })
+            }
+
+            $Run = Invoke-PolSync -Item $Item -Live @($Raw)
+
+            @($Run.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 1
+            $Failed = @($Run.Rows | Where-Object { $_.Action -eq 'Failed' })[0]
+            $Failed.Detail | Should -BeLike '*without expiration*'
+            $Run.Sent.Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PUT' }
+            # The engine re-publishes the record under its caller; the cmdlet wrote its own exactly once.
+            $Own = @($Run.Published | Where-Object { [string]$_.FullyQualifiedErrorId -ceq 'AssignmentPolicyValueUnknown,Set-OERAccessPackageAssignmentPolicy' })
+            $Own.Count | Should -Be 1
+        }
         It 'reports Unchanged and sends nothing when the policy already carries the new name (the second run)' {
             $Item = [PSCustomObject]@{
                 displayName        = 'AP'
