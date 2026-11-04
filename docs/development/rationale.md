@@ -14501,6 +14501,18 @@ access review or another reference that names it reads the GUID as an object id.
 the directory role guard's "eligible for" wording, is under
 [#directory-role-assignments](#directory-role-assignments).
 
+### The engine writes the validator's warnings (Sprint 12 step 4, BL-143a)
+
+`Invoke-OERStructure` validated the document and wrote only its errors; a Warning finding never
+reached the operator, so the two warnings of this anchor (BL-54, BL-24) and every other were
+invisible to an apply. It now writes one `Write-Warning` per Warning finding, in the validator's order, with the text
+`Invoke-OERStructure: structure document warning at <Path>: <Message>`, directly after a valid
+validation and BEFORE the `ConfirmationUnavailable` check, the sign-in and every read or write. The
+placement is the warning-before-confirmation rule: `-WhatIf` shows them, a `-Confirm` prompt is
+answered with them on screen, and a `-WarningAction Stop` caller stops before anything is signed in
+to. A document with an error is refused as before and writes none of its warnings. The test file
+holds the order, the stop before `Initialize-OERAuth` and every handler, and both no-warning cases.
+
 ## run-right-after-a-write
 
 Sprint 11 step 11 (BL-121, second point): documented, no code.
@@ -14524,18 +14536,6 @@ Sprint 12 step 4 (BL-159a, BL-161d).
 Measured on PowerShell 7.6.7 with a plain function that writes two rows and then throws: an assignment
 `$Records = & F` never completes, so the rows the function wrote are lost and `$Records` keeps its
 previous value; `& F | ForEach-Object { $List.Add($_) }` leaves both rows in the list and the catch sees
-### The engine writes the validator's warnings (Sprint 12 step 4, BL-143a)
-
-`Invoke-OERStructure` validated the document and wrote only its errors; a Warning finding never
-reached the operator, so the two warnings above (and every other) were invisible to an apply. It now
-writes one `Write-Warning` per Warning finding, in the validator's order, with the text
-`Invoke-OERStructure: structure document warning at <Path>: <Message>`, directly after a valid
-validation and BEFORE the `ConfirmationUnavailable` check, the sign-in and every read or write. The
-placement is the warning-before-confirmation rule: `-WhatIf` shows them, a `-Confirm` prompt is
-answered with them on screen, and a `-WarningAction Stop` caller stops before anything is signed in
-to. A document with an error is refused as before and writes none of its warnings. The test file
-holds the order, the stop before `Initialize-OERAuth` and every handler, and both no-warning cases.
-
 the same error record (the `FullyQualifiedErrorId` unchanged, also for `ThrowTerminatingError`);
 `-OutVariable` also keeps them. The engine collected a handler's rows with the assignment, so a handler
 that wrote a row (a `Created` or `Updated`) and then threw lost that row and the report showed only

@@ -7,7 +7,8 @@ function Invoke-OERStructure {
     The top-level apply engine for Phase 5 JSON Orchestration. Reads a structure document from
     -Path or -Json, validates it offline with Test-OERStructureSchema (aborting before any write
     if invalid; the validator's warnings are written, one Write-Warning each, before anything is
-    confirmed, signed in to, read or written), authenticates, then iterates every declared section in dependency order --
+    confirmed, signed in to, read or written), authenticates, then iterates every declared
+    section in dependency order --
     Groups, AdministrativeUnits, Catalogs, AccessPackages, AccessReviews,
     DirectoryRoleManagementPolicies, DirectoryRoleAssignments, RoleAssignments, RoleManagementPolicies
     -- and calls the matching Sync-OERStructure* handler for each item.
