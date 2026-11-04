@@ -226,11 +226,13 @@ Describe 'New-OERAccessPackage' {
 
     Context 'a name that exists in another catalog is never returned (BL-148a)' {
         BeforeEach {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $null }
             Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId { 'ap-other' }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $null } -ParameterFilter { $Method -eq 'POST' }
         }
 
         It 'refuses with AccessPackageInAnotherCatalog, returns nothing and creates nothing' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $null }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
                 @{ id = 'ap-other'; displayName = 'AP-Sales'; catalog = @{ id = 'cat-B' } }
             } -ParameterFilter { $Method -ne 'POST' }
@@ -247,6 +249,7 @@ Describe 'New-OERAccessPackage' {
         }
 
         It 'refuses under -WhatIf too' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $null }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
                 @{ id = 'ap-other'; displayName = 'AP-Sales'; catalog = @{ id = 'cat-B' } }
             } -ParameterFilter { $Method -ne 'POST' }
@@ -258,6 +261,7 @@ Describe 'New-OERAccessPackage' {
         }
 
         It 'returns the package when its catalog id differs only in letter case' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $null }
             Mock -ModuleName $script:moduleName Resolve-OERCatalogId { 'CAT-1' }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
                 @{ id = 'ap-other'; displayName = 'AP-Sales'; catalog = @{ id = 'cat-1' } }
@@ -270,6 +274,7 @@ Describe 'New-OERAccessPackage' {
         }
 
         It 'refuses with the unreadable-catalog message when the read carries no catalog' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $null }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
                 @{ id = 'ap-other'; displayName = 'AP-Sales' }
             } -ParameterFilter { $Method -ne 'POST' }
@@ -326,7 +331,10 @@ Describe 'New-OERAccessPackage' {
     }
 
     Context 'create then call again converges (G8)' {
+        AfterEach { Remove-Variable -Name OERT6Created -Scope Global -ErrorAction SilentlyContinue }
+
         It 'returns the existing package on the second call with exactly one POST over both' {
+            # Relies on the file-level Resolve-OERCatalogId mock ('cat-1').
             $global:OERT6Created = $false
             Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId { if ($global:OERT6Created) { 'ap-1' } else { $null } }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {

@@ -4658,11 +4658,12 @@ Describe 'Invoke-OERStructure applies what an export writes by id: a package''s 
         @($script:IdTenant.Packages).Count | Should -Be 2
     }
 
-    It 'fails, writing nothing, a package to be created in the catalog its id names while a package of that name is in another catalog (twin catalogs)' {
+    It 'fails with the cmdlet''s refusal, writing nothing, a package to be created in the catalog its id names while a package of that name is in another catalog (twin catalogs)' {
         # The catalog the id names does not hold AP-ById; a package of that name exists in another catalog --
         # the case the export's catalog id makes reachable for two catalogs that share a name.
-        # New-OERAccessPackage's tenant-wide name check finds that package and returns it, read with its
-        # catalog: the entry must fail with nothing written to that package or for the entry.
+        # New-OERAccessPackage's tenant-wide name check finds that package, reads it with its catalog and
+        # refuses it (AccessPackageInAnotherCatalog): the entry is one Failed row carrying that record, with
+        # nothing written to that package or for the entry.
         $TwinId = 'aaaa1111-0000-0000-0000-000000000053'
         $OtherCatalogId = 'eeee5555-0000-0000-0000-000000000052'
         $script:IdTenant.Packages.Add(@{
@@ -4670,11 +4671,14 @@ Describe 'Invoke-OERStructure applies what an export writes by id: a package''s 
                 catalog = @{ id = $OtherCatalogId }
             })
 
-        $Rows = @(Invoke-OERStructure -Json $script:IdPackageDoc -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
-        @(ConvertTo-IdRowLine -Row $Rows) | Should -Be @(
-            ("accessPackages|AP-ById|Failed|access package 'AP-ById' was not created in catalog '$($script:IdCatId)': a package of that name " +
-            "already exists in another catalog ($OtherCatalogId), and New-OERAccessPackage returned it ($TwinId); nothing was written to it")
-        )
+        $Err = $null
+        $Rows = @(Invoke-OERStructure -Json $script:IdPackageDoc -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue)
+        $Message = "Access package 'AP-ById' exists in another catalog ($OtherCatalogId), not in catalog '$($script:IdCatId)' ($($script:IdCatId)), so it was not returned and nothing was created. " +
+            'Access package names are unique only within a catalog, and this command looks the name up in the whole tenant; use a name no other access package carries.'
+        @(ConvertTo-IdRowLine -Row $Rows) | Should -Be @("accessPackages|AP-ById|Failed|access package creation failed: $Message")
+        @($Rows).Count | Should -Be 1
+        @($Rows[0].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'AccessPackageInAnotherCatalog'
+        @($Err | Where-Object { @($_.FullyQualifiedErrorId -split ',')[0] -eq 'AccessPackageInAnotherCatalog' }).Count | Should -BeGreaterOrEqual 1
         # Reached: the declared catalog was read by its id, and New-OERAccessPackage made its tenant-wide name
         # check and read the package it found with its catalog.
         $script:IdTenant.Requests | Should -Contain ("GET v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=catalog/id eq '$($script:IdCatId)'&`$expand=catalog")

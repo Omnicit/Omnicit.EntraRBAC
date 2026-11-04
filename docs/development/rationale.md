@@ -12883,8 +12883,8 @@ ordinal ignore-case one on the `$expand=catalog` read) -- an id as written, a na
 when they differ reports the entry as one `Failed` row and returns, with nothing written to that
 package or for the entry; a lookup that fails is scrubbed first and reported `Failed` with its error,
 nothing further written. A package with no catalog in the answer is one the create sent into the
-declared catalog whose confirmation read did not answer, and is reported `Created` as before. No
-ErrorId was added. Residual: none. (d) `Get-OERInventory` reads the listing of every group once per
+declared catalog whose confirmation read did not answer, and is reported `Created` as before. The handler added no
+ErrorId (Sprint 12 step 4 added one to the cmdlet, above). Residual: none. (d) `Get-OERInventory` reads the listing of every group once per
 invocation that meets a group principal whose name was read, and `Export-OERInventory` makes one
 invocation per Azure scope, whose role assignment read returns inherited assignments too: one group
 assignment at a management group costs ceil(G/999) requests at every scope beneath it (about 9,300
