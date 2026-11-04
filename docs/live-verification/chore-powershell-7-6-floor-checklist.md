@@ -70,7 +70,7 @@ after it. The stalled-body case itself was measured offline against a local list
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is never switched.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is never switched.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -99,13 +99,22 @@ bounded lookup): True; C (no DateKind support question): True`.
 clone; any other `False` -- build the worktree first (`./build.ps1 -Tasks build`), never while the
 gate runs.
 
-Result:
+Result: 2026-11-04 16:45 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Run 2026-11-04 UTC. The session's Repo is the step's own worktree, not the main clone; the main clone is on main, never switched; the worktree is on this branch at 4850533 (the checklist commit; its code is e36c2d7's, built there and gated green: 13416 passed, 0 failed, coverage 96.32 %) with 0 tracked changes; the build carries A (floor 7.6), B (the bounded lookup) and C (no DateKind support question).
+
+[oer-s122] The module loads from a worktree that is not the main clone: True
+[oer-s122] Main clone: branch main
+[oer-s122] Worktree: branch chore/powershell-7-6-floor; HEAD 4850533 docs: give the import check its own heading in the live checklist; tracked changes: 0
+[oer-s122] The worktree's build carries A (floor 7.6): True; B (the bounded lookup): True; C (no DateKind support question): True
+```
 
 ## 1. The module imports on PowerShell 7.6
 
 ### 1.1. Import-Module of the build in a fresh pwsh -NoProfile
 
-- [ ] **1.1** In a fresh `pwsh -NoProfile` on 7.6, `Import-Module` of the build's manifest succeeds, and the loaded module declares `PowerShellVersion` 7.6.
+- [x] **1.1** In a fresh `pwsh -NoProfile` on 7.6, `Import-Module` of the build's manifest succeeds, and the loaded module declares `PowerShellVersion` 7.6.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -134,7 +143,15 @@ True`; the exported command count the README states.
 **Failure looks like:** an import error -- read the id; `False` on the version line -- the machine
 does not run 7.6, and the check cannot be run here.
 
-Result:
+Result: 2026-11-04 16:45 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Run 2026-11-04 UTC, no sign-in. A fresh pwsh -NoProfile -NonInteractive on PowerShell 7.6.7 imported the build's manifest with no error; the loaded module (1.3.2, the local build's version) declares PowerShellVersion 7.6 and exports 98 commands, the count README states.
+
+[oer-s122] 1.1 PowerShell 7.6.7; at least 7.6.0: True
+[oer-s122] 1.1 Import-Module succeeded: True
+[oer-s122] 1.1 module 1.3.2; declares PowerShellVersion 7.6: True; exported commands: 98
+```
 
 ## 2. The tenant lookup, in the module's scope, with the bound timeout
 
@@ -145,7 +162,7 @@ their values.
 
 ### 2.1. The test tenant's domain resolves to its tenant ID
 
-- [ ] **2.1** `Resolve-OERTenantDomain -Domain` (the test tenant's primary domain) `-Environment Global` in the module's scope returns a GUID that is the test tenant's, in one request carrying exactly `Uri, Method, TimeoutSec, OperationTimeoutSeconds, ErrorAction`; the time is printed.
+- [x] **2.1** `Resolve-OERTenantDomain -Domain` (the test tenant's primary domain) `-Environment Global` in the module's scope returns a GUID that is the test tenant's, in one request carrying exactly `Uri, Method, TimeoutSec, OperationTimeoutSeconds, ErrorAction` (PowerShell 7.4 and later bind `-TimeoutSec` to its parameter `ConnectionTimeoutSeconds`, the name the fence records); the time is printed.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -173,16 +190,24 @@ Write-OerLiveStep ("2.1 the test tenant's domain: error: {0}; the answer is a GU
 ```
 
 **Expect:** the build `True`, the fence `True`; `error: none; the answer is a GUID: True; the answer
-is the test tenant's ID: True; requests: 1; parameters bound: ErrorAction, Method,
-OperationTimeoutSeconds, TimeoutSec, Uri`; a time well under 30 seconds.
+is the test tenant's ID: True; requests: 1; parameters bound: ConnectionTimeoutSeconds, ErrorAction,
+Method, OperationTimeoutSeconds, Uri`; a time well under 30 seconds.
 **Failure looks like:** an error -- the authority refused a real domain (read 2.2's message format);
 a parameter list without `OperationTimeoutSeconds` -- the build is not this branch's.
 
-Result:
+Result: 2026-11-04 16:45 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Run 2026-11-04 UTC, no sign-in. Resolve-OERTenantDomain in the module's scope resolved the test tenant's primary domain to a GUID that is the test tenant's ID (True, True) in one request, 0.39 s. The fence recorded the bound parameters ConnectionTimeoutSeconds (-TimeoutSec, bound to that parameter on PowerShell 7.4 and later), ErrorAction, Method, OperationTimeoutSeconds and Uri: the new parameter is sent. The Expect named TimeoutSec and is corrected to the recorded name.
+
+[oer-s122] The module is the worktree's build: True
+[oer-s122] The module resolves Invoke-RestMethod to the fence: True
+[oer-s122] 2.1 the test tenant's domain: error: none; the answer is a GUID: True; the answer is the test tenant's ID: True; requests: 1; parameters bound: ConnectionTimeoutSeconds, ErrorAction, Method, OperationTimeoutSeconds, Uri; seconds: 0.39
+```
 
 ### 2.2. A made-up domain is refused, in the lookup and in the sign-in, before any token request
 
-- [ ] **2.2** In the same process: `Resolve-OERTenantDomain` with the made-up domain throws (one request, the same five parameters); `Connect-OER -TenantId` (the made-up domain) `-ClientId -Certificate` is refused with `TenantResolutionFailed` and requests no token; the times are printed.
+- [x] **2.2** In the same process: `Resolve-OERTenantDomain` with the made-up domain throws (one request, the same five parameters); `Connect-OER -TenantId` (the made-up domain) `-ClientId -Certificate` is refused with `TenantResolutionFailed` and requests no token; the times are printed.
 
 ```powershell
 # Run in 2.1's process, after 2.1.
@@ -213,19 +238,27 @@ Remove-Item -Path 'function:global:Invoke-RestMethod', 'function:global:Get-AzTo
 ```
 
 **Expect:** the fence `True`; `threw: True (InvalidOperationException); requests: 1; parameters
-bound: ErrorAction, Method, OperationTimeoutSeconds, TimeoutSec, Uri`; a message naming the authority,
+bound: ConnectionTimeoutSeconds, ErrorAction, Method, OperationTimeoutSeconds, Uri`; a message naming the authority,
 `MADE-UP-DOMAIN` and `invalid_tenant, AADSTS90002`; then `errors: TenantResolutionFailed; lookups: 1;
 token requests: 0; the module holds a session: False`; both times well under 30 seconds.
 **Failure looks like:** `threw: False`, or a token request -- STOP: the lookup does not refuse a
 made-up domain before a token is requested.
 
-Result:
+Result: 2026-11-04 16:45 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Run 2026-11-04 UTC in 2.1's process. The lookup of the made-up domain threw InvalidOperationException after one request carrying the same five parameters, 0.54 s, with the authority's 400 invalid_tenant, AADSTS90002 in the message; Connect-OER with the made-up domain and the certificate was refused with TenantResolutionFailed after one lookup, with 0 token requests and no session, 0.26 s.
+
+[oer-s122] The module resolves Get-AzToken to the fence: True
+[oer-s122] 2.2 the lookup of the made-up domain: threw: True (InvalidOperationException); requests: 1; parameters bound: ConnectionTimeoutSeconds, ErrorAction, Method, OperationTimeoutSeconds, Uri; seconds: 0.54; message: The Microsoft Entra ID authority 'https://login.microsoftonline.com/' did not resolve 'MADE-UP-DOMAIN' to a tenant: Response status code does not indicate success: 400 (Bad Request). (invalid_tenant, AADSTS90002)
+[oer-s122] 2.2 Connect-OER with the made-up domain: errors: TenantResolutionFailed; lookups: 1; token requests: 0; the module holds a session: False; seconds: 0.26
+```
 
 ## 3. A sign-in that names the tenant by domain, and a Graph read
 
 ### 3.1. Connect-OER as oer-live-cc with -TenantId the domain, then Get-OERGroup -All
 
-- [ ] **3.1** After the identity check and `Disconnect-OerLive`, `Connect-OER -TenantId` (the test tenant's primary domain) `-ClientId -Certificate` signs in with one lookup carrying the five parameters, and `Get-OERGroup -All` returns groups (a count only).
+- [x] **3.1** After the identity check and `Disconnect-OerLive`, `Connect-OER -TenantId` (the test tenant's primary domain) `-ClientId -Certificate` signs in with one lookup carrying the five parameters, and `Get-OERGroup -All` returns groups (a count only).
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -272,19 +305,38 @@ Disconnect-OerLive
 ```
 
 **Expect:** every identity line `True`; the build and the fences `True`; `errors: none; lookups: 1;
-parameters bound: ErrorAction, Method, OperationTimeoutSeconds, TimeoutSec, Uri; token requests: 1`;
+parameters bound: ConnectionTimeoutSeconds, ErrorAction, Method, OperationTimeoutSeconds, Uri; token requests: 1`;
 the three state lines `True`; then `errors: none; groups returned: more than 0: True; tagged
 Omnicit.EntraRBAC.Group: True; Graph requests at least 1: True`.
 **Failure looks like:** `application is disabled` -- STOP: the identity is not enabled for this run;
 a 401 or 403 -- STOP; `TenantResolutionFailed` -- the lookup refused the real domain.
 
-Result:
+Result: 2026-11-04 16:45 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Run 2026-11-04 UTC as oer-live-cc (every identity line True). After Disconnect-OerLive, Connect-OER -TenantId (the primary domain) -ClientId -Certificate signed in with no error, one lookup carrying the five parameters (OperationTimeoutSeconds among them) and one token request, the Graph token issued for the test tenant (True), the client oer-live-cc (True), 0.36 s; Get-OERGroup -All then returned groups (True), tagged Omnicit.EntraRBAC.Group (True), with no error.
+
+[oer-s122] Omnicit.EntraRBAC 1.3.2 loaded from REPO\.claude\worktrees\s12-steg2\output\module\Omnicit.EntraRBAC\1.3.2.
+[oer-s122] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s122] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s122] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s122] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s122] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s122] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s122] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s122] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s122] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s122] The module is the worktree's build: True
+[oer-s122] The module resolves the three fenced commands to the fences: True
+[oer-s122] 3.1 Connect-OER by domain: errors: none; lookups: 1; parameters bound: ConnectionTimeoutSeconds, ErrorAction, Method, OperationTimeoutSeconds, Uri; token requests: 1; the Graph token was issued for the test tenant: True; the client is oer-live-cc: True; the state carries a signed-in object id: True; seconds: 0.36
+[oer-s122] 3.1 Get-OERGroup -All: errors: none; groups returned: more than 0: True; tagged Omnicit.EntraRBAC.Group: True; Graph requests at least 1: True
+```
 
 ## Teardown
 
 ### T.1. Nothing carries the prefix, no session is left, the main clone was never switched
 
-- [ ] **T.1** No group carries `oer-s122-`, the module holds no session, and the raw folder for the step is deleted after the results are copied.
+- [x] **T.1** No group carries `oer-s122-`, the module holds no session, and the raw folder for the step is deleted after the results are copied.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -292,11 +344,12 @@ Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
 $Cfg = Import-OerLiveConfig -Prefix 'oer-s122-' -ConfigDirectory $VaultDir
 $Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s122'
 if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
-Connect-OerLive
+Connect-OerLive -Arm
+$Module = Get-Module -Name Omnicit.EntraRBAC
 $Left = @(Find-OerLivePrefixed -Quiet)
 Write-OerLiveStep "T.1 objects carrying the prefix: $(@($Left | Where-Object { $_.Kind -ne 'unread' }).Count); collections that could not be read: $(@($Left | Where-Object { $_.Kind -eq 'unread' }).Count)"
 Disconnect-OerLive
-Write-OerLiveStep "T.1 the module holds a session after Disconnect-OerLive: $([bool](& (Get-Module -Name Omnicit.EntraRBAC) { $script:_OERAuthState }))"
+Write-OerLiveStep "T.1 the module holds a session after Disconnect-OerLive: $([bool](& $Module { $script:_OERAuthState }))"
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
 Write-OerLiveStep "T.1 main clone: branch $(([string]($List | Where-Object { $_ -like 'branch *' -or $_ -eq 'detached' } | Select-Object -First 1)) -replace '^branch refs/heads/', '')"
 ```
@@ -306,4 +359,23 @@ False`; the main clone on `main`.
 **Failure looks like:** a count above 0 -- this file creates nothing, so an object with the prefix is
 not this run's: STOP.
 
-Result:
+Result: 2026-11-04 16:45 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Run 2026-11-04 UTC as oer-live-cc. No user, group, administrative unit, catalog, access package, access review definition or app registration carries oer-s122- (0), every collection was read (0 unread), the module holds no session after Disconnect-OerLive, and the main clone is on main. The first run of this block failed in the block itself (Connect-OerLive needs -Graph or -Arm); the block was corrected to Connect-OerLive -Arm and run again. The raw folder raw\s122 is deleted after this result is copied.
+
+[oer-s122] Omnicit.EntraRBAC 1.3.2 loaded from REPO\.claude\worktrees\s12-steg2\output\module\Omnicit.EntraRBAC\1.3.2.
+[oer-s122] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s122] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s122] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s122] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s122] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s122] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s122] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s122] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s122] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s122] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s122-' is left.
+[oer-s122] T.1 objects carrying the prefix: 0; collections that could not be read: 0
+[oer-s122] T.1 the module holds a session after Disconnect-OerLive: False
+[oer-s122] T.1 main clone: branch main
+```
