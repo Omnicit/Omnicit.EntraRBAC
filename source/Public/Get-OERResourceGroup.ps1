@@ -11,6 +11,9 @@ function Get-OERResourceGroup {
     -IncludeRoleAssignments, each returned resource group gains a RoleAssignments property holding the
     role assignments at that resource group scope (via Get-OERRoleAssignment -AtScope) -- this is the
     light aggregator that lists every delegation on every resource group under a subscription.
+    RoleAssignments is an empty collection when the group has none, and $null when the read failed: the
+    resource group is still returned, followed by a non-terminating error record carrying the read's
+    own error, and the next one is processed. Test for $null to tell unread from none.
     -ResolveNames is forwarded to Get-OERRoleAssignment so those assignments carry PrincipalDisplayName
     and RoleName; it requires -IncludeRoleAssignments. Output objects are tagged
     Omnicit.EntraRBAC.ResourceGroup and expose SubscriptionId and ResourceGroup so they pipe into the
@@ -27,7 +30,9 @@ function Get-OERResourceGroup {
 
     .PARAMETER IncludeRoleAssignments
     For each resource group, attach a RoleAssignments property with the role assignments at that
-    resource group scope.
+    resource group scope. The property is an empty collection when there are none, and $null when the
+    read failed (a non-terminating error record carrying the read's own error follows the resource
+    group, which is still returned); test for $null to tell unread from none.
 
     .PARAMETER ResolveNames
     Enrich the attached role assignments with PrincipalDisplayName and RoleName. Requires
@@ -115,8 +120,18 @@ function Get-OERResourceGroup {
             if ($IncludeRoleAssignments) {
                 $RaParams = @{ Scope = $Rg.ResourceId; AtScope = $true }
                 if ($ResolveNames) { $RaParams.ResolveNames = $true }
-                $Assignments = @(Get-OERRoleAssignment @RaParams)
+                $ReadFailure = $null
+                try {
+                    $Assignments = @(Get-OERRoleAssignment @RaParams -ErrorAction Stop)
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $ReadFailure = $PSItem
+                    $Assignments = $null
+                }
                 $Rg | Add-Member -NotePropertyName 'RoleAssignments' -NotePropertyValue $Assignments
+                $Rg
+                if ($null -ne $ReadFailure) { $PSCmdlet.WriteError($ReadFailure) }
+                continue
             }
             $Rg
         }

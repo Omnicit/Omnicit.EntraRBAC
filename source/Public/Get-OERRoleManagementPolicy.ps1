@@ -23,7 +23,9 @@ function Get-OERRoleManagementPolicy {
     .PARAMETER CommonRoles
     Read the role management policy for each role in the curated common-role set (Reader, Contributor,
     Owner, User Access Administrator, Role Based Access Control Administrator) at the given scope. A
-    role with no policy at the scope is skipped with a warning. Mutually exclusive with -Role and
+    role or policy that does not exist at the scope is skipped with a warning. A role whose lookup
+    FAILED (a permission refusal, a paging refusal, an ambiguous name) is written as a non-terminating
+    error of its own, and the next role is still read. Mutually exclusive with -Role and
     -AllRolesAtScope.
 
     .PARAMETER AllRolesAtScope
@@ -65,7 +67,8 @@ function Get-OERRoleManagementPolicy {
 
     .EXAMPLE
     Get-OERRoleManagementPolicy -CommonRoles -Subscription 'Prod'
-    Reads the PIM policy for each curated common role on the Prod subscription, skipping any with no policy.
+    Reads the PIM policy for each curated common role on the Prod subscription, skipping any with no
+    policy and writing an error for any whose lookup failed.
 
     .EXAMPLE
     Get-OERRoleManagementPolicy -AllRolesAtScope -Subscription 'Prod'
@@ -160,15 +163,21 @@ function Get-OERRoleManagementPolicy {
 
         if ($CommonRoles) {
             # Read the curated set: resolve each display name to a role definition id, then read its
-            # policy. A role with no policy at the scope is skipped with a warning, not an abort.
+            # policy. A role or policy that does not exist at the scope is skipped with a warning,
+            # not an abort; a lookup that FAILED (403, paging refusal, ambiguous name) is written as
+            # a non-terminating error of its own and the next role is read.
             foreach ($Name in (Get-OERCommonRoleName)) {
                 try {
-                    $RoleDefinitionId = Resolve-OERRoleDefinitionId -Role $Name -Scope $TargetScope
-                    $PolicyInfo = Get-OERRoleManagementPolicyId -Scope $TargetScope -RoleDefinitionId $RoleDefinitionId
+                    $RoleDefinitionId = Resolve-OERRoleDefinitionId -Role $Name -Scope $TargetScope -ThrowUnresolved
+                    $PolicyInfo = Get-OERRoleManagementPolicyId -Scope $TargetScope -RoleDefinitionId $RoleDefinitionId -ThrowUnresolved
                     ConvertTo-OERRoleManagementPolicy -Rules @($PolicyInfo.EffectiveRules) -PolicyId $PolicyInfo.PolicyId -Scope $TargetScope -RoleName $PolicyInfo.RoleName -RoleDefinitionId $RoleDefinitionId
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
-                    Write-Warning "Skipping role '$Name': $($PSItem.Exception.Message)"
+                    if (Test-OERRoleLookupUnresolved -Record $PSItem) {
+                        Write-Warning "Skipping role '$Name': $($PSItem.Exception.Message)"
+                    } else {
+                        $PSCmdlet.WriteError($PSItem)
+                    }
                     continue
                 }
             }
@@ -176,18 +185,28 @@ function Get-OERRoleManagementPolicy {
         }
 
         # ByRole: a single explicit role -- granular non-terminating errors (preserved behavior).
+        # Only a lookup that succeeded and matched nothing is RoleDefinitionNotFound / PolicyNotFound;
+        # a failed read (403, paging refusal, ambiguous name) is published as itself.
         try {
-            $RoleDefinitionId = Resolve-OERRoleDefinitionId -Role $Role -Scope $TargetScope
+            $RoleDefinitionId = Resolve-OERRoleDefinitionId -Role $Role -Scope $TargetScope -ThrowUnresolved
         } catch {
             Remove-OERErrorRecord -Record $PSItem
-            Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'RoleDefinitionNotFound' -Category ObjectNotFound -TargetObject $Role -Cmdlet $PSCmdlet
+            if (Test-OERRoleLookupUnresolved -Record $PSItem) {
+                Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'RoleDefinitionNotFound' -Category ObjectNotFound -TargetObject $Role -Cmdlet $PSCmdlet
+            } else {
+                $PSCmdlet.WriteError($PSItem)
+            }
             return
         }
         try {
-            $PolicyInfo = Get-OERRoleManagementPolicyId -Scope $TargetScope -RoleDefinitionId $RoleDefinitionId
+            $PolicyInfo = Get-OERRoleManagementPolicyId -Scope $TargetScope -RoleDefinitionId $RoleDefinitionId -ThrowUnresolved
         } catch {
             Remove-OERErrorRecord -Record $PSItem
-            Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'PolicyNotFound' -Category ObjectNotFound -TargetObject $RoleDefinitionId -Cmdlet $PSCmdlet
+            if (Test-OERRoleLookupUnresolved -Record $PSItem) {
+                Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'PolicyNotFound' -Category ObjectNotFound -TargetObject $RoleDefinitionId -Cmdlet $PSCmdlet
+            } else {
+                $PSCmdlet.WriteError($PSItem)
+            }
             return
         }
 

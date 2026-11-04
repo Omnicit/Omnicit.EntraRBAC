@@ -327,18 +327,28 @@ function Set-OERRoleManagementPolicy {
             }
             Write-Verbose "[Set-OERRoleManagementPolicy] Target scope: '$TargetScope'."
             try {
-                $RoleDefinitionId = Resolve-OERRoleDefinitionId -Role $Role -Scope $TargetScope
+                $RoleDefinitionId = Resolve-OERRoleDefinitionId -Role $Role -Scope $TargetScope -ThrowUnresolved
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'RoleDefinitionNotFound' -Category ObjectNotFound -TargetObject $Role -Cmdlet $PSCmdlet
+                # Only a lookup that succeeded and matched nothing is RoleDefinitionNotFound; a failed
+                # read (403, paging refusal, ambiguous name) is published as itself.
+                if (Test-OERRoleLookupUnresolved -Record $PSItem) {
+                    Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'RoleDefinitionNotFound' -Category ObjectNotFound -TargetObject $Role -Cmdlet $PSCmdlet
+                } else {
+                    $PSCmdlet.WriteError($PSItem)
+                }
                 return
             }
             Write-Verbose "[Set-OERRoleManagementPolicy] Resolved role '$Role' to '$RoleDefinitionId'."
             try {
-                $PolicyInfo = Get-OERRoleManagementPolicyId -Scope $TargetScope -RoleDefinitionId $RoleDefinitionId
+                $PolicyInfo = Get-OERRoleManagementPolicyId -Scope $TargetScope -RoleDefinitionId $RoleDefinitionId -ThrowUnresolved
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'PolicyNotFound' -Category ObjectNotFound -TargetObject $RoleDefinitionId -Cmdlet $PSCmdlet
+                if (Test-OERRoleLookupUnresolved -Record $PSItem) {
+                    Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'PolicyNotFound' -Category ObjectNotFound -TargetObject $RoleDefinitionId -Cmdlet $PSCmdlet
+                } else {
+                    $PSCmdlet.WriteError($PSItem)
+                }
                 return
             }
             $ResolvedPolicyId = $PolicyInfo.PolicyId

@@ -1251,7 +1251,7 @@ Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
         $Reader = "$Sub/providers/Microsoft.Authorization/roleDefinitions/bbbb4040-0000-0000-0000-000000000001"
         if ($Method -eq 'GET' -and $Path -like '*/roleDefinitions?*') { return [pscustomobject]@{ value = @([pscustomobject]@{ id = $Reader }) } }
         if ($Method -eq 'GET' -and $Path -like '*/roleManagementPolicyAssignments?*') {
-            if ('#POLICYLIST#' -eq 'fails') { throw 'ARM 403 AuthorizationFailed' }
+            if ('#POLICYLIST#' -eq 'fails') { throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('ARM 403 AuthorizationFailed'), 'AuthorizationFailed', [System.Management.Automation.ErrorCategory]::PermissionDenied, $Path) }
             return [pscustomobject]@{ value = @([pscustomobject]@{ properties = [pscustomobject]@{
                 policyId = "$Sub/providers/Microsoft.Authorization/roleManagementPolicies/eeee4040-0000-0000-0000-000000000001"
                 roleDefinitionId = $Reader; scope = $Sub; effectiveRules = @() } }) }
@@ -1288,7 +1288,7 @@ $RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OER
         # The read's own record reached the error stream, once, and no other error did.
         @($Run.Errors).Count | Should -Be 1
         $Run.Errors[0] | Should -BeExactly 'ARM 403 AuthorizationFailed'
-        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @('ERRID:PolicyNotFound,Invoke-OERStructure')
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @('ERRID:AuthorizationFailed,Invoke-OERStructure')
         # Nothing after the read ran: no approver lookup and no policy write.
         @($Logged | Where-Object { $_ -like 'POLICY SET*' }) | Should -BeNullOrEmpty -Because "the requests were:`n$($Logged -join "`n")"
         $Logged | Should -Not -Contain 'APPROVER LOOKUP'

@@ -1264,8 +1264,9 @@ sections included. Inside `Export-OERInventory` the walk's answers are reused, s
 request. A `-Subscription` is read by the ID the check found, never by the name as given. A
 `RoleAssignments` or `RoleManagementPolicies` read that fails is named in `InventoryPartial` too, by
 the section's own name, with the reader's message as its cause, and the section is written empty,
-which does not mean the scope has none; only `-CommonRoles` differs, since it skips a role it cannot
-read with a warning and carries on. A `-Scope`, `-Subscription` or `-ManagementGroup` of white space
+which does not mean the scope has none; only `-CommonRoles` differs, since it skips a role missing at
+the scope with a warning and carries on (a role whose read fails makes the whole section unread, named in
+`InventoryPartial` like any other failed read). A `-Scope`, `-Subscription` or `-ManagementGroup` of white space
 only is refused while PowerShell binds the parameters of `Get-OERInventory`, as are the `-Scope`,
 `-ManagementGroup` and `-GroupFilter` of `Export-OERInventory`.
 

@@ -10972,6 +10972,40 @@ What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule
   (BL-113); the cmdlets keep their refusal as the backstop.
   `Why: docs/development/rationale.md#approver-lookup`
 
+## role-lookup-unresolved
+
+Sprint 12 step 3 (BL-157, BL-161c). `Get-OERRoleManagementPolicy` and `Set-OERRoleManagementPolicy`
+booked EVERY failure of their two lookups as `RoleDefinitionNotFound` or `PolicyNotFound`: a 403 on
+the role definition list, an exhausted 429, an `ArmPagingIncomplete` and an ambiguous role name all
+reached the operator as "the role does not exist". `-CommonRoles` did the same with a `Skipping
+role` warning, and `Get-OERInventory -CommonRoles` therefore reported a failed read as a smaller
+section, never as unread.
+
+The fix copies the approver cohort's design (`#approver-lookup`). `Resolve-OERRoleDefinitionId` and
+`Get-OERRoleManagementPolicyId` throw an `ErrorRecord` with an internal id --
+`RoleDefinitionUnresolved`, `RolePolicyUnresolved` -- for a lookup that SUCCEEDED and matched
+nothing, same message, category `ObjectNotFound`, target the role or the role definition id.
+`Test-OERRoleLookupUnresolved` is the single owner of the test (an ordinal prefix on the
+FullyQualifiedErrorId, so a record that has crossed a `WriteError` boundary still counts; a null
+record is false). The two cmdlets publish `RoleDefinitionNotFound` / `PolicyNotFound` exactly as
+before for the unresolved case and the caught record itself for anything else; an ambiguous name is
+the resolver's own `AmbiguousName` record (R-7), which the tests of `AmbiguousName.Guard.Tests.ps1`
+now hold for both cmdlets. Neither internal id is ever published: a cohort scan in
+`tests/Unit/Private/Test-OERRoleLookupUnresolved.Tests.ps1` fails any file under `source/` other than
+the owner and the two producers that tests or names one.
+
+The internal ids are thrown only under a private `-ThrowUnresolved` switch (R-3). Without it the
+no-match throw stays a plain string: `Sync-OERStructureRoleAssignment` republishes the resolver's
+record as itself and a string throw's FullyQualifiedErrorId is its message text, so an always-on id
+would be published by the apply engine. Every other caller of the resolver is unchanged.
+
+`-CommonRoles` (R-6): a role or policy missing at the scope keeps the `Skipping role` warning; any
+other failure of a role's read is a non-terminating record per role and the next role is read.
+`Get-OERInventory` reads it with `-ErrorAction Stop`, as it does `-Role`, so the first such record
+ends the section as unread through `InventoryPartial` (the roles after it are not read), while a role
+missing at the scope is still a skip with a warning and no `InventoryPartial`. This replaces the
+Sprint 11 step 10 decision that a `-CommonRoles` read failure is a skipped role.
+
 ## failed-schedule-request
 
 Sprint 9 step 5 (BL-33) made a PIM schedule request that Microsoft Graph or Azure Resource Manager

@@ -8618,6 +8618,66 @@ Describe 'Get-OERInventory' {
                 'roleAssignments', 'roleManagementPolicies')
         }
     }
+
+    Context 'directory role policies read through the real Get-OERDirectoryRoleManagementPolicy (BL-162b)' {
+        # The reader runs for real; only its two helpers and the transport are mocked. The reader is
+        # called with -ErrorAction Stop, so its names-read record, written after every policy,
+        # reaches the inventory's catch with the policies already collected.
+        BeforeAll {
+            $script:RealPolRoleA = '11111111-1111-1111-1111-111111111111'
+            $script:RealPolRoleB = '22222222-2222-2222-2222-222222222222'
+        }
+
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment { }
+            Mock -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment { }
+            Mock -ModuleName $script:moduleName Get-OERDirectoryRolePolicyAssignment {
+                @(
+                    [PSCustomObject]@{ policyId = 'policy-a'; roleDefinitionId = '11111111-1111-1111-1111-111111111111'; policy = [PSCustomObject]@{ rules = @() } }
+                    [PSCustomObject]@{ policyId = 'policy-b'; roleDefinitionId = '22222222-2222-2222-2222-222222222222'; policy = [PSCustomObject]@{ rules = @() } }
+                )
+            }
+        }
+
+        It 'exports every policy named by its role id, with no InventoryPartial, when only the names read fails' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw [System.InvalidOperationException]::new('Forbidden: fixture refusal of the role names.') }
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies -AllDirectoryRolePolicies -ErrorAction SilentlyContinue -ErrorVariable DirErr
+            $Entries = @($Inv.directoryRoleManagementPolicies)
+            $Entries.Count | Should -Be 2
+            @($Entries.role) | Should -Be @($script:RealPolRoleA, $script:RealPolRoleB)
+            @(@($DirErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+        }
+
+        It 'states in the help that a names-only failure keeps the policies and is written to verbose only' {
+            $Help = (Get-Help Get-OERInventory -Full | Out-String) -replace '\s+', ' '
+            $Help | Should -Match 'only the Microsoft Entra role definition NAMES cannot be read, the policies are still exported, each role named by its role definition id'
+            $Help | Should -Match 'the cause is written to the verbose stream only'
+        }
+
+        It 'reports the section unread, keeping no partial list, when converting a later policy faults' {
+            Mock -ModuleName $script:moduleName ConvertTo-OERRoleManagementPolicy {
+                if ($PolicyId -eq 'policy-b') { throw [System.InvalidOperationException]::new('fixture converter fault') }
+                [PSCustomObject]@{ PolicyId = $PolicyId; RoleName = $RoleName; RoleDefinitionId = $RoleDefinitionId }
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } }
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies -AllDirectoryRolePolicies -ErrorAction SilentlyContinue -ErrorVariable DirErr
+            @($Inv.directoryRoleManagementPolicies).Count | Should -Be 0
+            $Partial = @(@($DirErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1
+            @(([string]$Partial[0].TargetObject) -split ', ') | Should -Be @('directoryRoleManagementPolicies')
+        }
+
+        It 'reports the section unread as before when the assignment read fails' {
+            Mock -ModuleName $script:moduleName Get-OERDirectoryRolePolicyAssignment { throw [System.InvalidOperationException]::new('Forbidden: fixture refusal of the assignments.') }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { }
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies -AllDirectoryRolePolicies -ErrorAction SilentlyContinue -ErrorVariable DirErr
+            @($Inv.directoryRoleManagementPolicies).Count | Should -Be 0
+            $Partial = @(@($DirErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1
+            @(([string]$Partial[0].TargetObject) -split ', ') | Should -Be @('directoryRoleManagementPolicies')
+            $Partial[0].Exception.Message | Should -Match 'fixture refusal of the assignments'
+        }
+    }
 }
 
 Describe 'Get-OERInventory role assignment principals the directory did not return, or whose lookup failed (Sprint 11 step 6, BL-133, A18)' {
@@ -10498,8 +10558,11 @@ Describe 'Get-OERInventory help documents the subscriptions of another tenant (B
         $Description | Should -Match ([regex]::Escape("The reader's own error is not written to the caller's error stream beside it (a caller's -ErrorVariable still collects it), and no warning is written for it."))
         # R-19: what -CommonRoles really does (the Describe 'Get-OERInventory -CommonRoles through the real
         # Get-OERRoleManagementPolicy' holds each claim), and the Stop warning preference.
-        $Description | Should -Match ([regex]::Escape("-CommonRoles is the exception: the reader reads each curated role on its own and skips any role whose definition or policy it cannot read -- a refused or failed read as much as a role that is missing at the scope -- with a warning of its own (Skipping role, the role's name and the reason), and carries on. That skip is not reported through InventoryPartial, so the section holds the policies of the roles that were read, which may be fewer than the curated set; only a scope that cannot be resolved, or a sign-in or Azure Resource Manager token the reader cannot get, is reported unread."))
-        $Description | Should -Match ([regex]::Escape("Under a Stop warning preference (-WarningAction Stop, or a global `$WarningPreference set to 'Stop') the stop at that warning is caught here as well: the section is reported unread, with the warning's text in its cause, and the command carries on."))
+        # Sprint 12 step 3 (BL-157): a role missing at the scope is a skip with a warning, a failed read of one is
+        # an unread section like under -Role.
+        $Description | Should -Match ([regex]::Escape("-CommonRoles is read the same way, with one difference: the reader reads each curated role on its own, and a role whose definition or policy is missing at the scope (the lookup succeeded and matched nothing) is skipped with a warning of its own (Skipping role, the role's name and the reason) while the others are read, so the section holds the policies of the roles that were found, which may be fewer than the curated set. A role whose read FAILED -- Azure Resource Manager refuses or fails it, or its name is ambiguous at the scope -- is a failure like any other: the section is reported unread, as under -Role, with the failure as its cause."))
+        $Description | Should -Not -Match ([regex]::Escape('a refused or failed read as much as a role that is missing at the scope'))
+        $Description | Should -Match ([regex]::Escape("Under a Stop warning preference (-WarningAction Stop, or a global `$WarningPreference set to 'Stop') the stop at that skip warning is caught here as well: the section is reported unread, with the warning's text in its cause, and the command carries on."))
         $Description | Should -Match ([regex]::Escape("a global `$WarningPreference set to 'Stop') the command stops at that warning, before it returns the inventory."))
         # The sentence that said the reader skips a curated role that does not exist, and nothing more, is gone.
         $Description | Should -Not -Match ([regex]::Escape('With -CommonRoles the reader still skips a curated role that does not exist in the subscription'))
@@ -11519,11 +11582,13 @@ foreach ($Held in @($Error)) { "HELD:$($Held.FullyQualifiedErrorId)" }
 Describe 'Get-OERInventory -CommonRoles through the real Get-OERRoleManagementPolicy (BL-34, BL-155, R-19)' {
     # Sprint 11 step 10, fix round 1. A mock of Get-OERRoleManagementPolicy cannot show what the REAL
     # -CommonRoles branch does with a role it cannot read: that branch reads each curated role on its own and
-    # its per-role catch (Get-OERRoleManagementPolicy.ps1) turns ANY failure of the definition or the policy
-    # read -- a refused or failed ARM read as much as a role missing at the scope -- into a warning
-    # ("Skipping role '<name>': <message>") and carries on. Only a scope that does not resolve (InvalidScope)
-    # reaches Get-OERInventory's catch. So the real reader runs here, with only its helpers mocked: one curated
-    # role cannot be read, the other two can. No id below is version-4 shaped.
+    # its per-role catch (Get-OERRoleManagementPolicy.ps1) turns a role MISSING at the scope (the internal
+    # RoleDefinitionUnresolved / RolePolicyUnresolved record) into a warning ("Skipping role '<name>':
+    # <message>") and carries on; since Sprint 12 step 3 (BL-157) any other failure of the definition or the
+    # policy read -- a refused or failed ARM read, an ambiguous name -- is written as a record of its own,
+    # which Get-OERInventory's -ErrorAction Stop makes the failure that names the section unread. So the real
+    # reader runs here, with only its helpers mocked: one curated role cannot be read (or is missing), the
+    # other two can. No id below is version-4 shaped.
     BeforeAll {
         $script:CrScope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
         $script:CrPolicy = {
@@ -11541,10 +11606,22 @@ Describe 'Get-OERInventory -CommonRoles through the real Get-OERRoleManagementPo
         Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { & $script:NewHomeVerdict $Scope }
         Mock -ModuleName $script:moduleName Resolve-OERScope { $script:CrScope }
         Mock -ModuleName $script:moduleName Get-OERCommonRoleName { @('Reader', 'Contributor', 'Owner') }
-        # The definition read of 'Contributor' is refused, as a 403 on the role definition list would be.
+        # The definition read of 'Contributor' either is refused, as a 403 on the role definition list would
+        # be ($script:CrMode 'Refused'), or matches nothing at the scope ('Missing': the internal record the
+        # real resolver throws under -ThrowUnresolved, which the reader tells from a failed read).
+        $script:CrMode = 'Refused'
         Mock -ModuleName $script:moduleName Resolve-OERRoleDefinitionId {
-            param($Role, $Scope)
-            if ($Role -ceq 'Contributor') { throw 'Authorization failed (403): the caller may not list role definitions.' }
+            param($Role, $Scope, [switch]$ThrowUnresolved)
+            if ($Role -ceq 'Contributor') {
+                if ($script:CrMode -eq 'Missing') {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Role definition 'Contributor' was not found at scope '$Scope'."),
+                        'RoleDefinitionUnresolved', [System.Management.Automation.ErrorCategory]::ObjectNotFound, 'Contributor')
+                }
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Authorization failed (403): the caller may not list role definitions.'),
+                    'AuthorizationFailed', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'Contributor')
+            }
             "/rd/$Role"
         }
         Mock -ModuleName $script:moduleName Get-OERRoleManagementPolicyId {
@@ -11561,7 +11638,8 @@ Describe 'Get-OERInventory -CommonRoles through the real Get-OERRoleManagementPo
         InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
     }
 
-    It 'skips the curated role it cannot read with the reader''s warning, writes the policies of the others, and names nothing unread' {
+    It 'skips a curated role that is missing at the scope with the reader''s warning, writes the policies of the others, and names nothing unread' {
+        $script:CrMode = 'Missing'
         # The error STREAM is read (2>&1), not -ErrorVariable: the reader's own caught failure of the role it
         # skips is deposited into a caller's -ErrorVariable by the engine whatever the reader does with it.
         $All = @(Get-OERInventory -Include RoleManagementPolicies -Scope $script:CrScope -CommonRoles -IncludeARM `
@@ -11571,15 +11649,35 @@ Describe 'Get-OERInventory -CommonRoles through the real Get-OERRoleManagementPo
         Should -Invoke -ModuleName $script:moduleName Resolve-OERRoleDefinitionId -Times 3 -Exactly
         Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicyId -Times 2 -Exactly
         @($Inv.RoleManagementPolicies | ForEach-Object { [string]$_.role }) | Should -Be @('Reader', 'Owner')
-        @($InvWarn | ForEach-Object { [string]$_.Message }) | Should -Be @("Skipping role 'Contributor': Authorization failed (403): the caller may not list role definitions.")
+        @($InvWarn | ForEach-Object { [string]$_.Message }) | Should -Be @("Skipping role 'Contributor': Role definition 'Contributor' was not found at scope '$script:CrScope'.")
         # Nothing unread: no InventoryPartial, no record at all on the error stream.
         @($All | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+    }
+
+    It 'names the section unread, as under -Role, when a curated role''s read FAILED (a 403), and writes none of its policies' {
+        $script:CrMode = 'Refused'
+        $All = @(Get-OERInventory -Include RoleManagementPolicies -Scope $script:CrScope -CommonRoles -IncludeARM `
+                -ErrorAction Continue -WarningVariable InvWarn -WarningAction Continue 3>$null 2>&1)
+        $Records = @($All | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+        $Inv = @($All | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] })[0]
+        # Reach proof: the real reader ran Reader and met the refusal at Contributor, which ended the read.
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERRoleDefinitionId -Times 2 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicyId -Times 1 -Exactly
+        @($Inv.RoleManagementPolicies).Count | Should -Be 0
+        # No skip warning: a failed read is not a missing role.
+        @($InvWarn).Count | Should -Be 0
+        $Partial = @($Records | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Get-OERInventory' })
+        $Partial.Count | Should -Be 1
+        $Partial[0].TargetObject | Should -BeExactly 'roleManagementPolicies'
+        $Partial[0].Exception.Message | Should -Match ([regex]::Escape('Authorization failed (403): the caller may not list role definitions'))
     }
 
     It 'names the section unread under a Stop warning preference set through <Form>: the stop is caught, the section is written empty, and the command carries on' -ForEach @(
         @{ Form = '-WarningAction Stop'; UseVariable = $false }
         @{ Form = '$WarningPreference'; UseVariable = $true }
     ) {
+        # The skip warning is written for a role MISSING at the scope, so that is the mode here.
+        $script:CrMode = 'Missing'
         $Splat = @{ Include = 'RoleManagementPolicies'; Scope = $script:CrScope; CommonRoles = $true; IncludeARM = $true; ErrorAction = 'Continue' }
         if (-not $UseVariable) { $Splat.WarningAction = 'Stop' }
         $OriginalPreference = $global:WarningPreference
@@ -11599,7 +11697,7 @@ Describe 'Get-OERInventory -CommonRoles through the real Get-OERRoleManagementPo
         @($Inv.RoleManagementPolicies).Count | Should -Be 0
         @($Records | ForEach-Object { [string]$_.FullyQualifiedErrorId }) | Should -Be @('InventoryPartial,Get-OERInventory')
         $Records[0].TargetObject | Should -BeExactly 'roleManagementPolicies'
-        $Records[0].Exception.Message | Should -Match ([regex]::Escape("Skipping role 'Contributor': Authorization failed (403): the caller may not list role definitions"))
+        $Records[0].Exception.Message | Should -Match ([regex]::Escape("Skipping role 'Contributor': Role definition 'Contributor' was not found"))
     }
 }
 

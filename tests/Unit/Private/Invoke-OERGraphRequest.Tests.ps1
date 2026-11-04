@@ -1208,6 +1208,82 @@ Describe 'Invoke-OERGraphRequest -All paging' {
         }
     }
 
+    It 'refuses a FIRST page that is <Label> under -All -RequireValue with GraphPagingIncomplete on page 1 (BL-140e)' -ForEach @(
+        @{ Label = 'null'; Answer = $null; Cause = 'empty body' }
+        @{ Label = 'an empty hashtable'; Answer = @{ }; Cause = 'no value member' }
+        @{ Label = 'an object without a value property'; Answer = [PSCustomObject]@{ Other = 1 }; Cause = 'no value member' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Answer = $Answer; Cause = $Cause } {
+            param($Answer, $Cause)
+            $script:_OERAuthState = $null
+            $script:FirstAnswer = $Answer
+            Mock Invoke-MgGraphRequest { $script:FirstAnswer }
+
+            $Caught = $null
+            $Result = $null
+            try { $Result = Invoke-OERGraphRequest -Uri 'v1.0/x' -All -RequireValue } catch { $Caught = $PSItem }
+
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.FullyQualifiedErrorId | Should -Be 'GraphPagingIncomplete'
+            $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidResult)
+            $Caught.Exception.PageNumber | Should -Be 1
+            @($Caught.Exception.PartialValue).Count | Should -Be 0
+            $Caught.Exception.Message | Should -Match 'page 1 '
+            $Caught.Exception.Message | Should -Match $Cause
+            $Result | Should -BeNullOrEmpty
+            Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly
+        }
+    }
+
+    It 'still hands back an empty collection for a FIRST page that is <Label> without -RequireValue (BL-140e)' -ForEach @(
+        @{ Label = 'null'; Answer = $null }
+        @{ Label = 'an empty hashtable'; Answer = @{ } }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Answer = $Answer } {
+            param($Answer)
+            $script:_OERAuthState = $null
+            $script:FirstAnswer = $Answer
+            Mock Invoke-MgGraphRequest { $script:FirstAnswer }
+
+            $Result = Invoke-OERGraphRequest -Uri 'v1.0/x' -All
+
+            @($Result.value).Count | Should -Be 0
+            $Result.ContainsKey('value') | Should -BeTrue
+            Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly
+        }
+    }
+
+    It 'accepts a FIRST page whose value is an empty array under -RequireValue as a successful empty read (BL-140e)' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            Mock Invoke-MgGraphRequest { @{ value = @() } }
+
+            $Result = Invoke-OERGraphRequest -Uri 'v1.0/x' -All -RequireValue
+
+            $Result.ContainsKey('value') | Should -BeTrue
+            @($Result.value).Count | Should -Be 0
+        }
+    }
+
+    It 'aggregates a multi-page walk unchanged under -RequireValue (BL-140e)' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:Page = 0
+            Mock Invoke-MgGraphRequest {
+                $script:Page++
+                if ($script:Page -eq 1) {
+                    @{ value = @('a'); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/x?$skiptoken=X' }
+                } else {
+                    @{ value = @('b') }
+                }
+            }
+
+            $Result = Invoke-OERGraphRequest -Uri 'v1.0/x' -All -RequireValue
+
+            @($Result.value) | Should -Be @('a', 'b')
+        }
+    }
+
     It 'treats a later page whose value is an empty array as a normal page and keeps walking' {
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
@@ -1773,6 +1849,26 @@ Describe 'Invoke-OERGraphRequest -ExpectedErrorCode' {
                 $Result = Invoke-OERGraphRequest -Uri 'beta/x' -ExpectedErrorCode 'ResourceTypeNotSupported'
                 @($Result.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError' | Should -BeTrue
                 $Result.ExpectedErrorCode | Should -Be 'ResourceTypeNotSupported'
+            } finally {
+                Remove-Item 'function:Invoke-MgGraphRequest'
+            }
+        }
+    }
+
+    It 'still hands the first-page marker back from -All -RequireValue, before the value check (BL-140e)' {
+        InModuleScope $script:moduleName {
+            try {
+                function Invoke-MgGraphRequest {
+                    [CmdletBinding()]
+                    param([string]$Method, [string]$Uri, $Body, [switch]$SkipHttpErrorCheck,
+                        [string]$StatusCodeVariable, [string]$ResponseHeadersVariable)
+                    Set-Variable -Name $StatusCodeVariable -Value 400 -Scope 1
+                    return ('{"error":{"code":"ResourceTypeNotSupported","message":"nope"}}' |
+                            ConvertFrom-Json -AsHashtable)
+                }
+
+                $Result = Invoke-OERGraphRequest -Uri 'beta/x' -All -RequireValue -ExpectedErrorCode 'ResourceTypeNotSupported'
+                @($Result.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError' | Should -BeTrue
             } finally {
                 Remove-Item 'function:Invoke-MgGraphRequest'
             }

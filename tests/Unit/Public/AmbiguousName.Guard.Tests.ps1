@@ -205,6 +205,17 @@ BeforeDiscovery {
             }
         }
         @{
+            # Sprint 12 step 3 (R-7): the role definition lookup of the two Azure role management policy cmdlets
+            # publishes the resolver's own AmbiguousName record (it used to book it as RoleDefinitionNotFound) and
+            # a failed read as itself, since only the internal no-match record is RoleDefinitionNotFound.
+            Cmdlet = 'Get-OERRoleManagementPolicy'; Resolver = 'Resolve-OERRoleDefinitionId'
+            ErrorId = 'AmbiguousName'; Pre = @{}
+            Invoke = {
+                Get-OERRoleManagementPolicy -Role 'Dup' -Scope '/subscriptions/s1' -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
             Cmdlet = 'Invoke-OERAccessReviewInstanceDecision'; Resolver = 'Resolve-OERAccessReviewDefinitionId'
             ErrorId = 'AmbiguousName'; FailureId = 'AccessReviewDefinitionResolveFailed'; Pre = @{}
             Invoke = {
@@ -389,6 +400,15 @@ BeforeDiscovery {
             ErrorId = 'AmbiguousApproverName'; Pre = @{}
             Invoke = {
                 Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -ApproverGroup 'Dup' -Confirm:$false `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            Cmdlet = 'Set-OERRoleManagementPolicy'; Resolver = 'Resolve-OERRoleDefinitionId'
+            ErrorId = 'AmbiguousName'; Pre = @{}
+            Invoke = {
+                Set-OERRoleManagementPolicy -Role 'Dup' -Scope '/subscriptions/s1' -AllowPermanentEligibility $true -Confirm:$false `
                     -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
                 $Err
             }

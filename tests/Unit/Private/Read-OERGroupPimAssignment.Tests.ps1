@@ -78,13 +78,46 @@ Describe 'Read-OERGroupPimAssignment' {
         }
     }
 
-    It 'returns an empty array, not one null, when the answer carries no value at all' {
-        InModuleScope Omnicit.EntraRBAC {
-            Mock Invoke-OERGraphRequest { @{ } }
+    It 'reads an answer that carries no value at all as UNREAD, never as an empty read (BL-140e) (<Label>)' -ForEach @(
+        @{ Label = 'empty hashtable'; Answer = @{ } }
+        @{ Label = 'object without value'; Answer = [PSCustomObject]@{ Other = 1 } }
+        @{ Label = 'null'; Answer = $null }
+    ) {
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ Answer = $Answer } {
+            param($Answer)
+            $script:NoValueAnswer = $Answer
+            Mock Invoke-OERGraphRequest { $script:NoValueAnswer }
             $R = Read-OERGroupPimAssignment -GroupId '11111111-1111-1111-1111-111111111111'
-            $R.Read | Should -BeTrue
-            $null -ne $R.Value | Should -BeTrue
-            $R.Value.Count | Should -Be 0
+            $R.PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.GroupPimAssignmentRead'
+            $R.Read | Should -BeFalse
+            $null -eq $R.Value | Should -BeTrue
+            $R.Message | Should -BeExactly 'Could not read the PIM for Groups assignments of group 11111111-1111-1111-1111-111111111111: Microsoft Graph answered without a value member.'
+            $R.Exception | Should -BeOfType ([System.Exception])
+            $R.Exception.Message | Should -BeExactly 'Microsoft Graph answered without a value member'
+        }
+    }
+
+    It 'passes -RequireValue with -All, so the transport refuses a first page without a value' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-OERGraphRequest { @{ value = @() } }
+            $null = Read-OERGroupPimAssignment -GroupId '11111111-1111-1111-1111-111111111111'
+            Should -Invoke Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $All -and $RequireValue }
+        }
+    }
+
+    It 'returns the transport''s GraphPagingIncomplete refusal of a first page without a value as unread' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Remove-OERErrorRecord { }
+            Mock Invoke-OERGraphRequest {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Microsoft Graph page 1 of this enumeration cannot be read as part of a complete walk: it has no value member.'),
+                    'GraphPagingIncomplete',
+                    [System.Management.Automation.ErrorCategory]::InvalidResult, $null)
+            }
+            $R = Read-OERGroupPimAssignment -GroupId '11111111-1111-1111-1111-111111111111'
+            $R.Read | Should -BeFalse
+            $null -eq $R.Value | Should -BeTrue
+            $R.Message | Should -BeLike 'Could not read the PIM for Groups assignments of group 11111111-1111-1111-1111-111111111111: Microsoft Graph page 1*'
         }
     }
 
@@ -169,7 +202,7 @@ Describe 'Read-OERGroupPimAssignment' {
     It 'returns a statement-terminating failure of the transport as unread too' {
         InModuleScope Omnicit.EntraRBAC {
             Mock Remove-OERErrorRecord { }
-            Mock Invoke-OERGraphRequest { [CmdletBinding()] param($Uri, [switch]$All, $ExpectedErrorCode) $PSCmdlet.ThrowTerminatingError(
+            Mock Invoke-OERGraphRequest { [CmdletBinding()] param($Uri, [switch]$All, [switch]$RequireValue, $ExpectedErrorCode) $PSCmdlet.ThrowTerminatingError(
                     [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('throttled'), 'TooManyRequests',
                         [System.Management.Automation.ErrorCategory]::LimitsExceeded, $null)) }
             $R = Read-OERGroupPimAssignment -GroupId '11111111-1111-1111-1111-111111111111'
