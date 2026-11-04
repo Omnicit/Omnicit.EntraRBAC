@@ -446,9 +446,20 @@ Passed.
 
 ## C. Manual (class C, optional, after the merge)
 
-- [ ] **C.1** The operator signs in interactively (`Connect-OER -TenantId` the test tenant), waits until the Microsoft Graph token is within five minutes of its expiry (or moves `GraphTokenExpiry` in module scope), and runs a Graph read: it answers without a browser, `-Verbose` shows the silent renewal, and the state carries the same account. #type/subtask
+- [x] **C.1** The operator signs in interactively (`Connect-OER -TenantId` the test tenant), waits until the Microsoft Graph token is within five minutes of its expiry (or moves `GraphTokenExpiry` in module scope), and runs a Graph read: it answers without a browser, `-Verbose` shows the silent renewal, and the state carries the same account. #type/subtask
 
-Result:
+Result: 2026-11-04 12:03 UTC, written by hand from the operator's console (not by Write-OerLiveResult), AzAuth 2.11.0.
+
+```text
+Passed.
+Connect-OER -TenantId (the test tenant), interactive, then GraphTokenExpiry moved to two minutes ahead in module scope.
+Get-OERGroup -Filter 'securityEnabled eq true' -Verbose:
+  Looking for a token from the following sources: Environment
+  [Initialize-OERAuth] Renewed the interactive session silently.
+  13 pages read; no browser opened.
+same account: True (SignedInObjectId before and after compared, not printed)
+new GraphTokenExpiry: about 78 minutes ahead
+```
 
 ## T. Teardown
 
