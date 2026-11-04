@@ -299,11 +299,13 @@ function Sync-OERStructureGroup {
     administrativeUnits section out), the unit the group is to be created into cannot be identified:
     the item emits one Failed row naming the unit, the refused rename and why (its error id, or what
     kept the run from deciding it), and nothing is created, read further or written for it. The check
-    comes before the create's ShouldProcess gate, so -WhatIf reports the same Failed row. That row
-    publishes no error record of its own: a refused rename's error is on the unit's own row, and a
-    rename the run did not reconcile because -Include leaves the administrativeUnits section out
-    publishes no error record at all, only this Failed row. administrativeUnit applies only when the
-    group is created, so a group that already exists is not affected either way.
+    comes before the create's ShouldProcess gate, so -WhatIf reports the same Failed row. The
+    refusal also writes an error record of its own (BL-145a), non-terminating and carried by the
+    row: its id is the refused rename's error id, or StructureReferenceUnidentified when the run
+    could not decide the rename (so -ErrorAction Stop and a caller's -ErrorVariable see it), with the
+    row's Detail as its message, category ObjectNotFound and the group as its target.
+    administrativeUnit applies only when the group is created, so a group that already exists is not
+    affected either way.
 
     Service principals (decision A9): a live member or owner whose ObjectType is servicePrincipal is
     never removed from the group. Microsoft Graph's v1.0 member and owner lists leave service
@@ -644,8 +646,17 @@ function Sync-OERStructureGroup {
                 $UnitRef = $Item.administrativeUnit
                 $UnitTarget = Get-OERStructureRenameTarget -Section 'administrativeUnits' -Name ([string]$Item.administrativeUnit) -RenameMap $RenameMap
                 if ($UnitTarget -and $UnitTarget.Refused) {
-                    ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
-                        -Detail "group not created: administrative unit '$($Item.administrativeUnit)' was not reconciled in this run -- its rename from '$($UnitTarget.PreviousName)' was refused ($($UnitTarget.Reason)), so the unit the group is to be created into cannot be identified"
+                    # BL-145a: the refusal writes its own error record (the map entry's ErrorId, or
+                    # StructureReferenceUnidentified when the run could not decide the rename).
+                    $UnitDetail = "group not created: administrative unit '$($Item.administrativeUnit)' was not reconciled in this run -- its rename from '$($UnitTarget.PreviousName)' was refused ($($UnitTarget.Reason)), so the unit the group is to be created into cannot be identified"
+                    $UnitErrorId = if ([string]::IsNullOrEmpty([string]$UnitTarget.ErrorId)) { 'StructureReferenceUnidentified' } else { [string]$UnitTarget.ErrorId }
+                    $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new($UnitDetail),
+                        $UnitErrorId,
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                        $Name)
+                    $Caller.WriteError($ErrRec)
+                    ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail $UnitDetail -ErrorRecord $ErrRec
                     return
                 }
                 if ($UnitTarget) { $UnitRef = $UnitTarget.Id }

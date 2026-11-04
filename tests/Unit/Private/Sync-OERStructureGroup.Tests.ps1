@@ -2993,7 +2993,7 @@ $Item = '{ "displayName": "grp-luo", "owners": [ "person2@example.com" ] }' | Co
             }
         }
 
-        It 'reports one Failed row naming the unit and its refused rename, with no error record, and creates nothing, when the rename was refused with <ErrorId> (<Mode>)' -ForEach @(
+        It 'reports one Failed row naming the unit and its refused rename, with its own error record, and creates nothing, when the rename was refused with <ErrorId> (<Mode>)' -ForEach @(
             @{ UnitId = 'au-new-id'; PrevId = 'au-old-id'; ErrorId = 'AdministrativeUnitRenameConflict'; Mode = 'run' }
             @{ UnitId = 'au-new-id'; PrevId = 'au-old-id'; ErrorId = 'AdministrativeUnitRenameConflict'; Mode = 'WhatIf' }
             @{ UnitId = ''; PrevId = ''; ErrorId = 'AdministrativeUnitRenameNotFound'; Mode = 'run' }
@@ -3024,9 +3024,14 @@ $Item = '{ "displayName": "grp-luo", "owners": [ "person2@example.com" ] }' | Co
                 $r[0].Action | Should -BeExactly 'Failed'
                 $r[0].Detail | Should -BeExactly ("group not created: administrative unit 'AU-New' was not reconciled in this run -- its rename from 'AU-Old' " +
                     "was refused ($ErrorId), so the unit the group is to be created into cannot be identified")
-                # R9: the unit's own row carries the refusal; the reference publishes none of its own.
-                $r[0].Error | Should -BeNullOrEmpty
-                @($Errs).Count | Should -Be 0
+                # BL-145a: the refusal writes its own error record, the rename's ErrorId, and the row carries it.
+                @($Errs).Count | Should -Be 1
+                ($Errs[0].FullyQualifiedErrorId -split ',')[0] | Should -BeExactly $ErrorId
+                $Errs[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
+                $Errs[0].TargetObject | Should -BeExactly 'grp-new'
+                $Errs[0].Exception.Message | Should -BeExactly $r[0].Detail
+                $r[0].Error | Should -Not -BeNullOrEmpty
+                $r[0].Error.FullyQualifiedErrorId | Should -BeExactly $Errs[0].FullyQualifiedErrorId
                 Should -Invoke New-OERGroup -Times 0
                 $Created.Count | Should -Be 0
             }
@@ -3057,8 +3062,11 @@ $Item = '{ "displayName": "grp-luo", "owners": [ "person2@example.com" ] }' | Co
                 $r[0].Action | Should -BeExactly 'Failed'
                 $r[0].Detail | Should -BeExactly ("group not created: administrative unit 'AU-New' was not reconciled in this run -- its rename from 'AU-Old' was refused " +
                     '(the administrativeUnits section is not selected by -Include, so its rename is not reconciled in this run), so the unit the group is to be created into cannot be identified')
-                $r[0].Error | Should -BeNullOrEmpty
-                @($Errs).Count | Should -Be 0
+                # BL-145a: no ErrorId in the entry, so the record carries StructureReferenceUnidentified.
+                @($Errs).Count | Should -Be 1
+                ($Errs[0].FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
+                $r[0].Error | Should -Not -BeNullOrEmpty
+                ($r[0].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
                 Should -Invoke New-OERGroup -Times 0
                 $Created.Count | Should -Be 0
             }

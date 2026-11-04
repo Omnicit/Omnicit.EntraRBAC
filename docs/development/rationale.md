@@ -10538,7 +10538,9 @@ the catalog, is refused instead of landing wherever a name lookup leads. A group
 is unaffected, and the error of a refused rename stays on the unit's or catalog's own row. The
 reference rows publish no error record of their own, and a rename left undecided by `-Include` has no
 row and no error record at all, so that refusal reaches the operator as a Failed row only:
-`-ErrorAction Stop` and `$?` do not see it. If wrong: a reference to a new name that another object
+`-ErrorAction Stop` and `$?` do not see it. (Sprint 12 step 4, BL-145a, changed that: each reference now
+writes its own error record, see [#review-package-in-the-same-run](#review-package-in-the-same-run).)
+If wrong: a reference to a new name that another object
 already carries would be created into, or read from, that other object, with nothing to say so. The
 cost, accepted: while `-Include` leaves the section out and the entry still declares
 `previousDisplayName`, every reference to its new name is refused -- for a catalog every package
@@ -12496,7 +12498,8 @@ before any Graph call for the entry, for its `accessPackage` (by name; a GUID is
 key) and its `assignmentPolicy` (by name within the package as the review names it, by the package's
 name or its object id). An entry that is refused -- a rename that conflicted or found nothing, or a
 mark -- gives one `Failed` row naming the refused rename and its reason, no error record of its own
-(the rename's own row carries one when it was refused, as step 4's R9 rules), and nothing is
+(the rename's own row carries one when it was refused, as step 4's R9 rules; BL-145a of Sprint 12 step 4
+later gave the reference one of its own), and nothing is
 created, read or written for the review, under `-WhatIf` too; the package is read first, so a refused
 package stops the review before its policy is read. An entry with an id replaces the name in a copy
 of the review entry that only the target check and the create read, so the check compares that id as
@@ -13593,8 +13596,8 @@ What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule
 Sprint 11 step 6 (BL-147, ruling R-8) put every `accessPackages` entry's package into the run's rename
 map, so an access review reaches the package its own document's entry found or created, and never one
 of that name in another catalog. This anchor records the problem, the rulings, the residual R-8 accepts
-and the known limits. `Resolve-OERStructureRename` stays the single owner of the map's keys. No ErrorId
-and no public parameter was added. The rules were derived from the code and proven with mocked tests;
+and the known limits. `Resolve-OERStructureRename` stays the single owner of the map's keys. No public
+parameter was added, and the one ErrorId added since (`StructureReferenceUnidentified`) is recorded below. The rules were derived from the code and proven with mocked tests;
 nothing here was measured live.
 
 **The problem (BL-147).** The map held only a package the document renames
@@ -13630,8 +13633,8 @@ neither looks the name up, and the policy is resolved within the package by that
 the target check says "accessPackage '...' was read as '...', the access package its accessPackages
 entry resolved in this run". A refusal is one `Failed` row, "access package '...' has no id in this run
 (reason), so the access package this access review reviews cannot be identified; nothing was created,
-read or written for it", with no error record and nothing read: it does not speak of a rename. Cost if
-wrong: a review the operator expected to apply is refused, and never written to the wrong package.
+read or written for it", with an error record of its own (BL-145a, below) and nothing read: it does not
+speak of a rename. Cost if wrong: a review the operator expected to apply is refused, and never written to the wrong package.
 
 **Rule 15, widened.** Every entry now registers its package under the name key, so two entries of one
 display name in two catalogs would replace each other's registration whether or not one renames. The
@@ -13649,8 +13652,8 @@ refusal. Accepted: the plan errs towards refusing, never towards a review on ano
 
 **The `-Include` refusal.** With `-Include` leaving out AccessPackages, nothing is read for the
 package entries, so the run cannot know which package a declared name means: every review that names a
-declared package by display name is refused, renamed or not, with no error record, so `-ErrorAction
-Stop` and `$?` do not see it. A review that names the package by object id, or a package the document
+declared package by display name is refused, renamed or not, with an error record of its own
+(`StructureReferenceUnidentified`, BL-145a below). A review that names the package by object id, or a package the document
 does not declare, is resolved as before. Cost: a run that selects `AccessReviews` without
 `AccessPackages` refuses reviews it applied before; include `AccessPackages`, or name the package by
 its object id.
@@ -13666,6 +13669,26 @@ R-5), but it names a review's access package by its object id whenever another p
 carries that name ([#access-review-target](#access-review-target), since Sprint 11 step 5), and Rule
 15 never reads a reference that is an object id. The refusal names the entries and says to name the
 package by its object id.
+
+### A refusal through the rename map writes its own error record (BL-145a)
+
+Sprint 12 step 4. Four handler sites refuse an entry because a rename-map entry (`Get-OERStructureRenameTarget`)
+is `Refused`: `Sync-OERStructureGroup` (the administrative unit of a group it creates),
+`Sync-OERStructureAccessPackage` (its catalog) and `Sync-OERStructureAccessReview` (its access package and
+its assignment policy). Each wrote only a `Failed` row, so a rename refused because `-Include` leaves its
+section out, or because the run could not decide it, reached neither `-ErrorAction Stop`, a caller's
+`-ErrorVariable` nor `$?`: a script that checked those saw a clean run. Each site now builds an
+`ErrorRecord` first, writes it with `$Caller.WriteError`, and the `Failed` row keeps its Detail
+byte-identical and carries the record. The message is the row's Detail, the category `ObjectNotFound`,
+the target the entry's own name. The id is the entry's `ErrorId` when the rename was refused
+(`AdministrativeUnitRenameConflict`, `CatalogRenameNotFound` and the like, so the unit's own row and the
+reference report one id), and otherwise the new `StructureReferenceUnidentified`: the run could not decide
+the rename (R12, `-Include` leaving the section out included), or an `accessPackages` entry has no id yet
+(`-Unidentified`). The id is new only for this refusal (A9); no published id changed. Nothing else changed:
+no read, no write, the same `return`. Measured in a runspace with no try above the call: without a
+preference, `-ErrorVariable` holds the record and `$?` is false and the script goes on; under
+`-ErrorAction Stop` the handler's `WriteError` is terminating and the call stops with the refusal's text,
+so nothing after it in the script runs. Nothing is written, so no convergence test applies.
 
 ### CLAUDE.md text for review-package-in-the-same-run
 
@@ -14505,7 +14528,8 @@ the directory role guard's "eligible for" wording, is under
 
 `Invoke-OERStructure` validated the document and wrote only its errors; a Warning finding never
 reached the operator, so the two warnings of this anchor (BL-54, BL-24) and every other were
-invisible to an apply. It now writes one `Write-Warning` per Warning finding, in the validator's order, with the text
+invisible to an apply. It now
+writes one `Write-Warning` per Warning finding, in the validator's order, with the text
 `Invoke-OERStructure: structure document warning at <Path>: <Message>`, directly after a valid
 validation and BEFORE the `ConfirmationUnavailable` check, the sign-in and every read or write. The
 placement is the warning-before-confirmation rule: `-WhatIf` shows them, a `-Confirm` prompt is

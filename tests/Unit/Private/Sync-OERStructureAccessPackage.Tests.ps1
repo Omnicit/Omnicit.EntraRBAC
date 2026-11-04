@@ -6337,9 +6337,14 @@ Describe 'Sync-OERStructureAccessPackage -previousDisplayName and the rename map
                 $r[0].Item | Should -BeExactly 'AP'
                 $r[0].Action | Should -BeExactly 'Failed'
                 $r[0].Detail | Should -BeExactly "catalog 'CAT-New' was not reconciled in this run: its rename from 'CAT-Old' was refused ($ErrorId), so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it"
-                # R9: the catalog's own row carries the refusal; this row publishes no record.
-                $r[0].Error | Should -BeNullOrEmpty
-                @($Err).Count | Should -Be 0
+                # BL-145a: the refusal writes its own error record, the rename's ErrorId, and the row carries it.
+                @($Err).Count | Should -Be 1
+                ($Err[0].FullyQualifiedErrorId -split ',')[0] | Should -BeExactly $ErrorId
+                $Err[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
+                $Err[0].TargetObject | Should -BeExactly 'AP'
+                $Err[0].Exception.Message | Should -BeExactly $r[0].Detail
+                $r[0].Error | Should -Not -BeNullOrEmpty
+                $r[0].Error.FullyQualifiedErrorId | Should -BeExactly $Err[0].FullyQualifiedErrorId
                 Should -Invoke Get-OERAccessPackage -Times 0
                 Should -Invoke Resolve-OERAccessPackageId -Times 0
                 Should -Invoke New-OERAccessPackage -Times 0
@@ -6379,8 +6384,11 @@ Describe 'Sync-OERStructureAccessPackage -previousDisplayName and the rename map
                 $r[0].Action | Should -BeExactly 'Failed'
                 $r[0].Detail | Should -BeExactly ("catalog 'CAT-New' was not reconciled in this run: its rename from 'CAT-Old' was refused (its previous name could not be looked up), " +
                     'so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it')
-                $r[0].Error | Should -BeNullOrEmpty
-                @($Err).Count | Should -Be 0
+                # BL-145a: no ErrorId in the entry, so the record carries StructureReferenceUnidentified.
+                @($Err).Count | Should -Be 1
+                ($Err[0].FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
+                $r[0].Error | Should -Not -BeNullOrEmpty
+                ($r[0].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
                 Should -Invoke Get-OERAccessPackage -Times 0
                 Should -Invoke Resolve-OERAccessPackageId -Times 0
                 Should -Invoke New-OERAccessPackage -Times 0
@@ -7715,7 +7723,9 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
 
             @($Run.Rows).Count | Should -Be 1
             $Run.Rows[0].Detail | Should -BeLike "catalog 'CAT' was not reconciled in this run*"
-            $Run.Published.Count | Should -Be 0
+            # BL-145a: the one record is the catalog refusal's own; the mark block publishes none.
+            $Run.Published.Count | Should -Be 1
+            $Run.Published[0].Exception.Message | Should -BeLike "catalog 'CAT' was not reconciled in this run*"
             # The map's keys are lower case, as Resolve-OERStructureRename builds them. The package, which
             # renames nothing here, is marked as an entry that has not found its package (BL-147).
             @($Map.Keys | Sort-Object) | Should -BeExactly @(@('catalogs|cat', 'accesspackages|ap') + @($Marked | ForEach-Object { $_.ToLowerInvariant() }) | Sort-Object)

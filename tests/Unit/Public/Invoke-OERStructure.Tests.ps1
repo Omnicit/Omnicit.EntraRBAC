@@ -3346,14 +3346,14 @@ Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an a
             $Rows[0].Action | Should -BeExactly 'Failed'
             $Rows[0].Detail | Should -BeExactly ("group not created: administrative unit 'AU-New' was not reconciled in this run -- its rename from 'AU-Old' " +
                 'was refused (AdministrativeUnitRenameNotFound), so the unit the group is to be created into cannot be identified')
-            $Rows[0].Error | Should -BeNullOrEmpty
+            [string]$Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'AdministrativeUnitRenameNotFound*'
             $Rows[1].Section | Should -BeExactly 'administrativeUnits'
             $Rows[1].Item | Should -BeExactly 'AU-New'
             $Rows[1].Action | Should -BeExactly 'Failed'
             [string]$Rows[1].Error.FullyQualifiedErrorId | Should -BeLike 'AdministrativeUnitRenameNotFound*'
-            # One error record, the unit's: the group's row publishes none of its own (R9), and the
-            # pre-pass reports nothing (R4).
-            @($Errs | ForEach-Object { [string]$_.FullyQualifiedErrorId }) | Should -Be @('AdministrativeUnitRenameNotFound,Invoke-OERStructure')
+            # Two error records (BL-145a): the group's own refusal carries the rename's id, then the
+            # unit's; the pre-pass reports nothing (R4).
+            @($Errs | ForEach-Object { [string]$_.FullyQualifiedErrorId }) | Should -Be @('AdministrativeUnitRenameNotFound,Invoke-OERStructure', 'AdministrativeUnitRenameNotFound,Invoke-OERStructure')
             Should -Invoke -ModuleName $script:moduleName New-OERGroup -Times 0
             Should -Invoke -ModuleName $script:moduleName New-OERAdministrativeUnit -Times 0
             Should -Invoke -ModuleName $script:moduleName Get-OERAdministrativeUnit -Times 0
@@ -3397,7 +3397,10 @@ Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an a
                 ("groups|G1|Failed|group not created: administrative unit 'AU-New' was not reconciled in this run -- its rename from 'AU-Old' was refused " +
                     '(the administrativeUnits section is not selected by -Include, so its rename is not reconciled in this run), so the unit the group is to be created into cannot be identified')
             )
-            @($Errs).Count | Should -Be 0
+            # BL-145a: the refusal writes its own error record, carried by the row.
+            @($Errs).Count | Should -Be 1
+            $Errs[0].FullyQualifiedErrorId | Should -BeExactly 'StructureReferenceUnidentified,Invoke-OERStructure'
+            ($Rows[0].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
             Should -Invoke -ModuleName $script:moduleName New-OERGroup -Times 0
             Should -Invoke -ModuleName $script:moduleName Resolve-OERAdministrativeUnitId -Times 0
             Should -Invoke -ModuleName $script:moduleName New-OERAdministrativeUnit -Times 0
@@ -3436,15 +3439,16 @@ Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an a
             $Rows[1].Action | Should -BeExactly 'Failed'
             $Rows[1].Detail | Should -BeExactly ("group not created: administrative unit 'AU-New' was not reconciled in this run -- its rename from 'AU-Old' was refused " +
                 '(one of its names could not be looked up), so the unit the group is to be created into cannot be identified')
-            $Rows[1].Error | Should -BeNullOrEmpty
+            ($Rows[1].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
             $Rows[2].Section | Should -BeExactly 'administrativeUnits'
             $Rows[2].Action | Should -BeExactly 'Failed'
             $Rows[2].Detail | Should -BeLike 'handler error: *'
             # -ErrorVariable also holds each layer's copy of the thrown record, some as the exception that
-            # carries it, so the count is not pinned: the lookup's error is published, and no other (the
-            # group's row publishes none).
+            # carries it, so the count is not pinned: the lookup's error is published, and (BL-145a) the
+            # group's own refusal, StructureReferenceUnidentified, and no other.
             @($Errs | Where-Object { [string]$_.FullyQualifiedErrorId -like 'AmbiguousName*' }).Count | Should -BeGreaterThan 0
-            @($Errs | ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { [string]$_.FullyQualifiedErrorId } else { [string]$_.ErrorRecord.FullyQualifiedErrorId } } | Where-Object { $_ -notlike 'AmbiguousName*' }).Count | Should -Be 0
+            @($Errs | Where-Object { [string]$_.FullyQualifiedErrorId -like 'StructureReferenceUnidentified*' }).Count | Should -Be 1
+            @($Errs | ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { [string]$_.FullyQualifiedErrorId } else { [string]$_.ErrorRecord.FullyQualifiedErrorId } } | Where-Object { $_ -notlike 'AmbiguousName*' -and $_ -notlike 'StructureReferenceUnidentified*' }).Count | Should -Be 0
             Should -Invoke -ModuleName $script:moduleName New-OERGroup -Times 0
             Should -Invoke -ModuleName $script:moduleName New-OERAdministrativeUnit -Times 0
             Should -Invoke -ModuleName $script:moduleName Set-OERAdministrativeUnit -Times 0
@@ -3475,7 +3479,7 @@ Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an a
             $Rows[1].Action | Should -BeExactly 'Failed'
             $Rows[1].Detail | Should -BeExactly ("group not created: administrative unit 'AU-New' was not reconciled in this run -- its rename from 'AU-Old' was refused " +
                 '(one of its names could not be looked up), so the unit the group is to be created into cannot be identified')
-            $Rows[1].Error | Should -BeNullOrEmpty
+            ($Rows[1].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
             # The administrativeUnits pass then finds both names on different units: the conflict.
             $Rows[2].Section | Should -BeExactly 'administrativeUnits'
             $Rows[2].Action | Should -BeExactly 'Failed'
@@ -3605,8 +3609,9 @@ Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an a
             $Rows[1].Action | Should -BeExactly 'Failed'
             $Rows[1].Detail | Should -BeExactly ("catalog 'CAT-New' was not reconciled in this run: its rename from 'CAT-Old' was refused (CatalogRenameConflict), " +
                 'so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it')
-            $Rows[1].Error | Should -BeNullOrEmpty
-            @($Errs | ForEach-Object { [string]$_.FullyQualifiedErrorId }) | Should -Be @('CatalogRenameConflict,Invoke-OERStructure')
+            # BL-145a: the package's refusal writes its own record, the rename's id, after the catalog's.
+            ($Rows[1].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'CatalogRenameConflict'
+            @($Errs | ForEach-Object { [string]$_.FullyQualifiedErrorId }) | Should -Be @('CatalogRenameConflict,Invoke-OERStructure', 'CatalogRenameConflict,Invoke-OERStructure')
             Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 0
             Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
             Should -Invoke -ModuleName $script:moduleName Get-OERCatalog -Times 0
@@ -3631,7 +3636,9 @@ Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an a
                 ("accessPackages|AP-1|Failed|catalog 'CAT-New' was not reconciled in this run: its rename from 'CAT-Old' was refused " +
                     '(the catalogs section is not selected by -Include, so its rename is not reconciled in this run), so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it')
             )
-            @($Errs).Count | Should -Be 0
+            # BL-145a: the refusal writes its own error record.
+            @($Errs).Count | Should -Be 1
+            $Errs[0].FullyQualifiedErrorId | Should -BeExactly 'StructureReferenceUnidentified,Invoke-OERStructure'
             Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 0
             Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
             Should -Invoke -ModuleName $script:moduleName Resolve-OERCatalogId -Times 0
@@ -3672,12 +3679,13 @@ Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an a
             $Rows[1].Action | Should -BeExactly 'Failed'
             $Rows[1].Detail | Should -BeExactly ("catalog 'CAT-New' was not reconciled in this run: its rename from 'CAT-Old' was refused (one of its names could not be looked up), " +
                 'so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it')
-            $Rows[1].Error | Should -BeNullOrEmpty
+            ($Rows[1].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
             # -ErrorVariable also holds each layer's copy of the thrown record, some as the exception that
-            # carries it, so the count is not pinned: the lookup's error is published, and no other (the
-            # package's row publishes none).
+            # carries it, so the count is not pinned: the lookup's error is published, and (BL-145a) the
+            # package's own refusal, StructureReferenceUnidentified, and no other.
             @($Errs | Where-Object { [string]$_.FullyQualifiedErrorId -like 'AmbiguousName*' }).Count | Should -BeGreaterThan 0
-            @($Errs | ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { [string]$_.FullyQualifiedErrorId } else { [string]$_.ErrorRecord.FullyQualifiedErrorId } } | Where-Object { $_ -notlike 'AmbiguousName*' }).Count | Should -Be 0
+            @($Errs | Where-Object { [string]$_.FullyQualifiedErrorId -like 'StructureReferenceUnidentified*' }).Count | Should -Be 1
+            @($Errs | ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { [string]$_.FullyQualifiedErrorId } else { [string]$_.ErrorRecord.FullyQualifiedErrorId } } | Where-Object { $_ -notlike 'AmbiguousName*' -and $_ -notlike 'StructureReferenceUnidentified*' }).Count | Should -Be 0
             Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 0
             Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
             Should -Invoke -ModuleName $script:moduleName Set-OERCatalog -Times 0
@@ -3707,7 +3715,7 @@ Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an a
                 ("accessPackages|AP-1|Failed|catalog 'CAT-New' was not reconciled in this run: its rename from 'CAT-Old' was refused (one of its names could not be looked up), " +
                     'so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it')
             )
-            $Rows[1].Error | Should -BeNullOrEmpty
+            ($Rows[1].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
             Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 0
             Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
             Should -Invoke -ModuleName $script:moduleName Set-OERCatalog -Times 0
@@ -3768,8 +3776,9 @@ Invoke-OERStructure -Json $Json -Confirm:$false | ForEach-Object { "ROW:$($_.Sec
                 'ROW:catalogs:CAT-New:Failed'
                 'ROW:accessPackages:AP-New:Failed'
             )
-            # Two refusals are published, the unit's and the catalog's; the two references publish none.
-            @($Run.Errors).Count | Should -Be 2
+            # Four refusals are published (BL-145a): the unit's and the catalog's, and the two references'
+            # own, the group's and the package's.
+            @($Run.Errors).Count | Should -Be 4
             @($Run.Prompts).Count | Should -Be 0
         }
 
@@ -3881,9 +3890,9 @@ Invoke-OERStructure -Json $Json -Confirm:$false | ForEach-Object { "ROW:$($_.Sec
                 'ROW:accessReviews:R-New:Failed'
                 'ROW:accessReviews:R-Pkg:Failed'
             )
-            # Four refusals are published -- the catalog read, the policy conflict, the package rename and
-            # the review of another package; the review refused through the map publishes none.
-            @($Run.Errors).Count | Should -Be 4
+            # Five refusals are published -- the catalog read, the policy conflict, the package rename and
+            # the review of another package, and (BL-145a) the review refused through the map.
+            @($Run.Errors).Count | Should -Be 5
             @($Run.Prompts).Count | Should -Be 0
         }
     }
@@ -4106,8 +4115,9 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
         $Rows = @(Invoke-OERStructure @Params)
 
         @(ConvertTo-RvRowLine -Row $Rows) | Should -Be @("accessReviews|Q3 AP review|Failed|$Detail")
-        $Rows[0].Error | Should -BeNullOrEmpty
-        @($Errs).Count | Should -Be 0
+        # BL-145a: the refusal writes its own error record, carried by the row.
+        ($Rows[0].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
+        @($Errs | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -eq 'StructureReferenceUnidentified,Invoke-OERStructure' }).Count | Should -Be 1
         Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
         Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 0
         Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
@@ -4163,12 +4173,14 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
         $Rows = @(Invoke-OERStructure @Params)
 
         @(ConvertTo-RvRowLine -Row $Rows) | Should -Be $Expected
-        # The review's row publishes no record of its own; the one record the engine published is the
-        # package entry's failed read (-ErrorVariable also holds the inner layers of the mock's throw).
-        $Rows[-1].Error | Should -BeNullOrEmpty
+        # BL-145a: the review's refusal writes its own record after the package entry's failed read
+        # (-ErrorVariable also holds the inner layers of the mock's throw).
+        ($Rows[-1].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
         $Own = @($Errs | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId.EndsWith(',Invoke-OERStructure') })
-        $Own.Count | Should -Be 1
+        $Own.Count | Should -Be 2
         $Own[0].Exception.Message | Should -BeExactly $Rows[-2].Error.Exception.Message
+        $Own[1].FullyQualifiedErrorId | Should -BeExactly 'StructureReferenceUnidentified,Invoke-OERStructure'
+        $Own[1].Exception.Message | Should -BeExactly $Rows[-1].Detail
         # Nothing was read or written for the review: no definition read, no name lookup of its package or
         # policy (the policy's new name would find another policy here), no write.
         Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
@@ -4209,11 +4221,13 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
                 "from 'POL-Old' was refused (the accessPackages entry did not reach a decision in this run; see that entry's rows), so the assignment " +
                 'policy this access review reviews cannot be identified; nothing was created, read or written for it')
         )
-        # The conflict's record is the one the engine published; the review's row carries none.
-        $Rows[1].Error | Should -BeNullOrEmpty
+        # The conflict's record, then (BL-145a) the review's own: the entry stopped before it decided the
+        # policy's rename, so StructureReferenceUnidentified; the review's row carries it.
+        ($Rows[1].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
         $Own = @($Errs | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId.EndsWith(',Invoke-OERStructure') })
-        $Own.Count | Should -Be 1
+        $Own.Count | Should -Be 2
         $Own[0].FullyQualifiedErrorId | Should -BeExactly 'AccessPackageRenameConflict,Invoke-OERStructure'
+        $Own[1].FullyQualifiedErrorId | Should -BeExactly 'StructureReferenceUnidentified,Invoke-OERStructure'
         Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
         Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
         Should -Invoke -ModuleName $script:moduleName Resolve-OERAssignmentPolicyId -Times 0
@@ -4232,7 +4246,8 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
         $Doc = ('{ "version": "1.0", ' +
             '"accessPackages": [ { "displayName": "AP-1", "catalog": "CAT-1", "resourceRoles": [], "assignmentPolicies": [ { "displayName": "Standard" } ] } ], ' +
             '"accessReviews": [ ' + $script:RvReview.Replace('#PKG#', 'AP-1').Replace('#POL#', 'Standard') + ' ] }')
-        $Params = @{ Json = $Doc; Include = 'AccessReviews'; ErrorAction = 'Stop'; WarningAction = 'SilentlyContinue' }
+        $Errs = $null
+        $Params = @{ Json = $Doc; Include = 'AccessReviews'; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Errs'; WarningAction = 'SilentlyContinue' }
         if ($Mode -eq 'a plan under -WhatIf') { $Params.WhatIf = $true } else { $Params.Confirm = $false }
         $Rows = @(Invoke-OERStructure @Params)
 
@@ -4240,7 +4255,9 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
             ("accessReviews|Q3 AP review|Failed|access package 'AP-1' has no id in this run (the accessPackages section is not selected by -Include), " +
                 'so the access package this access review reviews cannot be identified; nothing was created, read or written for it')
         )
-        $Rows[0].Error | Should -BeNullOrEmpty
+        # BL-145a: the refusal writes its own error record (it stopped the call under -ErrorAction Stop).
+        ($Rows[0].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
+        @($Errs | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -eq 'StructureReferenceUnidentified,Invoke-OERStructure' }).Count | Should -Be 1
         Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
         Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
         Should -Invoke -ModuleName $script:moduleName Resolve-OERAssignmentPolicyId -Times 0
@@ -4275,7 +4292,7 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
             '{ "displayName": "", "previousDisplayName": "POL-Old" }, { "displayName": "POL-A", "previousDisplayName": "" }, null, ' +
             '{ "displayName": "POL-New", "previousDisplayName": "POL-Old" } ] } ], ' +
             '"accessReviews": [ ' + $script:RvReview.Replace('#PKG#', 'AP-1').Replace('#POL#', 'POL-New') + ' ] }')
-        $Rows = @(Invoke-OERStructure -Json $Doc -Include AccessReviews -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        $Rows = @(Invoke-OERStructure -Json $Doc -Include AccessReviews -Confirm:$false -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
 
         # Positive proof that the marking ran past the skipped entries: the last entry is registered, so the
         # review that names it is refused -- for its package, which since BL-147 is marked whether or not it
@@ -4383,13 +4400,16 @@ Describe 'Invoke-OERStructure: an access review reaches the access package its a
     It 'fails the package that New-OERAccessPackage returns from another catalog, and refuses its review, creating, reading and writing nothing for it' {
         $script:TwState.Created = [PSCustomObject]@{ Id = $script:TwPkgB; DisplayName = 'AP-Twin'; CatalogId = $script:TwCatB }
 
-        $Rows = @(Invoke-OERStructure -Json $script:TwJson -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        $Rows = @(Invoke-OERStructure -Json $script:TwJson -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable TwErrs -WarningAction SilentlyContinue)
 
         @(ConvertTo-TwRowLine -Row $Rows) | Should -Be @(
             $script:TwTwinRow
             ("accessReviews|Q3 twin review|Failed|" + ($script:TwRefusal -f "the accessPackages entry did not find or create it; see that entry's rows"))
         )
-        $Rows[1].Error | Should -BeNullOrEmpty
+        # BL-145a: the review's refusal writes its own error record, carried by its row.
+        $Rows[1].Error | Should -Not -BeNullOrEmpty
+        ($Rows[1].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
+        @($TwErrs | Where-Object { ([string]$_.FullyQualifiedErrorId).StartsWith('StructureReferenceUnidentified,') }).Count | Should -Be 1
         # The package's own create was attempted, so the guard was reached.
         Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 1 -Exactly
         # Nothing for the review: no definition read, no tenant-wide name lookup of the package -- which here
@@ -4446,12 +4466,15 @@ Describe 'Invoke-OERStructure: an access review reaches the access package its a
     }
 
     It 'refuses the review of a package the plan would create, reading nothing for it (-WhatIf)' {
-        $Rows = @(Invoke-OERStructure -Json $script:TwJson -WhatIf -ErrorAction Stop -WarningAction SilentlyContinue)
+        $Rows = @(Invoke-OERStructure -Json $script:TwJson -WhatIf -ErrorAction SilentlyContinue -ErrorVariable TwErrs -WarningAction SilentlyContinue)
 
         @(ConvertTo-TwRowLine -Row $Rows) | Should -Be @(
             'accessPackages|AP-Twin|Skipped|would create access package AP-Twin'
             ('accessReviews|Q3 twin review|Failed|' + ($script:TwRefusal -f 'the accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined confirmation'))
         )
+        # BL-145a: the plan's refusal writes its own error record, carried by its row.
+        ($Rows[1].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
+        @($TwErrs | Where-Object { ([string]$_.FullyQualifiedErrorId).StartsWith('StructureReferenceUnidentified,') }).Count | Should -Be 1
         Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
         Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessReviewScopeTarget -Times 0
         Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
@@ -4513,12 +4536,9 @@ Invoke-OERStructure -Json $Json #FLAGS# | ForEach-Object { "ROW:$($_.Action):$($
             }
         }
 
-        It 'reaches the end of the script with the package and its review Failed, and creates, reads or looks up nothing for the review (<Flags>)' -ForEach @(
-            @{ Flags = '-Confirm:$false' }
-            @{ Flags = '-Confirm:$false -ErrorAction Stop' }
-        ) {
+        It 'reaches the end of the script with the package and its review Failed, and creates, reads or looks up nothing for the review' {
             $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
-            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-TwNoTryScenario -Log $Log -Flags $Flags)
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-TwNoTryScenario -Log $Log -Flags '-Confirm:$false')
 
             $Run.Output[-1] | Should -BeExactly 'END'
             @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
@@ -4527,7 +4547,20 @@ Invoke-OERStructure -Json $Json #FLAGS# | ForEach-Object { "ROW:$($_.Action):$($
             )
             # Nothing read, looked up, created or sent for the review; a failure here prints the calls made.
             @(Get-TwLoggedLine -Log $Log) | Should -BeNullOrEmpty
-            @($Run.Errors).Count | Should -Be 0
+            # BL-145a: the review's refusal is the one error record, written to the error stream.
+            @($Run.Errors).Count | Should -Be 1
+        }
+
+        It 'stops at the review''s refusal under -ErrorAction Stop (BL-145a), creating, reading and looking up nothing for the review' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Thrown = $null
+            try { $null = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-TwNoTryScenario -Log $Log -Flags '-Confirm:$false -ErrorAction Stop') } catch { $Thrown = $PSItem }
+
+            # Measured: the handler's WriteError is terminating under Stop, so the call stops with the
+            # refusal's text and nothing after it in the script runs.
+            $Thrown | Should -Not -BeNullOrEmpty
+            $Thrown.Exception.Message | Should -BeLike "*access package 'AP-Twin' has no id in this run*"
+            @(Get-TwLoggedLine -Log $Log) | Should -BeNullOrEmpty
         }
     }
 }

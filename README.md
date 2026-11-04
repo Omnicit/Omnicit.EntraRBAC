@@ -996,8 +996,9 @@ reference by the new name is refused -- for a catalog every package declared in 
 or a policy every review that names it by that name (one that names the package by object id looks
 a policy up by name, as above) -- existing ones included, even when the rename was done in an
 earlier run: include the section, or remove `previousDisplayName` once the new name resolves. A
-refusal because `-Include` leaves the section out publishes no error record, only the `Failed` row,
-so `-ErrorAction Stop` and `$?` do not see it: check the rows.
+refusal because `-Include` leaves the section out writes a non-terminating error record of its own
+with the id `StructureReferenceUnidentified`, beside the `Failed` row, so `-ErrorAction Stop`,
+`-ErrorVariable` and `$?` see it; a refused rename's record carries that rename's own error id.
 
 An access review that names, by its display name, an access package the same document declares
 reaches the package that `accessPackages` entry found in its catalog or created there, by its object
@@ -1006,8 +1007,8 @@ of that name in another catalog would be found. Until the entry has that id, the
 and nothing is read or written for it, under `-WhatIf` too: when the entry stopped first, when a
 `-WhatIf` plan would create the package (a real run creates the package, then the review) or a
 declined confirmation skipped its create, and when `-Include` leaves out the `AccessPackages`
-section. Such a refusal publishes no error record of its own, only the `Failed` row. Include
-`AccessPackages`, or name the package by its object id. A review that names a package the document
+section. Such a refusal writes an error record of its own, `StructureReferenceUnidentified`, beside
+the `Failed` row. Include `AccessPackages`, or name the package by its object id. A review that names a package the document
 does not declare is resolved as before.
 
 `Test-OERStructure` warns on a reference that still names a renamed object by its previous name, an

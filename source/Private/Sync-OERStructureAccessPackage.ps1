@@ -55,8 +55,11 @@ function Sync-OERStructureAccessPackage {
     found), or that this run could not decide (one of its names could not be looked up, or -Include
     leaves the catalogs section out), is not the catalog the document means, whatever now carries its
     new name: the package gets one Failed row naming the refused rename and why (its error id, or what
-    kept the run from deciding it), and nothing is created, read or written for it. That row
-    publishes no error record of its own; a refused rename's error is on the catalog's own row.
+    kept the run from deciding it), and nothing is created, read or written for it. The refusal also
+    writes an error record of its own (BL-145a), non-terminating and carried by the row: its id is
+    the refused rename's error id, or StructureReferenceUnidentified when the run could not decide
+    the rename, with the row's Detail as its message, category ObjectNotFound and the package as its
+    target.
 
     Once the package has been resolved (or created), every downstream call that has to identify it --
     the property re-read, the resourceRoleScopes read, the resource role add and prune, the assignment
@@ -417,8 +420,16 @@ function Sync-OERStructureAccessPackage {
         # what kept the run from deciding.
         $CatalogTarget = Get-OERStructureRenameTarget -Section 'catalogs' -Name ([string]$Item.catalog) -RenameMap $RenameMap
         if ($CatalogTarget -and $CatalogTarget.Refused) {
-            ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Failed' `
-                -Detail "catalog '$($Item.catalog)' was not reconciled in this run: its rename from '$($CatalogTarget.PreviousName)' was refused ($($CatalogTarget.Reason)), so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it"
+            # BL-145a: the refusal writes its own error record.
+            $CatalogDetail = "catalog '$($Item.catalog)' was not reconciled in this run: its rename from '$($CatalogTarget.PreviousName)' was refused ($($CatalogTarget.Reason)), so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it"
+            $CatalogErrorId = if ([string]::IsNullOrEmpty([string]$CatalogTarget.ErrorId)) { 'StructureReferenceUnidentified' } else { [string]$CatalogTarget.ErrorId }
+            $CatalogErrRec = [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new($CatalogDetail),
+                $CatalogErrorId,
+                [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                $Name)
+            $Caller.WriteError($CatalogErrRec)
+            ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Failed' -Detail $CatalogDetail -ErrorRecord $CatalogErrRec
             return
         }
         if ($CatalogTarget) { $CatalogRef = $CatalogTarget.Id }

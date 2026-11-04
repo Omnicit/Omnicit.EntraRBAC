@@ -83,8 +83,11 @@ function Sync-OERStructureAccessReview {
     the accessPackages entry stopped before it decided, or -Include leaves the accessPackages section
     out) -- names an object the run cannot identify, and a name lookup could reach another object that
     carries the new name, so the entry is refused instead: one Failed row naming the refused rename
-    and its reason, no error record of its own (the rename's own row carries one when it was refused),
-    and nothing is created, read or written for the entry, under -WhatIf too. The access package is
+    and its reason, with an error record of its own that the row carries (BL-145a; non-terminating,
+    category ObjectNotFound, the review as its target, the row's Detail as its message; its id is the
+    refused rename's error id, or StructureReferenceUnidentified when the run could not decide the
+    rename or the accessPackages entry has no id yet), and nothing is created, read or written for
+    the entry, under -WhatIf too. The access package is
     read first, so a refused package refuses the entry before its policy is read. A name the map
     holds nothing for is resolved exactly as before.
 
@@ -279,9 +282,8 @@ function Sync-OERStructureAccessReview {
         # policy by its name within the package as this entry names it (the package's declared name,
         # or its object id, which the package handler registers too once it knows the id).
         # A refused entry means the object this review names cannot be identified, and a name lookup
-        # could reach another object that carries the new name: one Failed row and nothing else -- no
-        # error record (R9: the rename's own row carries one when it was refused), no read, no write,
-        # the same under -WhatIf. The package is read first, so a refused package stops the entry
+        # could reach another object that carries the new name: one Failed row and its own error
+        # record (BL-145a), no read, no write, the same under -WhatIf. The package is read first, so a refused package stops the entry
         # before its policy is read. An id the map holds replaces the name in a COPY of the entry that
         # only the target check and the create read; $Item and the diff's $DeclaredItem keep the names
         # (the diff compares a GUID only, and the target check has refused any other scope first).
@@ -306,13 +308,29 @@ function Sync-OERStructureAccessReview {
             } else {
                 "access package '$PackageRef' has no id in this run ($($PackageTarget.Reason)), so the access package this access review reviews cannot be identified; nothing was created, read or written for it"
             }
-            ConvertTo-OERStructureResult -Section 'accessReviews' -Item $Name -Action 'Failed' -Detail $RefusedDetail
+            # BL-145a: the refusal writes its own error record (the map entry's ErrorId, or
+            # StructureReferenceUnidentified when the run could not decide it or the entry has no id).
+            $PackageErrorId = if ([string]::IsNullOrEmpty([string]$PackageTarget.ErrorId)) { 'StructureReferenceUnidentified' } else { [string]$PackageTarget.ErrorId }
+            $PackageErrRec = [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new($RefusedDetail),
+                $PackageErrorId,
+                [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                $Name)
+            $Caller.WriteError($PackageErrRec)
+            ConvertTo-OERStructureResult -Section 'accessReviews' -Item $Name -Action 'Failed' -Detail $RefusedDetail -ErrorRecord $PackageErrRec
             return
         }
         $PolicyTarget = Get-OERStructureRenameTarget -Section 'assignmentPolicies' -Name $PolicyRef -AccessPackage $PackageRef -RenameMap $RenameMap
         if ($PolicyTarget -and $PolicyTarget.Refused) {
-            ConvertTo-OERStructureResult -Section 'accessReviews' -Item $Name -Action 'Failed' `
-                -Detail "assignment policy '$PolicyRef' of access package '$PackageRef' was not reconciled in this run: its rename from '$($PolicyTarget.PreviousName)' was refused ($($PolicyTarget.Reason)), so the assignment policy this access review reviews cannot be identified; nothing was created, read or written for it"
+            $PolicyRefusedDetail = "assignment policy '$PolicyRef' of access package '$PackageRef' was not reconciled in this run: its rename from '$($PolicyTarget.PreviousName)' was refused ($($PolicyTarget.Reason)), so the assignment policy this access review reviews cannot be identified; nothing was created, read or written for it"
+            $PolicyErrorId = if ([string]::IsNullOrEmpty([string]$PolicyTarget.ErrorId)) { 'StructureReferenceUnidentified' } else { [string]$PolicyTarget.ErrorId }
+            $PolicyErrRec = [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new($PolicyRefusedDetail),
+                $PolicyErrorId,
+                [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                $Name)
+            $Caller.WriteError($PolicyErrRec)
+            ConvertTo-OERStructureResult -Section 'accessReviews' -Item $Name -Action 'Failed' -Detail $PolicyRefusedDetail -ErrorRecord $PolicyErrRec
             return
         }
         if ($PackageTarget -or $PolicyTarget) {

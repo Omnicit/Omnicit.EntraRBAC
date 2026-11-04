@@ -5428,9 +5428,17 @@ Describe 'Sync-OERStructureAccessReview reaches an access package or assignment 
             $Run.Rows[0].Action | Should -BeExactly 'Failed'
             $Run.Rows[0].Detail | Should -BeExactly ("access package 'AP-New' was not reconciled in this run: its rename from 'AP-Old' was refused ($Reason), " +
                 'so the access package this access review reviews cannot be identified; nothing was created, read or written for it')
-            $Run.Rows[0].Error | Should -BeNullOrEmpty
-            # R9: no error record of its own -- the rename's own row carries one when it was refused.
-            @($Run.All).Count | Should -Be 0
+            # BL-145a: the refusal writes its own error record: the rename's ErrorId, or
+            # StructureReferenceUnidentified when the run could not decide the rename.
+            $ExpectedId = if ($Splat.ContainsKey('Undecided')) { 'StructureReferenceUnidentified' } else { $Reason }
+            @($Run.Errors).Count | Should -Be 1
+            @($Run.All).Count | Should -Be 1
+            ($Run.Errors[0].FullyQualifiedErrorId -split ',')[0] | Should -BeExactly $ExpectedId
+            $Run.Errors[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
+            $Run.Errors[0].TargetObject | Should -BeExactly 'Q3 AP review'
+            $Run.Errors[0].Exception.Message | Should -BeExactly $Run.Rows[0].Detail
+            $Run.Rows[0].Error | Should -Not -BeNullOrEmpty
+            $Run.Rows[0].Error.FullyQualifiedErrorId | Should -BeExactly $Run.Errors[0].FullyQualifiedErrorId
             # Nothing read: not the definition, not a name, not a reviewer; nothing written.
             Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 0
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
@@ -5463,8 +5471,15 @@ Describe 'Sync-OERStructureAccessReview reaches an access package or assignment 
             $Run.Rows[0].Detail | Should -BeExactly ("assignment policy 'POL-New' of access package '$Package' was not reconciled in this run: its rename from " +
                 "'POL-Old' was refused ($Reason), so the assignment policy this access review reviews cannot be identified; nothing was " +
                 'created, read or written for it')
-            $Run.Rows[0].Error | Should -BeNullOrEmpty
-            @($Run.All).Count | Should -Be 0
+            $ExpectedId = if ($Splat.ContainsKey('Undecided')) { 'StructureReferenceUnidentified' } else { $Reason }
+            @($Run.Errors).Count | Should -Be 1
+            @($Run.All).Count | Should -Be 1
+            ($Run.Errors[0].FullyQualifiedErrorId -split ',')[0] | Should -BeExactly $ExpectedId
+            $Run.Errors[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
+            $Run.Errors[0].TargetObject | Should -BeExactly 'Q3 AP review'
+            $Run.Errors[0].Exception.Message | Should -BeExactly $Run.Rows[0].Detail
+            $Run.Rows[0].Error | Should -Not -BeNullOrEmpty
+            $Run.Rows[0].Error.FullyQualifiedErrorId | Should -BeExactly $Run.Errors[0].FullyQualifiedErrorId
             Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 0
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
             Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 0
@@ -5485,7 +5500,8 @@ Describe 'Sync-OERStructureAccessReview reaches an access package or assignment 
             $Run.Rows.Count | Should -Be 1
             $Run.Rows[0].Detail | Should -BeExactly ("access package 'AP-New' was not reconciled in this run: its rename from 'AP-Old' was refused " +
                 '(AccessPackageRenameNotFound), so the access package this access review reviews cannot be identified; nothing was created, read or written for it')
-            @($Run.All).Count | Should -Be 0
+            @($Run.All).Count | Should -Be 1
+            ($Run.Errors[0].FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'AccessPackageRenameNotFound'
             Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 0
         }
 
@@ -5506,7 +5522,8 @@ Describe 'Sync-OERStructureAccessReview reaches an access package or assignment 
             $Run.Rows[0].Detail | Should -BeExactly ("assignment policy 'POL-New' of access package 'AP-New' was not reconciled in this run: its rename from " +
                 "'POL-Old' was refused (the accessPackages entry did not reach a decision in this run; see that entry's rows), so the assignment " +
                 'policy this access review reviews cannot be identified; nothing was created, read or written for it')
-            @($Run.All).Count | Should -Be 0
+            @($Run.All).Count | Should -Be 1
+            ($Run.Errors[0].FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
             Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 0
             Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times 0
             Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
@@ -5543,8 +5560,12 @@ Describe 'Sync-OERStructureAccessReview reaches an access package or assignment 
             $Run.Rows[0].Detail | Should -BeExactly ("access package 'AP-New' has no id in this run ($Reason), so the access package this access review " +
                 'reviews cannot be identified; nothing was created, read or written for it')
             $Run.Rows[0].Detail | Should -Not -BeLike '*rename*'
-            $Run.Rows[0].Error | Should -BeNullOrEmpty
-            @($Run.All).Count | Should -Be 0
+            # BL-145a: an entry with no id writes its own error record, StructureReferenceUnidentified.
+            @($Run.Errors).Count | Should -Be 1
+            @($Run.All).Count | Should -Be 1
+            ($Run.Errors[0].FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
+            $Run.Errors[0].Exception.Message | Should -BeExactly $Run.Rows[0].Detail
+            $Run.Rows[0].Error | Should -Not -BeNullOrEmpty
             # Nothing read: not the definition, not the package by its name anywhere, not a reviewer.
             Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 0
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
