@@ -14535,7 +14535,7 @@ The engine now calls the handler as `$null = & Handler ... -OutVariable HandlerR
 form (`| ForEach-Object { $Results.Add($PSItem) }`) was tried first and rejected: a handler run under
 it no longer reached the caller's `-WarningVariable` (two `-Prune` tests failed on the warning they
 count). `$HandlerRows` is reset to `$null` before each call, so a binding failure never reads the
-previous entry's rows, and a $null $HandlerRows (the handler failed before the variable was populated) adds no row. All nine handlers are advanced functions, so `-OutVariable` binds.
+previous entry's rows, and a null `$HandlerRows` (the handler failed before the variable was populated, a binding failure) adds no row. All nine handlers are advanced functions, so `-OutVariable` binds.
 
 BL-161d: the pre-pass catch passed `[string]$AuItem.displayName` as the mandatory, non-empty `-Item`
 of `ConvertTo-OERStructureResult`; a unit entry without a name replaced the original error with a
