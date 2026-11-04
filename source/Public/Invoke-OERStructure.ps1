@@ -6,7 +6,8 @@ function Invoke-OERStructure {
     .DESCRIPTION
     The top-level apply engine for Phase 5 JSON Orchestration. Reads a structure document from
     -Path or -Json, validates it offline with Test-OERStructureSchema (aborting before any write
-    if invalid), authenticates, then iterates every declared section in dependency order --
+    if invalid; the validator's warnings are written, one Write-Warning each, before anything is
+    confirmed, signed in to, read or written), authenticates, then iterates every declared section in dependency order --
     Groups, AdministrativeUnits, Catalogs, AccessPackages, AccessReviews,
     DirectoryRoleManagementPolicies, DirectoryRoleAssignments, RoleAssignments, RoleManagementPolicies
     -- and calls the matching Sync-OERStructure* handler for each item.
@@ -647,6 +648,12 @@ function Invoke-OERStructure {
             Write-CmdletError -Message ([System.Exception]::new("Structure document failed validation: $Msgs")) `
                 -ErrorId 'StructureValidationFailed' -Category InvalidData -TargetObject $DocumentTarget -Cmdlet $PSCmdlet
             return
+        }
+        # The validator's warnings stand here, in its order, before the confirmation check, the sign-in
+        # and every read or write, so a -WhatIf plan, a -Confirm prompt and a -WarningAction Stop
+        # caller all meet them first (BL-143a). A document with errors is refused above without them.
+        foreach ($Finding in @($Validation.Errors | Where-Object { $_.Severity -eq 'Warning' })) {
+            Write-Warning "Invoke-OERStructure: structure document warning at $($Finding.Path): $($Finding.Message)"
         }
 
         # -- 2a. Refuse a run this host cannot confirm (BL-53) -----------------------------

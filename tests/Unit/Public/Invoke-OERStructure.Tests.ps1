@@ -474,7 +474,8 @@ Describe 'Invoke-OERStructure omitted-collection prune warning' {
         $MarkerAt.Count | Should -Be 3
         $Messages[$MarkerAt[0]] | Should -BeExactly 'MARKER: Sync-OERStructureAdministrativeUnit ran (EnsureOnly=True)'
         $EngineAt[0] | Should -BeLessThan $MarkerAt[0]
-        $EngineAt[0] | Should -Be 0
+        # BL-143a: the validator's own warnings (g1 and AU-1 omit collections) stand first; nothing else precedes the engine's.
+        @($Messages[0..($EngineAt[0] - 1)] | Where-Object { $_ -notlike 'Invoke-OERStructure: structure document warning*' }).Count | Should -Be 0
     }
 
     It 'names each omitted key as section, quoted item and collection, and counts them' {
@@ -2784,7 +2785,8 @@ Describe 'Invoke-OERStructure refuses a document from another tenant (BL-88, A14
             @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'DocumentTenantMismatch*' }).Count | Should -Be 1
             @($Errs).Count | Should -Be 1
             @($W | Where-Object { "$_" -like 'Invoke-OERStructure: -Prune is set*' }).Count | Should -Be 0
-            @($W).Count | Should -Be 0
+            # BL-143a: the validator's warnings are written before the tenant comparison; no other warning is.
+            @($W | Where-Object { "$_" -notlike 'Invoke-OERStructure: structure document warning*' }).Count | Should -Be 0
             Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureAdministrativeUnit -Times 0
             Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
         }
@@ -7035,5 +7037,59 @@ $RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OER
         @($Logged | Where-Object { $_ -like 'POLICY SET*-AccessType owner*' }).Count | Should -Be 1
         @($Run.Output | Where-Object { $_ -like 'ROW:*pimPolicy*' }) | Should -Be @('ROW:Updated:pimPolicy (member) set: eligible(perm=True,days=90)', 'ROW:Updated:pimPolicy (owner) set: activationMaxHours=4')
         @($Run.Errors).Count | Should -Be 0
+    }
+}
+
+Describe 'Invoke-OERStructure writes the validator''s warnings before anything else (BL-143a)' {
+    BeforeAll {
+        # Two access packages naming a catalog the document does not declare: two validator Warnings each.
+        $script:WarnJson = '{ "version":"1.0", "accessPackages":[ { "displayName":"P1", "catalog":"C1", "resourceRoles":[] }, { "displayName":"P2", "catalog":"C2", "resourceRoles":[] } ] }'
+        $script:WarnBadJson = '{ "version":"1.0", "accessPackages":[ { "displayName":"P1", "catalog":"C1", "resourceRoles":[] } ], "groups":[ { "displayName":5 } ] }'
+        $script:CleanJson = '{ "version":"1.0", "groups":[ { "displayName":"g", "members":[] } ] }'
+        $script:Expected = InModuleScope Omnicit.EntraRBAC {
+            $Doc = '{ "version":"1.0", "accessPackages":[ { "displayName":"P1", "catalog":"C1", "resourceRoles":[] }, { "displayName":"P2", "catalog":"C2", "resourceRoles":[] } ] }' | ConvertFrom-Json
+            @((Test-OERStructureSchema -Document $Doc).Errors | Where-Object { $_.Severity -eq 'Warning' } |
+                ForEach-Object { "Invoke-OERStructure: structure document warning at $($_.Path): $($_.Message)" })
+        }
+    }
+
+    BeforeEach {
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth {}
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERSubscriptionHomeTenant { [PSCustomObject]@{ Scope = $null; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null } }
+        Mock -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup { }
+        Mock -ModuleName Omnicit.EntraRBAC Sync-OERStructureCatalog { }
+        Mock -ModuleName Omnicit.EntraRBAC Sync-OERStructureAccessPackage { }
+    }
+
+    It 'writes one warning per finding, in the validator''s order, and still signs in' {
+        $null = Invoke-OERStructure -Json $script:WarnJson -WhatIf -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -WarningVariable Got
+        @($Got).Count | Should -Be 2
+        $script:Expected.Count | Should -Be 2
+        $Got[0].Message | Should -BeExactly $script:Expected[0]
+        $Got[1].Message | Should -BeExactly $script:Expected[1]
+        $Got[0].Message | Should -BeLike 'Invoke-OERStructure: structure document warning at accessPackages*C1*'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly
+    }
+
+    It 'stops at the first warning under -WarningAction Stop, before the sign-in and any handler' {
+        $Threw = $false
+        try { $null = Invoke-OERStructure -Json $script:WarnJson -WhatIf -WarningAction Stop -ErrorAction Stop } catch { $Threw = $true }
+        $Threw | Should -BeTrue
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureCatalog -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureAccessPackage -Times 0
+    }
+
+    It 'refuses a document with an error as before and writes none of its warnings' {
+        $null = Invoke-OERStructure -Json $script:WarnBadJson -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs -WarningAction SilentlyContinue -WarningVariable Got
+        @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'StructureValidationFailed*' }).Count | Should -Be 1
+        @($Got | Where-Object { $_.Message -like 'Invoke-OERStructure: structure document warning*' }).Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 0
+    }
+
+    It 'writes no warning for a valid document the validator has no warning for' {
+        $null = Invoke-OERStructure -Json $script:CleanJson -Include Groups -WhatIf -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -WarningVariable Got
+        @($Got | Where-Object { $_.Message -like 'Invoke-OERStructure: structure document warning*' }).Count | Should -Be 0
     }
 }
