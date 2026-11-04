@@ -236,15 +236,54 @@ Describe 'Get-OERDirectoryRoleManagementPolicy' {
             }
         }
 
-        It 'still returns the policies, with a warning and an empty RoleName, when the names read fails' {
+        It 'writes every policy with a null RoleName, then one error record, and no warning, when the names read fails' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERDirectoryRolePolicyAssignment {
+                @(
+                    [PSCustomObject]@{ policyId = 'pol1'; roleDefinitionId = 'aaaaaaaa-0000-0000-0000-000000000001'; policy = [PSCustomObject]@{ rules = @() } }
+                    [PSCustomObject]@{ policyId = 'pol2'; roleDefinitionId = 'aaaaaaaa-0000-0000-0000-000000000002'; policy = [PSCustomObject]@{ rules = @() } }
+                )
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { throw [System.InvalidOperationException]::new('Forbidden: insufficient privileges') }
+            $Out = @(Get-OERDirectoryRoleManagementPolicy -All -ErrorVariable e -ErrorAction SilentlyContinue -WarningVariable Warned -WarningAction SilentlyContinue)
+            $Out.Count | Should -Be 2
+            foreach ($Item in $Out) {
+                $Item.PSObject.Properties.Name | Should -Contain 'RoleName'
+                $null -eq $Item.RoleName | Should -BeTrue
+            }
+            $Warned | Should -BeNullOrEmpty
+            $Own = @($e | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId.EndsWith(',Get-OERDirectoryRoleManagementPolicy', [System.StringComparison]::Ordinal) })
+            $Own.Count | Should -Be 1
+            $Own[0].Exception.Message | Should -Be 'Forbidden: insufficient privileges'
+        }
+
+        It 'writes the policies before the record, so -ErrorAction Stop still receives them' {
             Mock -ModuleName Omnicit.EntraRBAC Get-OERDirectoryRolePolicyAssignment {
                 @([PSCustomObject]@{ policyId = 'pol1'; roleDefinitionId = 'aaaaaaaa-0000-0000-0000-000000000001'; policy = [PSCustomObject]@{ rules = @() } })
             }
-            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { throw 'Forbidden: insufficient privileges' }
-            $Policies = @(Get-OERDirectoryRoleManagementPolicy -All -WarningVariable Warned -WarningAction SilentlyContinue)
-            $Policies.Count | Should -Be 1
-            $Policies[0].RoleName | Should -BeNullOrEmpty
-            $Warned | Should -Not -BeNullOrEmpty
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { throw [System.InvalidOperationException]::new('Forbidden: insufficient privileges') }
+            $Seen = [System.Collections.Generic.List[object]]::new()
+            $Threw = $false
+            try {
+                Get-OERDirectoryRoleManagementPolicy -All -ErrorAction Stop | ForEach-Object { $Seen.Add($PSItem) }
+            } catch {
+                $Threw = $true
+            }
+            $Threw | Should -BeTrue
+            $Seen.Count | Should -Be 1
+            $Seen[0].PolicyId | Should -Be 'pol1'
+        }
+
+        It 'keeps an empty RoleName for a role id missing from a names read that succeeded' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERDirectoryRolePolicyAssignment {
+                @([PSCustomObject]@{ policyId = 'pol1'; roleDefinitionId = 'aaaaaaaa-0000-0000-0000-000000000009'; policy = [PSCustomObject]@{ rules = @() } })
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+                @{ value = @(@{ id = 'aaaaaaaa-0000-0000-0000-000000000001'; displayName = 'Reports Reader' }) }
+            }
+            $Out = @(Get-OERDirectoryRoleManagementPolicy -All -ErrorVariable e -ErrorAction SilentlyContinue)
+            $Out.Count | Should -Be 1
+            $Out[0].RoleName | Should -BeExactly ''
+            @($e).Count | Should -Be 0
         }
 
         It 'reports PolicyReadFailed and reads no names when the assignment list read throws' {

@@ -8618,6 +8618,47 @@ Describe 'Get-OERInventory' {
                 'roleAssignments', 'roleManagementPolicies')
         }
     }
+
+    Context 'directory role policies read through the real Get-OERDirectoryRoleManagementPolicy (BL-162b)' {
+        # The reader runs for real; only its two helpers and the transport are mocked. The reader is
+        # called with -ErrorAction Stop, so its names-read record, written after every policy,
+        # reaches the inventory's catch with the policies already collected.
+        BeforeAll {
+            $script:RealPolRoleA = '11111111-1111-1111-1111-111111111111'
+            $script:RealPolRoleB = '22222222-2222-2222-2222-222222222222'
+        }
+
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment { }
+            Mock -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment { }
+            Mock -ModuleName $script:moduleName Get-OERDirectoryRolePolicyAssignment {
+                @(
+                    [PSCustomObject]@{ policyId = 'policy-a'; roleDefinitionId = '11111111-1111-1111-1111-111111111111'; policy = [PSCustomObject]@{ rules = @() } }
+                    [PSCustomObject]@{ policyId = 'policy-b'; roleDefinitionId = '22222222-2222-2222-2222-222222222222'; policy = [PSCustomObject]@{ rules = @() } }
+                )
+            }
+        }
+
+        It 'exports every policy named by its role id, with no InventoryPartial, when only the names read fails' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw [System.InvalidOperationException]::new('Forbidden: fixture refusal of the role names.') }
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies -AllDirectoryRolePolicies -ErrorAction SilentlyContinue -ErrorVariable DirErr
+            $Entries = @($Inv.directoryRoleManagementPolicies)
+            $Entries.Count | Should -Be 2
+            @($Entries.role) | Should -Be @($script:RealPolRoleA, $script:RealPolRoleB)
+            @(@($DirErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+        }
+
+        It 'reports the section unread as before when the assignment read fails' {
+            Mock -ModuleName $script:moduleName Get-OERDirectoryRolePolicyAssignment { throw [System.InvalidOperationException]::new('Forbidden: fixture refusal of the assignments.') }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { }
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies -AllDirectoryRolePolicies -ErrorAction SilentlyContinue -ErrorVariable DirErr
+            @($Inv.directoryRoleManagementPolicies).Count | Should -Be 0
+            $Partial = @(@($DirErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1
+            @(([string]$Partial[0].TargetObject) -split ', ') | Should -Be @('directoryRoleManagementPolicies')
+            $Partial[0].Exception.Message | Should -Match 'fixture refusal of the assignments'
+        }
+    }
 }
 
 Describe 'Get-OERInventory role assignment principals the directory did not return, or whose lookup failed (Sprint 11 step 6, BL-133, A18)' {

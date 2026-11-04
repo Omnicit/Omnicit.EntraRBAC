@@ -56,10 +56,12 @@ function Get-OERDirectoryRoleManagementPolicy {
     .PARAMETER All
     Read the policy for every Microsoft Entra directory role in a single paged
     roleManagementPolicyAssignments list call, plus one paged role-definitions list to supply each
-    policy's RoleName. A failure reading the names is reported with Write-Warning and leaves
-    RoleName empty on every returned object; the policies themselves still come from the
-    authoritative assignment read, whose own failure is a non-terminating PolicyReadFailed error
-    that returns no policy at all.
+    policy's RoleName. A failure reading the names writes every policy with RoleName $null (never
+    an empty string) and then ONE non-terminating error carrying the read's own error record, so a
+    caller under -ErrorAction Stop still receives the policies first; the policies themselves
+    come from the authoritative assignment read, whose own failure is a non-terminating
+    PolicyReadFailed error that returns no policy at all. A role id missing from a names read that
+    succeeded keeps an empty RoleName.
 
     .PARAMETER TenantId
     Optional tenant id or domain forwarded to Initialize-OERAuth.
@@ -163,6 +165,7 @@ function Get-OERDirectoryRoleManagementPolicy {
             }
 
             $NameById = @{}
+            $NamesReadError = $null
             try {
                 $Response = Invoke-OERGraphRequest -Uri 'v1.0/roleManagement/directory/roleDefinitions?$select=id,displayName' -All
                 foreach ($Definition in @($Response.value)) {
@@ -170,16 +173,22 @@ function Get-OERDirectoryRoleManagementPolicy {
                 }
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                Write-Warning "Could not read Microsoft Entra directory role definition names: $($PSItem.Exception.Message)"
+                $NamesReadError = $PSItem
             }
 
             foreach ($Assignment in $Assignments) {
                 $AssignmentRoleDefinitionId = [string]$Assignment.roleDefinitionId
-                ConvertTo-OERRoleManagementPolicy -Rules @($Assignment.policy.rules) `
+                $PolicyOut = ConvertTo-OERRoleManagementPolicy -Rules @($Assignment.policy.rules) `
                     -PolicyId ([string]$Assignment.policyId) -Scope '/' `
                     -RoleName $NameById[$AssignmentRoleDefinitionId] -RoleDefinitionId $AssignmentRoleDefinitionId `
                     -ApproverShape Graph
+                # A failed names read leaves RoleName unknown ($null), never an empty string.
+                if ($NamesReadError) { $PolicyOut.RoleName = $null }
+                $PolicyOut
             }
+            # The policies come first, the names read's own record after them, so a caller under
+            # -ErrorAction Stop still receives every policy before the error stops it.
+            if ($NamesReadError) { $PSCmdlet.WriteError($NamesReadError) }
             return
         }
 

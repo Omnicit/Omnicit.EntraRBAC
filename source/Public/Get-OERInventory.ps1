@@ -2609,15 +2609,29 @@ function Get-OERInventory {
         if ($IncludeDirectoryPolicies) {
             $DirectoryPolicies = @()
             $DirectoryPoliciesRead = $false
+            $DirectoryPolicyList = [System.Collections.Generic.List[object]]::new()
             try {
-                $DirectoryPolicies = @(Get-OERDirectoryRoleManagementPolicy -All -ErrorAction Stop)
+                Get-OERDirectoryRoleManagementPolicy -All -ErrorAction Stop | ForEach-Object { $DirectoryPolicyList.Add($PSItem) }
+                $DirectoryPolicies = @($DirectoryPolicyList)
                 $DirectoryPoliciesRead = $true
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                $DirectoryCause = "Could not read the Microsoft Entra directory role management policies: $($PSItem.Exception.Message)"
-                Write-Verbose "Get-OERInventory: $DirectoryCause"
-                Add-UnreadCause -Cause $DirectoryCause
-                $UnreadCollections.Add('directoryRoleManagementPolicies')
+                if ($DirectoryPolicyList.Count -gt 0) {
+                    # The reader writes nothing before its authoritative assignment read has
+                    # succeeded, and then writes every policy before its only later record, the
+                    # failed role definition names read. A failure after at least one policy was
+                    # collected is therefore that names read: the policies are complete and
+                    # ConvertTo-OERInventoryRoleManagementPolicy names each role by its
+                    # RoleDefinitionId when RoleName is null, so the section is kept, not unread.
+                    Write-Verbose "Get-OERInventory: Could not read the Microsoft Entra directory role names; the roles are named by id: $($PSItem.Exception.Message)"
+                    $DirectoryPolicies = @($DirectoryPolicyList)
+                    $DirectoryPoliciesRead = $true
+                } else {
+                    $DirectoryCause = "Could not read the Microsoft Entra directory role management policies: $($PSItem.Exception.Message)"
+                    Write-Verbose "Get-OERInventory: $DirectoryCause"
+                    Add-UnreadCause -Cause $DirectoryCause
+                    $UnreadCollections.Add('directoryRoleManagementPolicies')
+                }
             }
             if ($DirectoryPoliciesRead) {
                 if (-not $AllDirectoryRolePolicies) {
