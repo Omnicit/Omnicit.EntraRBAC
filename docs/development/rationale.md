@@ -9709,10 +9709,11 @@ removed in Sprint 12 step 2, see above):
   ties by `[System.StringComparer]::Ordinal`, so the order is total and culture independent;
   eligibility by `principal`, `accessType`, `durationDays` (absent first, then ascending) and `id`.
   `Get-OERInventoryGroup` orders the three group lists and `Get-OERInventory` the unit members; never
-  order such a list anywhere else. Its LINQ calls take their generic arguments by INFERENCE and never
-  write them out: an explicit type argument on a generic method call is PowerShell 7.3 syntax, a parse
-  error under the module's 7.2 floor that fails the whole merged module, and CI runs a current
-  PowerShell only, so nothing but the helper's own test (an AST check of its file) would show it. Sprint 12 step 2: the floor is 7.6, so that guard and its test were removed.
+  order such a list anywhere else. Its LINQ calls took their generic arguments by INFERENCE and never
+  wrote them out: an explicit type argument on a generic method call is PowerShell 7.3 syntax, which was a
+  parse error under the module's former 7.2 floor that failed the whole merged module, and CI runs a current
+  PowerShell only, so nothing but the helper's own test (an AST check of its file) would show it. Sprint 12
+  step 2: the floor is 7.6, so that guard and its test were removed, and the CLAUDE.md rule with them.
   `Why: docs/development/rationale.md#export-group-selection`
 
 - **`Read-OERGroupCollection` is the single owner of the three per-group collection reads

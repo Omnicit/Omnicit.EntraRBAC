@@ -1049,7 +1049,7 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 - **`Get-OEROrderedInventoryEntry` is the single owner of the order the inventory writes its lists
   in:** a group's `members`, `owners`, `eligibility` and an administrative unit's `members`.
   `Get-OERInventoryGroup` orders the three group lists, `Get-OERInventory` the unit members; never
-  order such a list elsewhere. Its LINQ calls take generic arguments by INFERENCE, never written out.
+  order such a list elsewhere.
   `Why: docs/development/rationale.md#export-group-selection`
 - **`Read-OERGroupCollection` is the single owner of the three per-group collection reads
   `Get-OERGroup` attaches and the inventory's group reader uses** (members, owners, PIM eligibility)
