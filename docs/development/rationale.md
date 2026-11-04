@@ -12859,7 +12859,10 @@ older than this step, for every catalog named uniquely; the catalog id written h
 package whose catalog's name is shared (refused as ambiguous before), a pair only a tenant from
 before Microsoft Graph's refusal can hold (measurement C). The handler now compares the
 catalog of the package `New-OERAccessPackage` returns with the declared catalog, as ids without
-regard to letter case -- an id as written, a name looked up once with `Resolve-OERCatalogId` -- and
+regard to letter case (Sprint 12 step 4, BL-148a: `New-OERAccessPackage` itself now refuses to return
+a package of another catalog, or one whose catalog the read did not carry, with the new ErrorId
+`AccessPackageInAnotherCatalog`, nothing created, `-WhatIf` included; its own comparison is the same
+ordinal ignore-case one on the `$expand=catalog` read) -- an id as written, a name looked up once with `Resolve-OERCatalogId` -- and
 when they differ reports the entry as one `Failed` row and returns, with nothing written to that
 package or for the entry; a lookup that fails is scrubbed first and reported `Failed` with its error,
 nothing further written. A package with no catalog in the answer is one the create sent into the
