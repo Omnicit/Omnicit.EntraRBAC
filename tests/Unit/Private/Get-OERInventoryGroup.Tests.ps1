@@ -3,6 +3,9 @@ BeforeAll {
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
 
+    # The real assignment reader, captured before any test mocks it (BL-140e caller test).
+    $script:RealPimReaderBlock = InModuleScope Omnicit.EntraRBAC { ${function:Read-OERGroupPimAssignment} }
+
     # One read with every stream the assertions look at captured, and -ErrorAction pinned: a
     # global Stop preference would otherwise end the call at the first record the mocks write.
     # The verbose lines keep Get-OERInventory's own prefix on purpose (its verbose output did
@@ -1423,6 +1426,33 @@ Describe 'Get-OERInventoryGroup' {
             # On the eligibility basis they are eligible, not known to be held, and the line says so.
             @($Read.Verbose) | Should -Contain "Get-OERInventory: group 'role_sec_pim': 1 member(s) and 1 owner(s) left out, since they are eligible for the same access in PIM for Groups and the group's PIM assignments could not be read."
             @($Read.Verbose | Where-Object { $_ -like '*holds their access*' }).Count | Should -Be 0
+        }
+
+        It 'treats an assignment answer without a value member, read by the real reader, as an unread read exactly like a thrown failure (BL-140e) (<Mode>)' -ForEach @(
+            @{ Mode = 'full' }
+            @{ Mode = 'relevant-only' }
+        ) {
+            $script:PimListing = @(
+                @{ Id = 'g-pim'; Name = 'role_sec_pim'
+                    Members = @(@{ id = 'u-elig'; userPrincipalName = 'person5@contoso.com' }, @{ id = 'u-std'; userPrincipalName = 'person1@contoso.com' })
+                    Owners = @(@{ id = 'o-std'; userPrincipalName = 'person6@contoso.com' })
+                    Eligibility = @(@{ principalId = 'U-ELIG'; accessId = 'member' }) }
+            )
+            # The real reader answers the Graph wrapper's response, which has no value member.
+            $global:OERTestRealPimReader = $script:RealPimReaderBlock
+            Mock -ModuleName Omnicit.EntraRBAC Read-OERGroupPimAssignment { param($GroupId) & $global:OERTestRealPimReader -GroupId $GroupId }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { @{ } }
+            $Cause = 'Could not read the PIM for Groups assignments of group g-pim: Microsoft Graph answered without a value member.'
+            try { $Read = & $script:ReadIn $Mode } finally { Remove-Variable -Name OERTestRealPimReader -Scope Global -ErrorAction SilentlyContinue }
+            $Group = & $script:ProjectionOf $Read 'role_sec_pim'
+            # The same outcome as the thrown failure above: the eligible member is left out, the rest written.
+            $Group.members | Should -Be @('person1@contoso.com')
+            @($Read.Result.Unread) | Should -Be @('groups/role_sec_pim/pimAssignments')
+            @($Read.Result.Causes).Count | Should -Be 1
+            $Read.Result.Causes[0].Cause | Should -BeExactly $Cause
+            $Read.Result.Causes[0].Target | Should -BeExactly 'g-pim'
+            $Read.Result.PimLeftOut[0].Basis | Should -BeExactly 'Eligibility'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $RequireValue -and $Uri -like '*assignmentScheduleInstances*' }
         }
 
         It 'writes members as an explicit null and omits owners when neither the assignments nor the eligibility could be read (Review Focus 1) (<Mode>)' -ForEach @(

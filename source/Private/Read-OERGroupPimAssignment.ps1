@@ -26,7 +26,16 @@ function Read-OERGroupPimAssignment {
     read does: a group PIM for Groups cannot manage then comes back as the transport's marker and
     is returned as a successful, empty read. A dynamic group answered this read with that code
     (measured live 2026-10-13); the group never onboarded that was measured the same day answered
-    200 with its members and owners. Every failure that arrives thrown, of any kind and whatever its
+    200 with its members and owners.
+
+    The request passes -RequireValue to the transport, so a first page that is empty or has no value
+    member is refused as GraphPagingIncomplete and returned as unread; a response that reaches this
+    function without a value member is returned as unread too (BL-140e): Read false, Value null,
+    Message 'Could not read the PIM for Groups assignments of group <id>: Microsoft Graph answered
+    without a value member.' and an Exception carrying that reason. A response with value = @() stays
+    a successful, empty read.
+
+    Every failure that arrives thrown, of any kind and whatever its
     code, is returned as unread, the safe direction: a caller that cannot tell a standing member from
     one PIM for Groups holds writes neither as standing. The catch scrubs the record first
     (Remove-OERErrorRecord).
@@ -74,7 +83,7 @@ function Read-OERGroupPimAssignment {
         # raises no PowerShell error anywhere in the chain (the reason is the eligibility read's, in
         # Read-OERGroupCollection). Unlike that read, a thrown record is never recognised afterwards:
         # whatever arrives thrown is unread.
-        $Response = Invoke-OERGraphRequest -Uri (Get-OERPimGroupsGraphPath -Path ("identityGovernance/privilegedAccess/group/assignmentScheduleInstances?`$filter=groupId eq '{0}'" -f $GroupId)) -All -ExpectedErrorCode 'ResourceTypeNotSupported'
+        $Response = Invoke-OERGraphRequest -Uri (Get-OERPimGroupsGraphPath -Path ("identityGovernance/privilegedAccess/group/assignmentScheduleInstances?`$filter=groupId eq '{0}'" -f $GroupId)) -All -RequireValue -ExpectedErrorCode 'ResourceTypeNotSupported'
     } catch {
         Remove-OERErrorRecord -Record $PSItem
         # The sentence ends with this function's own period, so the reason's own is dropped: a reason
@@ -86,6 +95,20 @@ function Read-OERGroupPimAssignment {
     if (@($Response.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError') {
         # The declared answer: a read that SUCCEEDED in telling us there is nothing listed.
         return (& $Result $true @() $null $null)
+    }
+    # An answer without a value member is not "nothing listed" (BL-140e): -RequireValue makes the
+    # wrapper refuse it, and this check is the reader's own backstop for a response that reaches it
+    # that way anyway. value = @() is a successful empty read and passes.
+    if ($null -eq $Response) {
+        $HasValue = $false
+    } elseif ($Response -is [System.Collections.IDictionary]) {
+        $HasValue = $Response.Contains('value')
+    } else {
+        $HasValue = $null -ne $Response.PSObject.Properties['value']
+    }
+    if (-not $HasValue) {
+        $NoValueException = [System.Exception]::new('Microsoft Graph answered without a value member')
+        return (& $Result $false $null "Could not read the PIM for Groups assignments of group $($GroupId): Microsoft Graph answered without a value member." $NoValueException)
     }
     # The null-filter is load-bearing: an answer without a value would otherwise become @($null), one
     # instance that is not there.

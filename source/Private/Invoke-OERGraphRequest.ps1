@@ -118,6 +118,15 @@ function Invoke-OERGraphRequest {
     FIRST page may answer with a declared code. Any code NOT named here behaves exactly as it does
     without this parameter.
 
+    .PARAMETER RequireValue
+    Private opt-in for -All (BL-140e). Without it a FIRST page that is $null or has no value member
+    is handed back as an empty collection, as the paging paragraph documents. With -All
+    -RequireValue that first page is refused instead, with GraphPagingIncomplete (page 1, cause 'it
+    answered with an empty body' or 'it has no value member'), exactly as a later page is: the
+    caller reads the answer as a read that did not complete, never as an empty collection. A first
+    page that carries value, even an empty array, is still a successful empty read, and an
+    expected-code marker on the first page is still returned before the check. Ignored without -All.
+
     .OUTPUTS
     The Graph API response hashtable on success. With -All, a hashtable shaped @{ value = <array> }
     holding the aggregated items from every page. When -ExpectedErrorCode is supplied and Graph
@@ -164,7 +173,8 @@ function Invoke-OERGraphRequest {
         [string]$Uri,
         [hashtable]$Body,
         [switch]$All,
-        [string[]]$ExpectedErrorCode
+        [string[]]$ExpectedErrorCode,
+        [switch]$RequireValue
     )
 
     # -- Helper: extract claims from a Graph failure --
@@ -1320,7 +1330,12 @@ function Invoke-OERGraphRequest {
         # ending the walk there handed back the pages before it as though they were the whole
         # collection (BL-72, P0 family, latent). It is refused, with what was read attached.
         if ($null -eq $Page) {
-            if ($PageNumber -eq 1) { break }
+            if ($PageNumber -eq 1) {
+                if (-not $RequireValue) { break }
+                throw (Get-GraphPagingIncompleteRecord -Cause 'it answered with an empty body' `
+                    -AtPage $PageNumber -AtUri $NextUri -Aggregated $AllValues.ToArray())
+                return
+            }
             throw (Get-GraphPagingIncompleteRecord -Cause 'it answered with an empty body although the page before it carried a next link' `
                 -AtPage $PageNumber -AtUri $NextUri -Aggregated $AllValues.ToArray())
             return
@@ -1377,7 +1392,7 @@ function Invoke-OERGraphRequest {
         # and, with no next link, end the walk as complete. The marker check above runs first: a
         # marker has no value and is handled as before. Invoke-MgGraphRequest returns a hashtable; a
         # non-hashtable page is read defensively through its properties.
-        if ($PageNumber -gt 1) {
+        if ($PageNumber -gt 1 -or $RequireValue) {
             if ($Page -is [System.Collections.IDictionary]) {
                 [bool]$PageHasValue = $Page.Contains('value')
             } else {

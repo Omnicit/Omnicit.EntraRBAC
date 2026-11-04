@@ -195,6 +195,24 @@ Describe 'Read-OERGroupPimHold' {
         }
     }
 
+    Context 'the assignment answer carries no value member, in the real assignment reader (BL-140e)' {
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ } }
+        }
+
+        It 'is not read, with the reader''s own message as the cause, exactly as for a thrown read failure' {
+            $Hold = InModuleScope $script:moduleName {
+                Read-OERGroupPimHold -GroupId 'g-1' -Eligibility @(@{ principalId = 'u-elig'; accessId = 'member' }) -EligibilityRead
+            }
+            # Reach proof: the real reader sent its request, with the switch.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $RequireValue -and $Uri -like '*assignmentScheduleInstances*' }
+            $Hold.Read | Should -BeFalse
+            $Hold.Cause | Should -BeExactly 'Could not read the PIM for Groups assignments of group g-1: Microsoft Graph answered without a value member.'
+            $Hold.Held.Count | Should -Be 0
+        }
+    }
+
     Context 'the eligibility read fails in the real eligibility reader' {
         # Read-OERGroupCollection runs for real here, so a change to the words it closes its failure
         # with turns this red rather than letting the sentence back into the apply engine's cause.
