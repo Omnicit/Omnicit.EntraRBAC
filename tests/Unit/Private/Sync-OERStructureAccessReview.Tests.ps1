@@ -2245,6 +2245,11 @@ Describe 'Sync-OERStructureAccessReview' {
         # a semi-annual one (absoluteMonthly interval 6) against a document declaring Monthly, which
         # is the A19 note, and the document also changes the description, so without the stop the
         # handler would write.
+        # The engine's own validator warns about this document (no fallbackReviewers beside the default manager
+        # reviewer), and that warning is written before the apply starts, so under a global Stop it would end
+        # the call before the handler runs. The scenario therefore stubs Test-OERStructureSchema (valid, no
+        # findings) to isolate the handler's own warning; the validator's warnings have their own tests
+        # (Invoke-OERStructure.Tests.ps1, BL-143a) and the extra test below keeps the real validator first.
         BeforeAll {
             $script:StopDoc = [PSCustomObject]@{
                 displayName = 'Q3 AP review'; accessPackage = 'AP-Sales'; assignmentPolicy = 'Standard'
@@ -2272,11 +2277,13 @@ Describe 'Sync-OERStructureAccessReview' {
             # logs every write with AppendAllText, whose path is substituted into the text. #PREF# is the
             # global WarningPreference the engine runs under.
             function New-StopScenario {
-                param([string]$Log, [string]$Preference)
+                param([string]$Log, [string]$Preference, [switch]$RealValidator)
+                $ValidatorStub = if ($RealValidator) { '' } else { 'Set-Item -Path function:script:Test-OERStructureSchema -Value { [pscustomobject]@{ Valid = $true; Errors = @() } }' }
                 [scriptblock]::Create((@'
 Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
 & (Get-Module Omnicit.EntraRBAC) {
     Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    #VALIDATOR#
     Set-Item -Path function:script:Get-OERAccessReviewDefinition -Value {
         [CmdletBinding()]
         param([string]$Filter)
@@ -2317,7 +2324,7 @@ $global:WarningPreference = '#PREF#'
 Invoke-OERStructure -Json $Json -Confirm:$false | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
 $global:WarningPreference = 'Continue'
 'END'
-'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#PREF#', $Preference))
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#PREF#', $Preference).Replace('#VALIDATOR#', $ValidatorStub))
             }
             function Get-StopLoggedLine {
                 param([string]$Log)
@@ -2375,6 +2382,17 @@ $global:WarningPreference = 'Continue'
             $Rows[0] | Should -BeLike "*Sync-OERStructureAccessReview: access review 'Q3 AP review' -- the live review is semi-annual*"
             @(Get-StopLoggedLine -Log $Log) | Should -BeNullOrEmpty
             @($Run.Prompts).Count | Should -Be 0
+        }
+
+        It 'stops at the validator''s own warning first when the real validator runs under a global Stop preference, before any handler write' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            # The harness rethrows the stop that ends the script, so the call is caught here: the stop
+            # IS the validator's warning, and nothing was logged by a handler.
+            $Thrown = $null
+            try { $null = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-StopScenario -Log $Log -Preference 'Stop' -RealValidator) } catch { $Thrown = $PSItem }
+            $Thrown | Should -Not -BeNullOrEmpty
+            "$($Thrown.Exception.Message)" | Should -BeLike '*structure document warning at accessReviews[[]0].fallbackReviewers*'
+            @(Get-StopLoggedLine -Log $Log) | Should -BeNullOrEmpty
         }
 
         It 'writes once and reports the Skipped note and the Updated row when the preference is Continue' {
