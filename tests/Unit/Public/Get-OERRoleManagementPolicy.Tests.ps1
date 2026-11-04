@@ -29,7 +29,10 @@ Describe 'Get-OERRoleManagementPolicy' {
             $p.ActivationMaxHours | Should -Be 8
         }
         It 'routes a policy-not-found resolver error as PolicyNotFound' {
-            Mock -ModuleName Omnicit.EntraRBAC Get-OERRoleManagementPolicyId { throw 'No role management policy assignment was found.' }
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERRoleManagementPolicyId {
+                throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('No role management policy assignment was found.'),
+                    'RolePolicyUnresolved', [System.Management.Automation.ErrorCategory]::ObjectNotFound, $RoleDefinitionId)
+            }
             Get-OERRoleManagementPolicy -Role 'Reader' -Subscription 'Prod' -ErrorVariable e -ErrorAction SilentlyContinue
             (($e | ForEach-Object { $_.FullyQualifiedErrorId }) -join ' ') | Should -Match 'PolicyNotFound'
         }
@@ -39,7 +42,10 @@ Describe 'Get-OERRoleManagementPolicy' {
             (($e | ForEach-Object { $_.FullyQualifiedErrorId }) -join ' ') | Should -Match 'InvalidScope'
         }
         It 'routes a role resolver error as RoleDefinitionNotFound' {
-            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId { throw 'no role' }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId {
+                throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('no role'),
+                    'RoleDefinitionUnresolved', [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Role)
+            }
             Get-OERRoleManagementPolicy -Role 'Nope' -Subscription 'Prod' -ErrorVariable e -ErrorAction SilentlyContinue
             (($e | ForEach-Object { $_.FullyQualifiedErrorId }) -join ' ') | Should -Match 'RoleDefinitionNotFound'
         }
@@ -100,7 +106,10 @@ Describe 'Get-OERRoleManagementPolicy' {
             # here; failing on 'Owner' drops exactly one. If the echo mock changed, all five would
             # succeed and the Count -eq 4 assertion would fail loudly (never a silent false pass).
             Mock -ModuleName Omnicit.EntraRBAC Get-OERRoleManagementPolicyId {
-                if ($RoleDefinitionId -eq 'Owner') { throw 'No role management policy assignment was found.' }
+                if ($RoleDefinitionId -eq 'Owner') {
+                    throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('No role management policy assignment was found.'),
+                        'RolePolicyUnresolved', [System.Management.Automation.ErrorCategory]::ObjectNotFound, $RoleDefinitionId)
+                }
                 [PSCustomObject]@{ PolicyId = 'p'; RoleName = $RoleDefinitionId; Scope = '/subscriptions/s1'; EffectiveRules = @() }
             }
             $Policies = @(Get-OERRoleManagementPolicy -CommonRoles -Subscription 'Prod' -WarningVariable Warned -WarningAction SilentlyContinue)
@@ -325,5 +334,219 @@ Describe 'Get-OERRoleManagementPolicy' {
             Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERRoleManagementPolicyId -Times 1
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0
         }
+    }
+}
+
+Describe 'Get-OERRoleManagementPolicy publishes a failed role or policy lookup as itself (Sprint 12 step 3, BL-157, BL-161c)' {
+    # A lookup that SUCCEEDED and matched nothing is RoleDefinitionNotFound / PolicyNotFound (message, category
+    # and target unchanged). Any other failure -- a 403, a paging refusal, an ambiguous name -- is not evidence
+    # that the role or policy is missing and is published as the caught record itself. The helpers tell the two
+    # apart by the internal ids RoleDefinitionUnresolved / RolePolicyUnresolved, which are never published.
+    # Every call below stands in no try: a WriteError record reaches -ErrorVariable, a throw would fail the It.
+    BeforeAll {
+        $script:Forbidden = {
+            [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Authorization failed (403): the caller may not read role definitions.'),
+                'AuthorizationFailed', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'Reader')
+        }
+        $script:Published = {
+            param($Err, [string]$Id)
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq "$Id,Get-OERRoleManagementPolicy" })
+        }
+    }
+
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERScope { '/subscriptions/s1' }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId { "/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/$Role" }
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERRoleManagementPolicyId {
+            [PSCustomObject]@{ PolicyId = "/p/$RoleDefinitionId"; RoleName = 'Reader'; Scope = '/subscriptions/s1'; EffectiveRules = @() }
+        }
+    }
+
+    Context 'ByRole' {
+        It 'asks both helpers for the internal no-match record (-ThrowUnresolved)' {
+            $null = Get-OERRoleManagementPolicy -Role 'Reader' -Subscription 'Prod'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId -Times 1 -Exactly -ParameterFilter { $ThrowUnresolved }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERRoleManagementPolicyId -Times 1 -Exactly -ParameterFilter { $ThrowUnresolved }
+        }
+
+        It 'publishes a no-match role as RoleDefinitionNotFound with the same message, category and target' {
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId {
+                throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new("Role definition 'Nope' was not found at scope '/subscriptions/s1'."),
+                    'RoleDefinitionUnresolved', [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Role)
+            }
+            Get-OERRoleManagementPolicy -Role 'Nope' -Subscription 'Prod' -ErrorVariable Err -ErrorAction SilentlyContinue
+            $Hit = & $script:Published $Err 'RoleDefinitionNotFound'
+            $Hit.Count | Should -Be 1
+            $Hit[0].Exception.Message | Should -Be "Role definition 'Nope' was not found at scope '/subscriptions/s1'."
+            $Hit[0].CategoryInfo.Category | Should -Be 'ObjectNotFound'
+            $Hit[0].TargetObject | Should -Be 'Nope'
+            # The internal id is never published.
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERRoleManagementPolicy' -and $_.FullyQualifiedErrorId -like '*Unresolved*' }).Count | Should -Be 0
+        }
+
+        It 'publishes a role whose policy matches nothing as PolicyNotFound with the same message, category and target' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERRoleManagementPolicyId {
+                throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new("No role management policy assignment was found for role definition '$RoleDefinitionId'."),
+                    'RolePolicyUnresolved', [System.Management.Automation.ErrorCategory]::ObjectNotFound, $RoleDefinitionId)
+            }
+            Get-OERRoleManagementPolicy -Role 'Reader' -Subscription 'Prod' -ErrorVariable Err -ErrorAction SilentlyContinue
+            $Hit = & $script:Published $Err 'PolicyNotFound'
+            $Hit.Count | Should -Be 1
+            $Hit[0].Exception.Message | Should -BeLike "No role management policy assignment was found for role definition '*Reader'."
+            $Hit[0].CategoryInfo.Category | Should -Be 'ObjectNotFound'
+            $Hit[0].TargetObject | Should -BeLike '*/roleDefinitions/Reader'
+        }
+
+        It 'publishes a 403 on the role definition read as itself, never as RoleDefinitionNotFound, and reads no policy' {
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId { throw (& $script:Forbidden) }
+            Get-OERRoleManagementPolicy -Role 'Reader' -Subscription 'Prod' -ErrorVariable Err -ErrorAction SilentlyContinue
+            $Hit = & $script:Published $Err 'AuthorizationFailed'
+            $Hit.Count | Should -Be 1
+            $Hit[0].Exception.Message | Should -Match 'may not read role definitions'
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'RoleDefinitionNotFound*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERRoleManagementPolicyId -Times 0 -Exactly
+        }
+
+        It 'publishes a 403 on the policy list as itself, never as PolicyNotFound' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERRoleManagementPolicyId { throw (& $script:Forbidden) }
+            Get-OERRoleManagementPolicy -Role 'Reader' -Subscription 'Prod' -ErrorVariable Err -ErrorAction SilentlyContinue
+            (& $script:Published $Err 'AuthorizationFailed').Count | Should -Be 1
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'PolicyNotFound*' }).Count | Should -Be 0
+        }
+
+        It 'publishes <Id> from a failed policy list as itself' -ForEach @(
+            @{ Id = 'ArmPagingIncomplete' }
+            @{ Id = 'GraphPagingIncomplete' }
+        ) {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERRoleManagementPolicyId {
+                throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('The list could not be read to its end.'),
+                    $Id, [System.Management.Automation.ErrorCategory]::InvalidResult, $null)
+            }
+            Get-OERRoleManagementPolicy -Role 'Reader' -Subscription 'Prod' -ErrorVariable Err -ErrorAction SilentlyContinue
+            (& $script:Published $Err $Id).Count | Should -Be 1
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'PolicyNotFound*' }).Count | Should -Be 0
+        }
+
+        It 'publishes an ambiguous role name as the resolver''s own AmbiguousName record with the candidates' {
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId {
+                throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new("Role name 'Dup' matches 2 role definitions (/a, /b)."),
+                    'AmbiguousName', [System.Management.Automation.ErrorCategory]::InvalidArgument, $Role)
+            }
+            Get-OERRoleManagementPolicy -Role 'Dup' -Subscription 'Prod' -ErrorVariable Err -ErrorAction SilentlyContinue
+            $Hit = & $script:Published $Err 'AmbiguousName'
+            $Hit.Count | Should -Be 1
+            $Hit[0].Exception.Message | Should -Match '/a, /b'
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'RoleDefinitionNotFound*' }).Count | Should -Be 0
+        }
+    }
+
+    Context 'ByCommonRoles' {
+        It 'skips a missing role with a warning, writes a record for each failed one, and still returns the other roles' {
+            # Reader reads; Contributor is refused (403 on its definition); Owner matches nothing (skipped with a
+            # warning); User Access Administrator's policy list is refused; Role Based Access Control
+            # Administrator reads. One record per failed role, one warning for the missing one.
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId {
+                if ($Role -ceq 'Contributor') { throw (& $script:Forbidden) }
+                if ($Role -ceq 'Owner') {
+                    throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new("Role definition 'Owner' was not found at scope '/subscriptions/s1'."),
+                        'RoleDefinitionUnresolved', [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Role)
+                }
+                $Role
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERRoleManagementPolicyId {
+                if ($RoleDefinitionId -ceq 'User Access Administrator') { throw (& $script:Forbidden) }
+                [PSCustomObject]@{ PolicyId = "/p/$RoleDefinitionId"; RoleName = $RoleDefinitionId; Scope = '/subscriptions/s1'; EffectiveRules = @() }
+            }
+            $Policies = @(Get-OERRoleManagementPolicy -CommonRoles -Subscription 'Prod' -ErrorVariable Err -ErrorAction SilentlyContinue -WarningVariable Warned -WarningAction SilentlyContinue)
+            @($Policies | ForEach-Object { $_.RoleName }) | Should -Be @('Reader', 'Role Based Access Control Administrator')
+            (& $script:Published $Err 'AuthorizationFailed').Count | Should -Be 2
+            @($Warned | ForEach-Object { [string]$_.Message }) | Should -Be @("Skipping role 'Owner': Role definition 'Owner' was not found at scope '/subscriptions/s1'.")
+        }
+
+        It 'writes the failed role''s record after the objects read before it, so -ErrorAction Stop still gets them' {
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId {
+                if ($Role -ceq 'Contributor') { throw (& $script:Forbidden) }
+                $Role
+            }
+            $Got = [System.Collections.Generic.List[object]]::new()
+            $Caught = $null
+            try {
+                Get-OERRoleManagementPolicy -CommonRoles -Subscription 'Prod' -ErrorAction Stop | ForEach-Object { $Got.Add($_) }
+            } catch {
+                $Caught = $PSItem
+            }
+            $Got.Count | Should -Be 1
+            $Caught.FullyQualifiedErrorId | Should -Be 'AuthorizationFailed,Get-OERRoleManagementPolicy'
+        }
+    }
+}
+
+Describe 'Get-OERRoleManagementPolicy through the real lookup helpers (Sprint 12 step 3, BL-157, BL-161c)' {
+    # Only the ARM transport and the policy lister are mocked, so the helpers' own -ThrowUnresolved records
+    # reach the cmdlet's classification.
+    BeforeAll {
+        $script:RealPublished = {
+            param($Err, [string]$Id)
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq "$Id,Get-OERRoleManagementPolicy" })
+        }
+    }
+
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERScope { '/subscriptions/s1' }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { [PSCustomObject]@{ value = @() } }
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERRoleManagementPolicyForScope { @() }
+    }
+
+    It 'a role list that succeeded and held no match is RoleDefinitionNotFound' {
+        Get-OERRoleManagementPolicy -Role 'Nope' -Subscription 'Prod' -ErrorVariable Err -ErrorAction SilentlyContinue
+        $Hit = & $script:RealPublished $Err 'RoleDefinitionNotFound'
+        $Hit.Count | Should -Be 1
+        $Hit[0].Exception.Message | Should -BeLike "Role definition 'Nope' was not found at scope '/subscriptions/s1'.*"
+        $Hit[0].CategoryInfo.Category | Should -Be 'ObjectNotFound'
+        $Hit[0].TargetObject | Should -Be 'Nope'
+    }
+
+    It 'a policy list that succeeded and held no assignment for the role is PolicyNotFound' {
+        Get-OERRoleManagementPolicy -Role '00000000-0000-0000-0000-000000000001' -Subscription 'Prod' -ErrorVariable Err -ErrorAction SilentlyContinue
+        $Hit = & $script:RealPublished $Err 'PolicyNotFound'
+        $Hit.Count | Should -Be 1
+        $Hit[0].Exception.Message | Should -BeLike "No role management policy assignment was found for role definition '*roleDefinitions/00000000-0000-0000-0000-000000000001' at scope '/subscriptions/s1'."
+        $Hit[0].CategoryInfo.Category | Should -Be 'ObjectNotFound'
+    }
+
+    It 'a refused role definition list is the transport''s own record, never RoleDefinitionNotFound' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest {
+            throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Authorization failed (403).'),
+                'AuthorizationFailed', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'x')
+        }
+        Get-OERRoleManagementPolicy -Role 'Reader' -Subscription 'Prod' -ErrorVariable Err -ErrorAction SilentlyContinue
+        (& $script:RealPublished $Err 'AuthorizationFailed').Count | Should -Be 1
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'RoleDefinitionNotFound*' }).Count | Should -Be 0
+    }
+
+    It 'a refused policy list is the transport''s own record, never PolicyNotFound' {
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERRoleManagementPolicyForScope {
+            throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Authorization failed (403).'),
+                'AuthorizationFailed', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'x')
+        }
+        Get-OERRoleManagementPolicy -Role '00000000-0000-0000-0000-000000000001' -Subscription 'Prod' -ErrorVariable Err -ErrorAction SilentlyContinue
+        (& $script:RealPublished $Err 'AuthorizationFailed').Count | Should -Be 1
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'PolicyNotFound*' }).Count | Should -Be 0
+    }
+
+    It 'a role name two definitions share is the resolver''s own AmbiguousName record' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest {
+            [PSCustomObject]@{ value = @([PSCustomObject]@{ id = '/s/rd-a' }, [PSCustomObject]@{ id = '/s/rd-b' }) }
+        }
+        Get-OERRoleManagementPolicy -Role 'Dup' -Subscription 'Prod' -ErrorVariable Err -ErrorAction SilentlyContinue
+        $Hit = & $script:RealPublished $Err 'AmbiguousName'
+        $Hit.Count | Should -Be 1
+        $Hit[0].Exception.Message | Should -Match '/s/rd-a, /s/rd-b'
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'RoleDefinitionNotFound*' }).Count | Should -Be 0
     }
 }

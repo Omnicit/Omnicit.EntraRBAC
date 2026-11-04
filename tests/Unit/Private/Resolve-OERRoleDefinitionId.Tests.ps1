@@ -49,6 +49,61 @@ Describe 'Resolve-OERRoleDefinitionId' {
         }
     }
 
+    It 'throws the no-match case as a plain string without -ThrowUnresolved (Sync-OERStructureRoleAssignment republishes it as is)' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-OERArmRequest { [PSCustomObject]@{ value = @() } }
+            $Caught = $null
+            try { Resolve-OERRoleDefinitionId -Role 'No Such Role' -Scope '/subscriptions/s1' } catch { $Caught = $PSItem }
+            $Caught.TargetObject | Should -BeOfType ([string])
+            # A thrown string's id is its own text, and no internal id appears anywhere in it.
+            $Caught.FullyQualifiedErrorId | Should -Be $Caught.Exception.Message
+            $Caught.FullyQualifiedErrorId | Should -Not -Match 'RoleDefinitionUnresolved'
+            $Caught.CategoryInfo.Category | Should -Be 'OperationStopped'
+        }
+    }
+
+    It 'with -ThrowUnresolved throws the no-match case as RoleDefinitionUnresolved, ObjectNotFound, same message, target the role' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-OERArmRequest { [PSCustomObject]@{ value = @() } }
+            $Plain = $null
+            try { Resolve-OERRoleDefinitionId -Role 'No Such Role' -Scope '/subscriptions/s1' } catch { $Plain = $PSItem }
+            $Caught = $null
+            try { Resolve-OERRoleDefinitionId -Role 'No Such Role' -Scope '/subscriptions/s1' -ThrowUnresolved } catch { $Caught = $PSItem }
+            $Caught.FullyQualifiedErrorId | Should -Be 'RoleDefinitionUnresolved'
+            $Caught.CategoryInfo.Category | Should -Be 'ObjectNotFound'
+            $Caught.TargetObject | Should -Be 'No Such Role'
+            $Caught.Exception.Message | Should -Be $Plain.Exception.Message
+            Test-OERRoleLookupUnresolved -Record $Caught | Should -BeTrue
+        }
+    }
+
+    It 'with -ThrowUnresolved still lets a failed read through as the transport''s own record, never as the no-match record' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-OERArmRequest {
+                throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Authorization failed (403).'),
+                    'AuthorizationFailed', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'x')
+            }
+            $Caught = $null
+            try { Resolve-OERRoleDefinitionId -Role 'Reader' -Scope '/subscriptions/s1' -ThrowUnresolved } catch { $Caught = $PSItem }
+            $Caught.FullyQualifiedErrorId | Should -Be 'AuthorizationFailed'
+            Test-OERRoleLookupUnresolved -Record $Caught | Should -BeFalse
+        }
+    }
+
+    It 'with -ThrowUnresolved still throws AmbiguousName for a name two definitions share, and returns a match unchanged' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-OERArmRequest {
+                [PSCustomObject]@{ value = @([PSCustomObject]@{ id = '/s/r1' }, [PSCustomObject]@{ id = '/s/r2' }) }
+            }
+            $Caught = $null
+            try { Resolve-OERRoleDefinitionId -Role 'Dup' -Scope '/subscriptions/s1' -ThrowUnresolved } catch { $Caught = $PSItem }
+            $Caught.FullyQualifiedErrorId | Should -Be 'AmbiguousName'
+            Test-OERRoleLookupUnresolved -Record $Caught | Should -BeFalse
+            Mock Invoke-OERArmRequest { [PSCustomObject]@{ value = @([PSCustomObject]@{ id = '/s/r1' }) } }
+            Resolve-OERRoleDefinitionId -Role 'One' -Scope '/subscriptions/s1' -ThrowUnresolved | Should -Be '/s/r1'
+        }
+    }
+
     It 'names Get-OERRoleDefinition in the not-found message' {
         # A bare "was not found" leaves the operator with no way to discover the right spelling, and
         # all ten -Role consumers pass this message through verbatim, so the hint belongs here.
