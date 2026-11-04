@@ -396,7 +396,8 @@ this tenant.
   subscription's tenant, it writes none either and names those sections in `InventoryPartial`. A
   `RoleAssignments` or `RoleManagementPolicies` read that fails is named in `InventoryPartial` the
   same way, by the section's own name, and the section is written empty; only `-CommonRoles` differs,
-  since it skips a role it cannot read with a warning. A `-Subscription` is read by the ID the check
+  since it skips a role missing at the scope with a warning (a role whose read fails is named in
+  `InventoryPartial` like any other). A `-Subscription` is read by the ID the check
   found, and a `-Scope`, `-Subscription` or `-ManagementGroup` of white space only is refused when
   PowerShell binds the parameters (so are the `-Scope`, `-ManagementGroup` and `-GroupFilter` of
   `Export-OERInventory`).

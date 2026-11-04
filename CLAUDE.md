@@ -836,12 +836,19 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 - **A resolver on the cohort's list publishes its failure as itself and an ambiguous name as
   `Ambiguous*`, never `*NotFound`; a COHORT check holds that, not a helper.** Decided exception: the
   principal and Azure role definition lookups still publish a failed read as `PrincipalNotFound` or
-  `RoleDefinitionNotFound`; never change those ErrorIds. PIM approver lookups follow the rule:
+  `RoleDefinitionNotFound`, EXCEPT the role and policy lookups of `Get-OERRoleManagementPolicy` and
+  `Set-OERRoleManagementPolicy`, which tell no match from a failed read by the internal ids
+  `RoleDefinitionUnresolved` and `RolePolicyUnresolved` (published by none; the helpers throw them
+  only under the private `-ThrowUnresolved`) through `Test-OERRoleLookupUnresolved`, the single
+  owner of that test (cohort scan in its test file): `RoleDefinitionNotFound` and `PolicyNotFound`
+  mean only a lookup that matched nothing, any other failure and an ambiguous name are published as
+  themselves. Never change another of those ErrorIds. PIM approver lookups follow the rule:
   ambiguous is `AmbiguousApproverName`, a failed lookup is published as itself, `ApproverNotFound`
   means only an approver matching nothing -- in the three policy cmdlets and the three apply
   handlers alike -- told apart by the internal ids `PrincipalUnresolved` and `ApproverUnresolved`
   (published by none) through `Get-OERApproverErrorClass`.
-  `Why: docs/development/rationale.md#approver-lookup`
+  `Why: docs/development/rationale.md#approver-lookup`,
+  `docs/development/rationale.md#role-lookup-unresolved`
   `tests/Unit/Public/AmbiguousName.Guard.Tests.ps1` runs every call site on its hand-kept
   `$script:GuardCases` list with an ambiguous name and with a 403; a new public call site of an
   ambiguity-refusing `Resolve-OER*Id` helper, an approver lookup among them, joins that list.

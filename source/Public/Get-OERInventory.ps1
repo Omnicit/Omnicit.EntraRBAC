@@ -243,15 +243,16 @@ function Get-OERInventory {
     scope has none. The section is read whole or not at all: with -Role A,B, where the read for B fails,
     the policy of A is not written either. The reader's own error is not written to the caller's error
     stream beside it (a caller's -ErrorVariable still collects it), and no warning is written for it.
-    -CommonRoles is the exception: the reader reads each curated role on its own and skips any role whose
-    definition or policy it cannot read -- a refused or failed read as much as a role that is missing at
-    the scope -- with a warning of its own (Skipping role, the role's name and the reason), and carries
-    on. That skip is not reported through InventoryPartial, so the section holds the policies of the
-    roles that were read, which may be fewer than the curated set; only a scope that cannot be resolved,
-    or a sign-in or Azure Resource Manager token the reader cannot get, is reported unread. Under a Stop
-    warning preference (-WarningAction Stop, or a global $WarningPreference set to 'Stop') the stop
-    at that warning is caught here as well: the section is reported unread, with the warning's text
-    in its cause, and the command carries on.
+    -CommonRoles is read the same way, with one difference: the reader reads each curated role on its own,
+    and a role whose definition or policy is missing at the scope (the lookup succeeded and matched
+    nothing) is skipped with a warning of its own (Skipping role, the role's name and the reason) while
+    the others are read, so the section holds the policies of the roles that were found, which may be
+    fewer than the curated set. A role whose read FAILED -- Azure Resource Manager refuses or fails it,
+    or its name is ambiguous at the scope -- is a failure like any other: the section is reported
+    unread, as under -Role, with the failure as its cause. Under a Stop warning preference
+    (-WarningAction Stop, or a global $WarningPreference set to 'Stop') the stop at that skip warning
+    is caught here as well: the section is reported unread, with the warning's text in its cause, and
+    the command carries on.
     A role assignment at the Azure root scope '/', above every management group and subscription in
     the tenant, is left out of the RoleAssignments section: it is elevated
     access, a finding to review rather than part of the RBAC model a document describes, and
@@ -2705,19 +2706,18 @@ function Get-OERInventory {
                 # read before it: under -Role A,B where B fails, A's policy is not written either. The section is
                 # read whole or not at all, and an unread section is never a half-read one that states a subset as
                 # if it were the whole. The record is scrubbed and folded into the cause, not republished, and no
-                # warning is written. -CommonRoles is the exception, and the reader is left as it is: its per-role
-                # catch (Get-OERRoleManagementPolicy.ps1) turns ANY failure to read a curated role's definition or
-                # policy -- a refused or failed ARM read or an ambiguous name as much as a role missing at the
-                # scope -- into a 'Skipping role' warning of its own and carries on, so none of those is a failure
-                # here or named unread, and the section holds the policies of the roles that were read. Only a
-                # scope the reader cannot resolve (InvalidScope), or a sign-in or Azure Resource Manager token
-                # its own begin cannot get (ArmTokenAcquisitionFailed, which the inherited Stop makes
-                # terminating, or the terminating SignInRefused when this command's own sign-in left it
-                # latched), is a record or a stop that reaches the catch below. Under a Stop warning
-                # preference the stop at that warning leaves the reader and is caught below too: the section is
-                # named unread with the warning's text, and the command carries on (measured with the real
-                # reader, in the Describe 'Get-OERInventory -CommonRoles through the real
-                # Get-OERRoleManagementPolicy').
+                # warning is written. -CommonRoles differs in one way only (Sprint 12 step 3, BL-157): the reader's
+                # per-role catch (Get-OERRoleManagementPolicy.ps1) turns a curated role whose definition or policy
+                # is MISSING at the scope (the lookup succeeded and matched nothing) into a 'Skipping role'
+                # warning of its own and carries on, so that is no failure here and the section holds the policies
+                # of the roles that were found; any other failure of a role's read -- a refused or failed ARM
+                # read, a paging refusal, an ambiguous name -- is written by the reader as a non-terminating
+                # record, which the -ErrorAction Stop above makes the terminating failure that ends the section
+                # as unread, exactly as under -Role (the first such record ends the read, so the roles after it
+                # are not read, and the section is dropped whole). Under a Stop warning preference the stop at the skip warning
+                # leaves the reader and is caught below too: the section is named unread with the warning's
+                # text, and the command carries on (measured with the real reader, in the Describe
+                # 'Get-OERInventory -CommonRoles through the real Get-OERRoleManagementPolicy').
                 $Policies = @()
                 try {
                     $Policies = @(
