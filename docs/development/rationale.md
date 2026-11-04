@@ -14491,6 +14491,31 @@ prove convergence. A run after the reads settle reports `Unchanged`, and the liv
 that before a convergence check. The help of `Invoke-OERStructure` says so. Cost: none in the tenant; a
 row that overstates the second run.
 
+## handler-rows-before-an-error
+
+Sprint 12 step 4 (BL-159a, BL-161d).
+
+Measured on PowerShell 7.6.7 with a plain function that writes two rows and then throws: an assignment
+`$Records = & F` never completes, so the rows the function wrote are lost and `$Records` keeps its
+previous value; `& F | ForEach-Object { $List.Add($_) }` leaves both rows in the list and the catch sees
+the same error record (the `FullyQualifiedErrorId` unchanged, also for `ThrowTerminatingError`);
+`-OutVariable` also keeps them. The engine collected a handler's rows with the assignment, so a handler
+that wrote a row (a `Created` or `Updated`) and then threw lost that row and the report showed only
+`handler error:`, hiding a write that had happened.
+
+The engine now calls the handler as `$null = & Handler ... -OutVariable HandlerRows` and adds
+`$HandlerRows` to the results in the `try` and again first in the `catch`, before the
+`handler error:` row, so the report holds the rows written before the error, in order. The pipeline
+form (`| ForEach-Object { $Results.Add($PSItem) }`) was tried first and rejected: a handler run under
+it no longer reached the caller's `-WarningVariable` (two `-Prune` tests failed on the warning they
+count). `$HandlerRows` is reset to `$null` before each call, so a binding failure never reads the
+previous entry's rows. All nine handlers are advanced functions, so `-OutVariable` binds.
+
+BL-161d: the pre-pass catch passed `[string]$AuItem.displayName` as the mandatory, non-empty `-Item`
+of `ConvertTo-OERStructureResult`; a unit entry without a name replaced the original error with a
+binding error. It uses the main loop's last-resort label `(item)` for a null, empty or white space name.
+The validator refuses such an entry, so this is a defence, proven with the validator mocked Valid.
+
 ## claude-md-preamble
 
 This section records the CLAUDE.md preamble as it stood before step 11b.

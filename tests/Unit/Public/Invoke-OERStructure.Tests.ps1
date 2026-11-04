@@ -2336,6 +2336,7 @@ function Set-Session {
         [System.IO.File]::AppendAllText('#LOG#', "AUTH $TenantId`n")
     }
     Set-Item -Path function:script:Sync-OERStructureGroup -Value {
+        [CmdletBinding()]
         param($Item, $Caller, [switch]$Prune, $TenantAlias, $CreatedUnitMembership, $RenameMap)
         [System.IO.File]::AppendAllText('#LOG#', "ASK group $($Item.displayName)`n")
         ConvertTo-OERStructureResult -Section 'groups' -Item ([string]$Item.displayName) -Action 'Unchanged' -Detail 'stub row'
@@ -2477,6 +2478,7 @@ function Set-Mode {
         }
     }
     Set-Item -Path function:script:Sync-OERStructureGroup -Value {
+        [CmdletBinding()]
         param($Item, $Caller, [switch]$Prune, $TenantAlias, $CreatedUnitMembership, $RenameMap)
         [System.IO.File]::AppendAllText('#LOG#', "ASK group $($Item.displayName)`n")
         ConvertTo-OERStructureResult -Section 'groups' -Item ([string]$Item.displayName) -Action 'Unchanged' -Detail 'stub row'
@@ -6391,6 +6393,64 @@ Describe 'Invoke-OERStructure refuses a run the host cannot confirm (BL-53)' {
         Should -Invoke -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit -Times 1 -Exactly -ParameterFilter { $EnsureOnly }
     }
 
+    It 'keeps the rows a handler wrote before it threw, in order, ahead of its handler error row (BL-159a)' {
+        Mock -ModuleName $script:moduleName Test-OERHostCanConfirm { $true }
+        Mock -ModuleName $script:moduleName Sync-OERStructureGroup {
+            [PSCustomObject]@{ Section = 'groups'; Item = 'first'; Action = 'Created'; Detail = 'row one' }
+            [PSCustomObject]@{ Section = 'groups'; Item = 'second'; Action = 'Updated'; Detail = 'row two' }
+            throw [System.Exception]::new('late failure')
+        }
+        $Rows = @(Invoke-OERStructure -Json $script:CuJson -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable CuErr)
+
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)|$($_.Detail)" }) | Should -BeExactly @(
+            'groups|first|Created|row one'
+            'groups|second|Updated|row two'
+            'groups|g1|Failed|handler error: late failure'
+        )
+        @($CuErr | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' }).Count | Should -Be 1
+    }
+
+    It 'keeps the rows the administrative unit pre-pass wrote before it threw, ahead of its pre-pass handler error row (BL-159a)' {
+        Mock -ModuleName $script:moduleName Test-OERHostCanConfirm { $true }
+        Mock -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit {
+            param($Item, $Caller, $Prune, $TenantAlias, $EnsureOnly, $CreatedUnitMembership, $RenameMap)
+            if (-not $EnsureOnly) { return }
+            [PSCustomObject]@{ Section = 'administrativeUnits'; Item = 'pre-one'; Action = 'Created'; Detail = 'pre row one' }
+            [PSCustomObject]@{ Section = 'administrativeUnits'; Item = 'pre-two'; Action = 'Updated'; Detail = 'pre row two' }
+            throw [System.Exception]::new('lookup failed')
+        }
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "administrativeUnit": "AU-1" } ], "administrativeUnits": [ { "displayName": "AU-1" } ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable CuErr)
+
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)|$($_.Detail)" }) | Should -BeExactly @(
+            'administrativeUnits|pre-one|Created|pre row one'
+            'administrativeUnits|pre-two|Updated|pre row two'
+            'administrativeUnits|AU-1|Failed|pre-pass handler error: lookup failed'
+            'groups|g1|Unchanged|stub row'
+        )
+        @($CuErr | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' }).Count | Should -Be 1
+    }
+
+    It 'labels a pre-pass handler error row (item) for a unit with no displayName and keeps the original error (BL-161d)' {
+        # Defence test: the validator would refuse the unit, so it is mocked Valid to reach the pre-pass.
+        Mock -ModuleName $script:moduleName Test-OERHostCanConfirm { $true }
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @(); Findings = @() } }
+        Mock -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit {
+            param($Item, $Caller, $Prune, $TenantAlias, $EnsureOnly, $CreatedUnitMembership, $RenameMap)
+            if (-not $EnsureOnly) { return }
+            throw [System.Exception]::new('lookup failed')
+        }
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "administrativeUnit": "" } ], "administrativeUnits": [ { "description": "no name" } ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable CuErr)
+
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit -Times 1 -Exactly -ParameterFilter { $EnsureOnly }
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)|$($_.Detail)" }) | Should -Contain 'administrativeUnits|(item)|Failed|pre-pass handler error: lookup failed'
+        $Own = @($CuErr | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' })
+        $Own.Count | Should -Be 1
+        $Own[0].Exception.Message | Should -BeExactly 'lookup failed'
+        @($CuErr | Where-Object { $_.Exception -is [System.Management.Automation.ParameterBindingException] }) | Should -BeNullOrEmpty
+    }
+
     Context 'in a script with no try above it' {
         # The public engine in a runspace made without a PSHost -- the Default Host, as in a [powershell]::Create()
         # runspace or a thread job -- so no try stands anywhere above it and the REAL Test-OERHostCanConfirm
@@ -6426,12 +6486,14 @@ Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
         [System.IO.File]::AppendAllText('#LOG#', "TENANTCHECK`n")
     }
     Set-Item -Path function:script:Sync-OERStructureGroup -Value {
+        [CmdletBinding()]
         param($Item, $Caller, [switch]$Prune, $TenantAlias, $CreatedUnitMembership, $RenameMap)
         [System.IO.File]::AppendAllText('#LOG#', "ASK group $($Item.displayName)`n")
         if ($Caller.ShouldProcess([string]$Item.displayName, 'Update group')) { [System.IO.File]::AppendAllText('#LOG#', "WRITE group`n") }
         ConvertTo-OERStructureResult -Section 'groups' -Item ([string]$Item.displayName) -Action 'Unchanged' -Detail 'stub row'
     }
     Set-Item -Path function:script:Sync-OERStructureAdministrativeUnit -Value {
+        [CmdletBinding()]
         param($Item, $Caller, [switch]$Prune, $TenantAlias, [switch]$EnsureOnly, $CreatedUnitMembership, $RenameMap)
         [System.IO.File]::AppendAllText('#LOG#', "ASK unit $($Item.displayName) ensure=$EnsureOnly`n")
         if ($Caller.ShouldProcess([string]$Item.displayName, 'Update administrative unit')) { [System.IO.File]::AppendAllText('#LOG#', "WRITE unit`n") }
@@ -6536,6 +6598,7 @@ Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
     Set-Item -Path function:script:Initialize-OERAuth -Value { [System.IO.File]::AppendAllText('#LOG#', "AUTH`n") }
     Set-Item -Path function:script:Get-OERDocumentTenantMismatch -Value { param($Document, $Target, $RequestedTenantId, [switch]$IncludeARM) }
     Set-Item -Path function:script:Sync-OERStructureGroup -Value {
+        [CmdletBinding()]
         param($Item, $Caller, [switch]$Prune, $TenantAlias, $CreatedUnitMembership, $RenameMap)
         # A template group carries no displayName (the real handler computes it); the stub names it by its template.
         $Label = if ($Item.displayName) { [string]$Item.displayName } else { [string]$Item.template }

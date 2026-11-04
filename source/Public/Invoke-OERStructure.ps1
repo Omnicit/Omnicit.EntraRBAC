@@ -139,7 +139,8 @@ function Invoke-OERStructure {
 
     Per-item continuation: a handler error (thrown exception) is caught, written as a non-
     terminating error, recorded as a Failed StructureResult, and the engine continues to the next
-    item. A single bad item never aborts the run.
+    item. A single bad item never aborts the run. Rows a handler wrote before the error are kept, in
+    order, ahead of the handler-error row.
 
     Failed live reads: a live read that decides what is written is never taken as "nothing there". A
     roleManagementPolicies entry whose live policy read fails, or returns no policy, is reported Failed
@@ -891,15 +892,22 @@ function Invoke-OERStructure {
         if ($AuNamesNeeded.Count -gt 0) {
             foreach ($AuItem in @($Document.administrativeUnits)) {
                 if (@($AuNamesNeeded) -notcontains [string]$AuItem.displayName) { continue }
+                $HandlerRows = $null
                 try {
-                    $Records = Sync-OERStructureAdministrativeUnit -Item $AuItem -Caller $PSCmdlet -EnsureOnly -TenantAlias $TenantAlias -RenameMap $RenameMap
-                    foreach ($Rec in @($Records)) { $Results.Add($Rec) }
+                    # BL-159a: -OutVariable keeps the rows the handler wrote before a throw (an assignment
+                    # would lose them); a pipeline into the list would lose the handler's -WarningVariable.
+                    $null = Sync-OERStructureAdministrativeUnit -Item $AuItem -Caller $PSCmdlet -EnsureOnly -TenantAlias $TenantAlias -RenameMap $RenameMap -OutVariable HandlerRows
+                    foreach ($Rec in @($HandlerRows)) { $Results.Add($Rec) }
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
+                    foreach ($Rec in @($HandlerRows)) { $Results.Add($Rec) }
                     $PSCmdlet.WriteError($PSItem)
                     # BL-53 (R-4): a handler stopped at a confirmation prompt this host could not show.
                     $FailureText = if (Test-OERConfirmPromptFailure -Record $PSItem) { $ConfirmPromptFailureText -f $PSItem.Exception.InnerException.Message } else { $PSItem.Exception.Message }
-                    $Results.Add((ConvertTo-OERStructureResult -Section 'administrativeUnits' -Item ([string]$AuItem.displayName) -Action 'Failed' -Detail "pre-pass handler error: $FailureText" -ErrorRecord $PSItem))
+                    # BL-161d: -Item is mandatory and non-empty; the main loop's last-resort label.
+                    $AuLabel = [string]$AuItem.displayName
+                    if ([string]::IsNullOrWhiteSpace($AuLabel)) { $AuLabel = '(item)' }
+                    $Results.Add((ConvertTo-OERStructureResult -Section 'administrativeUnits' -Item $AuLabel -Action 'Failed' -Detail "pre-pass handler error: $FailureText" -ErrorRecord $PSItem))
                 }
             }
         }
@@ -1035,11 +1043,14 @@ function Invoke-OERStructure {
                 if ($Section.IncludeName -in @('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews')) {
                     $ExtraParams.RenameMap = $RenameMap
                 }
+                $HandlerRows = $null
                 try {
-                    $Records = & $Section.Handler -Item $It -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias @ExtraParams
-                    foreach ($Rec in @($Records)) { $Results.Add($Rec) }
+                    # BL-159a: as in the pre-pass.
+                    $null = & $Section.Handler -Item $It -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias @ExtraParams -OutVariable HandlerRows
+                    foreach ($Rec in @($HandlerRows)) { $Results.Add($Rec) }
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
+                    foreach ($Rec in @($HandlerRows)) { $Results.Add($Rec) }
                     $PSCmdlet.WriteError($PSItem)
                     # Name the item. This used to be the literal '(item)', which lost the identity of
                     # every entry whose handler threw -- exactly the row an operator has to act on,
