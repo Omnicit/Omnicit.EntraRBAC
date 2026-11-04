@@ -17,15 +17,11 @@ function Test-OERStructure {
     rejected by a draft-07 validator outside the module, even though Invoke-OERStructure would apply
     the very same document successfully: the apply path rewrites the casing first, this one does not.
 
-    Text is validated as written on PowerShell 7.5 or later, where the document is parsed with
-    ConvertFrom-Json -DateKind String. PowerShell 7.2 to 7.4 has no such parameter, and its
-    ConvertFrom-Json turns a string that holds an ISO 8601 date and time with seconds -- an assignment
-    policy's expirationDateTime such as "2027-01-01T00:00:00Z", for example -- into a date, so the text
-    written is lost: each such value is an Error at its own path that says to run on PowerShell 7.5 or
-    later, and Invoke-OERStructure refuses the document. A date alone ("2026-07-01"), or a time without
-    seconds ("2026-07-01T10:00"), stays a string. On PowerShell 7.5 or later an -InputObject whose
-    values the caller already turned into dates is read as ConvertTo-Json writes them; on 7.2 to 7.4
-    they come back as dates and are refused like any other. A displayName that is not a string (a
+    Text is validated as written: the document is parsed with ConvertFrom-Json -DateKind String, so a
+    string that holds an ISO 8601 date and time with seconds -- an assignment policy's
+    expirationDateTime such as "2027-01-01T00:00:00Z", for example -- stays the text written. An
+    -InputObject whose values the caller already turned into dates is read as ConvertTo-Json writes
+    them. A displayName that is not a string (a
     number, a boolean, an object or an array) is an Error naming the type found, in groups,
     administrativeUnits, catalogs, accessPackages, assignmentPolicies and accessReviews alike. A groups
     entry that declares template and no displayName, and whose template cannot be turned into a name

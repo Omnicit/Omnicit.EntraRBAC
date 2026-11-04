@@ -424,7 +424,7 @@ function Get-OERStructureSchemaJson {
                 "durationInHours": { "type": "integer", "minimum": 1 },
                 "expirationDateTime": {
                   "type": "string",
-                  "description": "ISO 8601 date-time string. At most one of durationInDays/durationInHours/expirationDateTime may be set; the offline validator enforces mutual exclusion -- draft-07 cannot express it cleanly. PowerShell 7.5 or later reads the value as written; PowerShell 7.2 to 7.4 reads a date and time with seconds as a date, so Test-OERStructure refuses it there and Invoke-OERStructure does not apply the document."
+                  "description": "ISO 8601 date-time string. At most one of durationInDays/durationInHours/expirationDateTime may be set; the offline validator enforces mutual exclusion -- draft-07 cannot express it cleanly. The value is read as written."
                 }
               }
             }
@@ -448,7 +448,7 @@ function Get-OERStructureSchemaJson {
             "enum": [ "OneTime", "Weekly", "Monthly", "Quarterly", "SemiAnnually", "Annually", null ],
             "description": "An explicit null means a one-time review, exactly as omitting the key does -- the offline validator treats a null as undeclared and applies the OneTime default. null appears in both type and enum because draft-07 asserts them independently."
           },
-          "startDate": { "type": "string", "description": "ISO 8601 date or date-time the first review instance starts. Defaults to today when omitted. Write a date alone (2026-07-01) for a document applied on PowerShell 7.2 to 7.4, which reads a date and time with seconds as a date, so Test-OERStructure refuses it there; PowerShell 7.5 or later reads either as written." },
+          "startDate": { "type": "string", "description": "ISO 8601 date or date-time the first review instance starts. Defaults to today when omitted. A date alone (2026-07-01) and a date-time are both read as written." },
           "endDate": { "type": "string", "description": "ISO 8601 date the recurrence series ends. Mutually exclusive with occurrences; ignored for a OneTime review." },
           "occurrences": { "type": "integer", "minimum": 1, "description": "Number of review instances in the series. Mutually exclusive with endDate; ignored for a OneTime review." },
           "durationInDays": { "type": "integer", "minimum": 1, "maximum": 365 },

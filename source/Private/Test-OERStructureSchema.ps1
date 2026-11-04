@@ -122,18 +122,12 @@ function Test-OERStructureSchema {
     roleAssignments or administrativeUnits scopedRoles entry, and the recurrence of an accessReviews
     entry, that is not a string (for example an array holding the right word) is an Error that names
     the type of the value it found (BL-155, BL-117).
-    A date value anywhere in the document -- a [datetime] or a [DateTimeOffset] in any property or array
-    element, at any depth -- is an Error at its own path (Rule 2b, BL-154): ConvertFrom-Json on PowerShell
-    before 7.5 converts a string that holds an ISO 8601 date and time with seconds while it parses, so
-    the text the author wrote is lost, and the Error says to run on PowerShell 7.5 or later to apply the
-    document as written.
-    Read-OERStructureDocument parses with -DateKind String where the PowerShell has it, so on 7.5 or later
-    a document it read raises none; a caller who builds a document with ConvertFrom-Json on any version
-    gets the dates the default parse gives. The displayName of a groups, administrativeUnits, catalogs,
-    accessPackages, assignmentPolicies or accessReviews entry must be a string: a number, a boolean, an
-    object or an array is an Error at the displayName path that names the type found, and a date gets
-    only the date Error. An absent or explicit null displayName is not declared and keeps its required
-    finding.
+    The displayName of a groups, administrativeUnits, catalogs, accessPackages, assignmentPolicies or
+    accessReviews entry must be a string: a number, a boolean, an object, an array or a date is an Error
+    at the displayName path that names the type found. A document read by Read-OERStructureDocument
+    holds no date (the reader parses with -DateKind String), so a date is reachable only from an
+    in-memory document, such as the one the export checks itself with. An absent or explicit null
+    displayName is not declared and keeps its required finding.
     Every closed enum value (accessType, enablement, membershipRuleProcessingState,
     catalogResourceType, approverInfoVisibility, accessReviewRecurrence, accessReviewDefaultDecision,
     principalType, directoryRoleAssignmentType, principalStatus) is accepted in any casing, but a non-canonically cased
@@ -548,77 +542,16 @@ function Test-OERStructureSchema {
         return "a value that is not a string ($($Value.GetType().Name))"
     }
 
-    # BL-154 (R-11): ConvertFrom-Json before PowerShell 7.5 turns a string that holds an ISO 8601 date
-    # and time with seconds into a [datetime] while it parses, and Read-OERStructureDocument asks for
-    # -DateKind String where the PowerShell has it. A date value in the document therefore means the
-    # text the author wrote is lost.
-    # [datetime] and [DateTimeOffset] are the two types a parse can produce (-DateKind Offset gives the
-    # second); nothing else is a date value here.
-    function Test-IsDateValue {
-        param([object]$Value)
-        $Value -is [datetime] -or $Value -is [System.DateTimeOffset]
-    }
-
-    # Rule 2b: one Error per date value, at its own path, at any depth. The walk follows only what a JSON
-    # parse produces -- a JSON object (PSCustomObject), a dictionary and an array -- and stops at a date
-    # (a [datetime] has a Date property that is a [datetime] again, so descending into one would never
-    # end), at a string and at any other value type. -Depth is a backstop against a cyclic object graph a
-    # caller built by hand: a parsed document is at most 32 levels deep (the reader's -Depth). A leaf that
-    # cannot be a date (null, a string, a number, a boolean) is skipped where it stands instead of being
-    # passed to a call of its own, and its path is not built: an export holds tens of thousands of member
-    # strings, and a call for each cost seconds (measured: 52,000 leaves, 2.5 s against 0.15 s).
-    function Find-DateValue {
-        param([object]$Node, [string]$Path, [string]$Section, [string]$Item, [int]$Depth = 0)
-        if ($null -eq $Node -or $Depth -gt 64) { return }
-        if (Test-IsDateValue -Value $Node) {
-            Add-Finding -Section $Section -Item $Item -Path $Path `
-                -Message ("The value at $Path was read as a date and time, not as the text written, since ConvertFrom-Json on " +
-                    'PowerShell before 7.5 converts a string that holds an ISO 8601 date and time with seconds. Run on PowerShell 7.5 ' +
-                    'or later to apply it as written.')
-            return
-        }
-        if ($Node -is [string] -or $Node -is [ValueType]) { return }
-        if ($Node -is [System.Collections.IDictionary]) {
-            foreach ($DictionaryKey in @($Node.Keys)) {
-                $DictionaryValue = $Node[$DictionaryKey]
-                if ($null -eq $DictionaryValue -or $DictionaryValue -is [string] -or
-                    ($DictionaryValue -is [ValueType] -and $DictionaryValue -isnot [datetime] -and $DictionaryValue -isnot [System.DateTimeOffset])) { continue }
-                Find-DateValue -Node $DictionaryValue -Path "$Path.$DictionaryKey" -Section $Section -Item $Item -Depth ($Depth + 1)
-            }
-            return
-        }
-        if ($Node -is [System.Collections.IEnumerable]) {
-            $ElementIndex = 0
-            foreach ($Element in $Node) {
-                if ($null -ne $Element -and $Element -isnot [string] -and
-                    ($Element -isnot [ValueType] -or $Element -is [datetime] -or $Element -is [System.DateTimeOffset])) {
-                    Find-DateValue -Node $Element -Path "$Path[$ElementIndex]" -Section $Section -Item $Item -Depth ($Depth + 1)
-                }
-                $ElementIndex++
-            }
-            return
-        }
-        if ($Node -is [System.Management.Automation.PSCustomObject]) {
-            foreach ($Property in $Node.PSObject.Properties) {
-                $PropertyValue = $Property.Value
-                if ($null -eq $PropertyValue -or $PropertyValue -is [string] -or
-                    ($PropertyValue -is [ValueType] -and $PropertyValue -isnot [datetime] -and $PropertyValue -isnot [System.DateTimeOffset])) { continue }
-                Find-DateValue -Node $PropertyValue -Path "$Path.$($Property.Name)" -Section $Section -Item $Item -Depth ($Depth + 1)
-            }
-        }
-    }
-
     # BL-154 (R-11): displayName names the object an entry of groups, administrativeUnits, catalogs,
     # accessPackages, an access package's assignmentPolicies and accessReviews is matched and created by, so it
     # must be a string. A number, a boolean, an object or an array is an Error at the displayName path that
-    # names the type found (the words recurrence uses). A date gets no second Error: the date finding of
-    # Rule 2b already says what happened to it, and the value was a string as written. An absent or explicit
-    # null displayName is not declared and is left to the required finding.
+    # names the type found (the words recurrence uses); so does a date, reachable only from an in-memory
+    # document. An absent or explicit null displayName is not declared and is left to the required finding.
     function Add-DisplayNameTypeFinding {
         param([object]$Node, [string]$Section, [string]$Path)
         if (-not (Test-HasProp -Node $Node -Name 'displayName')) { return }
         $NameValue = $Node.displayName
-        if ($NameValue -is [string] -or (Test-IsDateValue -Value $NameValue)) { return }
+        if ($NameValue -is [string]) { return }
         Add-Finding -Section $Section -Item $Path -Path "$Path.displayName" `
             -Message "'displayName' at $Path must be a string. Got: $(Get-FoundValueText -Value $NameValue)."
     }
@@ -675,37 +608,6 @@ function Test-OERStructureSchema {
         if ($KnownTop -inotcontains $Key) {
             Add-Finding -Section '(root)' -Item $Key -Path $Key `
                 -Message "Unknown top-level key '$Key'."
-        }
-    }
-
-    # Rule 2b (BL-154, R-11): every date value in the document is an Error at its own path, whatever the
-    # depth (Find-DateValue). Read-OERStructureDocument parses with -DateKind String on PowerShell 7.5 or
-    # later, so no string becomes a date there; on 7.2 to 7.4 a string that holds an ISO 8601 date and
-    # time with seconds does, and the text the author wrote is lost before any rule or apply handler sees
-    # it. Refused rather than guessed at, since the value can no longer be told from a date the author
-    # meant. A top-level key of a section carries the section as Section and, for each entry of its
-    # array, the entry's displayName (or its path) as Item; any other key is '(root)'.
-    $DateSectionNames = @('groups', 'administrativeUnits', 'catalogs', 'accessPackages', 'accessReviews',
-        'directoryRoleManagementPolicies', 'directoryRoleAssignments', 'roleAssignments', 'roleManagementPolicies')
-    foreach ($DateTopProperty in $Document.PSObject.Properties) {
-        $DateTopName = $DateTopProperty.Name
-        $DateTopValue = $DateTopProperty.Value
-        $DateTopSection = if ($DateSectionNames -icontains $DateTopName) { $DateTopName } else { '(root)' }
-        if ($DateTopSection -ne '(root)' -and $DateTopValue -is [System.Collections.IEnumerable] -and
-            $DateTopValue -isnot [string] -and $DateTopValue -isnot [System.Collections.IDictionary]) {
-            $DateEntryIndex = 0
-            foreach ($DateEntry in $DateTopValue) {
-                $DateEntryPath = "$DateTopName[$DateEntryIndex]"
-                $DateEntryItem = if ((Test-HasProp -Node $DateEntry -Name 'displayName') -and $DateEntry.displayName -is [string]) {
-                    $DateEntry.displayName
-                } else {
-                    $DateEntryPath
-                }
-                Find-DateValue -Node $DateEntry -Path $DateEntryPath -Section $DateTopSection -Item $DateEntryItem
-                $DateEntryIndex++
-            }
-        } else {
-            Find-DateValue -Node $DateTopValue -Path $DateTopName -Section $DateTopSection -Item $DateTopName
         }
     }
 

@@ -1010,11 +1010,7 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `docs/examples/naming-standard.schema.json` is the schema function's output, held identical by a
   test, never edited by hand. Never re-implement a rule, a Detail text or the file's validation
   elsewhere. `Why: docs/development/rationale.md#naming-standard`
-- **`Test-OERJsonDateKindSupport` is the single owner of whether the running `ConvertFrom-Json` has
-  `-DateKind`.** On 7.2-7.4 `Test-OERStructureSchema` refuses every date value the parse made (Rule
-  2b), no field exempted. Never ask the question elsewhere or "repair" a parsed date into text. A
-  test mocks it in module scope to run the 7.2-7.4 path on a newer PowerShell.
-  `Why: docs/development/rationale.md#structure-document-text`
+
 - **`Test-OERHostCanConfirm` is the single owner of whether the host can show a confirmation prompt
   that is decidable beforehand; `Test-OERConfirmPromptFailure` of whether a caught record is a
   `ShouldProcess` that failed because the host could not ask.** When the first answers false,
