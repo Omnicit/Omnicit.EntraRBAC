@@ -777,7 +777,7 @@ Describe 'Sync-OERStructureRoleManagementPolicy' {
                                                 id = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleDefinitions/bbbb4040-0000-0000-0000-000000000001' }) }
                                 }
                                 if ($Path -like '*/providers/Microsoft.Authorization/roleManagementPolicyAssignments?*') {
-                                    throw 'ARM 403 AuthorizationFailed'
+                                    throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('ARM 403 AuthorizationFailed'), 'AuthorizationFailed', [System.Management.Automation.ErrorCategory]::PermissionDenied, $Path)
                                 }
                                 throw "unexpected ARM request: $Path"
                             }
@@ -816,7 +816,7 @@ Describe 'Sync-OERStructureRoleManagementPolicy' {
 
         It 'reports one Failed row carrying the read''s record, writes it once and sends nothing when <Name>' -ForEach @(
             @{ Name = 'the read fails non-terminating'; Failure = 'NonTerminatingMock'; ErrorId = 'RoleDefinitionNotFound'; Message = 'ARM 403 AuthorizationFailed'; Category = 'ObjectNotFound' }
-            @{ Name = 'the real cmdlet fails its read non-terminating'; Failure = 'NonTerminatingReal'; ErrorId = 'PolicyNotFound'; Message = 'ARM 403 AuthorizationFailed'; Category = 'ObjectNotFound' }
+            @{ Name = 'the real cmdlet fails its read non-terminating'; Failure = 'NonTerminatingReal'; ErrorId = 'AuthorizationFailed'; Message = 'ARM 403 AuthorizationFailed'; Category = 'PermissionDenied' }
             @{ Name = 'the read fails terminating'; Failure = 'Terminating'; ErrorId = 'ArmServiceUnavailable'; Message = 'ARM 503 ServiceUnavailable'; Category = 'ReadError' }
         ) {
             Set-RmpReadFailure -Failure $Failure
@@ -858,8 +858,8 @@ Describe 'Sync-OERStructureRoleManagementPolicy' {
         It 'fails an entry declaring only approvers.users, never Skipped or Updated, when <Name> (<Mode>)' -ForEach @(
             @{ Name = 'the read fails non-terminating'; Failure = 'NonTerminatingMock'; Mode = 'a real run'; WhatIf = $false; ErrorId = 'RoleDefinitionNotFound'; DetailStart = 'could not read role management policy' }
             @{ Name = 'the read fails non-terminating'; Failure = 'NonTerminatingMock'; Mode = 'a -WhatIf plan'; WhatIf = $true; ErrorId = 'RoleDefinitionNotFound'; DetailStart = 'could not read role management policy' }
-            @{ Name = 'the real cmdlet fails its read non-terminating'; Failure = 'NonTerminatingReal'; Mode = 'a real run'; WhatIf = $false; ErrorId = 'PolicyNotFound'; DetailStart = 'could not read role management policy' }
-            @{ Name = 'the real cmdlet fails its read non-terminating'; Failure = 'NonTerminatingReal'; Mode = 'a -WhatIf plan'; WhatIf = $true; ErrorId = 'PolicyNotFound'; DetailStart = 'could not read role management policy' }
+            @{ Name = 'the real cmdlet fails its read non-terminating'; Failure = 'NonTerminatingReal'; Mode = 'a real run'; WhatIf = $false; ErrorId = 'AuthorizationFailed'; DetailStart = 'could not read role management policy' }
+            @{ Name = 'the real cmdlet fails its read non-terminating'; Failure = 'NonTerminatingReal'; Mode = 'a -WhatIf plan'; WhatIf = $true; ErrorId = 'AuthorizationFailed'; DetailStart = 'could not read role management policy' }
             @{ Name = 'the read fails terminating'; Failure = 'Terminating'; Mode = 'a real run'; WhatIf = $false; ErrorId = 'ArmServiceUnavailable'; DetailStart = 'could not read role management policy' }
             @{ Name = 'the read fails terminating'; Failure = 'Terminating'; Mode = 'a -WhatIf plan'; WhatIf = $true; ErrorId = 'ArmServiceUnavailable'; DetailStart = 'could not read role management policy' }
             @{ Name = 'the read returns no policy and no error'; Failure = 'NoObject'; Mode = 'a real run'; WhatIf = $false; ErrorId = 'PolicyNotFound'; DetailStart = 'Get-OERRoleManagementPolicy returned no policy' }
