@@ -6435,6 +6435,28 @@ Describe 'Invoke-OERStructure refuses a run the host cannot confirm (BL-53)' {
         @($CuErr | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' }).Count | Should -Be 1
     }
 
+    It 'emits no null element, only the handler error rows, when the handler fails before it writes anything (<Kind>)' -TestCases @(
+        @{ Kind = 'throws at once'; Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "administrativeUnit": "AU-1" } ], "administrativeUnits": [ { "displayName": "AU-1" } ] }'; Expected = @('administrativeUnits|AU-1|Failed', 'groups|g1|Failed', 'administrativeUnits|AU-1|Failed') }
+        @{ Kind = 'fails parameter binding'; Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "administrativeUnit": "" }, null ], "administrativeUnits": [ null ] }'; Expected = @('administrativeUnits|(item)|Failed', 'groups|(item)|Failed', 'administrativeUnits|(item)|Failed') }
+    ) {
+        # A binding failure stops the handler before -OutVariable is populated, so $HandlerRows is still $null in the catch.
+        # The validator would refuse the null entries, so it is mocked Valid to reach the handlers.
+        Mock -ModuleName $script:moduleName Test-OERHostCanConfirm { $true }
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @(); Findings = @() } }
+        if ($Kind -eq 'throws at once') {
+            Mock -ModuleName $script:moduleName Sync-OERStructureGroup { throw [System.Exception]::new('refused at once') }
+            Mock -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit { throw [System.Exception]::new('refused at once') }
+        } else {
+            Mock -ModuleName $script:moduleName Sync-OERStructureGroup { }
+            Mock -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit { }
+        }
+        $Rows = @(Invoke-OERStructure -Json $Json -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+        @($Rows | Where-Object { $null -eq $_ }) | Should -BeNullOrEmpty
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)" }) | Should -BeExactly $Expected
+        @($Rows | Where-Object { $_.Detail -notmatch '^(pre-pass )?handler error: ' }) | Should -BeNullOrEmpty
+    }
+
     It 'labels a pre-pass handler error row (item) for a unit with no displayName and keeps the original error (BL-161d)' {
         # Defence test: the validator would refuse the unit, so it is mocked Valid to reach the pre-pass.
         Mock -ModuleName $script:moduleName Test-OERHostCanConfirm { $true }

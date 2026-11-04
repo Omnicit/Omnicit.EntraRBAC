@@ -12319,9 +12319,16 @@ does not validate it, and Microsoft Graph refuses a bad one at the create; the d
 what catches it for a document (Rule 3). If wrong: moved before the lookup, the check would refuse an
 existing group; moved after the unit lookup, it would spend requests on a call that cannot succeed.
 A document group that declares no `mailNickname` and whose name derives to an invalid alias is not
-caught offline: `Test-OERStructure` and the `-WhatIf` plan accept it, since the plan reports
-`would create group` without calling `New-OERGroup`, and the real run reports the entry `Failed` with
-`DerivedMailNicknameInvalid`. That is a known limit, not a decision.
+caught offline: `Test-OERStructure` accepts it. The plan no longer promises the create (BL-143b, Sprint 12
+step 4): `Get-OERDerivedMailNicknameProblem` is the single owner of the condition and the text (the
+derivation through `Get-OERDerivedMailNickname`, 1 to 64 characters), `New-OERGroup` publishes its text,
+and `Sync-OERStructureGroup` asks it in the create branch, after the administrative unit refusal and
+before `ShouldProcess`, when the entry declares no non-empty `mailNickname`. A refused entry is one
+`Failed` row (Detail `group not created: <message>`) with the non-terminating `DerivedMailNicknameInvalid`
+(category `InvalidArgument`, target the name), under `-WhatIf` and in a real run alike, with no
+`New-OERGroup` call and no member, owner, eligibility or pimPolicy row. A declared non-empty
+`mailNickname` is sent as given and not checked there. If wrong: checked after `ShouldProcess`, the plan
+shows `would create group` for a create the run refuses. The validator still cannot see it offline.
 
 **Rule 3 (the validator refuses what Graph was measured to refuse, and a little more; R8).** A declared `mailNickname` that is a string is
 an `Error` at its path when it is empty, when it is longer than 64 characters (the message names the
@@ -12350,7 +12357,9 @@ declare. A `previousDisplayName` that is an object id, and a template-based grou
 
 ### CLAUDE.md text for mail-nickname
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (a frozen
+older quote; Sprint 12 step 4 added `Get-OERDerivedMailNicknameProblem` as the owner of the refusal's
+condition and text, see Rule 2, and CLAUDE.md names it):
 
 - **`Get-OERDerivedMailNickname` is the single owner of the mail alias `New-OERGroup` derives from a
   display name** (every character outside A-Z, a-z, 0-9, '.', '_' and '-' removed). `New-OERGroup`
@@ -14526,7 +14535,7 @@ The engine now calls the handler as `$null = & Handler ... -OutVariable HandlerR
 form (`| ForEach-Object { $Results.Add($PSItem) }`) was tried first and rejected: a handler run under
 it no longer reached the caller's `-WarningVariable` (two `-Prune` tests failed on the warning they
 count). `$HandlerRows` is reset to `$null` before each call, so a binding failure never reads the
-previous entry's rows. All nine handlers are advanced functions, so `-OutVariable` binds.
+previous entry's rows, and a $null $HandlerRows (the handler failed before the variable was populated) adds no row. All nine handlers are advanced functions, so `-OutVariable` binds.
 
 BL-161d: the pre-pass catch passed `[string]$AuItem.displayName` as the mandatory, non-empty `-Item`
 of `ConvertTo-OERStructureResult`; a unit entry without a name replaced the original error with a

@@ -897,10 +897,10 @@ function Invoke-OERStructure {
                     # BL-159a: -OutVariable keeps the rows the handler wrote before a throw (an assignment
                     # would lose them); a pipeline into the list would lose the handler's -WarningVariable.
                     $null = Sync-OERStructureAdministrativeUnit -Item $AuItem -Caller $PSCmdlet -EnsureOnly -TenantAlias $TenantAlias -RenameMap $RenameMap -OutVariable HandlerRows
-                    foreach ($Rec in @($HandlerRows)) { $Results.Add($Rec) }
+                    if ($null -ne $HandlerRows) { foreach ($Rec in $HandlerRows) { $Results.Add($Rec) } }
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
-                    foreach ($Rec in @($HandlerRows)) { $Results.Add($Rec) }
+                    if ($null -ne $HandlerRows) { foreach ($Rec in $HandlerRows) { $Results.Add($Rec) } }
                     $PSCmdlet.WriteError($PSItem)
                     # BL-53 (R-4): a handler stopped at a confirmation prompt this host could not show.
                     $FailureText = if (Test-OERConfirmPromptFailure -Record $PSItem) { $ConfirmPromptFailureText -f $PSItem.Exception.InnerException.Message } else { $PSItem.Exception.Message }
@@ -1047,10 +1047,10 @@ function Invoke-OERStructure {
                 try {
                     # BL-159a: as in the pre-pass.
                     $null = & $Section.Handler -Item $It -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias @ExtraParams -OutVariable HandlerRows
-                    foreach ($Rec in @($HandlerRows)) { $Results.Add($Rec) }
+                    if ($null -ne $HandlerRows) { foreach ($Rec in $HandlerRows) { $Results.Add($Rec) } }
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
-                    foreach ($Rec in @($HandlerRows)) { $Results.Add($Rec) }
+                    if ($null -ne $HandlerRows) { foreach ($Rec in $HandlerRows) { $Results.Add($Rec) } }
                     $PSCmdlet.WriteError($PSItem)
                     # Name the item. This used to be the literal '(item)', which lost the identity of
                     # every entry whose handler threw -- exactly the row an operator has to act on,
