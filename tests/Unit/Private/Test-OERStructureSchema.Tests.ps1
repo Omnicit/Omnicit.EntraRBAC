@@ -7083,7 +7083,7 @@ Describe 'Test-OERStructureSchema (Rule 17, naming standard, Sprint 11 step 7)' 
             $Hit[0].Message | Should -Not -BeLike "*does not follow*"
         }
 
-        It 'says so for a date displayName too (the date Error is beside it), and names its type' {
+        It 'says so for a date displayName too, and names its type' {
             $V = Invoke-NsValidation -Standard (Get-NsStandard) -Json '{ "version": "1.0", "groups": [ { "displayName": "2026-01-01T10:00:00" } ] }'
             $Hit = @(Get-NsFinding -Validation $V)
             $Hit.Count | Should -Be 1
@@ -7783,181 +7783,11 @@ Describe 'Test-OERStructureSchema access package displayName that is a GUID (BL-
     }
 }
 
-Describe 'Test-OERStructureSchema date values (BL-154, R-11)' {
-    # ConvertFrom-Json before PowerShell 7.5 turns a string that holds an ISO 8601 date and time with
-    # seconds into a [datetime], and Read-OERStructureDocument asks for -DateKind String wherever the
-    # PowerShell has it. Where it does not, the validator cannot tell what the author wrote, so it
-    # refuses every date value the document holds, at any depth, with an Error at the value's own path.
-    # A document built here with a plain ConvertFrom-Json is such a document on every PowerShell: the
-    # default parse gives dates.
-    BeforeAll {
-        function Invoke-DateValidation {
-            param([string]$Json)
-            $Doc = $Json | ConvertFrom-Json
-            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
-                param($Doc)
-                Test-OERStructureSchema -Document $Doc
-            }
-        }
-        function Get-DateFinding {
-            param([object]$Validation)
-            @($Validation.Errors | Where-Object { $_.Message -like '*was read as a date and time*' })
-        }
-        function Get-DateMessage {
-            param([string]$Path)
-            "The value at $Path was read as a date and time, not as the text written, since ConvertFrom-Json on PowerShell before 7.5 converts a string that holds an ISO 8601 date and time with seconds. Run on PowerShell 7.5 or later to apply it as written."
-        }
-    }
-
-    It 'gives an Error at the value''s own path for a date in <Where>' -ForEach @(
-        @{ Where = 'version'; Json = '{ "version": "2026-01-01T10:00:00" }'; Path = 'version'; Section = '(root)'; Item = 'version' }
-        @{ Where = 'a group property'; Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "description": "2026-01-01T10:00:00Z" } ] }'; Path = 'groups[0].description'; Section = 'groups'; Item = 'g1' }
-        @{ Where = 'an array element'; Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "members": [ "person1@example.com", "2026-01-01T10:00:00" ] } ] }'; Path = 'groups[0].members[1]'; Section = 'groups'; Item = 'g1' }
-        @{ Where = 'a nested array'; Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "members": [ [ "2026-01-01T10:00:00" ] ] } ] }'; Path = 'groups[0].members[0][0]'; Section = 'groups'; Item = 'g1' }
-        @{ Where = 'a nested object'; Json = '{ "version": "1.0", "groups": [ { "template": "t", "tokens": { "when": "2026-01-01T10:00:00" } } ] }'; Path = 'groups[0].tokens.when'; Section = 'groups'; Item = 'groups[0]' }
-        @{ Where = 'a block four levels down'; Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "pimPolicy": { "member": { "approvers": { "users": [ "2026-01-01T10:00:00" ] } } } } ] }'; Path = 'groups[0].pimPolicy.member.approvers.users[0]'; Section = 'groups'; Item = 'g1' }
-        @{ Where = 'a unit property'; Json = '{ "version": "1.0", "administrativeUnits": [ { "displayName": "au1", "description": "2026-01-01T10:00:00" } ] }'; Path = 'administrativeUnits[0].description'; Section = 'administrativeUnits'; Item = 'au1' }
-        @{ Where = 'a catalog resource'; Json = '{ "version": "1.0", "catalogs": [ { "displayName": "c1", "resources": [ { "name": "r", "url": "2026-01-01T10:00:00" } ] } ] }'; Path = 'catalogs[0].resources[0].url'; Section = 'catalogs'; Item = 'c1' }
-        @{ Where = 'an assignment policy'; Json = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap1", "catalog": "c1", "assignmentPolicies": [ { "displayName": "p1", "expirationDateTime": "2026-01-01T10:00:00Z" } ] } ] }'; Path = 'accessPackages[0].assignmentPolicies[0].expirationDateTime'; Section = 'accessPackages'; Item = 'ap1' }
-        @{ Where = 'an approval stage'; Json = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap1", "catalog": "c1", "assignmentPolicies": [ { "displayName": "p1", "approvalStages": [ { "durationDays": 7, "note": "2026-01-01T10:00:00" } ] } ] } ] }'; Path = 'accessPackages[0].assignmentPolicies[0].approvalStages[0].note'; Section = 'accessPackages'; Item = 'ap1' }
-        @{ Where = 'an access review start date'; Json = '{ "version": "1.0", "accessReviews": [ { "displayName": "ar1", "accessPackage": "ap1", "assignmentPolicy": "p1", "startDate": "2026-03-01T00:00:00Z" } ] }'; Path = 'accessReviews[0].startDate'; Section = 'accessReviews'; Item = 'ar1' }
-        @{ Where = 'an access review end date'; Json = '{ "version": "1.0", "accessReviews": [ { "displayName": "ar1", "accessPackage": "ap1", "assignmentPolicy": "p1", "endDate": "2026-09-01T00:00:00" } ] }'; Path = 'accessReviews[0].endDate'; Section = 'accessReviews'; Item = 'ar1' }
-        @{ Where = 'a role assignment (no displayName)'; Json = '{ "version": "1.0", "roleAssignments": [ { "scope": "/s", "role": "Reader", "principal": "p", "condition": "2026-01-01T10:00:00" } ] }'; Path = 'roleAssignments[0].condition'; Section = 'roleAssignments'; Item = 'roleAssignments[0]' }
-        @{ Where = 'a key the validator does not know'; Json = '{ "version": "1.0", "extra": { "when": "2026-01-01T10:00:00" } }'; Path = 'extra.when'; Section = '(root)'; Item = 'extra' }
-        @{ Where = 'a section that is not an array'; Json = '{ "version": "1.0", "groups": { "description": "2026-01-01T10:00:00" } }'; Path = 'groups.description'; Section = 'groups'; Item = 'groups' }
-        @{ Where = 'an entry that is itself a date'; Json = '{ "version": "1.0", "groups": [ "2026-01-01T10:00:00" ] }'; Path = 'groups[0]'; Section = 'groups'; Item = 'groups[0]' }
-    ) {
-        $V = Invoke-DateValidation -Json $Json
-        $Hit = @(Get-DateFinding -Validation $V)
-        $Hit.Count | Should -Be 1
-        $Hit[0].Severity | Should -BeExactly 'Error'
-        $Hit[0].Section | Should -BeExactly $Section
-        $Hit[0].Item | Should -BeExactly $Item
-        $Hit[0].Path | Should -BeExactly $Path
-        $Hit[0].Message | Should -BeExactly (Get-DateMessage -Path $Path)
-        $V.Valid | Should -BeFalse
-    }
-
-    It 'gives one Error per date value, in document order' {
-        $V = Invoke-DateValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "g1", "description": "2026-01-01T10:00:00", "members": [ "2026-02-01T10:00:00Z", "x", "2026-03-01T10:00:00+02:00" ] } ], ' +
-            '"accessReviews": [ { "displayName": "ar1", "accessPackage": "ap1", "assignmentPolicy": "p1", "startDate": "2026-03-01T00:00:00Z", "endDate": "2026-09-01T00:00:00Z" } ] }')
-        $Hit = @(Get-DateFinding -Validation $V)
-        @($Hit | ForEach-Object { $_.Path }) | Should -BeExactly @(
-            'groups[0].description', 'groups[0].members[0]', 'groups[0].members[2]', 'accessReviews[0].startDate', 'accessReviews[0].endDate')
-    }
-
-    It 'gives an Error for a DateTimeOffset value too' {
-        $Doc = [PSCustomObject]@{
-            version = '1.0'
-            groups  = @([PSCustomObject]@{ displayName = 'g1'; description = [System.DateTimeOffset]::new(2026, 1, 1, 10, 0, 0, [System.TimeSpan]::FromHours(2)) })
-        }
-        $V = InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
-            param($Doc)
-            Test-OERStructureSchema -Document $Doc
-        }
-        $Hit = @(Get-DateFinding -Validation $V)
-        $Hit.Count | Should -Be 1
-        $Hit[0].Path | Should -BeExactly 'groups[0].description'
-        $Hit[0].Message | Should -BeExactly (Get-DateMessage -Path 'groups[0].description')
-    }
-
-    It 'follows a dictionary a caller built by hand, by its key' {
-        $Doc = [PSCustomObject]@{
-            version = '1.0'
-            groups  = @([PSCustomObject]@{ displayName = 'g1'; tokens = @{ when = [datetime]::new(2026, 1, 1, 10, 0, 0) } })
-        }
-        $V = InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
-            param($Doc)
-            Test-OERStructureSchema -Document $Doc
-        }
-        $Hit = @(Get-DateFinding -Validation $V)
-        $Hit.Count | Should -Be 1
-        $Hit[0].Path | Should -BeExactly 'groups[0].tokens.when'
-        $Hit[0].Item | Should -BeExactly 'g1'
-    }
-
-    It 'raises nothing for text that merely looks like a date: a string, a date without a time, a number' {
-        $Doc = [PSCustomObject]@{
-            version = '1.0'
-            groups  = @([PSCustomObject]@{
-                    displayName = '2026-01-01T10:00:00'
-                    description = '2026-01-01T10:00:00Z'
-                    members     = @('2026-01-01', 'x', 20260101)
-                })
-            accessReviews = @([PSCustomObject]@{ displayName = 'ar1'; accessPackage = 'ap1'; assignmentPolicy = 'p1'; startDate = '2026-03-01T00:00:00Z'; endDate = '2026-09-01' })
-        }
-        $V = InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
-            param($Doc)
-            Test-OERStructureSchema -Document $Doc
-        }
-        @(Get-DateFinding -Validation $V).Count | Should -Be 0
-        @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0
-        $V.Valid | Should -BeTrue
-    }
-
-    It 'walks past a null, a string and an empty array without stopping' {
-        $V = Invoke-DateValidation -Json '{ "version": "1.0", "groups": [ null, "x", [ ], { "members": [ null, "2026-01-01T10:00:00" ] } ] }'
-        $Hit = @(Get-DateFinding -Validation $V)
-        $Hit.Count | Should -Be 1
-        $Hit[0].Path | Should -BeExactly 'groups[3].members[1]'
-    }
-
-    It 'stops at a depth limit instead of following a cyclic object graph a caller built by hand' {
-        # A parsed document is at most 32 levels deep, so the walk's limit of 64 never touches one. Without
-        # the limit a cycle runs into PowerShell's call depth overflow and the whole validation throws.
-        $Cyclic = [PSCustomObject]@{ version = '1.0'; when = [datetime]::new(2026, 1, 1, 10, 0, 0) }
-        $Cyclic | Add-Member -NotePropertyName self -NotePropertyValue $Cyclic
-        $Thrown = $null
-        $V = $null
-        try {
-            $V = InModuleScope $script:moduleName -Parameters @{ Doc = $Cyclic } {
-                param($Doc)
-                Test-OERStructureSchema -Document $Doc
-            }
-        } catch { $Thrown = $PSItem }
-        $Thrown | Should -BeNullOrEmpty
-        $V | Should -Not -BeNullOrEmpty
-        $Hit = @(Get-DateFinding -Validation $V)
-        $Hit.Count | Should -BeGreaterThan 0 -Because 'the walk reached the date before it met the limit'
-        $Hit[0].Path | Should -BeExactly 'when'
-    }
-
-    It 'reads the date through the reader on a PowerShell without -DateKind and gives the Error at the path' {
-        $V = InModuleScope $script:moduleName {
-            Mock Test-OERJsonDateKindSupport { $false }
-            $Doc = Read-OERStructureDocument -Json '{ "version": "1.0", "groups": [ { "displayName": "2026-01-01T10:00:00" } ], "accessReviews": [ { "displayName": "ar1", "accessPackage": "ap1", "assignmentPolicy": "p1", "startDate": "2026-03-01T00:00:00Z" } ] }'
-            Test-OERStructureSchema -Document $Doc
-        }
-        $Hit = @(Get-DateFinding -Validation $V)
-        @($Hit | ForEach-Object { $_.Path }) | Should -BeExactly @('groups[0].displayName', 'accessReviews[0].startDate')
-        $Hit[0].Message | Should -BeExactly (Get-DateMessage -Path 'groups[0].displayName')
-        $V.Valid | Should -BeFalse
-    }
-
-    It 'reads the same document through the reader with -DateKind String and raises no date Error' -Skip:(-not ($PSVersionTable.PSVersion -ge [version]'7.5')) {
-        $V = InModuleScope $script:moduleName {
-            Mock Test-OERJsonDateKindSupport { $true }
-            $Doc = Read-OERStructureDocument -Json '{ "version": "1.0", "groups": [ { "displayName": "2026-01-01T10:00:00" } ], "accessReviews": [ { "displayName": "ar1", "accessPackage": "ap1", "assignmentPolicy": "p1", "startDate": "2026-03-01T00:00:00Z" } ] }'
-            Test-OERStructureSchema -Document $Doc
-        }
-        @(Get-DateFinding -Validation $V).Count | Should -Be 0
-        @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0
-        $V.Valid | Should -BeTrue
-    }
-
-    It 'adds the date Errors after the findings of Rule 2 and before the section findings' {
-        $V = Invoke-DateValidation -Json '{ "version": "1.0", "grops": [ ], "groups": [ { "displayName": "g1", "description": "2026-01-01T10:00:00", "mailNickname": "" } ] }'
-        $Paths = @($V.Errors | ForEach-Object { $_.Path })
-        $Paths[0] | Should -BeExactly 'grops'
-        $Paths[1] | Should -BeExactly 'groups[0].description'
-        $Paths | Should -Contain 'groups[0].mailNickname'
-    }
-}
-
 Describe 'Test-OERStructureSchema displayName must be a string (BL-154, R-11)' {
     # Every section that names its objects by displayName holds it to a string. A number, a boolean, an
     # object or an array is an Error at the displayName path that names the type it found (the way
-    # recurrence does); a date gets only the date Error, since the value was a string as written.
+    # recurrence does); so does a date, which only an in-memory document can hold (the reader parses with
+    # -DateKind String).
     BeforeAll {
         function Invoke-NameTypeValidation {
             param([string]$Json)
@@ -8004,7 +7834,7 @@ Describe 'Test-OERStructureSchema displayName must be a string (BL-154, R-11)' {
         $V.Valid | Should -BeFalse
     }
 
-    It 'gives a date displayName of <Fact> only the date Error' -ForEach @(
+    It 'gives a [datetime] displayName of <Fact> in an in-memory document the type finding' -ForEach @(
         @{ Fact = 'groups' }
         @{ Fact = 'administrativeUnits' }
         @{ Fact = 'catalogs' }
@@ -8013,11 +7843,25 @@ Describe 'Test-OERStructureSchema displayName must be a string (BL-154, R-11)' {
         @{ Fact = 'accessReviews' }
     ) {
         $Case = $script:NameTypeSections | Where-Object { $_.Fact -eq $Fact }
-        $V = Invoke-NameTypeValidation -Json $Case.Document.Replace('%V%', '"2026-01-01T10:00:00"')
-        @(Get-NameTypeFinding -Validation $V -Entry $Case.Entry).Count | Should -Be 0
-        $OnPath = @($V.Errors | Where-Object { $_.Path -eq "$($Case.Entry).displayName" })
-        $OnPath.Count | Should -Be 1 -Because 'the date Error is the only finding at the displayName path'
-        $OnPath[0].Message | Should -BeLike '*was read as a date and time*'
+        $Doc = $Case.Document.Replace('%V%', '"2026-01-01T10:00:00"') | ConvertFrom-Json -DateKind Default
+        # Put the date where the entry's displayName stands, whatever the section's shape.
+        $Holder = switch ($Fact) {
+            'groups' { $Doc.groups[0] }
+            'administrativeUnits' { $Doc.administrativeUnits[0] }
+            'catalogs' { $Doc.catalogs[0] }
+            'accessPackages' { $Doc.accessPackages[0] }
+            'assignmentPolicies' { $Doc.accessPackages[0].assignmentPolicies[0] }
+            'accessReviews' { $Doc.accessReviews[0] }
+        }
+        $Holder.displayName | Should -BeOfType [datetime]
+        $V = InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            Test-OERStructureSchema -Document $Doc
+        }
+        $Hit = @(Get-NameTypeFinding -Validation $V -Entry $Case.Entry)
+        $Hit.Count | Should -Be 1
+        $Hit[0].Severity | Should -BeExactly 'Error'
+        $Hit[0].Message | Should -BeExactly "'displayName' at $($Case.Entry) must be a string. Got: a value that is not a string (DateTime)."
         $V.Valid | Should -BeFalse
     }
 

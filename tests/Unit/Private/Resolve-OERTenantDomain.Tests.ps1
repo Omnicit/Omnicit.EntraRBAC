@@ -33,7 +33,7 @@ Describe 'Resolve-OERTenantDomain' {
         }
     }
 
-    It 'sends the lookup with no credential: Uri, Method, TimeoutSec and ErrorAction are the only parameters' {
+    It 'sends the lookup with no credential: Uri, Method, TimeoutSec, OperationTimeoutSeconds and ErrorAction are the only parameters' {
         $script:CapturedBound = $null
         # No param() block on purpose. Measured on PowerShell 7.6.6 with Pester 6.2: a mock block with a
         # param() block binds only the parameters it declares and drops the rest without a word (a
@@ -51,8 +51,8 @@ Describe 'Resolve-OERTenantDomain' {
             $script:CapturedBound = $Bound
             [pscustomobject]@{ issuer = 'https://login.microsoftonline.com/aaaaaaaa-1111-1111-1111-111111111111/v2.0' }
         }
-        # The parameter a bound -TimeoutSec is recorded under depends on the runtime: PowerShell 7.4 made
-        # it an alias of ConnectionTimeoutSeconds, so ask the real cmdlet which name that is here.
+        # -TimeoutSec is an alias of ConnectionTimeoutSeconds on PowerShell 7.4 and later, so a bound
+        # -TimeoutSec is recorded under that name: ask the real cmdlet rather than spell it.
         $TimeoutName = (Get-Command -Name Invoke-RestMethod -CommandType Cmdlet).ResolveParameter('TimeoutSec').Name
 
         InModuleScope Omnicit.EntraRBAC {
@@ -60,9 +60,24 @@ Describe 'Resolve-OERTenantDomain' {
         }
 
         $script:CapturedBound | Should -Not -BeNullOrEmpty -Because 'the mock must have recorded the call, or the comparison below proves nothing'
-        (@($script:CapturedBound.Keys) | Sort-Object) -join ',' | Should -Be ((@('ErrorAction', 'Method', $TimeoutName, 'Uri') | Sort-Object) -join ',')
+        (@($script:CapturedBound.Keys) | Sort-Object) -join ',' | Should -Be ((@('ErrorAction', 'Method', 'OperationTimeoutSeconds', $TimeoutName, 'Uri') | Sort-Object) -join ',')
         $script:CapturedBound[$TimeoutName] | Should -Be 30
+        $script:CapturedBound['OperationTimeoutSeconds'] | Should -Be 30
         [string]$script:CapturedBound['ErrorAction'] | Should -Be 'Stop'
+    }
+
+    It 'sends OperationTimeoutSeconds 30 beside TimeoutSec 30' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-RestMethod {
+            [pscustomobject]@{ issuer = 'https://login.microsoftonline.com/aaaaaaaa-1111-1111-1111-111111111111/v2.0' }
+        }
+
+        $null = InModuleScope Omnicit.EntraRBAC {
+            Resolve-OERTenantDomain -Domain 'contoso.onmicrosoft.com' -Environment 'Global'
+        }
+
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+            $OperationTimeoutSeconds -eq 30 -and $ConnectionTimeoutSeconds -eq 30
+        }
     }
 
     It 'asks the authority once for the same domain named twice, the second time in upper case' {

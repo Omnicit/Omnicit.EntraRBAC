@@ -135,67 +135,6 @@ Describe 'Get-OEROrderedInventoryEntry (Sprint 11 step 10, BL-121, R-16)' {
         }
     }
 
-    Context 'it uses no syntax newer than the module floor (PowerShell 7.2)' {
-        # Fix round 1 of Sprint 11 step 10, task 4, finding 1. A generic method called with explicit type
-        # arguments ([System.Linq.Enumerable]::OrderBy[object, string](...)) is syntax PowerShell has only
-        # since 7.3 (about_Calling_Generic_Methods). Under the 7.2 grammar it is an index expression followed
-        # by a parenthesis, a parse error, so the whole merged module would fail to load. CI runs a current
-        # PowerShell only and PSScriptAnalyzer's PSUseCompatibleSyntax reports nothing for it, so every .ps1
-        # under source/ is read with the parser instead (Sprint 11 step 15, BL-157: it was the helper's own
-        # file alone): no InvokeMemberExpressionAst in any of them may carry generic type arguments, and a
-        # parser that refuses the file (the 7.2 case) is a finding too. The checker has a known-answer test
-        # of its own, so it cannot pass for nothing, and the scan asserts it read every file it should.
-        BeforeAll {
-            $script:SourceRoot = (Resolve-Path -Path (Join-Path -Path $PSScriptRoot -ChildPath '../../../source')).Path
-
-            function script:Get-GenericTypeArgumentUse {
-                param([string]$Path, [string]$Text)
-                $ParseErrors = $null
-                $Ast = if ($Path) {
-                    [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$null, [ref]$ParseErrors)
-                } else {
-                    [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$null, [ref]$ParseErrors)
-                }
-                $Uses = [System.Collections.Generic.List[string]]::new()
-                foreach ($ParseError in @($ParseErrors)) {
-                    if ($null -ne $ParseError) { $Uses.Add("does not parse: $($ParseError.Message)") }
-                }
-                $Calls = $Ast.FindAll({ param($Node) $Node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] }, $true)
-                foreach ($Call in $Calls) {
-                    $TypeArguments = $Call.GenericTypeArguments
-                    if ($null -ne $TypeArguments -and @($TypeArguments).Count -gt 0) {
-                        $Uses.Add("line $($Call.Extent.StartLineNumber): $($Call.Extent.Text)")
-                    }
-                }
-                , $Uses.ToArray()
-            }
-        }
-
-        It 'finds an explicit generic type argument on a method call, and finds none on a call that infers them (known answer)' {
-            $Explicit = Get-GenericTypeArgumentUse -Text '[System.Linq.Enumerable]::OrderBy[object, string]($Pairs, $Key)'
-            @($Explicit).Count | Should -BeGreaterThan 0 -Because 'a call with explicit type arguments is exactly what the checker is for'
-            $Inferred = Get-GenericTypeArgumentUse -Text '[System.Linq.Enumerable]::OrderBy($Pairs, $Key); $List.Add($Item); [System.Math]::Max(1, 2)'
-            @($Inferred).Count | Should -Be 0
-        }
-
-        It 'has no method call with explicit generic type arguments in any file under source, which PowerShell 7.2 cannot parse' {
-            $Files = @(Get-ChildItem -Path $script:SourceRoot -Recurse -File -Filter '*.ps1')
-            $Findings = [System.Collections.Generic.List[string]]::new()
-            $Scanned = 0
-            foreach ($File in $Files) {
-                $Scanned++
-                $FileUses = Get-GenericTypeArgumentUse -Path $File.FullName
-                foreach ($Use in $FileUses) {
-                    $Findings.Add("$($File.FullName.Substring($script:SourceRoot.Length + 1)) $Use")
-                }
-            }
-            # Non-vacuity: the scan read every .ps1 the tree holds, and the tree is not a near-empty one.
-            $Scanned | Should -Be @(Get-ChildItem -Path $script:SourceRoot -Recurse -File -Filter '*.ps1').Count
-            $Scanned | Should -BeGreaterThan 250 -Because 'the module holds over three hundred source files, so a smaller count means a partial tree, which is what this floor catches'
-            $Findings.Count | Should -Be 0 -Because "the module declares PowerShell 7.2 as its floor and an explicit generic type argument on a method call is syntax of 7.3 and later, so the merged module would not load there: $($Findings -join ' | ')"
-        }
-    }
-
     Context 'it is pure' {
         It 'sends no request and signs in nowhere' {
             Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }

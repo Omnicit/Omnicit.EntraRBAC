@@ -6521,12 +6521,11 @@ $RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OER
 }
 
 Describe 'Invoke-OERStructure refuses a document the validator refuses, in a script with no try above it (BL-139, BL-154)' {
-    # The two validator refusals of this step, through the public engine in a runspace through
+    # The validator refusal of this step, through the public engine in a runspace through
     # Invoke-OERWithConfirmAnswer, so no try stands anywhere above it: a group template the naming engine cannot
-    # resolve, and a value the reader turned into a date and time (Test-OERJsonDateKindSupport answers $false in
-    # the runspace's module scope, as on PowerShell before 7.5). Each is refused with StructureValidationFailed,
-    # with no sign-in, no handler call and no row, and the script goes on. A control document in the same script
-    # is applied, so the scenario tells a refusal from silence.
+    # resolve. It is refused with StructureValidationFailed, with no sign-in, no handler call and no row, and
+    # the script goes on. A control document in the same script is applied, so the scenario tells a refusal
+    # from silence.
     BeforeAll {
         . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
         function script:New-VrNoTryScenario {
@@ -6534,7 +6533,6 @@ Describe 'Invoke-OERStructure refuses a document the validator refuses, in a scr
             [scriptblock]::Create((@'
 Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
 & (Get-Module Omnicit.EntraRBAC) {
-    Set-Item -Path function:script:Test-OERJsonDateKindSupport -Value { $false }
     Set-Item -Path function:script:Initialize-OERAuth -Value { [System.IO.File]::AppendAllText('#LOG#', "AUTH`n") }
     Set-Item -Path function:script:Get-OERDocumentTenantMismatch -Value { param($Document, $Target, $RequestedTenantId, [switch]$IncludeARM) }
     Set-Item -Path function:script:Sync-OERStructureGroup -Value {
@@ -6562,13 +6560,6 @@ $RunErrors | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
             ControlJson = '{ "version": "1.0", "groups": [ { "template": "grp-{env}", "tokens": { "env": "prd" } } ] }'
             Control     = 'grp-{env}'
             Finding     = "groups[0].template: 'template' at groups[0] cannot be resolved to a group name: "
-        }
-        @{
-            Case        = 'a value the reader turned into a date and time'
-            Json        = '{ "version": "1.0", "groups": [ { "displayName": "g1", "description": "2026-01-01T00:00:00Z" } ] }'
-            ControlJson = '{ "version": "1.0", "groups": [ { "displayName": "g1", "description": "plain text" } ] }'
-            Control     = 'g1'
-            Finding     = 'groups[0].description: The value at groups[0].description was read as a date and time, not as the text written'
         }
     ) {
         $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())

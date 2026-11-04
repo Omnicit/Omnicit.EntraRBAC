@@ -1703,13 +1703,13 @@ BeforeAll {
     # call's own parameter names, both case-insensitive. The DENIED list is every credential-carrying
     # parameter of the cmdlet. It cannot stand alone: PowerShell binds an abbreviated name (-Head for
     # -Headers, -Cred for -Credential), and a parameter added to the cmdlet later is on no list, so the
-    # ALLOWED list pins the call to exactly the four parameters the lookup is specified to send.
+    # ALLOWED list pins the call to exactly the five parameters the lookup is specified to send.
     $script:tenantLookupDeniedParameters = @(
         'Headers', 'Authentication', 'Token', 'Credential', 'UseDefaultCredentials', 'WebSession',
         'SessionVariable', 'Certificate', 'CertificateThumbprint', 'PreserveAuthorizationOnRedirect',
         'AllowUnencryptedAuthentication'
     )
-    $script:tenantLookupAllowedParameters = @('Uri', 'Method', 'TimeoutSec', 'ErrorAction')
+    $script:tenantLookupAllowedParameters = @('Uri', 'Method', 'TimeoutSec', 'OperationTimeoutSeconds', 'ErrorAction')
 
     # One report per tree: how many Invoke-RestMethod calls (an alias or a module-qualified name
     # included), and which of them name a denied parameter, a parameter outside the allowed list, or
@@ -2306,7 +2306,7 @@ BeforeAll {
     # Known answers: the checker above must reach each verdict below, or a green gate proves nothing.
     # Each case is the text of a miniature, and the counts it must report as Calls/Denied/Unexpected/Splats.
     $script:tenantLookupKnownAnswers = @(
-        @{ Case = 'the specified call'; Expect = '1/0/0/0'; Text = 'function F { Invoke-RestMethod -Uri $Uri -Method Get -TimeoutSec 30 -ErrorAction Stop }' }
+        @{ Case = 'the specified call'; Expect = '1/0/0/0'; Text = 'function F { Invoke-RestMethod -Uri $Uri -Method Get -TimeoutSec 30 -OperationTimeoutSeconds 30 -ErrorAction Stop }' }
         @{ Case = 'no call at all'; Expect = '0/0/0/0'; Text = 'function F { Get-Date }' }
         @{ Case = 'two calls'; Expect = '2/0/0/0'; Text = 'function F { Invoke-RestMethod -Uri $A; Invoke-RestMethod -Uri $B }' }
         @{ Case = 'the alias irm'; Expect = '1/0/0/0'; Text = 'function F { irm -Uri $Uri }' }
@@ -4781,7 +4781,7 @@ default credentials or a session -- would send that secret to a request that has
 whatever answers it, a redirect included. Remove the parameter.
 '@
         $script:tenantLookupReport.Unexpected -join ', ' | Should -BeNullOrEmpty -Because @'
-The tenant lookup sends exactly four parameters: Uri, Method, TimeoutSec and ErrorAction. Any other
+The tenant lookup sends exactly five parameters: Uri, Method, TimeoutSec, OperationTimeoutSeconds and ErrorAction. Any other
 parameter is either a credential under a name the denied list does not know (PowerShell binds an
 abbreviated parameter name, -Head for -Headers, and a cmdlet gains parameters over time) or a change to
 what the module sends that needs a decision of its own. Remove it, or widen this list deliberately.

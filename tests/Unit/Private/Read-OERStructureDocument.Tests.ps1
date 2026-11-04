@@ -525,19 +525,16 @@ Describe 'Read-OERStructureDocument reads the file with -ErrorAction Stop and sa
 }
 
 Describe 'Read-OERStructureDocument keeps a date-and-time string as written (BL-154, R-11)' {
-    # ConvertFrom-Json on PowerShell before 7.5 turns a string that holds an ISO 8601 date and time with
-    # seconds into a [datetime]; 7.5 added -DateKind, and -DateKind String leaves every string as
-    # written. The reader asks Test-OERJsonDateKindSupport, so a test mocks either answer whatever
-    # PowerShell runs it.
+    # The parse always runs ConvertFrom-Json -DateKind String (the floor is PowerShell 7.6), so a string
+    # that holds an ISO 8601 date and time with seconds stays the text written.
     BeforeAll {
         $script:DateJson = '{ "version": "1.0", "groups": [ { "displayName": "2026-01-01T10:00:00", "description": "2026-01-01T10:00:00Z", "members": [ "2026-01-01T10:00:00+02:00" ] } ], ' +
             '"accessReviews": [ { "displayName": "ar1", "accessPackage": "ap1", "assignmentPolicy": "p1", "startDate": "2026-03-01T00:00:00Z", "endDate": "2026-09-01" } ] }'
     }
 
-    It 'adds -DateKind String to the parse when the PowerShell supports it: every date-and-time string stays the text written' -Skip:(-not ($PSVersionTable.PSVersion -ge [version]'7.5')) {
+    It 'keeps every date-and-time string the text written through -Json' {
         InModuleScope $script:moduleName -Parameters @{ Json = $script:DateJson } {
             param($Json)
-            Mock Test-OERJsonDateKindSupport { $true }
             $Doc = Read-OERStructureDocument -Json $Json
             $Doc.groups[0].displayName | Should -BeOfType [string]
             $Doc.groups[0].displayName | Should -BeExactly '2026-01-01T10:00:00'
@@ -545,59 +542,42 @@ Describe 'Read-OERStructureDocument keeps a date-and-time string as written (BL-
             $Doc.groups[0].members[0] | Should -BeExactly '2026-01-01T10:00:00+02:00'
             $Doc.accessReviews[0].startDate | Should -BeExactly '2026-03-01T00:00:00Z'
             $Doc.accessReviews[0].endDate | Should -BeExactly '2026-09-01'
-            Should -Invoke Test-OERJsonDateKindSupport -Exactly -Times 1
         }
     }
 
-    It 'leaves the parse as it was when the PowerShell has no -DateKind: the date-and-time strings come back as dates' {
-        InModuleScope $script:moduleName -Parameters @{ Json = $script:DateJson } {
-            param($Json)
-            Mock Test-OERJsonDateKindSupport { $false }
-            $Doc = Read-OERStructureDocument -Json $Json
-            $Doc.groups[0].displayName | Should -BeOfType [datetime]
-            $Doc.groups[0].description | Should -BeOfType [datetime]
-            $Doc.groups[0].members[0] | Should -BeOfType [datetime]
-            $Doc.accessReviews[0].startDate | Should -BeOfType [datetime]
-            $Doc.accessReviews[0].endDate | Should -BeOfType [string] -Because 'a date without a time is no date-and-time form, so no PowerShell converts it'
-            Should -Invoke Test-OERJsonDateKindSupport -Exactly -Times 1
-        }
-    }
-
-    It 'asks the seam for a file read through -Path too' -Skip:(-not ($PSVersionTable.PSVersion -ge [version]'7.5')) {
+    It 'keeps every date-and-time string the text written through -Path' {
         $File = Join-Path -Path $TestDrive -ChildPath 'dates.json'
         [System.IO.File]::WriteAllText($File, $script:DateJson, [System.Text.UTF8Encoding]::new($false))
         InModuleScope $script:moduleName -Parameters @{ File = $File } {
             param($File)
-            Mock Test-OERJsonDateKindSupport { $true }
-            (Read-OERStructureDocument -Path $File).groups[0].displayName | Should -BeExactly '2026-01-01T10:00:00'
-            Should -Invoke Test-OERJsonDateKindSupport -Exactly -Times 1
+            $Doc = Read-OERStructureDocument -Path $File
+            $Doc.groups[0].displayName | Should -BeOfType [string]
+            $Doc.groups[0].displayName | Should -BeExactly '2026-01-01T10:00:00'
+            $Doc.accessReviews[0].startDate | Should -BeExactly '2026-03-01T00:00:00Z'
         }
     }
 
-    It 'reads the real answer end to end: a string on PowerShell 7.5 or later, a date before' {
+    It 'keeps every date-and-time string the text written through -InputObject (a document object holding strings)' {
         InModuleScope $script:moduleName -Parameters @{ Json = $script:DateJson } {
             param($Json)
-            $Doc = Read-OERStructureDocument -Json $Json
-            if ($PSVersionTable.PSVersion -ge [version]'7.5') {
-                $Doc.groups[0].displayName | Should -BeOfType [string]
-            } else {
-                $Doc.groups[0].displayName | Should -BeOfType [datetime]
-            }
+            $Object = $Json | ConvertFrom-Json -DateKind String
+            $Doc = Read-OERStructureDocument -InputObject $Object
+            $Doc.groups[0].displayName | Should -BeOfType [string]
+            $Doc.groups[0].displayName | Should -BeExactly '2026-01-01T10:00:00'
+            $Doc.accessReviews[0].startDate | Should -BeExactly '2026-03-01T00:00:00Z'
         }
     }
 
-    It 'canonicalizes enum values as before when -DateKind is in force' -Skip:(-not ($PSVersionTable.PSVersion -ge [version]'7.5')) {
+    It 'canonicalizes enum values as before' {
         InModuleScope $script:moduleName {
-            Mock Test-OERJsonDateKindSupport { $true }
             $Doc = Read-OERStructureDocument -Json '{ "version": "1.0", "accessReviews": [ { "displayName": "ar1", "accessPackage": "ap1", "recurrence": "monthly", "startDate": "2026-03-01T00:00:00Z" } ] }'
             $Doc.accessReviews[0].recurrence | Should -BeExactly 'Monthly'
             $Doc.accessReviews[0].startDate | Should -BeExactly '2026-03-01T00:00:00Z'
         }
     }
 
-    It 'reads an -InputObject whose values the caller already turned into dates as ConvertTo-Json writes them (documented limit)' -Skip:(-not ($PSVersionTable.PSVersion -ge [version]'7.5')) {
+    It 'reads an -InputObject whose values the caller already turned into dates as ConvertTo-Json writes them (documented limit)' {
         InModuleScope $script:moduleName {
-            Mock Test-OERJsonDateKindSupport { $true }
             $Object = [PSCustomObject]@{
                 version = '1.0'
                 groups  = @([PSCustomObject]@{ displayName = 'g1'; description = [datetime]::new(2026, 1, 1, 10, 0, 0, [System.DateTimeKind]::Utc) })
@@ -612,8 +592,8 @@ Describe 'Read-OERStructureDocument keeps a date-and-time string as written (BL-
 
     It 'parses with the module-qualified cmdlet, so a function of the same name in the session is never the one called' {
         InModuleScope $script:moduleName {
-            # Test-OERJsonDateKindSupport asks about Microsoft.PowerShell.Utility\ConvertFrom-Json; the
-            # parse must call that same command, or a shadowing function decides what the document holds
+            # The parse must call Microsoft.PowerShell.Utility\ConvertFrom-Json by its qualified name, or a
+            # shadowing function decides what the document holds
             # (and whether -DateKind is accepted at all). A plain ConvertFrom-Json finds the function first
             # (functions outrank cmdlets), so the control shows the shadow is in force.
             function script:ConvertFrom-Json {

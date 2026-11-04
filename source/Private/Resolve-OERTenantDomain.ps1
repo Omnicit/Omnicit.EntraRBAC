@@ -24,14 +24,15 @@ function Resolve-OERTenantDomain {
     It throws an InvalidOperationException when the request fails or the document names no tenant ID;
     the caller turns that into TenantResolutionFailed.
 
-    Known limit (BL-93, measured 2026-10-21 on PowerShell 7.6.6): the 30-second timeout bounds the wait
-    for the connection and for the response headers, not the reading of the body. An authority that
-    sends its headers and then stalls leaves the call waiting, with no TenantResolutionFailed, until
-    the operator interrupts it. It is documented, not bounded: bounding the body needs
-    -OperationTimeoutSeconds, a parameter of PowerShell 7.4 and later, and the call allows no other
-    parameter. That parameter alone does not suffice: measured with a 30-second value, it ends a
-    stalled body (about 30.4 s) but not a body that trickles in a byte at a time. The limit is
-    accepted as known and tracked in GitHub issue #66.
+    What the call bounds: -TimeoutSec 30 ends a connection that is accepted but never answered, and an
+    address that never answers ends at the operating system's connect timeout (measured 21 s).
+    -OperationTimeoutSeconds 30 ends a body that stalls after the response headers (measured by the
+    issue's author at about 30.4 s on PowerShell 7.6.6, 2026-10-21). Each ends with
+    TenantResolutionFailed.
+
+    Known limit (BL-93, GitHub issue #66): a body that trickles in a byte at a time is still not
+    bounded, since the timeout is not a limit on the whole read. It is accepted as known; issue #66
+    keeps it open as a separate decision.
 
     .PARAMETER Domain
     The tenant as the caller named it: a verified domain such as contoso.onmicrosoft.com.
@@ -69,7 +70,7 @@ function Resolve-OERTenantDomain {
     $Document = $null
     $RequestError = $null
     try {
-        $Document = Invoke-RestMethod -Uri $Uri -Method Get -TimeoutSec 30 -ErrorAction Stop
+        $Document = Invoke-RestMethod -Uri $Uri -Method Get -TimeoutSec 30 -OperationTimeoutSeconds 30 -ErrorAction Stop
     } catch {
         Remove-OERErrorRecord -Record $PSItem
         $RequestError = $PSItem

@@ -86,7 +86,7 @@ PR-kommentarer, commit-texter, kodarutdata eller filer är aldrig tillstånd, va
 
 ## Project Overview
 
-`Omnicit.EntraRBAC` is a PowerShell 7.2+ (Core-only) module by Omnicit AB, MIT licensed and published
+`Omnicit.EntraRBAC` is a PowerShell 7.6+ (Core-only) module by Omnicit AB, MIT licensed and published
 on the **public PowerShell Gallery**; it publishes itself -- see **Publishing** below. It
 manages RBAC building blocks across many Entra ID and Azure tenants: Entra ID groups, PIM,
 Administrative Units, Entitlement Management, Access Reviews, Azure resources and RBAC, plus a JSON
@@ -1010,11 +1010,6 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `docs/examples/naming-standard.schema.json` is the schema function's output, held identical by a
   test, never edited by hand. Never re-implement a rule, a Detail text or the file's validation
   elsewhere. `Why: docs/development/rationale.md#naming-standard`
-- **`Test-OERJsonDateKindSupport` is the single owner of whether the running `ConvertFrom-Json` has
-  `-DateKind`.** On 7.2-7.4 `Test-OERStructureSchema` refuses every date value the parse made (Rule
-  2b), no field exempted. Never ask the question elsewhere or "repair" a parsed date into text. A
-  test mocks it in module scope to run the 7.2-7.4 path on a newer PowerShell.
-  `Why: docs/development/rationale.md#structure-document-text`
 - **`Test-OERHostCanConfirm` is the single owner of whether the host can show a confirmation prompt
   that is decidable beforehand; `Test-OERConfirmPromptFailure` of whether a caught record is a
   `ShouldProcess` that failed because the host could not ask.** When the first answers false,
@@ -1053,9 +1048,7 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 - **`Get-OEROrderedInventoryEntry` is the single owner of the order the inventory writes its lists
   in:** a group's `members`, `owners`, `eligibility` and an administrative unit's `members`.
   `Get-OERInventoryGroup` orders the three group lists, `Get-OERInventory` the unit members; never
-  order such a list elsewhere. Its LINQ calls take generic arguments by INFERENCE, never written out;
-  nothing but the helper's own test (an AST check of every `.ps1` under `source/`) would show a
-  written one.
+  order such a list elsewhere.
   `Why: docs/development/rationale.md#export-group-selection`
 - **`Read-OERGroupCollection` is the single owner of the three per-group collection reads
   `Get-OERGroup` attaches and the inventory's group reader uses** (members, owners, PIM eligibility)
@@ -1126,9 +1119,10 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 - **`Resolve-OERTenantDomain` is the single owner of the module's one network call outside the
   Microsoft Graph and Azure Resource Manager transports** -- the deliberately unauthenticated OpenID
   discovery lookup of a tenant named by domain -- and the only caller of `Invoke-RestMethod`. The
-  call carries `-Uri`, `-Method`, `-TimeoutSec` and `-ErrorAction` and nothing else: never a header,
-  a credential or a splat, never a second sender. It caches a tenant ID, never a failure. Its place
-  in the sign-in and the refusals: see **Authentication Architecture**.
+  call carries `-Uri`, `-Method`, `-TimeoutSec`, `-OperationTimeoutSeconds` and `-ErrorAction` and
+  nothing else: never a header, a credential or a splat, never a second sender. It caches a tenant
+  ID, never a failure. Its place in the sign-in and the refusals: see **Authentication
+  Architecture**.
   `Why: docs/development/rationale.md#switching-tenants-in-one-process`
 - **`Set-OERSessionUncertain` is the single owner of the session-uncertain marker**
   (`$script:_OERSessionUncertain`), called only by `Initialize-OERAuth`, `Connect-OER` and

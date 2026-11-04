@@ -944,9 +944,10 @@ remembered ones -- a second identity builder there is the drift the rule exists 
 callers get no row: the snapshot is a value a command keeps in its own variable, never a gate in
 front of a request. The tenant lookup (Sprint 9 step 3, BL-12) is held tighter than an owner rule
 alone: `Resolve-OERTenantDomain` holds exactly one `Invoke-RestMethod` call, with no splat, and that
-call names only `-Uri`, `-Method`, `-TimeoutSec` and `-ErrorAction`. Two lists read the call's own
+call names only `-Uri`, `-Method`, `-TimeoutSec`, `-OperationTimeoutSeconds` and `-ErrorAction`
+(`-OperationTimeoutSeconds`, added in Sprint 12 step 2 with the 7.6 floor). Two lists read the call's own
 parameter names: a denied list of every credential-carrying parameter of the cmdlet (`-Headers`,
-`-Authentication`, `-Token`, `-Credential` and the rest), and an allowed list of those four, since
+`-Authentication`, `-Token`, `-Credential` and the rest), and an allowed list of those five, since
 PowerShell binds an abbreviated name (`-Head` for `-Headers`) and a parameter added to the cmdlet
 later is on no list. A known-answer table of eleven miniatures runs that checker in every run. The
 session-uncertain marker (Sprint 9 step 3, A10) is held the same way: `$script:_OERSessionUncertain`
@@ -1198,7 +1199,8 @@ statically, importing nothing).
   `Get-OERDocumentTenantMismatch` only in `Invoke-OERStructure`, and
   `Get-OERSubscriptionHomeTenant` only in `Resolve-OERInventoryScopeTree`, `Invoke-OERStructure` and
   `Get-OERInventory`, every listed owner really calling it; the tenant lookup's one `Invoke-RestMethod` call carrying only
-  `-Uri`, `-Method`, `-TimeoutSec` and `-ErrorAction`, with no splat; `$script:_OERSessionUncertain`
+  `-Uri`, `-Method`, `-TimeoutSec`, `-OperationTimeoutSeconds` and `-ErrorAction`, with no splat;
+  `$script:_OERSessionUncertain`
   read and written only in `Set-OERSessionUncertain`, and in `Initialize-OERAuth` exactly three
   `Set-OERSessionUncertain` calls -- the statement directly after the `Lock-OERSignIn` assignment and
   the statement directly after each `Register-OERSignInIdentity`; the name `ReclaimGraphSession`
@@ -4358,8 +4360,8 @@ through `Resolve-OERTenantDomain`, the single owner of the module's one network 
 Microsoft Graph and Azure Resource Manager transports, and its one deliberately unauthenticated
 call. It sends one GET of `{AuthorityHost}{domain}/v2.0/.well-known/openid-configuration` to the
 cloud's Microsoft Entra ID authority, the host read from `Get-OERCloudEndpoint`, through
-`Invoke-RestMethod` with `-Uri`, `-Method Get`, `-TimeoutSec 30` and `-ErrorAction Stop` and nothing
-else: no `Authorization` header and no credential of any kind. (The ARM wrapper's documented
+`Invoke-RestMethod` with `-Uri`, `-Method Get`, `-TimeoutSec 30`, `-OperationTimeoutSeconds 30` and
+`-ErrorAction Stop` and nothing else: no `Authorization` header and no credential of any kind. (The ARM wrapper's documented
 no-auth-state fallback also sends a request without a token, by accident of state rather than by
 design, which is why this is the one DELIBERATELY unauthenticated call.) It reads the tenant ID
 from the first path segment of the document's `issuer`. The lookup runs after the cached return -- a session that
@@ -4429,9 +4431,17 @@ tenant (A13), both under [Requested tenant vs granted tenant](#requested-tenant-
 - PowerShell 7.4 and later bind `-TimeoutSec` to `ConnectionTimeoutSeconds` (MEASURED on 7.6.6 for
   the lookup helper's commit: the cmdlet resolves the name to that parameter), so there the 30-second
   bound covers establishing the connection.
-- **A response whose body stalls after the headers is NOT bounded (BL-93, MEASURED 2026-10-21, decision
-  A28: a documented known limit, accepted as known; no bound, no new parameter).** pwsh 7.6.6 on Windows, the call
-  exactly as written (`-Uri`, `-Method Get`, `-TimeoutSec 30`, `-ErrorAction Stop`), each case in its
+- **Sprint 12 step 2: the call now also carries `-OperationTimeoutSeconds 30`, which the 7.6 floor
+  makes available.** A connection accepted but never answered (30 s), an address that never answers
+  (the operating system's connect timeout, measured 21 s) and a body that stalls after the headers
+  (`-OperationTimeoutSeconds`, about 30.4 s measured on 7.6.6, 2026-10-21, see the measurement below)
+  all end with `TenantResolutionFailed`. The parameter as now written in the call has not been
+  measured by a run of the module. A body that trickles in a byte at a time is still not bounded
+  (known limit; issue #66 keeps it open as a separate decision).
+- **History: before Sprint 12 step 2, a response whose body stalls after the headers was NOT bounded
+  (BL-93, MEASURED 2026-10-21, decision A28: a documented known limit, accepted as known; no bound, no
+  new parameter).** pwsh 7.6.6 on Windows, the call as it was then written (`-Uri`, `-Method Get`,
+  `-TimeoutSec 30`, `-ErrorAction Stop`), each case in its
   own process, no tenant, a local listener or an unroutable address standing in for the authority:
   a listener that accepts the connection and never answers ends after 30.4 s with a
   `TaskCanceledException` (the `HttpClient.Timeout` of 30 seconds); an address that never answers
@@ -4443,7 +4453,7 @@ tenant (A13), both under [Requested tenant vs granted tenant](#requested-tenant-
   connection and for the response headers and do not bound the reading of the body: an authority that
   sends its headers and then stalls leaves the sign-in waiting, with no `TenantResolutionFailed`,
   until the operator interrupts it. Bounding the body needs `-OperationTimeoutSeconds` on the call, a
-  parameter of PowerShell 7.4 and later, while the module supports 7.2, and the rule above allows no
+  parameter of PowerShell 7.4 and later, while the module then supported 7.2, and the rule then allowed no
   other parameter on that call. That parameter alone does not suffice (measured earlier with a
   30-second value): it ends a stalled body after about 30.4 s but not a body that trickles in a byte
   at a time, so issue #66 is not to be planned on the assumption that it alone closes the limit. The limit is accepted as known; its future handling, together with a
@@ -4555,7 +4565,8 @@ or the credential checks, and never exempt another non-GUID value the way `organ
   Microsoft Graph and Azure Resource Manager transports** -- the deliberately unauthenticated OpenID
   discovery lookup of a tenant named by domain at the cloud's Microsoft Entra ID authority, the host
   read from `Get-OERCloudEndpoint` -- and the only caller of `Invoke-RestMethod`.
-  The call carries `-Uri`, `-Method`, `-TimeoutSec` and `-ErrorAction` and nothing else: never a
+  The call carries `-Uri`, `-Method`, `-TimeoutSec`, `-OperationTimeoutSeconds` and `-ErrorAction`
+  and nothing else: never a
   header, a credential or a splat, never a second sender. It caches a tenant ID per cloud and
   lower-cased domain for the process and never caches a failure.
   `Why: docs/development/rationale.md#switching-tenants-in-one-process`
@@ -6603,10 +6614,12 @@ creation -- and leaves H4 green.
   `[ValidateNotNullOrEmpty()]` and nothing more (A12, above). It names a tenant that is not the
   session's and is looked up like any value that is not a tenant ID, and refused with
   `TenantResolutionFailed` when the authority resolves it to no tenant. That path ends in a refusal,
-  so decision A12's attribute stands as decided for those cmdlets: PowerShell 7.4's
-  `[ValidateNotNullOrWhiteSpace()]` does not exist on 7.2, which the module supports, and a
+  so decision A12's attribute stands as decided for those cmdlets: at the time PowerShell 7.4's
+  `[ValidateNotNullOrWhiteSpace()]` did not exist on 7.2, which the module supported, and a
   `[ValidatePattern()]` or `[ValidateScript()]` that refused spaces at binding on 7.2 would replace
-  the attribute A12 names on every one of them for a value that is already refused.
+  the attribute A12 names on every one of them for a value that is already refused. Sprint 12 step 2:
+  the floor is now PowerShell 7.6, so `[ValidateNotNullOrWhiteSpace()]` exists, and the decision
+  stands for the other reason above: such a value is already refused with `TenantResolutionFailed`.
 - **`New-OERConfiguration` and `Set-OERConfiguration` refuse a `-TenantId` of white space only at
   binding** (Sprint 10 step 3, BL-96). They store the tenant and look nothing up, so such a value was
   written to the profile and refused only later, when a `Connect-OER -TenantAlias` read it back at its
@@ -6622,7 +6635,10 @@ creation -- and leaves H4 green.
   message (`The argument is null or empty`), a blank one reads the script's, and both carry
   `ParameterArgumentValidationError,<cmdlet>`. Declared the other way round, an empty value would
   read the white-space message, which is wrong for it. The attribute stays, since
-  `TenantIdNotEmpty.Cohort.Tests.ps1` requires it on every carrier but `Connect-OER`.
+  `TenantIdNotEmpty.Cohort.Tests.ps1` requires it on every carrier but `Connect-OER`. Sprint 12 step 2: on the 7.6 floor
+  `[ValidateNotNullOrWhiteSpace()]` exists, but the scripts stay: they keep the message above, which
+  is published behaviour, and in these two cmdlets also refuse the invisible format (Cf) characters
+  (BL-111) that the attribute would not.
   `Set-OERConfiguration` binds `-TenantId` from the pipeline, so a piped profile object whose
   `TenantId` is blank is refused per input object, at binding, and the next object is still
   processed. That is the safe direction, since the write would otherwise keep a blank tenant; the
@@ -9613,6 +9629,12 @@ through `List.Sort` with the comparison inline, and about 1.9 s when it calls a 
 comparison inline per file, which costs a second copy and the time above for a group with thousands of
 members.
 
+**Sprint 12 step 2: the generic-argument guard is gone.** The floor is now PowerShell 7.6, and an explicit
+generic argument on a method call is valid syntax from 7.3, so there is no newer syntax left to guard against: the
+context in the helper's test file that parsed every `.ps1` under `source/` for one was removed, with its
+known-answer test and its CLAUDE.md sentence. The helper's code is unchanged (the arguments stay inferred); the
+paragraph above is the history of the guard.
+
 **The texts (BL-48, Sprint 11 step 10, the text task).** A dynamic group's null `members` is told to the reader
 of a bundle in every text that explains a null, each saying that it is no unread collection: the schema
 description of `groups[].members`, the bundle README (the roster bullet and "Unread collections"), the prompt
@@ -9657,10 +9679,11 @@ What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule
   ties by `[System.StringComparer]::Ordinal`, so the order is total and culture independent;
   eligibility by `principal`, `accessType`, `durationDays` (absent first, then ascending) and `id`.
   `Get-OERInventoryGroup` orders the three group lists and `Get-OERInventory` the unit members; never
-  order such a list anywhere else. Its LINQ calls take their generic arguments by INFERENCE and never
-  write them out: an explicit type argument on a generic method call is PowerShell 7.3 syntax, a parse
-  error under the module's 7.2 floor that fails the whole merged module, and CI runs a current
-  PowerShell only, so nothing but the helper's own test (an AST check of its file) would show it.
+  order such a list anywhere else. Its LINQ calls took their generic arguments by INFERENCE and never
+  wrote them out: an explicit type argument on a generic method call is PowerShell 7.3 syntax, which was a
+  parse error under the module's former 7.2 floor that failed the whole merged module, and CI runs a current
+  PowerShell only, so nothing but the helper's own test (an AST check of its file) would show it. Sprint 12
+  step 2: the floor is 7.6, so that guard and its test were removed, and the CLAUDE.md rule with them.
   `Why: docs/development/rationale.md#export-group-selection`
 
 - **`Read-OERGroupCollection` is the single owner of the three per-group collection reads
@@ -13721,8 +13744,8 @@ on PowerShell 7.6.6, with `-Depth 32 -NoEnumerate` as the reader calls it: `2024
 `2024-01-01T10:00:00Z` and `2024-01-01T10:00:00.5+02:00` become a `DateTime`, while `2024-01-01`,
 `2024-01-01T10:00` and `2024-01-01 10:00:00` stay a string. This is a limit of the parser, not
 something the reader fixes. `Read-OERStructureDocument` parsed structure documents the same way
-until Sprint 11 step 11, and now adds `-DateKind String` where `ConvertFrom-Json` has it (PowerShell
-7.5 or later), so a structure document keeps its text there
+until Sprint 11 step 11, and now always parses with `-DateKind String` (the floor is PowerShell 7.6 since
+Sprint 12 step 2), so a structure document keeps its text
 ([#structure-document-text](#structure-document-text)); the naming standard reader does not. (b)
 The check reads the document it is given. An object the export left out of `inventory.json` is not in
 the document and so is not checked: a name two or more objects share, a role assignment at a scope no
@@ -14307,15 +14330,24 @@ dates from the re-parse and are refused like any other.
 array is an `Error` at its path naming the type found; a date gets only the date `Error`. With a naming
 standard, Rule 17 adds a `Warning` that such a name was not checked, a date included.
 
-Cost if wrong: a user on PowerShell 7.2 to 7.4 has to run 7.5 or later to apply a document that holds a
-date and time with seconds; nothing is ever changed on the way. Held by `Read-OERStructureDocument.Tests.ps1`,
-`Test-OERJsonDateKindSupport.Tests.ps1`, the date and displayName Contexts of
-`Test-OERStructureSchema.Tests.ps1`, and a runspace with no `try` in `Invoke-OERStructure.Tests.ps1`
-with `Test-OERJsonDateKindSupport` stubbed false.
+Cost if wrong: a user on PowerShell 7.2 to 7.4 had to run 7.5 or later to apply a document that holds a
+date and time with seconds; nothing is ever changed on the way. Held by `Read-OERStructureDocument.Tests.ps1`
+and the displayName Context of `Test-OERStructureSchema.Tests.ps1`.
+
+**Sprint 12 step 2: the floor is PowerShell 7.6, and the 7.2 to 7.4 branch is gone.** Everything above
+describes the Sprint 11 step 11 design, kept as history. The module now requires PowerShell 7.6, where
+`ConvertFrom-Json` always has `-DateKind`, so `Read-OERStructureDocument` always parses with
+`-DateKind String`, and `Test-OERJsonDateKindSupport` and Rule 2b (with its helpers `Find-DateValue` and
+`Test-IsDateValue`) were removed: a document that 7.2 to 7.4 refused for a date is read as on 7.5 or
+later. The `-InputObject` limit stays. `Add-DisplayNameTypeFinding` no longer exempts a date: a
+`displayName` that is a date, reachable only from an in-memory document such as the export's
+self-check, gets the ordinary type finding, the safer direction since a read document holds no date.
+No ErrorId, parameter or output type changed, and no rule was renumbered.
 
 ### CLAUDE.md text for structure-document-text
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (the rule was
+removed in Sprint 12 step 2, see above):
 
 - **`Test-OERJsonDateKindSupport` is the single owner of whether the running `ConvertFrom-Json` has
   `-DateKind`** (Sprint 11 step 11, BL-154): one `Get-Command` of the module-qualified
@@ -14470,7 +14502,7 @@ This section records the CLAUDE.md text on what the module is and which clone is
 
 What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
-`Omnicit.EntraRBAC` is a PowerShell 7.2+ (Core-only) module built and maintained by Omnicit AB. MIT
+`Omnicit.EntraRBAC` is a PowerShell 7.6+ (Core-only) module built and maintained by Omnicit AB. MIT
 licensed and **published on the public PowerShell Gallery for anyone to use**: 1.0.0 went out by
 hand on 2026-09-18, and everything since publishes itself -- see **Publishing** below.
 

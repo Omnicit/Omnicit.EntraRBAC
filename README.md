@@ -7,7 +7,7 @@
 
 ![Omnicit.EntraRBAC](assets/icon.png)
 
-`Omnicit.EntraRBAC` is a PowerShell 7.2+ (Core-only) module for managing RBAC building blocks
+`Omnicit.EntraRBAC` is a PowerShell 7.6+ (Core-only) module for managing RBAC building blocks
 across many Entra ID and Azure tenants. It covers Entra ID groups and PIM, Administrative Units,
 Entitlement Management (Catalogs, Access Packages, Resources), Access Reviews, Azure resources and
 RBAC, Azure PIM, plus a JSON inventory and a declarative apply engine. It is built and maintained by
@@ -22,7 +22,7 @@ README summarises. `Get-OERRequiredScope` is authoritative for permissions -- se
 
 ## Requirements
 
-- **PowerShell 7.2 or later** (Core only; Windows PowerShell 5.x is not supported)
+- **PowerShell 7.6 or later** (Core only; Windows PowerShell 5.x is not supported)
 - **AzAuth** >= 2.11.0 (`Get-AzToken` -- token acquisition for all credential types)
 - **Microsoft.Graph.Authentication** >= 2.36.0 (`Connect-MgGraph`)
 
@@ -1017,16 +1017,13 @@ access review's `assignmentPolicy` included. It refuses, as an `Error`, an acces
 by its name alone, so it cannot tell which package the review means. Name the package by its object
 id.
 
-`Test-OERStructure` and `Invoke-OERStructure` read a document as written on PowerShell 7.5 or later.
-On PowerShell 7.2 to 7.4 the JSON reader turns a string that holds an ISO 8601 date and time with
-seconds, such as an assignment policy's `expirationDateTime` of `2027-01-01T00:00:00Z`, into a date,
-so the text written is lost: each such value is an `Error` at its path, and `Invoke-OERStructure`
-refuses the document. Run both on PowerShell 7.5 or later for such a document; a date alone, such as
-`2026-07-01`, or a time without seconds, such as `2026-07-01T10:00`, stays a string. A `displayName`
-that is not a string is an `Error` too, and so is a group `template` that cannot be turned into a
-name with its `tokens`, which used to be that group's `Failed` row and now refuses the whole document
-before anything is read or written. A token's value is inserted as text, so a `$` in it stays as
-written.
+`Test-OERStructure` and `Invoke-OERStructure` read a document as written: a string that holds an
+ISO 8601 date and time with seconds, such as an assignment policy's `expirationDateTime` of
+`2027-01-01T00:00:00Z`, stays the text written, as does a date alone, such as `2026-07-01`, or a
+time without seconds, such as `2026-07-01T10:00`. A `displayName` that is not a string is an `Error`,
+and so is a group `template` that cannot be turned into a name with its `tokens`, which used to be
+that group's `Failed` row and now refuses the whole document before anything is read or written. A
+token's value is inserted as text, so a `$` in it stays as written.
 
 `Invoke-OERStructure` writes nothing for a policy whose live read fails or returns nothing: a
 `roleManagementPolicies` entry, or a group's `pimPolicy` for that access type, is `Failed` with the

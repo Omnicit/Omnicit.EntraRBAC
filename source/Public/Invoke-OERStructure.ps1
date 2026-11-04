@@ -11,12 +11,10 @@ function Invoke-OERStructure {
     DirectoryRoleManagementPolicies, DirectoryRoleAssignments, RoleAssignments, RoleManagementPolicies
     -- and calls the matching Sync-OERStructure* handler for each item.
 
-    Reading and validation: the document reaches the validation as written on PowerShell 7.5 or later.
-    On PowerShell 7.2 to 7.4 the JSON reader turns a string that holds an ISO 8601 date and time with
-    seconds -- an assignment policy's expirationDateTime such as "2027-01-01T00:00:00Z", for example --
-    into a date, so the text written is lost; the validation then gives an Error at each such value and
-    the document is refused (StructureValidationFailed). A date alone ("2026-07-01"), or a time without
-    seconds ("2026-07-01T10:00"), stays a string. A displayName
+    Reading and validation: the document reaches the validation as written. A string that holds an ISO
+    8601 date and time with seconds -- an assignment policy's expirationDateTime such as
+    "2027-01-01T00:00:00Z", for example -- stays the text written. An -InputObject whose values the
+    caller already turned into dates is read as ConvertTo-Json writes them. A displayName
     that is not a string is an Error, and so is a groups entry whose template cannot be turned into a
     name with its tokens (a placeholder no token supplies, a name over 256 characters), which earlier versions
     reported as that group's Failed row: the whole document is now refused, before anything is signed

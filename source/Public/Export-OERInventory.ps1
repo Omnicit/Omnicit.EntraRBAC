@@ -712,9 +712,9 @@ function Export-OERInventory {
         # follows DECLARATION order, so a parameter inserted above -ManagementGroup, -Scope or
         # -TenantId would silently change what an existing positional argument binds to.
         # A filter of white space only is refused here, at binding, as an empty one is (the same
-        # BL-96 pattern as New-OERConfiguration's -TenantId). The module supports PowerShell 7.2, which
-        # has no [ValidateNotNullOrWhiteSpace()] (7.4+), so the same test runs as a script. Declared
-        # ABOVE [ValidateNotNullOrEmpty()] on purpose: validation attributes run in reverse
+        # BL-96 pattern as New-OERConfiguration's -TenantId). [ValidateNotNullOrWhiteSpace()] exists on
+        # the 7.6 floor, but the test stays a script: it keeps its own binding message (published
+        # behaviour). Declared ABOVE [ValidateNotNullOrEmpty()] on purpose: validation attributes run in reverse
         # declaration order (measured), so an empty or null value still reads the NotNullOrEmpty
         # message and white space reads this one.
         [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) }, ErrorMessage = 'The GroupFilter consists only of white space. Pass an OData filter, or leave the parameter out.')]

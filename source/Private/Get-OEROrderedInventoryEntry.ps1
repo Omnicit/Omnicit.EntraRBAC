@@ -97,11 +97,8 @@ function Get-OEROrderedInventoryEntry {
         # OrderBy and ThenBy are .NET's own, with .NET's own comparers, and OrderBy is stable: a text pass
         # (OrderBy, then ThenBy) calls the key function twice per entry and a number pass once, never once
         # per comparison. The generic arguments are INFERRED from the typed arguments ($Pairs is an
-        # [object[]], the key is a [Func[object, string]] or [Func[object, double]]), never written out:
-        # an explicit type argument on a generic method call (::OrderBy[object, string](...)) is syntax
-        # PowerShell has only since 7.3, a parse error in a module whose floor is 7.2, which fails the
-        # whole merged module and which CI (a current PowerShell only) would not show. The test file
-        # holds it: no call in this file may carry generic type arguments.
+        # [object[]], the key is a [Func[object, string]] or [Func[object, double]]), never written out,
+        # which is all the call needs: the typed arguments fix them.
         $Sorted = if ($IsNumber) {
             [System.Linq.Enumerable]::ToArray(
                 [System.Linq.Enumerable]::OrderBy($Pairs, $NumberKey))
