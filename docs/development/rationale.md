@@ -11727,12 +11727,12 @@ place, without it; no warning and no `ShouldProcess` call. When the hold could n
 undeclared candidate in that collection is `Skipped` with "prune withheld:" with or without `-Prune`
 (`-PimUnread`), like an unresolved declared entry, and the item's one warning names the cause. The
 order of the withholds is the unresolved entry, the service principal, the synchronized group, the
-PIM hold and, for owners, the last-owner guards, and a withheld owner counts as an owner still
-standing (a withheld user owner as a user owner too, for the user-owner floor Sprint 11 step 11
-added, [#last-user-owner](#last-user-owner)). So `-Prune` can remove the last STANDING owner while an
-activated or time-bound owner remains, and when that activation ends the group has no owner: the
-guard follows Graph's current state (recorded, not changed). If the hold rule is wrong: a removal the
-operator wanted is withheld.
+PIM hold and, for owners, the last-owner guards. A service principal or synchronized-group owner
+counts as an owner still standing (a withheld user owner as a user owner too, for the user-owner
+floor Sprint 11 step 11 added, [#last-user-owner](#last-user-owner)); an owner the PIM hold withholds
+no longer does: Sprint 12 step 4 (BL-140b) takes it out of both counts, so `-Prune` no longer removes
+the last STANDING owner while only an activated or time-bound owner remains (it was recorded, not
+changed, before). If the hold rule is wrong: a removal the operator wanted is withheld.
 
 **Rule 8 (the bundle).** The bundle `README.md` has a section, "Members and owners left out as PIM for
 Groups access", that lists by group name, never by principal, how many members and owners were left
@@ -14242,6 +14242,23 @@ count only: the conservative reading, which can still hold back the last user ow
 that failed, or one declined at the confirmation prompt, counts nowhere.
 Each owner is counted once by its id, so a reference declared twice cannot count twice. Cost if wrong:
 an owner added by object id beside the last user owner leaves that removal to a later run.
+
+### Sprint 12 step 4: only standing owners count (BL-140b)
+
+The floors counted every owner the read found, an owner PIM for Groups holds or makes eligible
+included, so `-Prune` could remove the last standing owner while only such an owner remained; when
+the activation ended the group had no owner. Now `Get-PimHoldReason -AccessType owner` (the rule is
+`Get-OERGroupPimHeldAccess`'s) decides, once per item, at the first undeclared owner that reaches the
+floors: every owner of `$CurrentOwners` it names is taken out of the any-type count, and a user
+owner out of the user count too. That covers an activation, a time-bound assignment, an
+unrecognized assignment and an eligibility alike, also an owner that is a direct owner and eligible
+at once (the safer direction). A service principal, a synchronized group's or an unresolved
+owner still counts as standing; an owner this run added still counts. No extra PIM read: the state
+was read before the first undeclared owner got this far. A floor that refuses with at least one
+owner excluded gives a `prune withheld:` Detail naming the last standing owner and the number of
+excluded owners; with none excluded the two older Details are unchanged. The plan and the run give
+the same rows. Cost if wrong: a removal the operator wanted waits until the other owner is made
+standing or the operator removes it with `Remove-OERGroupMember`.
 
 ## unknown-allowed-target-scope
 

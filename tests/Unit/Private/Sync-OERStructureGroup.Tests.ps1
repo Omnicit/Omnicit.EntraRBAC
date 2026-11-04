@@ -9806,15 +9806,112 @@ Invoke-OERStructure -Json $Json -Prune -Confirm:$false | ForEach-Object { "ROW:$
                 Get-PimRowCount -Rows $Out.Rows -Action 'Extra' -Detail (Get-PimExtraHeld -Candidate "undeclared owner 'o-act'" -Reason $script:PimActOwner) | Should -Be 1
             }
 
-            # (2) The held owner first, then a plain one: the held owner stays and is counted, so the
-            # plain one is not the last remaining owner and is removed.
-            $script:PimLiveOwners = @(New-PimLive 'o-act', 'o-plain')
-            $Run = Invoke-PimHoldRun -Items @($Item) -Prune
+            # (2) The held owner first, then a plain one: since BL-140b the held owner does not count as
+            # standing, so the plain one IS the last standing owner and is kept (see the Context below
+            # for the texts); with a second standing owner declared it is removed.
+            $script:PimLiveOwners = @(New-PimLive 'o-act', 'o-plain', 'o-keep')
+            $Kept = [PSCustomObject]@{ displayName = 'grp-pim'; members = $null; owners = @('o-keep') }
+            $Run = Invoke-PimHoldRun -Items @($Kept) -Prune
             @($Run.Errors).Count | Should -Be 0
             Get-PimRowCount -Rows $Run.Rows -Action 'Skipped' -Detail (Get-PimPruneHeld -Candidate "undeclared owner 'o-act'" -Reason $script:PimActOwner) | Should -Be 1
             Get-PimRowCount -Rows $Run.Rows -Action 'Removed' -Detail "removed undeclared owner 'o-plain'" | Should -Be 1
             Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -Scope It
             Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -Scope It -ParameterFilter { $PrincipalId -eq 'o-plain' -and $AccessType -eq 'owner' }
+        }
+
+        Context 'only standing owners count for the last-owner floors (Sprint 12 step 4, BL-140b)' {
+            BeforeAll {
+                function Get-StandingUserText ([string]$Id, [int]$N) {
+                    "prune withheld: undeclared owner '$Id' is the last standing user owner of group 'grp-pim': the other $N user owner(s) hold their ownership through PIM for Groups or are eligible for it there (an activation, a time-bound assignment or an eligibility), so they do not count as standing, and removing it could leave the group without a user owner; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember -AccessType owner if it is meant to go."
+                }
+                function Get-StandingAnyText ([string]$Id, [int]$N) {
+                    "prune withheld: undeclared owner '$Id' is the last standing owner of group 'grp-pim': the other $N owner(s) hold their ownership through PIM for Groups or are eligible for it there (an activation, a time-bound assignment or an eligibility), so they do not count as standing, and removing it could leave the group without an owner; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember -AccessType owner if it is meant to go."
+                }
+            }
+            BeforeEach {
+                Mock -ModuleName $script:moduleName Add-OERGroupMember { }
+                Mock -ModuleName $script:moduleName Remove-OERGroupMember { }
+                $script:Undeclared = [PSCustomObject]@{ displayName = 'grp-pim'; members = $null; owners = @() }
+            }
+
+            It 'refuses the last standing user owner while the other user owner holds ownership through an activation, in a run and a plan' {
+                $script:PimLiveOwners = @(New-PimLive 'o-a', 'o-b')
+                $script:PimHold = New-PimHold -Held @{ 'o-b|owner' = $script:PimActOwner }
+                Mock -ModuleName $script:moduleName Read-OERGroupPimHold { $script:PimHold }
+                foreach ($AsPlan in $true, $false) {
+                    $Out = Invoke-PimHoldRun -Items @($script:Undeclared) -Prune -Plan:$AsPlan
+                    @($Out.Errors).Count | Should -Be 0
+                    Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-StandingUserText 'o-a' 1) | Should -Be 1
+                    Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-PimPruneHeld -Candidate "undeclared owner 'o-b'" -Reason $script:PimActOwner) | Should -Be 1
+                    @($Out.Rows).Count | Should -Be 3
+                    @($Out.Warnings).Count | Should -Be 0
+                }
+                Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Scope It
+            }
+
+            It 'converges: the same withheld prune applied twice gives the same rows and no write' {
+                $script:PimLiveOwners = @(New-PimLive 'o-a', 'o-b')
+                $script:PimHold = New-PimHold -Held @{ 'o-b|owner' = $script:PimActOwner }
+                Mock -ModuleName $script:moduleName Read-OERGroupPimHold { $script:PimHold }
+                $First = Invoke-PimHoldRun -Items @($script:Undeclared) -Prune
+                $Second = Invoke-PimHoldRun -Items @($script:Undeclared) -Prune
+                (Get-PimRowText $Second.Rows) | Should -Be (Get-PimRowText $First.Rows)
+                Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Scope It
+            }
+
+            It 'refuses the user floor with a service principal owner standing beside a held user owner' {
+                $script:PimLiveOwners = @(
+                    [PSCustomObject]@{ id = 'o-a'; ObjectType = 'user' }
+                    [PSCustomObject]@{ id = 'o-b'; ObjectType = 'user' }
+                    [PSCustomObject]@{ id = 'sp-1'; ObjectType = 'servicePrincipal' })
+                $script:PimHold = New-PimHold -Held @{ 'o-b|owner' = $script:PimActOwner }
+                Mock -ModuleName $script:moduleName Read-OERGroupPimHold { $script:PimHold }
+                $Out = Invoke-PimHoldRun -Items @($script:Undeclared) -Prune
+                Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-StandingUserText 'o-a' 1) | Should -Be 1
+                Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Scope It
+            }
+
+            It 'refuses a non-user last standing owner with the any-type text' {
+                $script:PimLiveOwners = @(
+                    [PSCustomObject]@{ id = 'o-x'; ObjectType = 'group' }
+                    [PSCustomObject]@{ id = 'o-b'; ObjectType = 'user' })
+                $script:PimHold = New-PimHold -Held @{ 'o-b|owner' = $script:PimActOwner }
+                Mock -ModuleName $script:moduleName Read-OERGroupPimHold { $script:PimHold }
+                foreach ($AsPlan in $true, $false) {
+                    $Out = Invoke-PimHoldRun -Items @($script:Undeclared) -Prune -Plan:$AsPlan
+                    Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-StandingAnyText 'o-x' 1) | Should -Be 1
+                }
+                Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Scope It
+            }
+
+            It 'removes an undeclared standing owner exactly once when another standing owner is declared' {
+                $script:PimLiveOwners = @(New-PimLive 'o-a', 'o-b', 'id-o-c')
+                $script:PimHold = New-PimHold -Held @{ 'o-b|owner' = $script:PimActOwner }
+                Mock -ModuleName $script:moduleName Read-OERGroupPimHold { $script:PimHold }
+                $Item = [PSCustomObject]@{ displayName = 'grp-pim'; members = $null; owners = @('o-c') }
+                $Out = Invoke-PimHoldRun -Items @($Item) -Prune
+                Get-PimRowCount -Rows $Out.Rows -Action 'Removed' -Detail "removed undeclared owner 'o-a'" | Should -Be 1
+                Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -Scope It -ParameterFilter { $PrincipalId -eq 'o-a' -and $AccessType -eq 'owner' }
+            }
+
+            It 'does not count an owner that is a direct owner and also eligible for owner access as standing' {
+                $script:PimLiveOwners = @(New-PimLive 'o-a', 'o-b')
+                $script:PimHold = New-PimHold -Held @{ 'o-b|owner' = $script:PimEligOwner }
+                Mock -ModuleName $script:moduleName Read-OERGroupPimHold { $script:PimHold }
+                $Out = Invoke-PimHoldRun -Items @($script:Undeclared) -Prune
+                Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-StandingUserText 'o-a' 1) | Should -Be 1
+                Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Scope It
+            }
+
+            It 'keeps the older last-owner Detail when no owner is held by PIM' {
+                $script:PimLiveOwners = @(New-PimLive 'o-a')
+                $script:PimHold = New-PimHold -Held @{}
+                Mock -ModuleName $script:moduleName Read-OERGroupPimHold { $script:PimHold }
+                $Out = Invoke-PimHoldRun -Items @($script:Undeclared) -Prune
+                @($Out.Rows | Where-Object { $_.Detail -like "did not remove owner 'o-a': it is the last remaining user owner*" }).Count | Should -Be 1
+                @($Out.Rows | Where-Object { $_.Detail -like 'prune withheld:*' }).Count | Should -Be 0
+            }
         }
 
         It 'matches the hold per access type: a hold for member access never protects an owner, and the other way round' {

@@ -462,9 +462,10 @@ function Invoke-OERStructure {
     reported Extra without -Prune, with a hint that -Prune leaves it in place, and Skipped, with a
     Detail starting "prune withheld:", with -Prune, with no warning and no ShouldProcess prompt. A
     principal that is a standing member and also eligible for member access is covered too. An owner
-    withheld this way still counts as an owner in the group for the rules that the last owner and the
-    last user owner are not removed (below), so -Prune can remove the last standing owner while an
-    activated or time-bound owner remains, and when that activation ends the group has no owner.
+    withheld this way does not count as a standing owner for the rules that the last owner and the
+    last user owner are not removed (below), so -Prune never removes the last standing owner while
+    only an activated, time-bound or eligible owner remains: it is reported Skipped, with a Detail
+    starting "prune withheld:" that names the last standing owner.
     While the PIM for Groups assignments or the eligibility of a group that already existed cannot be
     read, no member or owner is removed from that group: each undeclared one is reported Skipped, with
     a Detail starting "prune withheld:", with or without -Prune, and one warning for the group names
@@ -478,8 +479,8 @@ function Invoke-OERStructure {
     the last remaining owner of any other type (the module's own rule): no warning, no ShouldProcess
     prompt and no request. A -WhatIf plan counts each removal it reports as done, so it holds back the
     same owner a run does; a removal declined at the confirmation prompt, or one that fails, leaves
-    its owner standing. A service principal owner, and an owner withheld for PIM for Groups, count as
-    owners still standing, and a withheld user owner as a user owner. An owner the same run adds
+    its owner standing. A service principal owner counts as an owner still standing, and a withheld
+    user owner as a user owner; an owner withheld for PIM for Groups does not. An owner the same run adds
     counts as one standing too, and as a user owner when the document names it by user principal name
     (an owner named by object id names no type, so it counts for the last-owner rule only), so a
     document that replaces a user owner with one named that way completes in one run. A -WhatIf plan

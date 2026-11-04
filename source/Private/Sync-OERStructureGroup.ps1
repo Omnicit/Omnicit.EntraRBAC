@@ -75,7 +75,9 @@ function Sync-OERStructureGroup {
         principal is an owner; a -Prune run that would remove the last remaining user owner, or the
         last remaining owner of any type, reports a Skipped record instead of firing a call Microsoft
         Graph rejects. A service principal owner, and an owner PIM for Groups holds or makes eligible,
-        is withheld before that guard and counts as an owner still standing. An owner this step added
+        is withheld before that guard; a service principal counts as an owner still standing, an owner
+        PIM holds or makes eligible does not (its access can end), so the last STANDING owner is
+        refused as "prune withheld: ... last standing owner" (BL-140b). An owner this step added
         in the same run counts as standing too (a -WhatIf plan counts one it reports it would add),
         and as a user owner when the document names it by user principal name; an add that failed or
         was declined at the confirmation prompt counts nowhere.
@@ -1156,9 +1158,12 @@ function Sync-OERStructureGroup {
             # the same run (final review of Sprint 11 step 11, Important 2).
             # Since A9 an owner the read types servicePrincipal is withheld before this guard and never
             # removed, and since BL-125 so is an owner PIM for Groups holds or makes eligible (and every
-            # owner while that cannot be read), so the guard decides only for the other owners, and a
-            # withheld owner counts as one still standing -- a withheld user owner counts as a user
-            # owner still standing too.
+            # owner while that cannot be read), so the guard decides only for the other owners. A
+            # withheld owner counts as one still standing -- a withheld user owner as a user owner too
+            # -- EXCEPT an owner PIM holds or makes eligible (BL-140b): its access can end with an
+            # activation, so it is taken out of both counts once per item, at the first owner that
+            # reaches the floors ($OwnerPimState), and a floor that refuses then says so.
+            $OwnerPimState = @{ Decided = $false; Excluded = 0; ExcludedUsers = 0 }
             $RemainingOwnerCount = $CurrentOwners.Count + $AddedOwnerIds.Count
             $RemainingUserOwnerCount = @($CurrentOwners | Where-Object { $_.ObjectType -eq 'user' }).Count + $AddedUserOwnerIds.Count
             foreach ($CurOwner in $CurrentOwners) {
@@ -1191,18 +1196,43 @@ function Sync-OERStructureGroup {
                         continue
                     }
                     if ($Prune) {
+                        # BL-140b: an owner PIM for Groups holds or makes eligible can lose that access
+                        # when an activation ends, so it does not count as standing. Decided once per
+                        # item, here, at the first owner that reaches the floors (the PIM state was read
+                        # by then, or the owner was withheld above), before any removal lowers a count.
+                        if (-not $OwnerPimState.Decided) {
+                            $OwnerPimState.Decided = $true
+                            foreach ($Other in $CurrentOwners) {
+                                if (Get-PimHoldReason -PrincipalId $Other.id -AccessType owner) {
+                                    $OwnerPimState.Excluded++
+                                    if ($Other.ObjectType -eq 'user') { $OwnerPimState.ExcludedUsers++ }
+                                }
+                            }
+                            $RemainingOwnerCount -= $OwnerPimState.Excluded
+                            $RemainingUserOwnerCount -= $OwnerPimState.ExcludedUsers
+                        }
                         $CurIsUserOwner = ($CurOwner.ObjectType -eq 'user')
                         # BL-84 (R-15): the last user owner is never removed, also while another owner of
                         # another type (a service principal) stands. Asked first, since it is the more
                         # specific floor: a user owner that is the only owner left is also refused here.
                         if ($CurIsUserOwner -and $RemainingUserOwnerCount -le 1) {
-                            ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
-                                -Detail "did not remove owner '$CurId': it is the last remaining user owner of group '$Name', and Microsoft Graph refuses to remove a group's last user owner, also while a service principal is an owner (measured: 400 `"The group must have at least one owner, hence this owner cannot be removed.`"), so no request was sent (our own guard)."
+                            if ($OwnerPimState.ExcludedUsers -gt 0) {
+                                ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
+                                    -Detail "prune withheld: undeclared owner '$CurId' is the last standing user owner of group '$Name': the other $($OwnerPimState.ExcludedUsers) user owner(s) hold their ownership through PIM for Groups or are eligible for it there (an activation, a time-bound assignment or an eligibility), so they do not count as standing, and removing it could leave the group without a user owner; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember -AccessType owner if it is meant to go."
+                            } else {
+                                ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
+                                    -Detail "did not remove owner '$CurId': it is the last remaining user owner of group '$Name', and Microsoft Graph refuses to remove a group's last user owner, also while a service principal is an owner (measured: 400 `"The group must have at least one owner, hence this owner cannot be removed.`"), so no request was sent (our own guard)."
+                            }
                             continue
                         }
                         if ($RemainingOwnerCount -le 1) {
-                            ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
-                                -Detail "did not remove owner '$CurId': it is the last remaining owner of group '$Name', and this pass refuses to remove it (this is our own guard, not a Graph rejection). Microsoft Graph refuses to remove a group's last user owner (measured 2026-10-20), and this pass holds the last owner of any other type the same way, since what Graph does with one has not been measured."
+                            if ($OwnerPimState.Excluded -gt 0) {
+                                ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
+                                    -Detail "prune withheld: undeclared owner '$CurId' is the last standing owner of group '$Name': the other $($OwnerPimState.Excluded) owner(s) hold their ownership through PIM for Groups or are eligible for it there (an activation, a time-bound assignment or an eligibility), so they do not count as standing, and removing it could leave the group without an owner; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember -AccessType owner if it is meant to go."
+                            } else {
+                                ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
+                                    -Detail "did not remove owner '$CurId': it is the last remaining owner of group '$Name', and this pass refuses to remove it (this is our own guard, not a Graph rejection). Microsoft Graph refuses to remove a group's last user owner (measured 2026-10-20), and this pass holds the last owner of any other type the same way, since what Graph does with one has not been measured."
+                            }
                             continue
                         }
                         $PruneVerb = if ($WhatIfPreference) { 'would remove' } else { 'removing' }
