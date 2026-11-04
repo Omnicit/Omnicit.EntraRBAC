@@ -8648,6 +8648,12 @@ Describe 'Get-OERInventory' {
             @(@($DirErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
         }
 
+        It 'states in the help that a names-only failure keeps the policies and is written to verbose only' {
+            $Help = (Get-Help Get-OERInventory -Full | Out-String) -replace '\s+', ' '
+            $Help | Should -Match 'only the Microsoft Entra role definition NAMES cannot be read, the policies are still exported, each role named by its role definition id'
+            $Help | Should -Match 'the cause is written to the verbose stream only'
+        }
+
         It 'reports the section unread, keeping no partial list, when converting a later policy faults' {
             Mock -ModuleName $script:moduleName ConvertTo-OERRoleManagementPolicy {
                 if ($PolicyId -eq 'policy-b') { throw [System.InvalidOperationException]::new('fixture converter fault') }

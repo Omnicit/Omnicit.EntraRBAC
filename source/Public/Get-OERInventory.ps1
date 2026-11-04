@@ -302,7 +302,9 @@ function Get-OERInventory {
     carries approvers only while approval is required. A failed read of either schedule list or of
     the policies is reported through the InventoryPartial error and never stated as a fact: the kind
     whose read failed exports no entry, and a role selection made from an incomplete read is
-    reported as partial.
+    reported as partial. When only the Microsoft Entra role definition NAMES cannot be read, the
+    policies are still exported, each role named by its role definition id; the section is not
+    reported unread and the cause is written to the verbose stream only.
     The export never writes two entries that the validator would refuse as duplicates, so a document
     it emits is not refused by Invoke-OERStructure for that reason. Live groups, administrative
     units, catalogs, access reviews, access packages of one catalog, or assignment policies of one

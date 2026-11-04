@@ -65,7 +65,7 @@ function Invoke-OERGraphRequest {
        after the cause is never requested. Links are compared as the text that was requested, so
        an absolute link back to page 1, which was requested as the relative -Uri, is requested once
        more before the repeat is refused (bounded, and the walk still fails). A page whose value
-       is an empty array is a normal page, and a $null FIRST page (an empty GET body) is still an empty collection. Under
+       is an empty array is a normal page, and a $null FIRST page (an empty GET body) is still an empty collection, unless -RequireValue is passed (see that parameter). Under
        -ErrorAction SilentlyContinue, with no try up the call stack, a failed walk returns NOTHING
        (no partial list and no empty collection) and the record is kept in $Error and in the
        caller's -ErrorVariable: a caller that asks for silence must read it and never read "no

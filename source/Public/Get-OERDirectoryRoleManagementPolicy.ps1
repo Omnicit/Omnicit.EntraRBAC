@@ -58,7 +58,7 @@ function Get-OERDirectoryRoleManagementPolicy {
     roleManagementPolicyAssignments list call, plus one paged role-definitions list to supply each
     policy's RoleName. A failure reading the names writes every policy with RoleName $null (never
     an empty string) and then ONE non-terminating error carrying the read's own error record, so a
-    caller under -ErrorAction Stop still receives the policies first; the policies themselves
+    pipeline consumer under -ErrorAction Stop still receives the policies first; the policies themselves
     come from the authoritative assignment read, whose own failure is a non-terminating
     PolicyReadFailed error that returns no policy at all. A role id missing from a names read that
     succeeded keeps an empty RoleName.
