@@ -53,6 +53,15 @@ function Set-OERAccessPackageAssignmentPolicy {
     through Invoke-OERStructure and its row is Failed for the same reason whatever its entry declares,
     a requestorScope included, since the engine has no such escape, with nothing written.
 
+    A policy read that succeeds but lacks expiration (absent or null), or requestApprovalSettings, is
+    refused with a non-terminating AssignmentPolicyValueUnknown error (category InvalidData) unless the
+    call names every value the missing block holds: for expiration, one of -DurationInDays,
+    -DurationInHours or -ExpirationDateTime; for requestApprovalSettings, the stages (-ApprovalStage),
+    approval for add (-RequireApproval or -ApprovalStage), -RequireRequestorJustification and
+    -RequireApprovalForUpdate. The full update would otherwise write a default (no expiration, approval
+    off, no stages) over a value the read did not return. One record names both when both are missing;
+    it is written after the read and before anything is sent, also under -WhatIf.
+
     .PARAMETER Id
     The assignment policy id (GUID) to update.
 
@@ -330,6 +339,42 @@ function Set-OERAccessPackageAssignmentPolicy {
                     "'Prefer: include-unknown-enum-members' header; writing it back would replace the policy's " +
                     'requestor scope, so nothing was sent. Pass -RequestorScope to set the scope.')) `
                 -ErrorId 'UnknownAllowedTargetScope' -Category InvalidData -TargetObject $Id -Cmdlet $PSCmdlet
+            return
+        }
+
+        # BL-161a (Sprint 12 step 4): a read that succeeds but lacks expiration or requestApprovalSettings
+        # leaves the full update nothing to carry, and ConvertTo-OERPolicyBody would write its builder
+        # default in its place (noExpiration, approval off, no stages). Refused here, after the read and
+        # BEFORE ConvertTo-OERPolicyBody and ShouldProcess, so it reads the same under -WhatIf and no PUT
+        # is sent, unless the call names every value the missing block holds. ONE record names both
+        # blocks when both are missing. The builder throws the same conditions as a backstop.
+        $ExpirationUnknown = $null -eq $Existing.expiration -and
+            -not ($PSBoundParameters.ContainsKey('DurationInDays') -or
+                $PSBoundParameters.ContainsKey('DurationInHours') -or
+                $PSBoundParameters.ContainsKey('ExpirationDateTime'))
+        $ApprovalUnknown = $null -eq $Existing.requestApprovalSettings -and
+            -not ($PSBoundParameters.ContainsKey('ApprovalStage') -and
+                $PSBoundParameters.ContainsKey('RequireRequestorJustification') -and
+                $PSBoundParameters.ContainsKey('RequireApprovalForUpdate'))
+        if ($ExpirationUnknown -or $ApprovalUnknown) {
+            $MissingKey = @()
+            $Remedy = @()
+            if ($ExpirationUnknown) {
+                $MissingKey += 'expiration'
+                $Remedy += '-DurationInDays, -DurationInHours or -ExpirationDateTime'
+            }
+            if ($ApprovalUnknown) {
+                $MissingKey += 'requestApprovalSettings'
+                $Remedy += '-ApprovalStage (or -RequireApproval), -RequireRequestorJustification and -RequireApprovalForUpdate'
+            }
+            $Names = $MissingKey -join ' and '
+            $WhatIsHeld = if ($MissingKey.Count -gt 1) { 'every value they hold' } elseif ($ApprovalUnknown) { 'every value it holds' } else { 'the value' }
+            Write-CmdletError `
+                -Message ([System.Exception]::new(
+                    "Microsoft Graph returned assignment policy '$Id' without $Names, and this update does not " +
+                    "name $WhatIsHeld; the full update would write a default in its place, so nothing was " +
+                    "sent. Pass $($Remedy -join ' and ') to set it.")) `
+                -ErrorId 'AssignmentPolicyValueUnknown' -Category InvalidData -TargetObject $Id -Cmdlet $PSCmdlet
             return
         }
 

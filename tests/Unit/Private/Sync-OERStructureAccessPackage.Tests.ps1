@@ -6690,6 +6690,7 @@ Describe 'Sync-OERStructureAccessPackage -- assignment policies renamed through 
                     gracePeriodBeforeAccessRemoval             = 'P7D'
                 }
                 expiration                   = @{ type = 'noExpiration' }
+                requestApprovalSettings      = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }
                 customExtensionStageSettings = @(@{
                         id              = 'aaaaaaaa-0000-0000-0000-000000000072'
                         stage           = 'assignmentRequestCreated'

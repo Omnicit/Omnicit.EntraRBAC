@@ -4,10 +4,25 @@ BeforeAll {
     Import-Module $script:moduleName -Force -ErrorAction Stop
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
+
+    # A realistic full policy read: a test that is not about expiration or approval settings gives its
+    # -Existing both, since ConvertTo-OERPolicyBody refuses an -Existing that lacks either (BL-161a).
+    # Fills only what is missing; global so the module-scope test blocks resolve it.
+    function global:Add-OERTestPolicyDefaults {
+        param([hashtable]$Policy)
+        if (-not $Policy.ContainsKey('expiration')) { $Policy['expiration'] = @{ type = 'noExpiration' } }
+        if (-not $Policy.ContainsKey('requestApprovalSettings')) {
+            $Policy['requestApprovalSettings'] = @{
+                isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false
+                isRequestorJustificationRequired = $false; stages = @()
+            }
+        }
+        $Policy
+    }
 }
 
 AfterAll {
-    try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire }
+    try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire; Remove-Item function:global:Add-OERTestPolicyDefaults -ErrorAction SilentlyContinue }
 }
 
 Describe 'ConvertTo-OERPolicyBody' {
@@ -114,7 +129,7 @@ Describe 'ConvertTo-OERPolicyBody (granular)' {
                 requestApprovalSettings = @{ isApprovalRequiredForAdd=$true; isApprovalRequiredForUpdate=$true; isRequestorJustificationRequired=$true; stages=@() }
                 expiration = @{ type='noExpiration' }
             }
-            $b = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap' -RequestorScope $scope -Existing $existing
+            $b = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap' -RequestorScope $scope -Existing (Add-OERTestPolicyDefaults $existing)
             $b.requestorSettings.allowCustomAssignmentSchedule | Should -BeTrue
             $b.reviewSettings.isEnabled | Should -BeTrue
             $b.requestApprovalSettings.isApprovalRequiredForUpdate | Should -BeTrue
@@ -131,7 +146,7 @@ Describe 'ConvertTo-OERPolicyBody (granular)' {
         InModuleScope Omnicit.EntraRBAC {
             $scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
             $existing = @{ expiration = @{ type='afterDuration'; duration='P90D' } }
-            $b = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap' -RequestorScope $scope -Existing $existing
+            $b = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap' -RequestorScope $scope -Existing (Add-OERTestPolicyDefaults $existing)
             $b.expiration.type | Should -Be 'afterDuration'
             $b.expiration.duration | Should -Be 'P90D'
         }
@@ -144,7 +159,7 @@ Describe 'ConvertTo-OERPolicyBody (granular)' {
                 requestApprovalSettings = @{ isApprovalRequiredForAdd=$true; stages=@(@{ durationBeforeAutomaticDenial='P3D' }) }
                 questions = @(@{ id='q1' })
             }
-            $b = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap' -RequestorScope $scope -Existing $existing
+            $b = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap' -RequestorScope $scope -Existing (Add-OERTestPolicyDefaults $existing)
             $b.requestApprovalSettings.stages.Count | Should -Be 1
             $b.requestApprovalSettings.isApprovalRequiredForAdd | Should -BeTrue
             $b.questions.Count | Should -Be 1
@@ -156,7 +171,7 @@ Describe 'ConvertTo-OERPolicyBody (granular)' {
             $scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
             $stage = New-OERAccessPackageApprovalStage -DurationDays 7 -Manager
             $existing = @{ requestApprovalSettings = @{ isApprovalRequiredForAdd=$false; stages=@() } }
-            $b = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap' -RequestorScope $scope -ApprovalStage $stage -Existing $existing
+            $b = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap' -RequestorScope $scope -ApprovalStage $stage -Existing (Add-OERTestPolicyDefaults $existing)
             $b.requestApprovalSettings.stages.Count | Should -Be 1
             $b.requestApprovalSettings.isApprovalRequiredForAdd | Should -BeTrue
         }
@@ -180,7 +195,7 @@ Describe 'ConvertTo-OERPolicyBody (granular)' {
                     stages                           = @(@{ durationBeforeAutomaticDenial = 'P3D' })
                 }
             }
-            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap' -RequestorScope $Scope -ApprovalStage @() -Existing $Existing
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap' -RequestorScope $Scope -ApprovalStage @() -Existing (Add-OERTestPolicyDefaults $Existing)
 
             @($Body.requestApprovalSettings.stages).Count | Should -Be 0
             # -Be $false rather than -BeFalse: -BeFalse also passes on $null, so it would pass if the
@@ -209,7 +224,7 @@ Describe 'ConvertTo-OERPolicyBody (granular)' {
                     stages                           = @(@{ durationBeforeAutomaticDenial = 'P3D' })
                 }
             }
-            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap' -RequestorScope $Scope -Existing $Existing
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap' -RequestorScope $Scope -Existing (Add-OERTestPolicyDefaults $Existing)
 
             @($Body.requestApprovalSettings.stages).Count | Should -Be 1
             $Body.requestApprovalSettings.stages[0].durationBeforeAutomaticDenial | Should -Be 'P3D'
@@ -243,7 +258,7 @@ Describe 'ConvertTo-OERPolicyBody description overlay' {
         InModuleScope Omnicit.EntraRBAC {
             $Scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
             $Body = ConvertTo-OERPolicyBody -DisplayName 'Standard access' -AccessPackageId 'ap-1' `
-                -RequestorScope $Scope -Existing @{ description = 'Business justification required'; expiration = @{ type = 'noExpiration' } }
+                -RequestorScope $Scope -Existing (Add-OERTestPolicyDefaults @{ description = 'Business justification required'; expiration = @{ type = 'noExpiration' } })
             $Body.description | Should -Be 'Business justification required'
         }
     }
@@ -260,7 +275,7 @@ Describe 'ConvertTo-OERPolicyBody description overlay' {
         InModuleScope Omnicit.EntraRBAC {
             $Scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
             $Body = ConvertTo-OERPolicyBody -DisplayName 'Standard access' -AccessPackageId 'ap-1' `
-                -RequestorScope $Scope -Existing @{ expiration = @{ type = 'noExpiration' } }
+                -RequestorScope $Scope -Existing (Add-OERTestPolicyDefaults @{ expiration = @{ type = 'noExpiration' } })
             $Body.description | Should -Be 'Standard access'
         }
     }
@@ -269,7 +284,7 @@ Describe 'ConvertTo-OERPolicyBody description overlay' {
         InModuleScope Omnicit.EntraRBAC {
             $Scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
             $Body = ConvertTo-OERPolicyBody -DisplayName 'Standard access' -AccessPackageId 'ap-1' `
-                -RequestorScope $Scope -Description 'New text' -Existing @{ description = 'Old text' }
+                -RequestorScope $Scope -Description 'New text' -Existing (Add-OERTestPolicyDefaults @{ description = 'Old text' })
             $Body.description | Should -Be 'New text'
         }
     }
@@ -284,7 +299,7 @@ Describe 'ConvertTo-OERPolicyBody explicit empty description' {
     It 'writes an explicitly empty description instead of carrying the live one forward' {
         InModuleScope 'Omnicit.EntraRBAC' {
             $Existing = @{ description = 'live text' }
-            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Description '' -Existing $Existing
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Description '' -Existing (Add-OERTestPolicyDefaults $Existing)
             $Body.description | Should -BeExactly ''
         }
     }
@@ -292,7 +307,7 @@ Describe 'ConvertTo-OERPolicyBody explicit empty description' {
     It 'still carries the live description forward when -Description is not bound at all' {
         InModuleScope 'Omnicit.EntraRBAC' {
             $Existing = @{ description = 'live text' }
-            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing (Add-OERTestPolicyDefaults $Existing)
             $Body.description | Should -BeExactly 'live text'
         }
     }
@@ -306,7 +321,7 @@ Describe 'ConvertTo-OERPolicyBody explicit empty description' {
     It 'carries an already-empty live description forward instead of stamping the display name' {
         InModuleScope 'Omnicit.EntraRBAC' {
             $Existing = @{ description = '' }
-            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing (Add-OERTestPolicyDefaults $Existing)
             $Body.description | Should -BeExactly ''
         }
     }
@@ -332,7 +347,7 @@ Describe 'ConvertTo-OERPolicyBody requestor scope overlay' {
                 specificAllowedTargets = @(@{ '@odata.type' = '#microsoft.graph.singleUser'; userId = 'u-1' })
                 expiration             = @{ type = 'noExpiration' }
             }
-            $Body = ConvertTo-OERPolicyBody -DisplayName 'p' -AccessPackageId 'ap-1' -Existing $Existing -DurationInDays 30
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'p' -AccessPackageId 'ap-1' -Existing (Add-OERTestPolicyDefaults $Existing) -DurationInDays 30
             $Body.allowedTargetScope | Should -Be 'specificDirectoryUsers'
             @($Body.specificAllowedTargets).Count | Should -Be 1
             @($Body.specificAllowedTargets)[0].userId | Should -Be 'u-1'
@@ -350,7 +365,7 @@ Describe 'ConvertTo-OERPolicyBody requestor scope overlay' {
         InModuleScope Omnicit.EntraRBAC {
             $Scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
             $Existing = @{ allowedTargetScope = 'specificDirectoryUsers'; specificAllowedTargets = @(@{ userId = 'u-1' }) }
-            $Body = ConvertTo-OERPolicyBody -DisplayName 'p' -AccessPackageId 'ap-1' -RequestorScope $Scope -Existing $Existing
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'p' -AccessPackageId 'ap-1' -RequestorScope $Scope -Existing (Add-OERTestPolicyDefaults $Existing)
             $Body.allowedTargetScope | Should -Be 'allMemberUsers'
             @($Body.specificAllowedTargets).Count | Should -Be 0
         }
@@ -374,7 +389,7 @@ Describe 'ConvertTo-OERPolicyBody requestorSettings merge (stop-loss)' {
                 }
             }
             $Built = New-OERAccessPackageRequestorSettings -AllowSelfRequest
-            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -RequestorSettings $Built -Existing $Existing
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -RequestorSettings $Built -Existing (Add-OERTestPolicyDefaults $Existing)
             $Body.requestorSettings.someFutureGraphFlag | Should -Be $true
         }
     }
@@ -383,7 +398,7 @@ Describe 'ConvertTo-OERPolicyBody requestorSettings merge (stop-loss)' {
         InModuleScope 'Omnicit.EntraRBAC' {
             $Existing = @{ requestorSettings = @{ enableTargetsToSelfRemoveAccess = $true } }
             $Built = New-OERAccessPackageRequestorSettings -AllowSelfRequest
-            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -RequestorSettings $Built -Existing $Existing
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -RequestorSettings $Built -Existing (Add-OERTestPolicyDefaults $Existing)
             $Body.requestorSettings.enableTargetsToSelfRemoveAccess | Should -Be $false
         }
     }
@@ -392,7 +407,7 @@ Describe 'ConvertTo-OERPolicyBody requestorSettings merge (stop-loss)' {
         InModuleScope 'Omnicit.EntraRBAC' {
             $Existing = @{ requestorSettings = [PSCustomObject]@{ someFutureGraphFlag = $true } }
             $Built = New-OERAccessPackageRequestorSettings -AllowSelfRequest
-            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -RequestorSettings $Built -Existing $Existing
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -RequestorSettings $Built -Existing (Add-OERTestPolicyDefaults $Existing)
             $Body.requestorSettings.someFutureGraphFlag | Should -Be $true
         }
     }
@@ -401,7 +416,7 @@ Describe 'ConvertTo-OERPolicyBody requestorSettings merge (stop-loss)' {
         InModuleScope 'Omnicit.EntraRBAC' {
             $Existing = @{ requestorSettings = @{ enableTargetsToSelfRemoveAccess = $true; someFutureGraphFlag = $true } }
             $Scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
-            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -RequestorScope $Scope -Existing $Existing
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -RequestorScope $Scope -Existing (Add-OERTestPolicyDefaults $Existing)
             $Body.requestorSettings.enableTargetsToSelfRemoveAccess | Should -Be $true
             $Body.requestorSettings.someFutureGraphFlag | Should -Be $true
         }
@@ -445,7 +460,7 @@ Describe 'ConvertTo-OERPolicyBody custom extension stages (Sprint 11 step 3)' {
                     }
                 )
             }
-            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing (Add-OERTestPolicyDefaults $Existing)
 
             $Body.ContainsKey('customExtensionStageSettings') | Should -Be $true
             @($Body.customExtensionStageSettings).Count | Should -Be 1
@@ -474,7 +489,7 @@ Describe 'ConvertTo-OERPolicyBody custom extension stages (Sprint 11 step 3)' {
                     }
                 )
             }
-            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing (Add-OERTestPolicyDefaults $Existing)
 
             $Carried = @($Body.customExtensionStageSettings)
             $Carried.Count | Should -Be 2
@@ -493,7 +508,7 @@ Describe 'ConvertTo-OERPolicyBody custom extension stages (Sprint 11 step 3)' {
                     @{ stage = 'assignmentRequestCreated'; customExtension = @{ id = 'aaaaaaaa-0000-0000-0000-000000000002'; displayName = 'ext' } }
                 )
             }
-            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing (Add-OERTestPolicyDefaults $Existing)
 
             $Ref = @($Body.customExtensionStageSettings)[0].customExtension
             ($Ref.Keys | Sort-Object) -join ',' | Should -Be 'id'
@@ -509,7 +524,7 @@ Describe 'ConvertTo-OERPolicyBody custom extension stages (Sprint 11 step 3)' {
     ) {
         InModuleScope Omnicit.EntraRBAC -Parameters @{ Existing = $Existing } {
             param($Existing)
-            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing (Add-OERTestPolicyDefaults $Existing)
 
             $Body.ContainsKey('customExtensionStageSettings') | Should -Be $false
         }
@@ -536,7 +551,7 @@ Describe 'ConvertTo-OERPolicyBody custom extension stages (Sprint 11 step 3)' {
             param($Stage)
             $Existing = @{ customExtensionStageSettings = @($Stage) }
 
-            { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing } |
+            { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing (Add-OERTestPolicyDefaults $Existing) } |
                 Should -Throw '*custom extension*'
         }
     }
@@ -545,7 +560,7 @@ Describe 'ConvertTo-OERPolicyBody custom extension stages (Sprint 11 step 3)' {
         InModuleScope Omnicit.EntraRBAC {
             $Existing = @{ customExtensionStageSettings = @(@{ stage = 'assignmentRequestCreated' }) }
 
-            { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing } |
+            { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing (Add-OERTestPolicyDefaults $Existing) } |
                 Should -Throw "*whose custom extension id was not read, so it cannot be carried forward and the update would remove it. No update was sent; read the policy with its custom extension stages (or remove the stage) before updating it."
         }
     }
@@ -559,7 +574,7 @@ Describe 'ConvertTo-OERPolicyBody custom extension stages (Sprint 11 step 3)' {
                 )
             }
 
-            { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing } |
+            { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing (Add-OERTestPolicyDefaults $Existing) } |
                 Should -Throw "*custom extension stage 'assignmentRequestGranted'*"
         }
     }
@@ -585,7 +600,7 @@ Describe 'ConvertTo-OERPolicyBody automatic request settings (Sprint 11 step 3)'
                     gracePeriodBeforeAccessRemoval             = 'P7D'
                 }
             }
-            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing (Add-OERTestPolicyDefaults $Existing)
 
             $Body.ContainsKey('automaticRequestSettings') | Should -Be $true
             $Body.automaticRequestSettings.requestAccessForAllowedTargets | Should -Be $true
@@ -609,7 +624,7 @@ Describe 'ConvertTo-OERPolicyBody automatic request settings (Sprint 11 step 3)'
                     gracePeriodBeforeAccessRemoval             = 'P7D'
                 }
             }
-            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -RequestorScope $Scope -Existing $Existing
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -RequestorScope $Scope -Existing (Add-OERTestPolicyDefaults $Existing)
 
             # The scope really was replaced (the path was reached) and the settings did not follow it.
             $Body.allowedTargetScope | Should -Be 'allMemberUsers'
@@ -620,7 +635,7 @@ Describe 'ConvertTo-OERPolicyBody automatic request settings (Sprint 11 step 3)'
     It 'adds no automaticRequestSettings key when the live value is null' {
         InModuleScope Omnicit.EntraRBAC {
             $Existing = @{ allowedTargetScope = 'allMemberUsers'; automaticRequestSettings = $null }
-            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing (Add-OERTestPolicyDefaults $Existing)
 
             $Body.allowedTargetScope | Should -Be 'allMemberUsers'
             $Body.ContainsKey('automaticRequestSettings') | Should -Be $false
@@ -630,7 +645,7 @@ Describe 'ConvertTo-OERPolicyBody automatic request settings (Sprint 11 step 3)'
     It 'adds no automaticRequestSettings key when the live policy does not read one' {
         InModuleScope Omnicit.EntraRBAC {
             $Existing = @{ allowedTargetScope = 'allMemberUsers' }
-            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing (Add-OERTestPolicyDefaults $Existing)
 
             $Body.ContainsKey('automaticRequestSettings') | Should -Be $false
         }
@@ -642,6 +657,71 @@ Describe 'ConvertTo-OERPolicyBody automatic request settings (Sprint 11 step 3)'
             $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -RequestorScope $Scope
 
             $Body.ContainsKey('automaticRequestSettings') | Should -Be $false
+        }
+    }
+}
+
+
+
+Describe 'ConvertTo-OERPolicyBody refuses an -Existing without expiration or requestApprovalSettings (Sprint 12 step 4, BL-161a)' {
+    BeforeAll {
+        $script:Bl161Approval = @{ isApprovalRequiredForAdd = $true; isApprovalRequiredForUpdate = $true; isRequestorJustificationRequired = $true; stages = @() }
+    }
+
+    It 'throws for an -Existing without expiration when no duration or date is given' {
+        InModuleScope $script:moduleName -Parameters @{ Approval = $script:Bl161Approval } {
+            param($Approval)
+            $Existing = @{ allowedTargetScope = 'allMemberUsers'; requestApprovalSettings = $Approval }
+            { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing } | Should -Throw '*no expiration*'
+        }
+    }
+
+    It 'throws for an -Existing whose expiration is null' {
+        InModuleScope $script:moduleName -Parameters @{ Approval = $script:Bl161Approval } {
+            param($Approval)
+            $Existing = @{ allowedTargetScope = 'allMemberUsers'; expiration = $null; requestApprovalSettings = $Approval }
+            { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing } | Should -Throw '*no expiration*'
+        }
+    }
+
+    It 'does not throw for an -Existing without expiration when <Name> is given' -ForEach @(
+        @{ Name = '-DurationInDays'; Params = @{ DurationInDays = 10 }; Type = 'afterDuration' }
+        @{ Name = '-DurationInHours'; Params = @{ DurationInHours = 10 }; Type = 'afterDuration' }
+        @{ Name = '-ExpirationDateTime'; Params = @{ ExpirationDateTime = [datetime]'2030-01-01T00:00:00Z' }; Type = 'afterDateTime' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Approval = $script:Bl161Approval; Params = $Params; Type = $Type } {
+            param($Approval, $Params, $Type)
+            $Existing = @{ allowedTargetScope = 'allMemberUsers'; requestApprovalSettings = $Approval }
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing @Params
+            $Body.expiration.type | Should -Be $Type
+        }
+    }
+
+    It 'throws for an -Existing without requestApprovalSettings unless all of stages, justification and update flag are given' {
+        InModuleScope $script:moduleName {
+            $Stage = New-OERAccessPackageApprovalStage -DurationDays 3 -Manager
+            $Existing = @{ allowedTargetScope = 'allMemberUsers'; expiration = @{ type = 'noExpiration' } }
+            { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing } | Should -Throw '*no requestApprovalSettings*'
+            { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing -RequireApproval $true } | Should -Throw '*no requestApprovalSettings*'
+            { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing -ApprovalStage $Stage -RequireRequestorJustification $true } | Should -Throw '*no requestApprovalSettings*'
+            { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing -ApprovalStage $Stage -RequireApprovalForUpdate $true } | Should -Throw '*no requestApprovalSettings*'
+            { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing -RequireApproval $true -RequireRequestorJustification $true -RequireApprovalForUpdate $true } | Should -Throw '*no requestApprovalSettings*'
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing -ApprovalStage $Stage -RequireApproval $true -RequireRequestorJustification $false -RequireApprovalForUpdate $true
+            $Body.requestApprovalSettings.isApprovalRequiredForAdd | Should -BeTrue
+            $Body.requestApprovalSettings.isApprovalRequiredForUpdate | Should -BeTrue
+            $Body.requestApprovalSettings.isRequestorJustificationRequired | Should -BeFalse
+            @($Body.requestApprovalSettings.stages).Count | Should -Be 1
+        }
+    }
+
+    It 'keeps the New defaults when no -Existing is supplied' {
+        InModuleScope $script:moduleName {
+            $Scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -RequestorScope $Scope
+            $Body.expiration.type | Should -Be 'noExpiration'
+            $Body.requestApprovalSettings.isApprovalRequiredForAdd | Should -BeFalse
+            $Body.requestApprovalSettings.isRequestorJustificationRequired | Should -BeFalse
+            @($Body.requestApprovalSettings.stages).Count | Should -Be 0
         }
     }
 }

@@ -37,6 +37,13 @@ function ConvertTo-OERPolicyBody {
     automatic assignment. Without them an update of an automatic assignment policy is refused by
     Microsoft Graph (measured).
 
+    With -Existing supplied, an Existing policy that has no expiration (or a null one) throws unless
+    -DurationInDays, -DurationInHours or -ExpirationDateTime is given, and one with no
+    requestApprovalSettings throws unless -ApprovalStage, -RequireRequestorJustification and
+    -RequireApprovalForUpdate are all given (a backstop for the refusal
+    Set-OERAccessPackageAssignmentPolicy makes first); the builder default is never written over a
+    live value. Without -Existing (New) the defaults stay.
+
     .PARAMETER DisplayName
     The policy display name.
 
@@ -144,6 +151,23 @@ function ConvertTo-OERPolicyBody {
     if ($PSBoundParameters.ContainsKey('RequestorSettings') -and
         $RequestorSettings.PSObject.TypeNames -notcontains 'Omnicit.EntraRBAC.RequestorSettings') {
         throw '-RequestorSettings must be an object from New-OERAccessPackageRequestorSettings.'
+    }
+
+    # BL-161a backstop: with -Existing, a read lacking expiration or requestApprovalSettings must not
+    # fall to the builder default. Set-OERAccessPackageAssignmentPolicy refuses first; this throws.
+    if ($Existing) {
+        if ($null -eq $Existing.expiration -and
+            -not ($PSBoundParameters.ContainsKey('DurationInDays') -or
+                $PSBoundParameters.ContainsKey('DurationInHours') -or
+                $PSBoundParameters.ContainsKey('ExpirationDateTime'))) {
+            throw 'The existing policy has no expiration and no -DurationInDays, -DurationInHours or -ExpirationDateTime was given; writing the default would replace it.'
+        }
+        if ($null -eq $Existing.requestApprovalSettings -and
+            -not ($PSBoundParameters.ContainsKey('ApprovalStage') -and
+                $PSBoundParameters.ContainsKey('RequireRequestorJustification') -and
+                $PSBoundParameters.ContainsKey('RequireApprovalForUpdate'))) {
+            throw 'The existing policy has no requestApprovalSettings and -ApprovalStage, -RequireRequestorJustification and -RequireApprovalForUpdate were not all given; writing the default would replace it.'
+        }
     }
 
     $Stages = @()

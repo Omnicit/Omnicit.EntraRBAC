@@ -3648,6 +3648,23 @@ lacks, and `Set-OERResourceGroup` sends an empty location when Azure Resource Ma
 empty body. Cost if R-14 is wrong: a direct caller whose live read fails is refused instead of warned,
 which is the safe direction.
 
+**The assignment policy residual, closed (Sprint 12 step 4, BL-161a).** The first of those two shapes
+is now refused. `Set-OERAccessPackageAssignmentPolicy` reads the policy it updates and sends the whole
+policy back; when that read succeeds but has no `expiration` (absent or null), or no
+`requestApprovalSettings`, there is nothing to carry forward and `ConvertTo-OERPolicyBody` used to
+write its builder default in its place (`noExpiration`, approval off, no stages, both flags false).
+The cmdlet now refuses with `AssignmentPolicyValueUnknown` (category InvalidData, target the policy
+id), after the read and before `ConvertTo-OERPolicyBody` and `ShouldProcess`, so it reads the same
+under `-WhatIf` and no PUT is sent. The expiration is unknown unless `-DurationInDays`,
+`-DurationInHours` or `-ExpirationDateTime` is bound; the approval block is unknown unless the call
+names every value it holds: the stages (`-ApprovalStage`), approval for add (`-RequireApproval` or
+`-ApprovalStage`), `-RequireRequestorJustification` and `-RequireApprovalForUpdate`. One record names
+both keys when both are missing. `ConvertTo-OERPolicyBody` throws the same two conditions when called
+with `-Existing`, as a backstop for a caller that skips the cmdlet's check; without `-Existing`
+(`New-OERAccessPackageAssignmentPolicy`) the defaults stay. The text of the CLAUDE.md bullet below is
+the frozen quote of Sprint 11 step 11; the bullet itself now carries this sentence in place of the
+"Known and NOT fixed" half for this cmdlet.
+
 #### CLAUDE.md text for a-set-cmdlets-own-read-decides-a-written-value
 
 What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
