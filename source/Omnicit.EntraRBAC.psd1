@@ -7,7 +7,7 @@
     CompanyName          = 'Omnicit'
     Copyright            = '(c) 2026 Omnicit AB'
     Description          = 'Manage Entra ID and Azure RBAC building blocks across tenants: Entra ID groups, PIM, Administrative Units, Entitlement Management, Access Reviews, Azure resources and RBAC, plus a JSON inventory and declarative apply engine.'
-    PowerShellVersion    = '7.2'
+    PowerShellVersion    = '7.6'
 
     RequiredModules = @(
         @{ ModuleName = 'AzAuth'; ModuleVersion = '2.11.0' }

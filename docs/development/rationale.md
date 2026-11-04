@@ -14470,7 +14470,7 @@ This section records the CLAUDE.md text on what the module is and which clone is
 
 What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
-`Omnicit.EntraRBAC` is a PowerShell 7.2+ (Core-only) module built and maintained by Omnicit AB. MIT
+`Omnicit.EntraRBAC` is a PowerShell 7.6+ (Core-only) module built and maintained by Omnicit AB. MIT
 licensed and **published on the public PowerShell Gallery for anyone to use**: 1.0.0 went out by
 hand on 2026-09-18, and everything since publishes itself -- see **Publishing** below.
 

@@ -7,7 +7,7 @@
 
 ![Omnicit.EntraRBAC](assets/icon.png)
 
-`Omnicit.EntraRBAC` is a PowerShell 7.2+ (Core-only) module for managing RBAC building blocks
+`Omnicit.EntraRBAC` is a PowerShell 7.6+ (Core-only) module for managing RBAC building blocks
 across many Entra ID and Azure tenants. It covers Entra ID groups and PIM, Administrative Units,
 Entitlement Management (Catalogs, Access Packages, Resources), Access Reviews, Azure resources and
 RBAC, Azure PIM, plus a JSON inventory and a declarative apply engine. It is built and maintained by
@@ -22,7 +22,7 @@ README summarises. `Get-OERRequiredScope` is authoritative for permissions -- se
 
 ## Requirements
 
-- **PowerShell 7.2 or later** (Core only; Windows PowerShell 5.x is not supported)
+- **PowerShell 7.6 or later** (Core only; Windows PowerShell 5.x is not supported)
 - **AzAuth** >= 2.11.0 (`Get-AzToken` -- token acquisition for all credential types)
 - **Microsoft.Graph.Authentication** >= 2.36.0 (`Connect-MgGraph`)
 

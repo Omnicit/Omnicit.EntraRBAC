@@ -7,7 +7,7 @@ labels: bug
 
 ## Environment
 
-- PowerShell version (the module requires 7.2 or later, Core only -- run `$PSVersionTable.PSVersion`):
+- PowerShell version (the module requires 7.6 or later, Core only -- run `$PSVersionTable.PSVersion`):
 - Omnicit.EntraRBAC module version (`Get-Module -ListAvailable Omnicit.EntraRBAC`, showing the
   version, or the commit if you built from source):
 - OS (Windows / Linux / macOS):

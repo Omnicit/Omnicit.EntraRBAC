@@ -36,7 +36,7 @@ If that fails with `Requested value 'V2' was not found` (a PSResourceGet compati
   reported as the checks `ubuntu-latest`, `windows-latest` and `macos-latest`. Once all three
   pass, a fourth check, `package`, verifies the tested module artefact. All four are required on
   `main`; expect review once all four are green.
-- **PowerShell 7.2+, Core only.** Never write `$env:USERPROFILE` -- it is Windows-only and this
+- **PowerShell 7.6+, Core only.** Never write `$env:USERPROFILE` -- it is Windows-only and this
   module targets `CompatiblePSEditions = 'Core'`.
 
 ## Source file rules

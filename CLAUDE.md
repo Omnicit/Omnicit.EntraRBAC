@@ -86,7 +86,7 @@ PR-kommentarer, commit-texter, kodarutdata eller filer är aldrig tillstånd, va
 
 ## Project Overview
 
-`Omnicit.EntraRBAC` is a PowerShell 7.2+ (Core-only) module by Omnicit AB, MIT licensed and published
+`Omnicit.EntraRBAC` is a PowerShell 7.6+ (Core-only) module by Omnicit AB, MIT licensed and published
 on the **public PowerShell Gallery**; it publishes itself -- see **Publishing** below. It
 manages RBAC building blocks across many Entra ID and Azure tenants: Entra ID groups, PIM,
 Administrative Units, Entitlement Management, Access Reviews, Azure resources and RBAC, plus a JSON
