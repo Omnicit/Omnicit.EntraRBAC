@@ -10,7 +10,10 @@ function Get-OERResource {
     (paged) -- which can be large. -Name and -ResourceType filter the results client-side
     (case-insensitive). With -IncludeRoleAssignments, each returned resource gains a RoleAssignments
     property holding the role assignments at that resource's scope (via Get-OERRoleAssignment -AtScope)
-    -- a light aggregator for the delegations on a single resource. -ResolveNames is forwarded to
+    -- a light aggregator for the delegations on a single resource. RoleAssignments is an empty
+    collection when the resource has none, and $null when the read failed: the resource is still
+    returned, followed by a non-terminating error record carrying the read's own error, and the next
+    resource is processed. Test for $null to tell unread from none. -ResolveNames is forwarded to
     Get-OERRoleAssignment so those assignments carry PrincipalDisplayName and RoleName; it requires
     -IncludeRoleAssignments. Output objects are tagged Omnicit.EntraRBAC.Resource and expose
     SubscriptionId, ResourceGroup, ResourceType, and ResourceName, so they pipe into the Azure RBAC and
@@ -38,7 +41,9 @@ function Get-OERResource {
     For each resource, attach a RoleAssignments property with the role assignments that apply at that
     resource's scope. This uses atScope() semantics, so the list includes assignments inherited from the
     resource group, subscription, and management group, not only assignments defined directly on the
-    resource.
+    resource. The property is an empty collection when there are none, and $null when the read failed
+    (a non-terminating error record carrying the read's own error follows the resource, which is still
+    returned); test for $null to tell unread from none.
 
     .PARAMETER ResolveNames
     Enrich the attached role assignments with PrincipalDisplayName and RoleName. Requires
@@ -123,8 +128,18 @@ function Get-OERResource {
             if ($IncludeRoleAssignments) {
                 $RaParams = @{ Scope = $Resource.ResourceId; AtScope = $true }
                 if ($ResolveNames) { $RaParams.ResolveNames = $true }
-                $Assignments = @(Get-OERRoleAssignment @RaParams)
+                $ReadFailure = $null
+                try {
+                    $Assignments = @(Get-OERRoleAssignment @RaParams -ErrorAction Stop)
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $ReadFailure = $PSItem
+                    $Assignments = $null
+                }
                 $Resource | Add-Member -NotePropertyName 'RoleAssignments' -NotePropertyValue $Assignments
+                $Resource
+                if ($null -ne $ReadFailure) { $PSCmdlet.WriteError($ReadFailure) }
+                continue
             }
             $Resource
         }

@@ -114,4 +114,109 @@ Describe 'Get-OERResource' {
         $null = Get-OERResource -Subscription 'Prod' -ErrorAction SilentlyContinue
         Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
     }
+
+    Context 'a failed role assignment read (BL-162a)' {
+        BeforeEach {
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest {
+                [PSCustomObject]@{ value = @(
+                    [PSCustomObject]@{ id = '/subscriptions/sub-guid/resourceGroups/rg-app/providers/Microsoft.Storage/storageAccounts/stg1'; name = 'stg1'; type = 'Microsoft.Storage/storageAccounts'; location = 'westeurope' }
+                    [PSCustomObject]@{ id = '/subscriptions/sub-guid/resourceGroups/rg-app/providers/Microsoft.Web/sites/web1'; name = 'web1'; type = 'Microsoft.Web/sites'; location = 'westeurope' }
+                ) }
+            }
+            # The first resource's read fails with the read's own id; the second one succeeds.
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERRoleAssignment {
+                if ($Scope -like '*storageAccounts/stg1') {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('ARM read refused'),
+                        'RoleAssignmentReadFailed',
+                        [System.Management.Automation.ErrorCategory]::ReadError,
+                        $null)
+                }
+                [PSCustomObject]@{ PrincipalId = 'p2' }
+            }
+        }
+
+        It 'sets RoleAssignments to null, writes one record with the read''s id and no warning' {
+            $Result = @(Get-OERResource -Subscription 'Prod' -ResourceGroup 'rg-app' -IncludeRoleAssignments `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err -WarningVariable Warn)
+            $Result.Count | Should -Be 2
+            $Result[0].Name | Should -Be 'stg1'
+            ($null -eq $Result[0].RoleAssignments) | Should -BeTrue -Because 'unread is null, never an empty array'
+            $Err = @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERResource' })
+            @($Err).Count | Should -Be 1
+            $Err[0].FullyQualifiedErrorId | Should -BeLike 'RoleAssignmentReadFailed*'
+            @($Warn).Count | Should -Be 0
+        }
+
+        It 'still processes the next resource after the first failed' {
+            $Result = @(Get-OERResource -Subscription 'Prod' -ResourceGroup 'rg-app' -IncludeRoleAssignments `
+                    -ErrorAction SilentlyContinue)
+            $Result[1].Name | Should -Be 'web1'
+            @($Result[1].RoleAssignments).Count | Should -Be 1
+            $Result[1].RoleAssignments[0].PrincipalId | Should -Be 'p2'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERRoleAssignment -Times 2 -Exactly
+        }
+
+        It 'writes the resource before the error record' {
+            $Stream = @(Get-OERResource -Subscription 'Prod' -ResourceGroup 'rg-app' -IncludeRoleAssignments -ErrorAction Continue 2>&1)
+            $Stream.Count | Should -Be 3
+            $Stream[0].Name | Should -Be 'stg1'
+            $Stream[1] | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+            $Stream[2].Name | Should -Be 'web1'
+        }
+
+        It 'scrubs the caught record once' {
+            Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
+            $null = Get-OERResource -Subscription 'Prod' -ResourceGroup 'rg-app' -IncludeRoleAssignments `
+                -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
+        }
+
+        It 'reaches a caller''s -ErrorVariable with no try around the call, and still returns the object' {
+            # No try and no catch around the call: the record is a written one, not a raised one, so it
+            # lands in the variable and the object comes back.
+            $Result = @(Get-OERResource -Subscription 'Prod' -ResourceGroup 'rg-app' -Name 'stg1' `
+                    -IncludeRoleAssignments -ErrorAction SilentlyContinue -ErrorVariable Err)
+            $Result.Count | Should -Be 1
+            $Result[0].Name | Should -Be 'stg1'
+            $Err = @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERResource' })
+            @($Err).Count | Should -Be 1
+            $Err[0].FullyQualifiedErrorId | Should -BeLike 'RoleAssignmentReadFailed*'
+        }
+
+        It 'treats a non-terminating error of the read as a failure too' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERRoleAssignment {
+                [CmdletBinding()]
+                param($Scope, $AtScope, $ResolveNames)
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('ARM read refused'), 'RoleAssignmentReadFailed',
+                        [System.Management.Automation.ErrorCategory]::ReadError, $null))
+            }
+            # The mock body runs under the GLOBAL preference, which Pester sets to Stop; pin it to Continue
+            # so the mock's record is non-terminating unless the cmdlet itself asks for -ErrorAction Stop.
+            $Saved = $global:ErrorActionPreference
+            $global:ErrorActionPreference = 'Continue'
+            try {
+                $Result = @(Get-OERResource -Subscription 'Prod' -ResourceGroup 'rg-app' -IncludeRoleAssignments `
+                        -ErrorAction SilentlyContinue -ErrorVariable Err)
+            } finally {
+                $global:ErrorActionPreference = $Saved
+            }
+            $Err = @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERResource' })
+            ($null -eq $Result[0].RoleAssignments) | Should -BeTrue
+            @($Err).Count | Should -Be 2 -Because 'one record per resource'
+            $Err[0].FullyQualifiedErrorId | Should -BeLike 'RoleAssignmentReadFailed*'
+        }
+
+        It 'gives an empty array, not null, when the read succeeds with no rows' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERRoleAssignment { }
+            $Result = @(Get-OERResource -Subscription 'Prod' -ResourceGroup 'rg-app' -IncludeRoleAssignments `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err)
+            $Result.Count | Should -Be 2
+            ($null -eq $Result[0].RoleAssignments) | Should -BeFalse
+            @($Result[0].RoleAssignments).Count | Should -Be 0
+            $Err = @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERResource' })
+            @($Err).Count | Should -Be 0
+        }
+    }
 }

@@ -9,8 +9,10 @@ function Get-OERAccessReviewInstance {
     instance directly; omit it to list all instances under the definition. The definition is resolved by
     name or GUID via Resolve-OERAccessReviewDefinitionId. When -IncludeStages is set, each instance's
     stages are attached as a Stages property. When -IncludeDecisions is set, each instance's decisions
-    are attached as a Decisions property. Errors during stage or decision retrieval are surfaced as
-    non-terminating warnings so that the instance is still returned.
+    are attached as a Decisions property. Each of those properties is an empty collection when the
+    instance has none, and $null when its read failed: the instance is still returned, followed by a
+    non-terminating error record carrying the read's own error (stages first, then decisions). Test the
+    property for $null to tell unread from none.
 
     The instance and decision reads request only the fields the converters use, via $select, so each
     response carries less data to transfer and deserialize -- which is what Microsoft Graph itself
@@ -33,11 +35,17 @@ function Get-OERAccessReviewInstance {
 
     .PARAMETER IncludeStages
     When set, each returned instance has a Stages property containing the instance's review stages as
-    tagged Omnicit.EntraRBAC.AccessReviewStage objects.
+    tagged Omnicit.EntraRBAC.AccessReviewStage objects. The property is an empty collection when the
+    instance has no stages, and $null when the read failed (a non-terminating error record carrying the
+    read's own error follows the instance, which is still returned); test for $null to tell unread from
+    none.
 
     .PARAMETER IncludeDecisions
     When set, each returned instance has a Decisions property containing the instance's decision items
-    as tagged Omnicit.EntraRBAC.AccessReviewDecision objects.
+    as tagged Omnicit.EntraRBAC.AccessReviewDecision objects. The property is an empty collection when
+    the instance has no decisions, and $null when the read failed (a non-terminating error record
+    carrying the read's own error follows the instance, which is still returned); test for $null to tell
+    unread from none.
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
@@ -222,6 +230,9 @@ function Get-OERAccessReviewInstance {
         foreach ($GraphInst in $Raw) {
             $Inst = ConvertTo-OERAccessReviewInstance -InputObject $GraphInst -DefinitionId $DefId
 
+            $StagesFailure = $null
+            $DecisionsFailure = $null
+
             if ($IncludeStages) {
                 try {
                     $Stages = @((Invoke-OERGraphRequest -Uri "$BaseUri/$($Inst.Id)/stages" -All).value)
@@ -230,8 +241,8 @@ function Get-OERAccessReviewInstance {
                     })
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
-                    $Stages = @()
-                    Write-Warning "Could not read stages for access review instance $($Inst.Id): $($PSItem.Exception.Message)"
+                    $StagesFailure = $PSItem
+                    $Stages = $null
                 }
                 $Inst | Add-Member -NotePropertyName Stages -NotePropertyValue $Stages -Force
             }
@@ -244,13 +255,16 @@ function Get-OERAccessReviewInstance {
                     })
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
-                    $Decisions = @()
-                    Write-Warning "Could not read decisions for access review instance $($Inst.Id): $($PSItem.Exception.Message)"
+                    $DecisionsFailure = $PSItem
+                    $Decisions = $null
                 }
                 $Inst | Add-Member -NotePropertyName Decisions -NotePropertyValue $Decisions -Force
             }
 
             $Inst
+            # The instance is written first, so a caller under -ErrorAction Stop still receives it.
+            if ($null -ne $StagesFailure) { $PSCmdlet.WriteError($StagesFailure) }
+            if ($null -ne $DecisionsFailure) { $PSCmdlet.WriteError($DecisionsFailure) }
         }
     }
 }

@@ -205,6 +205,7 @@ Describe 'Get-OERAccessReviewInstance' {
             $Result | Should -BeNullOrEmpty -Because 'a shell instance built from the marker would be a junk object, not an error'
             # The marker is an answer, not a raised error: exactly the one record this cmdlet writes, in the same
             # id, category, target and message as before, and no inner exception since none exists.
+            $Err = @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERAccessReviewInstance' })
             @($Err).Count | Should -Be 1 -Because ('no other record may stand beside it; got: ' +
                 (@($Err | ForEach-Object { [string]$_.FullyQualifiedErrorId }) -join ' | '))
             $Err[0].FullyQualifiedErrorId | Should -Be 'AccessReviewInstanceNotFound,Get-OERAccessReviewInstance'
@@ -248,6 +249,7 @@ Describe 'Get-OERAccessReviewInstance' {
             $Result = Get-OERAccessReviewInstance -Definition 'Review' -Instance 'i1' -ErrorAction SilentlyContinue -ErrorVariable Err
             @($Result).Count | Should -Be 1
             $Result.Id | Should -Be 'i1'
+            $Err = @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERAccessReviewInstance' })
             @($Err).Count | Should -Be 0
         }
 
@@ -364,6 +366,7 @@ Describe 'Get-OERAccessReviewInstance' {
                 -ErrorAction SilentlyContinue -ErrorVariable Err
             @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AccessReviewInstanceNotFound,Get-OERAccessReviewInstance' }).Count |
                 Should -Be 1
+            $Err = @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERAccessReviewInstance' })
             @($Err).Count | Should -Be 1
         }
     }
@@ -373,8 +376,8 @@ Describe 'Get-OERAccessReviewInstance' {
         #   :71  definition resolve   -- driven by 'surfaces a definition-resolution failure ...'
         #   :97  single-instance GET  -- driven by the 'missing instance (audit PR8)' Context above
         #   :150 list GET             -- driven by 'surfaces a list-path Graph failure ...'
-        #   :167 -IncludeStages       -- driven by 'warns and falls back to an empty stage list ...'
-        #   :181 -IncludeDecisions    -- driven by 'warns and falls back to an empty decision list ...'
+        #   :167 -IncludeStages       -- driven by 'sets Stages to null and publishes the stages record ...'
+        #   :181 -IncludeDecisions    -- driven by 'sets Decisions to null and publishes the decisions record ...'
         # Each asserts the scrub with Mock + Should -Invoke rather than a $global:Error reference
         # check, because two of the five re-emit the caught record unchanged and a reference proof is
         # inert against that shape.
@@ -422,7 +425,7 @@ Describe 'Get-OERAccessReviewInstance' {
             Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         }
 
-        It 'warns and falls back to an empty stage list when the stages sub-request fails' {
+        It 'sets Stages to null and publishes the stages record when the stages sub-request fails' {
             Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId { 'def-1' }
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
                 param($Uri)
@@ -430,21 +433,21 @@ Describe 'Get-OERAccessReviewInstance' {
                 return @{ id = 'i1'; status = 'InProgress' }
             }
             Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
-            # -WarningVariable is declared on the CALL, in this It's own scope. Declaring it inside a
-            # { } | Should -Not -Throw scriptblock would populate a child-scope copy and leave $Warnings
-            # $null here.
+            # -WarningVariable and -ErrorVariable are declared on the CALL, in this It's own scope.
             $Result = Get-OERAccessReviewInstance -Definition 'Q3' -Instance 'i1' -IncludeStages `
-                -WarningVariable Warnings
+                -ErrorAction SilentlyContinue -ErrorVariable Err -WarningVariable Warnings
             # The main read still succeeded, so the instance is emitted despite the failed sub-request.
             $Result | Should -Not -BeNullOrEmpty
             $Result.Id | Should -Be 'i1'
-            @($Warnings).Count | Should -Be 1
-            @($Warnings)[0] | Should -Match 'Could not read stages'
-            @($Result.Stages).Count | Should -Be 0
+            @($Warnings).Count | Should -Be 0
+            ($null -eq $Result.Stages) | Should -BeTrue -Because 'unread is null, never an empty array'
+            $Err = @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERAccessReviewInstance' })
+            @($Err).Count | Should -Be 1
+            $Err[0].Exception.Message | Should -Be 'Forbidden'
             Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         }
 
-        It 'warns and falls back to an empty decision list when the decisions sub-request fails' {
+        It 'sets Decisions to null and publishes the decisions record when the decisions sub-request fails' {
             Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId { 'def-1' }
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
                 param($Uri)
@@ -453,13 +456,98 @@ Describe 'Get-OERAccessReviewInstance' {
             }
             Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
             $Result = Get-OERAccessReviewInstance -Definition 'Q3' -Instance 'i1' -IncludeDecisions `
-                -WarningVariable Warnings
+                -ErrorAction SilentlyContinue -ErrorVariable Err -WarningVariable Warnings
             $Result | Should -Not -BeNullOrEmpty
             $Result.Id | Should -Be 'i1'
-            @($Warnings).Count | Should -Be 1
-            @($Warnings)[0] | Should -Match 'Could not read decisions'
-            @($Result.Decisions).Count | Should -Be 0
+            @($Warnings).Count | Should -Be 0
+            ($null -eq $Result.Decisions) | Should -BeTrue -Because 'unread is null, never an empty array'
+            $Err = @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERAccessReviewInstance' })
+            @($Err).Count | Should -Be 1
+            $Err[0].Exception.Message | Should -Be 'Forbidden'
             Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
+        }
+    }
+
+    Context 'a failed stage or decision read is null, not empty (BL-162a)' {
+        BeforeEach {
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId { 'def-1' }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+                param($Uri)
+                if ($Uri -like '*/stages') {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('stages refused'), 'StagesReadFailed',
+                        [System.Management.Automation.ErrorCategory]::ReadError, $null)
+                }
+                if ($Uri -like '*/decisions*') {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('decisions refused'), 'DecisionsReadFailed',
+                        [System.Management.Automation.ErrorCategory]::ReadError, $null)
+                }
+                @{ value = @(@{ id = 'i1'; status = 'InProgress' }) }
+            }
+        }
+
+        It 'gives two records, stages first, both after the instance, and no warning' {
+            $Stream = @(Get-OERAccessReviewInstance -Definition 'Q3' -IncludeStages -IncludeDecisions `
+                    -ErrorAction Continue -WarningVariable Warn 2>&1)
+            $Stream.Count | Should -Be 3
+            $Stream[0].Id | Should -Be 'i1'
+            ($null -eq $Stream[0].Stages) | Should -BeTrue
+            ($null -eq $Stream[0].Decisions) | Should -BeTrue
+            $Stream[1] | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+            $Stream[1].FullyQualifiedErrorId | Should -BeLike 'StagesReadFailed*'
+            $Stream[2] | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+            $Stream[2].FullyQualifiedErrorId | Should -BeLike 'DecisionsReadFailed*'
+            @($Warn).Count | Should -Be 0
+        }
+
+        It 'gives only the decisions record when only the decisions read fails' {
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+                param($Uri)
+                if ($Uri -like '*/decisions*') {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('decisions refused'), 'DecisionsReadFailed',
+                        [System.Management.Automation.ErrorCategory]::ReadError, $null)
+                }
+                if ($Uri -like '*/stages') { return @{ value = @(@{ id = 's1'; status = 'InProgress' }) } }
+                @{ value = @(@{ id = 'i1'; status = 'InProgress' }) }
+            }
+            $Result = @(Get-OERAccessReviewInstance -Definition 'Q3' -IncludeStages -IncludeDecisions `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err)
+            $Result.Count | Should -Be 1
+            @($Result[0].Stages).Count | Should -Be 1
+            ($null -eq $Result[0].Decisions) | Should -BeTrue
+            $Err = @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERAccessReviewInstance' })
+            @($Err).Count | Should -Be 1
+            $Err[0].FullyQualifiedErrorId | Should -BeLike 'DecisionsReadFailed*'
+        }
+
+        It 'gives empty collections, not null, when both reads succeed with no rows' {
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+                param($Uri)
+                if ($Uri -like '*/stages' -or $Uri -like '*/decisions*') { return @{ value = @() } }
+                @{ value = @(@{ id = 'i1'; status = 'InProgress' }) }
+            }
+            $Result = @(Get-OERAccessReviewInstance -Definition 'Q3' -IncludeStages -IncludeDecisions `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err)
+            ($null -eq $Result[0].Stages) | Should -BeFalse
+            ($null -eq $Result[0].Decisions) | Should -BeFalse
+            @($Result[0].Stages).Count | Should -Be 0
+            @($Result[0].Decisions).Count | Should -Be 0
+            $Err = @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERAccessReviewInstance' })
+            @($Err).Count | Should -Be 0
+        }
+
+        It 'reaches a caller''s -ErrorVariable with no try around the call, and still returns the instance' {
+            # No try and no catch around the call: the records are written ones, not raised ones.
+            $Result = @(Get-OERAccessReviewInstance -Definition 'Q3' -IncludeStages -IncludeDecisions `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err)
+            $Result.Count | Should -Be 1
+            $Result[0].Id | Should -Be 'i1'
+            $Err = @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERAccessReviewInstance' })
+            @($Err).Count | Should -Be 2
+            $Err[0].FullyQualifiedErrorId | Should -BeLike 'StagesReadFailed*'
+            $Err[1].FullyQualifiedErrorId | Should -BeLike 'DecisionsReadFailed*'
         }
     }
 
