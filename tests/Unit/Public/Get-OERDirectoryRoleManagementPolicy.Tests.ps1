@@ -273,6 +273,27 @@ Describe 'Get-OERDirectoryRoleManagementPolicy' {
             $Seen[0].PolicyId | Should -Be 'pol1'
         }
 
+        It 'emits nothing when converting a later policy faults, so no policy precedes the failure' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERDirectoryRolePolicyAssignment {
+                @(
+                    [PSCustomObject]@{ policyId = 'pol1'; roleDefinitionId = 'aaaaaaaa-0000-0000-0000-000000000001'; policy = [PSCustomObject]@{ rules = @() } }
+                    [PSCustomObject]@{ policyId = 'pol2'; roleDefinitionId = 'aaaaaaaa-0000-0000-0000-000000000002'; policy = [PSCustomObject]@{ rules = @() } }
+                )
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { @{ value = @() } }
+            Mock -ModuleName Omnicit.EntraRBAC ConvertTo-OERRoleManagementPolicy {
+                if ($PolicyId -eq 'pol2') { throw [System.InvalidOperationException]::new('fixture converter fault') }
+                [PSCustomObject]@{ PolicyId = $PolicyId; RoleName = $RoleName }
+            }
+            $Seen = [System.Collections.Generic.List[object]]::new()
+            try {
+                Get-OERDirectoryRoleManagementPolicy -All -ErrorAction Stop | ForEach-Object { $Seen.Add($PSItem) }
+            } catch {
+                $null = $PSItem
+            }
+            $Seen.Count | Should -Be 0
+        }
+
         It 'keeps an empty RoleName for a role id missing from a names read that succeeded' {
             Mock -ModuleName Omnicit.EntraRBAC Get-OERDirectoryRolePolicyAssignment {
                 @([PSCustomObject]@{ policyId = 'pol1'; roleDefinitionId = 'aaaaaaaa-0000-0000-0000-000000000009'; policy = [PSCustomObject]@{ rules = @() } })

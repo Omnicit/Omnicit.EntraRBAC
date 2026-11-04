@@ -8648,6 +8648,19 @@ Describe 'Get-OERInventory' {
             @(@($DirErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
         }
 
+        It 'reports the section unread, keeping no partial list, when converting a later policy faults' {
+            Mock -ModuleName $script:moduleName ConvertTo-OERRoleManagementPolicy {
+                if ($PolicyId -eq 'policy-b') { throw [System.InvalidOperationException]::new('fixture converter fault') }
+                [PSCustomObject]@{ PolicyId = $PolicyId; RoleName = $RoleName; RoleDefinitionId = $RoleDefinitionId }
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } }
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies -AllDirectoryRolePolicies -ErrorAction SilentlyContinue -ErrorVariable DirErr
+            @($Inv.directoryRoleManagementPolicies).Count | Should -Be 0
+            $Partial = @(@($DirErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1
+            @(([string]$Partial[0].TargetObject) -split ', ') | Should -Be @('directoryRoleManagementPolicies')
+        }
+
         It 'reports the section unread as before when the assignment read fails' {
             Mock -ModuleName $script:moduleName Get-OERDirectoryRolePolicyAssignment { throw [System.InvalidOperationException]::new('Forbidden: fixture refusal of the assignments.') }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { }

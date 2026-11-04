@@ -176,6 +176,10 @@ function Get-OERDirectoryRoleManagementPolicy {
                 $NamesReadError = $PSItem
             }
 
+            # Every policy is converted BEFORE any is emitted: a fault converting policy N happens
+            # with nothing written yet, which Get-OERInventory relies on to read a failure after a
+            # collected policy as the names read.
+            $PolicyList = [System.Collections.Generic.List[object]]::new()
             foreach ($Assignment in $Assignments) {
                 $AssignmentRoleDefinitionId = [string]$Assignment.roleDefinitionId
                 $PolicyOut = ConvertTo-OERRoleManagementPolicy -Rules @($Assignment.policy.rules) `
@@ -184,8 +188,9 @@ function Get-OERDirectoryRoleManagementPolicy {
                     -ApproverShape Graph
                 # A failed names read leaves RoleName unknown ($null), never an empty string.
                 if ($NamesReadError) { $PolicyOut.RoleName = $null }
-                $PolicyOut
+                $PolicyList.Add($PolicyOut)
             }
+            foreach ($PolicyOut in $PolicyList) { $PolicyOut }
             # The policies come first, the names read's own record after them, so a caller under
             # -ErrorAction Stop still receives every policy before the error stops it.
             if ($NamesReadError) { $PSCmdlet.WriteError($NamesReadError) }

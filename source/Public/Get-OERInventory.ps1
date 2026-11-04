@@ -2618,9 +2618,12 @@ function Get-OERInventory {
                 Remove-OERErrorRecord -Record $PSItem
                 if ($DirectoryPolicyList.Count -gt 0) {
                     # The reader writes nothing before its authoritative assignment read has
-                    # succeeded, and then writes every policy before its only later record, the
-                    # failed role definition names read. A failure after at least one policy was
-                    # collected is therefore that names read: the policies are complete and
+                    # succeeded, converts EVERY policy before it emits any, and then writes every
+                    # policy before its only later record, the failed role definition names read.
+                    # A failure after at least one policy was collected is therefore that names
+                    # read (by construction, not because the converter happens not to throw). An
+                    # EMPTY assignment list together with a names failure collects zero policies
+                    # and is named unread, conservatively. The policies are complete and
                     # ConvertTo-OERInventoryRoleManagementPolicy names each role by its
                     # RoleDefinitionId when RoleName is null, so the section is kept, not unread.
                     Write-Verbose "Get-OERInventory: Could not read the Microsoft Entra directory role names; the roles are named by id: $($PSItem.Exception.Message)"
