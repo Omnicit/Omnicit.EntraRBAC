@@ -364,8 +364,9 @@ Two limits. AzAuth holds one interactive credential, the one the last interactiv
 renewal is silent only for the resource whose interactive request came last, and `-IncludeARM`
 sign-ins request Azure Resource Manager last, so a session that uses both resources alternates that
 credential between the two and still prompts for each renewal; the silent renewal helps a session
-that uses only Microsoft Graph (every sign-in requests Graph first). And this is read from the sources of AzAuth 2.11.0 and Azure.Identity
-1.21.0, not measured against a tenant: if the refresh inside the stored credential fails because
+that uses only Microsoft Graph (every sign-in requests Graph first). This is read from the sources of AzAuth 2.11.0 and Azure.Identity
+1.21.0 and was measured on 2026-11-04 for a Microsoft Graph renewal in the global cloud, which
+answered without a browser (the Azure Resource Manager renewal is not measured yet). If the refresh inside the stored credential fails because
 it needs the user, Azure.Identity opens the browser from that non-interactive request, with no
 timeout the module can bound, and the module then signs in interactively, which can be a second
 browser. So a long interactive run still needs someone at the keyboard, though it may be asked to

@@ -7063,7 +7063,10 @@ opened the browser every time: Ruling R1 of [How a long run renews its token](#h
 renewal that asks nothing of the operator needs a new design (BL-115), for example a change in AzAuth
 itself (PalmEmanuel/AzAuth issue 233)". AzAuth 2.11.0 carries such a change, and this step uses it.
 
-**M1: what AzAuth 2.11.0 does (READ in its source, 2026-10-21; not measured against a tenant).** Pull
+**M1: what AzAuth 2.11.0 does (READ in its source, 2026-10-21; MEASURED for Microsoft Graph on
+2026-11-04, check C.1 of `fix-sign-in-and-profile-findings-checklist.md`: a renewal with the token
+two minutes from expiry answered silently, as the same account; the Azure Resource Manager renewal
+and a refresh token that no longer works are not measured).** Pull
 request 236 (merge `3caedf1`, release commit `aed8163`):
 
 - `TokenManager.NonInteractive.cs:71` inserts the stored credential FIRST in the chain when it is an
