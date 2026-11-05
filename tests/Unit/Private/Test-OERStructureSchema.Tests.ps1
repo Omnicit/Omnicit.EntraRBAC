@@ -402,6 +402,51 @@ Describe 'Test-OERStructureSchema' {
         }
     }
 
+    It 'accepts an accessReview declaring group, with no unknown-key warning (Sprint 12 step 6)' {
+        InModuleScope $script:moduleName {
+            $Doc = '{ "version": "1.0", "accessReviews": [ { "displayName": "r", "group": "g", "reviewers": [ "self" ] } ] }' | ConvertFrom-Json
+            $Result = Test-OERStructureSchema -Document $Doc
+            @($Result.Errors).Count | Should -Be 0
+            @($Result.Warnings | Where-Object { $_.Message -like '*Unknown key*' }).Count | Should -Be 0
+        }
+    }
+
+    It 'refuses group beside <Other> with exactly one Error at accessReviews[0].group' -ForEach @(
+        @{ Other = 'accessPackage'; Extra = '"accessPackage": "ap"' }
+        @{ Other = 'assignmentPolicy'; Extra = '"assignmentPolicy": "p"' }
+        @{ Other = 'accessPackage and assignmentPolicy'; Extra = '"accessPackage": "ap", "assignmentPolicy": "p"' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Extra = $Extra } {
+            $Doc = ('{ "version": "1.0", "accessReviews": [ { "displayName": "r", "group": "g", ' + $Extra + ', "reviewers": [ "self" ] } ] }') | ConvertFrom-Json
+            $Errors = @((Test-OERStructureSchema -Document $Doc).Errors)
+            $Errors.Count | Should -Be 1
+            $Errors[0].Path | Should -BeExactly 'accessReviews[0].group'
+            $Errors[0].Message | Should -BeExactly "'group' at accessReviews[0] cannot be combined with 'accessPackage' or 'assignmentPolicy': a review reviews either the members of a group or the assignments of an access package. Declare one form."
+        }
+    }
+
+    It 'refuses a group of <Case> with the string Error' -ForEach @(
+        @{ Case = 'an empty string'; Value = '""' }
+        @{ Case = 'white space'; Value = '"   "' }
+        @{ Case = 'a number'; Value = '5' }
+        @{ Case = 'a boolean'; Value = 'true' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Value = $Value } {
+            $Doc = ('{ "version": "1.0", "accessReviews": [ { "displayName": "r", "group": ' + $Value + ', "reviewers": [ "self" ] } ] }') | ConvertFrom-Json
+            $Errors = @((Test-OERStructureSchema -Document $Doc).Errors)
+            $Errors.Count | Should -Be 1
+            $Errors[0].Path | Should -BeExactly 'accessReviews[0].group'
+            $Errors[0].Message | Should -BeExactly "'group' at accessReviews[0] must be a group display name or object id."
+        }
+    }
+
+    It 'reads an explicit null group as undeclared and keeps the two required Errors' {
+        InModuleScope $script:moduleName {
+            $Doc = '{ "version": "1.0", "accessReviews": [ { "displayName": "r", "group": null, "reviewers": [ "self" ] } ] }' | ConvertFrom-Json
+            @((Test-OERStructureSchema -Document $Doc).Errors).Path | Should -Be @('accessReviews[0].accessPackage', 'accessReviews[0].assignmentPolicy')
+        }
+    }
+
     It 'flags a role assignment missing scope/role/principal' {
         InModuleScope $script:moduleName {
             $Doc = '{ "version": "1.0", "roleAssignments": [ { "role": "Reader" } ] }' | ConvertFrom-Json

@@ -132,7 +132,11 @@ function Test-OERStructureSchema {
     catalogResourceType, approverInfoVisibility, accessReviewRecurrence, accessReviewDefaultDecision,
     principalType, directoryRoleAssignmentType, principalStatus) is accepted in any casing, but a non-canonically cased
     value is reported as a Warning naming the canonical spelling Get-OERStructureSchemaJson declares,
-    because draft-07 matches "enum" case-sensitively. An accessReviews item validates
+    because draft-07 matches "enum" case-sensitively. An accessReviews item declares either 'group'
+    (the group whose members the review reviews: a display name or object id) or 'accessPackage' and
+    'assignmentPolicy'. A declared 'group' replaces the two required findings; 'group' beside either
+    of the other two is an Error at accessReviews[i].group, and a 'group' that is not a non-empty
+    string is an Error there too (an explicit null is undeclared). An accessReviews item validates
     reviewers/fallbackReviewers as string arrays,
     descriptionForAdmins/descriptionForReviewers as strings, the five review settings booleans
     (mailNotification, reminderNotification, requireJustification, recommendationsEnabled,
@@ -1743,12 +1747,24 @@ function Test-OERStructureSchema {
                 $ARPath = "accessReviews[$I]"
                 $ARItem = if (Test-HasProp -Node $AR -Name 'displayName') { $AR.displayName } else { "accessReviews[$I]" }
 
-                foreach ($Req in @('displayName', 'accessPackage', 'assignmentPolicy')) {
+                # A review reviews either the members of a group ('group') or the assignments of an access
+                # package ('accessPackage' and 'assignmentPolicy'); the two forms are never mixed.
+                $ArDeclaresGroup = Test-HasProp -Node $AR -Name 'group'
+                $ArDeclaresPackageForm = (Test-HasProp -Node $AR -Name 'accessPackage') -or (Test-HasProp -Node $AR -Name 'assignmentPolicy')
+                $ArRequired = if ($ArDeclaresGroup) { @('displayName') } else { @('displayName', 'accessPackage', 'assignmentPolicy') }
+                foreach ($Req in $ArRequired) {
                     if (-not (Test-HasProp -Node $AR -Name $Req)) {
                         Add-Finding -Section 'accessReviews' -Item $ARItem `
                             -Path "$ARPath.$Req" `
                             -Message "'$Req' is required at $ARPath."
                     }
+                }
+                if ($ArDeclaresGroup -and $ArDeclaresPackageForm) {
+                    Add-Finding -Section 'accessReviews' -Item $ARItem -Path "$ARPath.group" `
+                        -Message "'group' at $ARPath cannot be combined with 'accessPackage' or 'assignmentPolicy': a review reviews either the members of a group or the assignments of an access package. Declare one form."
+                } elseif ($ArDeclaresGroup -and (($AR.group -isnot [string]) -or [string]::IsNullOrWhiteSpace($AR.group))) {
+                    Add-Finding -Section 'accessReviews' -Item $ARItem -Path "$ARPath.group" `
+                        -Message "'group' at $ARPath must be a group display name or object id."
                 }
                 if (Test-HasProp -Node $AR -Name 'displayName') {
                     Add-DuplicateEntryFinding -Seen $ARSeen -Key ([string]$AR.displayName) -Index $I `

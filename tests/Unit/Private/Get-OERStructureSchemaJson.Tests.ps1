@@ -797,7 +797,7 @@ Describe 'Get-OERStructureSchemaJson round-trip precedence documentation' {
     It 'documents that an existing access review is updated only when it reviews the declared package and policy (BL-127)' {
         InModuleScope Omnicit.EntraRBAC {
             (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.accessReviews.description |
-                Should -Match ([regex]::Escape('an existing review is updated in place only when it reviews the declared accessPackage and assignmentPolicy; otherwise the entry fails and nothing is written.'))
+                Should -Match ([regex]::Escape('an existing review is updated in place only when it reviews the declared accessPackage and assignmentPolicy, or the declared group; otherwise the entry fails and nothing is written.'))
         }
     }
 
@@ -1339,11 +1339,36 @@ Describe 'Get-OERStructureSchemaJson renames of administrative units, catalogs a
             $Prev.minLength | Should -Be 1
             $Prev.description | Should -BeExactly 'The access review''s current display name or object id, when displayName declares a new one. The name is looked up tenant-wide, as displayName is. When only this value matches a live access review, that review is renamed in place; when displayName also matches a different review, the entry fails and nothing is merged; when neither matches, the entry fails and nothing is created. The review found under either name must review the declared accessPackage and assignmentPolicy, or the entry fails and nothing is written. A name lookup can follow a rename with a delay: keep this value until the new name resolves, then remove it. Not exported by Get-OERInventory.'
             # The section description keeps what it said about the update and the match key, and adds the rename.
-            $Reviews.description | Should -Match ([regex]::Escape('displayName is the match key: an existing review is updated in place only when it reviews the declared accessPackage and assignmentPolicy; otherwise the entry fails and nothing is written.'))
+            $Reviews.description | Should -Match ([regex]::Escape('displayName is the match key: an existing review is updated in place only when it reviews the declared accessPackage and assignmentPolicy, or the declared group; otherwise the entry fails and nothing is written.'))
             $Reviews.description | Should -Match ([regex]::Escape('To rename a review, declare its new name as displayName and its current name (or object id) as previousDisplayName: the name is looked up tenant-wide, as displayName is, and the review found under either name must review the declared accessPackage and assignmentPolicy, or the entry fails and nothing is written. When the same document renames the access package or the policy, name it by its new name (or object id) here.'))
             # BL-147 (Sprint 11 step 6): a package the same document declares is reached through its entry.
             $Reviews.description | Should -Match ([regex]::Escape('An accessPackage named by the displayName of an accessPackages entry of the same document is the package that entry found in its catalog or created there, never one of that name in another catalog'))
             $Reviews.description | Should -Match ([regex]::Escape('When two or more accessPackages entries declare that name, as displayName or previousDisplayName, the offline validator refuses the document: name the access package by its object id.'))
+        }
+    }
+
+    It 'declares group on the accessReviews item and requires exactly one of the two forms (Sprint 12 step 6)' {
+        InModuleScope $script:moduleName {
+            $Items = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.accessReviews.items
+            @($Items.required) | Should -Be @('displayName')
+            $Items.properties.group.type | Should -BeExactly 'string'
+            $Items.properties.group.minLength | Should -Be 1
+            @($Items.oneOf).Count | Should -Be 2
+        }
+    }
+
+    It 'validates a group review and rejects a mixed or an empty form' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson
+            $Wrap = { param($Item) '{ "version": "1.0", "accessReviews": [ ' + $Item + ' ] }' }
+            Test-Json -Json (& $Wrap '{ "displayName": "R", "group": "G" }') -Schema $Schema | Should -BeTrue
+            Test-Json -Json (& $Wrap '{ "displayName": "R", "accessPackage": "AP", "assignmentPolicy": "P" }') -Schema $Schema | Should -BeTrue
+            Test-Json -Json (& $Wrap '{ "displayName": "R", "group": "G", "accessPackage": "AP" }') -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+            Test-Json -Json (& $Wrap '{ "displayName": "R", "group": "G", "assignmentPolicy": "P" }') -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+            Test-Json -Json (& $Wrap '{ "displayName": "R", "group": "G", "accessPackage": "AP", "assignmentPolicy": "P" }') -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+            Test-Json -Json (& $Wrap '{ "displayName": "R" }') -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+            Test-Json -Json (& $Wrap '{ "displayName": "R", "accessPackage": "AP" }') -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+            Test-Json -Json (& $Wrap '{ "displayName": "R", "group": "" }') -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
         }
     }
 
