@@ -1040,7 +1040,8 @@ live approval stage that names nobody. `-Prune` never removes a group's last rem
 last remaining user owner, which Microsoft Graph refuses to remove even while a service principal is
 an owner (measured); the row is `Skipped`. An owner the same run adds counts as one standing, and as
 a user owner when the document names it by user principal name, so replacing a user owner with one
-named that way completes in one run. An owner that PIM for Groups holds, or makes eligible, does not\ncount as standing. A section set to `null` is not declared and gives no row. In a
+named that way completes in one run. An owner that PIM for Groups holds, or makes eligible, does not
+count as standing. A section set to `null` is not declared and gives no row. In a
 runspace with no host of its own, such as a thread job, a run without `-WhatIf` or `-Confirm:$false`
 (or a `$ConfirmPreference` of `None`) is refused with `ConfirmationUnavailable` before it signs in,
 also one that would change nothing; run it with `-Confirm:$false` or `-WhatIf`. In another host that
