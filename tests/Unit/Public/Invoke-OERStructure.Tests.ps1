@@ -474,8 +474,32 @@ Describe 'Invoke-OERStructure omitted-collection prune warning' {
         $MarkerAt.Count | Should -Be 3
         $Messages[$MarkerAt[0]] | Should -BeExactly 'MARKER: Sync-OERStructureAdministrativeUnit ran (EnsureOnly=True)'
         $EngineAt[0] | Should -BeLessThan $MarkerAt[0]
-        # BL-143a: the validator's own warnings (g1 and AU-1 omit collections) stand first; nothing else precedes the engine's.
-        @($Messages[0..($EngineAt[0] - 1)] | Where-Object { $_ -notlike 'Invoke-OERStructure: structure document warning*' }).Count | Should -Be 0
+        # BL-143a: g1 omits members, but the validator's omitted-key finding (Rule 13) is not written (the
+        # engine's own -Prune warning names it), so the engine's warning is the very first one.
+        $EngineAt[0] | Should -Be 0
+        @($Messages | Where-Object { $_ -like 'Invoke-OERStructure: structure document warning*' }).Count | Should -Be 0
+    }
+
+    It 'writes no validator omitted-key warning with or without -Prune, and the one -Prune warning only with it' {
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1" } ] }'
+        $Plain = @(Get-WarningMessage (Invoke-OERStructure -Json $Json -WhatIf 3>&1))
+        @($Plain | Where-Object { $_ -like '*structure document warning*' }).Count | Should -Be 0
+        @($Plain | Where-Object { $_ -like 'Invoke-OERStructure: -Prune is set*' }).Count | Should -Be 0
+        $Pruned = @(Get-WarningMessage (Invoke-OERStructure -Json $Json -Prune -WhatIf 3>&1))
+        @($Pruned | Where-Object { $_ -like '*structure document warning*' }).Count | Should -Be 0
+        @($Pruned | Where-Object { $_ -like 'Invoke-OERStructure: -Prune is set*' }).Count | Should -Be 1
+    }
+
+    It 'still writes another validator warning once for a document that also omits a reconciled key' {
+        # g1 omits members (Rule 13, not written); P1 names a catalog the document does not declare (a Warning that is written).
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1" } ], ' +
+            '"accessPackages": [ { "displayName": "P1", "catalog": "C1", "resourceRoles": [] } ] }'
+        $Messages = @(Get-WarningMessage (Invoke-OERStructure -Json $Json -Prune -WhatIf 3>&1))
+        $Validator = @($Messages | Where-Object { $_ -like 'Invoke-OERStructure: structure document warning*' })
+        $Validator.Count | Should -BeGreaterThan 0
+        @($Validator | Where-Object { $_ -like '*is omitted at*' }).Count | Should -Be 0
+        @($Validator | Where-Object { $_ -like '*C1*' }).Count | Should -Be 1
+        @($Messages | Where-Object { $_ -like 'Invoke-OERStructure: -Prune is set*' }).Count | Should -Be 1
     }
 
     It 'names each omitted key as section, quoted item and collection, and counts them' {
@@ -2785,8 +2809,11 @@ Describe 'Invoke-OERStructure refuses a document from another tenant (BL-88, A14
             @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'DocumentTenantMismatch*' }).Count | Should -Be 1
             @($Errs).Count | Should -Be 1
             @($W | Where-Object { "$_" -like 'Invoke-OERStructure: -Prune is set*' }).Count | Should -Be 0
-            # BL-143a: the validator's warnings are written before the tenant comparison; no other warning is.
-            @($W | Where-Object { "$_" -notlike 'Invoke-OERStructure: structure document warning*' }).Count | Should -Be 0
+            # BL-143a: the validator's warnings are written before the tenant comparison, but not the
+            # omitted-key ones (the engine's -Prune warning names them); g1's unit placement is the one left.
+            @($W).Count | Should -Be 1
+            "$($W[0])" | Should -BeLike 'Invoke-OERStructure: structure document warning at groups[[]0[]].administrativeUnit:*'
+            @($W | Where-Object { "$_" -like '*is omitted at*' }).Count | Should -Be 0
             Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureAdministrativeUnit -Times 0
             Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
         }

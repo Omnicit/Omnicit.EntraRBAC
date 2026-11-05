@@ -7,7 +7,8 @@ function Invoke-OERStructure {
     The top-level apply engine for Phase 5 JSON Orchestration. Reads a structure document from
     -Path or -Json, validates it offline with Test-OERStructureSchema (aborting before any write
     if invalid; the validator's warnings are written, one Write-Warning each, before anything is
-    confirmed, signed in to, read or written), authenticates, then iterates every declared
+    confirmed, signed in to, read or written -- except the omitted-key ones, which the engine's own
+    -Prune warning covers), authenticates, then iterates every declared
     section in dependency order --
     Groups, AdministrativeUnits, Catalogs, AccessPackages, AccessReviews,
     DirectoryRoleManagementPolicies, DirectoryRoleAssignments, RoleAssignments, RoleManagementPolicies
@@ -133,7 +134,7 @@ function Invoke-OERStructure {
     tenant, where a package of that name in another catalog would be found. Until the entry has that
     id, the review is refused, Failed with nothing created, read or written for it, under -WhatIf too:
     when the entry stops first (its catalog refused, a failed or ambiguous lookup, a failed create, or
-    a create that returned another catalog's package), when the -WhatIf plan would create the package
+    a create refused with AccessPackageInAnotherCatalog), when the -WhatIf plan would create the package
     or a declined confirmation skipped its create (the plan then reports the review Failed although a
     real run creates the package first and then the review), and when -Include leaves out the
     AccessPackages section, whether or not the entry renames. Such a refusal writes an error record
@@ -549,7 +550,8 @@ function Invoke-OERStructure {
     administrative unit whose conversion to dynamic is not applied in this run (-WhatIf, a declined
     prompt, a failed update, or no membershipRule available), still has its omitted members pruned,
     and this warning does not list them. Test-OERStructure reports the same omissions as Warning
-    findings.
+    findings; Invoke-OERStructure writes this -Prune warning for them in place of the validator's, so
+    those findings are not written twice.
 
     .PARAMETER Include
     Restricts the sections the engine dispatches. Defaults to all nine sections. Pass a subset to limit
@@ -562,9 +564,9 @@ function Invoke-OERStructure {
     a renamed object above). Leaving out AccessPackages matters for every access review besides
     (BL-147): a review that names, by its display name, an access package the document declares --
     renamed or not -- is reported Failed with a StructureReferenceUnidentified error record, and
-    nothing is read or written for it; under -ErrorAction Stop the call stops at the refusal. A review that names the package by its object id, or names one the
-    document does not declare, is resolved as before (see An access review and the access package the
-    same document declares, above).
+    nothing is read or written for it; under -ErrorAction Stop the call stops at the refusal. A review
+    that names the package by its object id, or names one the document does not declare, is resolved as
+    before (see An access review and the access package the same document declares, above).
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth. Without it
@@ -657,7 +659,16 @@ function Invoke-OERStructure {
         # The validator's warnings stand here, in its order, before the confirmation check, the sign-in
         # and every read or write, so a -WhatIf plan, a -Confirm prompt and a -WarningAction Stop
         # caller all meet them first (BL-143a). A document with errors is refused above without them.
+        # Rule 13 (an omitted key that -Prune still reconciles) is the one exception: the engine writes
+        # its own -Prune warning for exactly those keys, filtered by -Prune and -Include, so the
+        # validator's finding would only duplicate it. Such a finding is told by its path AND its text.
+        $OmittedFindingStart = @{}
+        foreach ($OmittedCollection in @(Get-OEROmittedPruneCollection -Document $Document)) {
+            $OmittedFindingStart["$($OmittedCollection.Path).$($OmittedCollection.Collection)"] = "'$($OmittedCollection.Collection)' is omitted at "
+        }
         foreach ($Finding in @($Validation.Errors | Where-Object { $_.Severity -eq 'Warning' })) {
+            if ($OmittedFindingStart.ContainsKey([string]$Finding.Path) -and
+                ([string]$Finding.Message).StartsWith($OmittedFindingStart[[string]$Finding.Path], [System.StringComparison]::Ordinal)) { continue }
             Write-Warning "Invoke-OERStructure: structure document warning at $($Finding.Path): $($Finding.Message)"
         }
 

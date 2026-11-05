@@ -3648,8 +3648,9 @@ lacks, and `Set-OERResourceGroup` sends an empty location when Azure Resource Ma
 empty body. Cost if R-14 is wrong: a direct caller whose live read fails is refused instead of warned,
 which is the safe direction.
 
-**The assignment policy residual, closed (Sprint 12 step 4, BL-161a).** The first of those two shapes
-is now refused. `Set-OERAccessPackageAssignmentPolicy` reads the policy it updates and sends the whole
+**The assignment policy residual, closed for two keys (Sprint 12 step 4, BL-161a).** The first of those
+two shapes is now refused for `expiration` and `requestApprovalSettings`, and stays open for
+`requestorSettings` and `notificationSettings` (see the end of this subsection). `Set-OERAccessPackageAssignmentPolicy` reads the policy it updates and sends the whole
 policy back; when that read succeeds but has no `expiration` (absent or null), or no
 `requestApprovalSettings`, there is nothing to carry forward and `ConvertTo-OERPolicyBody` used to
 write its builder default in its place (`noExpiration`, approval off, no stages, both flags false).
@@ -3657,13 +3658,15 @@ The cmdlet now refuses with `AssignmentPolicyValueUnknown` (category InvalidData
 id), after the read and before `ConvertTo-OERPolicyBody` and `ShouldProcess`, so it reads the same
 under `-WhatIf` and no PUT is sent. The expiration is unknown unless `-DurationInDays`,
 `-DurationInHours` or `-ExpirationDateTime` is bound; the approval block is unknown unless the call
-names every value it holds: the stages (`-ApprovalStage`), approval for add (`-RequireApproval` or
-`-ApprovalStage`), `-RequireRequestorJustification` and `-RequireApprovalForUpdate`. One record names
+names every value it holds: the stages and approval for add (`-ApprovalStage`, an empty list for no
+stages), `-RequireRequestorJustification` and `-RequireApprovalForUpdate`. One record names
 both keys when both are missing. `ConvertTo-OERPolicyBody` throws the same two conditions when called
 with `-Existing`, as a backstop for a caller that skips the cmdlet's check; without `-Existing`
 (`New-OERAccessPackageAssignmentPolicy`) the defaults stay. The text of the CLAUDE.md bullet below is
 the frozen quote of Sprint 11 step 11; the bullet itself now carries this sentence in place of the
-"Known and NOT fixed" half for this cmdlet.
+"Known and NOT fixed" half for these two keys. Still open, unmeasured and not changed: when a
+successful read lacks `requestorSettings` or `notificationSettings`, `ConvertTo-OERPolicyBody` writes
+its default for it, and the `requestorSettings` default is a self-service one that enables self-add.
 
 #### CLAUDE.md text for a-set-cmdlets-own-read-decides-a-written-value
 
@@ -14536,6 +14539,14 @@ placement is the warning-before-confirmation rule: `-WhatIf` shows them, a `-Con
 answered with them on screen, and a `-WarningAction Stop` caller stops before anything is signed in
 to. A document with an error is refused as before and writes none of its warnings. The test file
 holds the order, the stop before `Initialize-OERAuth` and every handler, and both no-warning cases.
+
+One exclusion (final review, ruled): the omitted-key finding (Rule 13 of the validator, an omitted
+collection key that `-Prune` still reconciles) is NOT written. The engine already writes its own
+`-Prune` warning for exactly those keys, filtered by `-Prune` and `-Include` (without `-Prune` nothing
+is removed), so the validator's finding would be a second, unfiltered copy of it. The engine tells such
+a finding by both its path (`<Path>.<Collection>` of a record `Get-OEROmittedPruneCollection` returns)
+and the start of its text (`'<Collection>' is omitted at `), so another rule's warning at the same path
+is still written. `Test-OERStructure` still reports the omitted keys as Warning findings.
 
 ## run-right-after-a-write
 
