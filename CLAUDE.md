@@ -559,7 +559,11 @@ with or without `-TenantId`, runs as the other account (`$ContinuesSession` deci
 token whose tenant is not a tenant ID is not compared on another label, and a command naming the
 tenant by another label inherits nothing, so it is compared only after an Interactive sign-in with
 the default application in the Global cloud); only `Connect-OER`
-(`-ReclaimGraphSession`, never refused by it) signs in as another account. The marker is set as
+(`-ReclaimGraphSession`, never refused by it) signs in as another account. Every OTHER sign-in with
+`-IncludeARM` -- a first one, `Connect-OER`, a switch of tenant, method, client or cloud -- whose ARM
+token's oid differs from the session's `SignedInObjectId`, both GUIDs, is refused for its ARM half with
+`ArmAccountMismatch` before that token is cached (BL-163): the Graph half stands, the caller stays
+latched and the session uncertain, and no ARM request is sent with that token. The marker is set as
 after every refusal, but it is not what keeps the session: a command that names its tenant is never
 refused by it. A token without oid never refuses anything, and on either never replaces
 `SignedInObjectId`. Never let a renewal make the session another account's; never key the account

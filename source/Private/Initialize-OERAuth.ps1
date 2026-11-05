@@ -141,10 +141,11 @@ function Initialize-OERAuth {
     still compared with the known account; any other sign-in records its own token's oid.
     SignInAccountId is the fifth term of the sign-in identity (Get-OERSignInIdentity); a renewal or a
     continuation carries it over, and any other sign-in sets it to the new token's oid when that is a
-    GUID. An Azure Resource Manager token acquired by a renewal, or by a continuation whose Microsoft
-    Graph token was acquired in the same call, is held
-    to the same rule against the session's SignedInObjectId: another account's is refused the same way
-    and is not cached, and the state is left as it is. The silent renewal (A22) is unchanged; its own
+    GUID. Every Azure Resource Manager token is held to the session's account (SignedInObjectId):
+    one acquired by a renewal, or by a continuation, is refused as above (SignInSuperseded) and one
+    acquired by any other sign-in with a terminating ArmAccountMismatch, before it is cached; the
+    Microsoft Graph half of such a sign-in stands, the caller stays latched and the session uncertain,
+    and no Azure Resource Manager request is sent with that token. The silent renewal (A22) is unchanged; its own
     check of the object id still comes first.
 
     Every other entry then latches the command that called this function (Lock-OERSignIn), and only a
@@ -1787,27 +1788,49 @@ function Initialize-OERAuth {
                     -Terminating
             }
 
-            # SEC (BL-119): the ARM token of a sign-in that continues the session ($ContinuesSession: a
-            # renewal, or the same session under another tenant label when this call acquired the Graph
-            # token too; $RenewsSession when only this ARM token was acquired) is held to the same account
-            # rule as the Graph one. Its ARM request opens the same account picker, so another account could answer it while
-            # the Graph token stayed the first one's (or was cached): the session would then hold one
-            # account's Graph token and another's ARM token under one sign-in identity. An ARM token whose
-            # oid is a GUID that differs from the session's SignedInObjectId (a GUID) is refused with the
-            # same terminating SignInSuperseded (-AccountChanged), above the assignments below so nothing
-            # is cached, and the state is left as it is: no identity moves here, the ARM token is simply
-            # not accepted. Terminating for the reason the tenant checks above give. A token without an
-            # oid, or a session without one, never refuses. Not applied to a first sign-in or to
-            # Connect-OER (-ReclaimGraphSession), which do not continue a session (known limit). Every term on its
-            # own line and independently deletable, so each stays mutation-provable.
+            # SEC (BL-119, BL-163): every ARM token is held to the session's account, the Graph token's.
+            # Its ARM request opens the same account picker, so another account could answer it while the
+            # Graph token stayed the first one's (or was cached, or was acquired as another account in
+            # this very call): the session would then hold one account's Graph token and another's ARM
+            # token. An ARM token whose oid is a GUID that differs from the session's SignedInObjectId (a
+            # GUID; the rebuilt state's when this call acquired the Graph token, else the cached
+            # session's) is refused above the assignments below, so nothing is cached. A renewal or a
+            # continuation ($ContinuesSession: a renewal, or the same session under another tenant label
+            # when this call acquired the Graph token too; $RenewsSession when only this ARM token was
+            # acquired) keeps the terminating SignInSuperseded (-AccountChanged), whose text (the session
+            # stays the account it was) holds there. Any other sign-in (a first sign-in, a Connect-OER, a
+            # switch of tenant, method, client or cloud) is refused with the terminating
+            # ArmAccountMismatch (a new id only for a refusal), since that text would be false there:
+            # the Graph half of that sign-in has already been accepted and stands, which is the state the
+            # ARM TenantMismatch refusal above leaves too. Terminating for the reason the tenant checks
+            # above give. A token without an oid, or a session without one, never refuses. Every term on
+            # its own line and independently deletable, so each stays mutation-provable.
             $ArmSecureToken = [System.Net.NetworkCredential]::new('', $ArmToken.Token).SecurePassword
             $ArmObjectId = Get-OERTokenObjectId -Token $ArmSecureToken
-            if ($ContinuesSession -and
-                (Test-OERGuid -Value $ArmObjectId) -and
+            [bool]$ArmAccountDiffers = (Test-OERGuid -Value $ArmObjectId) -and
                 (Test-OERGuid -Value $script:_OERAuthState.SignedInObjectId) -and
-                $ArmObjectId -ne $script:_OERAuthState.SignedInObjectId) {
+                $ArmObjectId -ne $script:_OERAuthState.SignedInObjectId
+            if ($ArmAccountDiffers -and
+                $ContinuesSession) {
                 [string]$ArmChangedCaller = if ($SignInCaller -and $SignInCaller.MyCommand.Name) { $SignInCaller.MyCommand.Name } else { 'a script block' }
                 Write-CmdletError -ErrorRecord (New-OERSignInSupersededError -Command $ArmChangedCaller -AccountChanged) -Cmdlet $PSCmdlet -Terminating
+                return
+            }
+            if ($ArmAccountDiffers) {
+                $ArmSecureToken = $null
+                $ArmToken = $null
+                Write-CmdletError `
+                    -Message ([System.Exception]::new(
+                        "The Azure Resource Manager token was issued to another account than the session's Microsoft " +
+                        "Graph token. Omnicit.EntraRBAC refuses to cache it, so no Azure Resource Manager request is " +
+                        "sent with it: every later Azure call would act as one account while every Microsoft Graph " +
+                        "call acts as another. The Microsoft Graph sign-in stands. Sign in again and choose the same " +
+                        "account for both, for example with Connect-OER -IncludeARM -Force.")) `
+                    -ErrorId 'ArmAccountMismatch' `
+                    -Category AuthenticationError `
+                    -TargetObject $EffectiveTenant `
+                    -Cmdlet $PSCmdlet `
+                    -Terminating
                 return
             }
 

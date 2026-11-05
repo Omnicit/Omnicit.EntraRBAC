@@ -8351,8 +8351,82 @@ Describe 'Initialize-OERAuth never continues a renewal as another account (BL-11
             (Get-A119Info).HasArm | Should -BeTrue
         }
 
-        It 'does not hold a first sign-in to the rule (known limit): Graph as one account and ARM as another are both cached' {
+        It 'refuses a first sign-in whose ARM token is another account''s (BL-163): the Graph half stands, nothing of the ARM token is cached' {
             $script:A119GraphOid = $script:A119OidA
+            $script:A119ArmOid = $script:A119OidB
+
+            $Probe = Invoke-A119Probe @{ TenantId = $script:A119Tenant; AuthMethod = 'DeviceCode'; IncludeARM = $true }
+
+            $Probe.Caught.FullyQualifiedErrorId | Should -BeExactly 'ArmAccountMismatch,Initialize-OERAuth'
+            $Probe.Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
+            $Probe.Caught.TargetObject | Should -BeExactly $script:A119Tenant
+            $Probe.Caught.Exception.Message | Should -BeExactly ("The Azure Resource Manager token was issued to another account than the session's Microsoft " +
+                "Graph token. Omnicit.EntraRBAC refuses to cache it, so no Azure Resource Manager request is " +
+                "sent with it: every later Azure call would act as one account while every Microsoft Graph " +
+                "call acts as another. The Microsoft Graph sign-in stands. Sign in again and choose the same " +
+                "account for both, for example with Connect-OER -IncludeARM -Force.")
+            $Probe.Latched | Should -BeTrue
+            $Probe.Marker | Should -BeTrue
+            $Probe.Remembers | Should -BeFalse
+            $After = Get-A119Info
+            $After.HasArm | Should -BeFalse
+            $After.ArmTenant | Should -BeNullOrEmpty
+            $After.Oid | Should -BeExactly $script:A119OidA
+            $After.AccountId | Should -BeExactly $script:A119OidA
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly -ParameterFilter { [string]$Resource -like '*management*' }
+        }
+
+        It 'refuses Connect-OER (-ReclaimGraphSession) whose ARM token is another account''s: the Graph token is a cache hit, only the ARM token is requested' {
+            Start-A119Session -Method DeviceCode
+            $script:A119ArmOid = $script:A119OidB
+
+            $Probe = Invoke-A119Probe @{ TenantId = $script:A119Tenant; AuthMethod = 'DeviceCode'; IncludeARM = $true; ReclaimGraphSession = $true }
+
+            $Probe.Caught.FullyQualifiedErrorId | Should -BeExactly 'ArmAccountMismatch,Initialize-OERAuth'
+            $Probe.Latched | Should -BeTrue
+            $After = Get-A119Info
+            $After.HasArm | Should -BeFalse
+            $After.Oid | Should -BeExactly $script:A119OidA
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly -ParameterFilter { [string]$Resource -like '*management*' }
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+        }
+
+        It 'refuses Connect-OER as account B over a session of A when its ARM token is A''s: no token of A remains' {
+            Start-A119Session -Method DeviceCode -Arm
+            $script:A119GraphOid = $script:A119OidB
+            $script:A119ArmOid = $script:A119OidA
+
+            $Probe = Invoke-A119Probe @{ TenantId = $script:A119Tenant; AuthMethod = 'DeviceCode'; IncludeARM = $true; ReclaimGraphSession = $true; ForceRefresh = $true }
+
+            $Probe.Caught.FullyQualifiedErrorId | Should -BeExactly 'ArmAccountMismatch,Initialize-OERAuth'
+            $After = Get-A119Info
+            $After.HasArm | Should -BeFalse
+            $After.Oid | Should -BeExactly $script:A119OidB
+        }
+
+        It 'refuses a switch of method whose ARM token is another account''s than the new Graph token' {
+            Start-A119Session -Method Interactive
+            $script:A119GraphOid = $script:A119OidB
+            $script:A119ArmOid = $script:A119OidA
+
+            $Probe = Invoke-A119Probe @{ TenantId = $script:A119Tenant; AuthMethod = 'DeviceCode'; IncludeARM = $true }
+
+            $Probe.Caught.FullyQualifiedErrorId | Should -BeExactly 'ArmAccountMismatch,Initialize-OERAuth'
+            (Get-A119Info).HasArm | Should -BeFalse
+        }
+
+        It 'caches the ARM token of a first sign-in when it carries no oid' {
+            $script:A119ArmOid = ''
+
+            $Probe = Invoke-A119Probe @{ TenantId = $script:A119Tenant; AuthMethod = 'DeviceCode'; IncludeARM = $true }
+
+            $Probe.Caught | Should -BeNullOrEmpty
+            (Get-A119Info).HasArm | Should -BeTrue
+        }
+
+        It 'caches the ARM token of a first sign-in when the Graph token carries no oid' {
+            $script:A119GraphOid = ''
             $script:A119ArmOid = $script:A119OidB
 
             $Probe = Invoke-A119Probe @{ TenantId = $script:A119Tenant; AuthMethod = 'DeviceCode'; IncludeARM = $true }
@@ -8361,14 +8435,10 @@ Describe 'Initialize-OERAuth never continues a renewal as another account (BL-11
             (Get-A119Info).HasArm | Should -BeTrue
         }
 
-        It 'does not hold Connect-OER (-ReclaimGraphSession) to the rule (known limit)' {
-            Start-A119Session -Method DeviceCode
-            $script:A119ArmOid = $script:A119OidB
-
-            $Probe = Invoke-A119Probe @{ TenantId = $script:A119Tenant; AuthMethod = 'DeviceCode'; IncludeARM = $true; ReclaimGraphSession = $true }
+        It 'caches the ARM token of a first sign-in when both tokens are the same account' {
+            $Probe = Invoke-A119Probe @{ TenantId = $script:A119Tenant; AuthMethod = 'DeviceCode'; IncludeARM = $true }
 
             $Probe.Caught | Should -BeNullOrEmpty
-            $Probe.Latched | Should -BeFalse
             (Get-A119Info).HasArm | Should -BeTrue
         }
     }
@@ -8672,6 +8742,101 @@ foreach ($L in [System.IO.File]::ReadAllLines('#LOG#')) { "LOG#N#:$L" }
             @($Lines | Where-Object { $_ -like 'TOKEN*' }).Count | Should -BeGreaterThan 0
             @($Lines | Where-Object { $_ -eq 'CONNECT' }).Count | Should -Be 1
             @($Lines | Where-Object { $_ -eq 'GRAPH' }).Count | Should -BeGreaterThan 0
+        }
+    }
+    Context 'a public command in a script with no try above it, ARM token of another account (BL-163)' {
+        BeforeAll {
+            . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+            # Same scaffold as the Context above (real module code in a runspace, every transport replaced
+            # by a stand-in that logs a line), with the oid of each resource set separately: the token
+            # text carries its oid after a '|' and Get-OERTokenObjectId reads it back. The real
+            # Connect-OER signs in with -IncludeARM while the Graph token is account A's and the ARM token
+            # account B's, at the top level of the script with no try anywhere; then the ARM oid is set to
+            # A and an Azure command that names the tenant runs.
+            function script:New-ArmAccountNoTryScenario {
+                param([string]$Log)
+                $Text = @'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    $script:_OERAuthState = $null
+    $script:_OERSessionUncertain = $null
+    $script:_OERInteractiveCredential = $null
+    $script:A163GraphOid = '88888888-8888-8888-8888-888888888888'
+    $script:A163ArmOid = '99999999-9999-9999-9999-999999999999'
+    Set-Item -Path function:script:Test-OERHostNonInteractive -Value { $false }
+    Set-Item -Path function:script:Get-AzToken -Value {
+        param($ClientId, $Resource, $Tenant, $Scope, $Interactive, $DeviceCode, $Force, $CredentialPrecedence, $ErrorAction, $WarningAction)
+        $Oid = if ([string]$Resource -like '*management*') { $script:A163ArmOid } else { $script:A163GraphOid }
+        [System.IO.File]::AppendAllText('#LOG#', "TOKEN $Resource`n")
+        [pscustomobject]@{
+            Token     = "NOT-A-REAL-TOKEN-a163|$Oid"
+            ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+            Identity  = 'admin@contoso.com'
+            TenantId  = '66666666-6666-6666-6666-666666666666'
+        }
+    }
+    Set-Item -Path function:script:Get-OERTokenObjectId -Value {
+        param($Token)
+        $Plain = [System.Net.NetworkCredential]::new('', $Token).Password
+        ($Plain -split '\|')[1]
+    }
+    Set-Item -Path function:script:Connect-MgGraph -Value { [System.IO.File]::AppendAllText('#LOG#', "CONNECT`n") }
+    Set-Item -Path function:script:Get-MgContext -Value {
+        [pscustomobject]@{ AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '11111111-1111-1111-1111-111111111111'; TenantId = '66666666-6666-6666-6666-666666666666'
+            Account = 'admin@contoso.com'; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All') }
+    }
+    Set-Item -Path function:script:Invoke-MgGraphRequest -Value { [System.IO.File]::AppendAllText('#LOG#', "GRAPH`n") }
+    Set-Item -Path function:script:Invoke-WebRequest -Value {
+        param($Uri, $Method, $Headers, $SkipHttpErrorCheck, $UseBasicParsing, $ErrorAction, $TimeoutSec, $OperationTimeoutSeconds, $Body, $ContentType, $MaximumRedirection)
+        [System.IO.File]::AppendAllText('#LOG#', "ARM $($Headers.Authorization)`n")
+    }
+    Set-Item -Path function:script:Resolve-OERTenantDomain -Value { '66666666-6666-6666-6666-666666666666' }
+}
+$Tenant = '66666666-6666-6666-6666-666666666666'
+Connect-OER -TenantId $Tenant -DeviceCode -IncludeARM -ErrorVariable EV -ErrorAction Continue | Out-Null
+foreach ($E in $EV) { "ERR1:$($E.FullyQualifiedErrorId)" }
+"ARMTOKEN1:$(& (Get-Module Omnicit.EntraRBAC) { [bool]$script:_OERAuthState.ArmToken })"
+foreach ($L in [System.IO.File]::ReadAllLines('#LOG#')) { "LOG1:$L" }
+[System.IO.File]::WriteAllText('#LOG#', '')
+& (Get-Module Omnicit.EntraRBAC) { $script:A163ArmOid = '88888888-8888-8888-8888-888888888888' }
+$null = Get-OERSubscription -TenantId $Tenant -ErrorVariable EV2 -ErrorAction Continue
+foreach ($E in $EV2) { "ERR2:$($E.FullyQualifiedErrorId)" }
+foreach ($L in [System.IO.File]::ReadAllLines('#LOG#')) { "LOG2:$L" }
+& (Get-Module Omnicit.EntraRBAC) {
+    foreach ($Name in 'Get-AzToken', 'Connect-MgGraph', 'Invoke-MgGraphRequest', 'Invoke-WebRequest') {
+        Remove-Item -Path ('function:' + $Name) -ErrorAction SilentlyContinue
+    }
+}
+'END'
+'@
+                [scriptblock]::Create($Text.Replace('#LOG#', $Log.Replace("'", "''")))
+            }
+        }
+
+        It 'delivers ArmAccountMismatch to the caller, caches no ARM token, and sends the next Azure command only with the session''s own account''s token' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-ArmAccountNoTryScenario -Log $Log)
+
+            $Out = "the output was:`n$($Run.Output -join "`n")"
+            $Run.Output[-1] | Should -BeExactly 'END' -Because $Out
+            # Connect-OER: the refusal reaches -ErrorVariable although no try stands above, and it is the only error.
+            # (-ErrorVariable also holds one more entry with no error id, measured: it is not a record of
+            # its own, so only the entries that carry an id are compared.)
+            @($Run.Output | Where-Object { $_ -like 'ERR1:?*' }) | Should -Be @('ERR1:ArmAccountMismatch,Initialize-OERAuth') -Because $Out
+            @($Run.Output | Where-Object { $_ -eq 'ARMTOKEN1:False' }).Count | Should -Be 1 -Because $Out
+            $Lines1 = @($Run.Output | Where-Object { $_ -like 'LOG1:*' })
+            @($Lines1 | Where-Object { $_ -like '*TOKEN*management*' }).Count | Should -Be 1 -Because $Out
+            @($Lines1 | Where-Object { $_ -like 'LOG1:ARM *' }).Count | Should -Be 0 -Because $Out
+            # The next command names the tenant, so the marker the refusal left does not stop it: it signs
+            # in again (the Graph token is a cache hit, the ARM token is requested afresh and now answered
+            # by the session's own account A, so it is cached and used). Measured: no ARM request carries
+            # B's token; every ARM request that is sent carries the token whose oid is A.
+            $Arm2 = @($Run.Output | Where-Object { $_ -like 'LOG2:ARM *' })
+            @($Run.Output | Where-Object { $_ -like 'LOG2:ARM *|99999999-9999-9999-9999-999999999999' }).Count | Should -Be 0 -Because $Out
+            $Arm2.Count | Should -BeGreaterThan 0 -Because $Out
+            @($Arm2 | Where-Object { $_ -notlike '*|88888888-8888-8888-8888-888888888888' }).Count | Should -Be 0 -Because $Out
+            @($Run.Output | Where-Object { $_ -like 'LOG2:TOKEN*management*' }).Count | Should -Be 1 -Because $Out
         }
     }
 }
