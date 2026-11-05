@@ -3679,6 +3679,11 @@ throws the same conditions with `-Existing` as a backstop; without `-Existing` t
 refusal is the safe direction: the case is latent, since Graph v1.0 answers with both keys. Cost if
 wrong: a caller whose read lacks a key must name the value, where it used to get the default.
 
+Known limit: the apply engine calls `Set-OERAccessPackageAssignmentPolicy` only after its own
+`ShouldProcess`, so under `-WhatIf` a policy whose read lacks one of the four keys is planned as
+"would update assignmentPolicy ...", while the real run reports it `Failed` with
+`AssignmentPolicyValueUnknown`. Latent: Microsoft Graph v1.0 answers with the keys.
+
 #### CLAUDE.md text for a-set-cmdlets-own-read-decides-a-written-value
 
 What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:

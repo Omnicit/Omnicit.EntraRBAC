@@ -987,7 +987,8 @@ Disconnect-OerLive
 
 **Expect:** the module is the build `True`, the token fence `True`; rows `catalogs | oer-s1241-cat |
 Skipped | would create catalog ...`, `accessPackages | oer-s1241-pkg | Skipped | would create access
-package oer-s1241-pkg`, and `accessReviews | oer-s1241-review | Failed | access package 'oer-s1241-pkg'
+package oer-s1241-pkg`, `accessPackages | oer-s1241-pkg | Skipped | would create assignmentPolicy
+'oer-s1241-policy' after access package is created`, and `accessReviews | oer-s1241-review | Failed | access package 'oer-s1241-pkg'
 has no id in this run (the accessPackages entry would create it, and the create was not carried out:
 -WhatIf, or a declined confirmation), ...` with `record: none`; `$? True`; 0 error records; the plan
 under Stop `completed` with the same number of rows; 0 writes.
