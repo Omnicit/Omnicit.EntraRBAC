@@ -34,10 +34,10 @@ function Get-OERAccessReviewDuration {
     function Get-DurationValue {
         param([object]$Bag, [string]$Key)
         if ($null -eq $Bag) { return $null }
-        # ContainsKey, not Contains: on a generic Dictionary[string, object] the Contains overload
-        # takes a KeyValuePair and would throw on a bare key.
+        # Keys, not Contains or ContainsKey: a generic Dictionary[string, object] has a Contains that
+        # takes a KeyValuePair, and an [ordered] dictionary (OrderedDictionary) has no ContainsKey.
         if ($Bag -is [System.Collections.IDictionary]) {
-            if ($Bag.ContainsKey($Key)) { return $Bag[$Key] }
+            if (@($Bag.Keys) -contains $Key) { return $Bag[$Key] }
             return $null
         }
         $Property = $Bag.PSObject.Properties[$Key]

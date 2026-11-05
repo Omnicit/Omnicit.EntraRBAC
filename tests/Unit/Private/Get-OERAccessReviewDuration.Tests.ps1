@@ -111,6 +111,26 @@ Describe 'Get-OERAccessReviewDuration' {
         }
     }
 
+    It 'reads an [ordered] settings bag of a one-time review (no ContainsKey on OrderedDictionary)' {
+        InModuleScope Omnicit.EntraRBAC {
+            $Settings = [ordered]@{
+                recurrence             = [ordered]@{ pattern = $null; range = [ordered]@{ startDate = '2026-11-12'; endDate = '2026-11-26' } }
+                instanceDurationInDays = 0
+            }
+            Get-OERAccessReviewDuration -Settings $Settings | Should -Be 14
+        }
+    }
+
+    It 'reads an [ordered] settings bag of a repeating review' {
+        InModuleScope Omnicit.EntraRBAC {
+            $Settings = [ordered]@{
+                recurrence             = [ordered]@{ pattern = [ordered]@{ type = 'weekly'; interval = 1 }; range = [ordered]@{ type = 'noEnd'; startDate = '2026-11-12' } }
+                instanceDurationInDays = 21
+            }
+            Get-OERAccessReviewDuration -Settings $Settings | Should -Be 21
+        }
+    }
+
     It 'reads a PSCustomObject settings fixture' {
         InModuleScope Omnicit.EntraRBAC {
             $Settings = [pscustomobject]@{
