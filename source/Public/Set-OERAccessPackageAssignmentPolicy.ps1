@@ -56,8 +56,8 @@ function Set-OERAccessPackageAssignmentPolicy {
     A policy read that succeeds but lacks expiration (absent or null), or requestApprovalSettings, is
     refused with a non-terminating AssignmentPolicyValueUnknown error (category InvalidData) unless the
     call names every value the missing block holds: for expiration, one of -DurationInDays,
-    -DurationInHours or -ExpirationDateTime; for requestApprovalSettings, the stages (-ApprovalStage),
-    approval for add (-RequireApproval or -ApprovalStage), -RequireRequestorJustification and
+    -DurationInHours or -ExpirationDateTime; for requestApprovalSettings, the stages and approval for add
+    (-ApprovalStage, an empty list for no stages), -RequireRequestorJustification and
     -RequireApprovalForUpdate. The full update would otherwise write a default (no expiration, approval
     off, no stages) over a value the read did not return. One record names both when both are missing;
     it is written after the read and before anything is sent, also under -WhatIf.
@@ -365,7 +365,7 @@ function Set-OERAccessPackageAssignmentPolicy {
             }
             if ($ApprovalUnknown) {
                 $MissingKey += 'requestApprovalSettings'
-                $Remedy += '-ApprovalStage (or -RequireApproval), -RequireRequestorJustification and -RequireApprovalForUpdate'
+                $Remedy += '-ApprovalStage (an empty list for no stages), -RequireRequestorJustification and -RequireApprovalForUpdate'
             }
             $Names = $MissingKey -join ' and '
             if ($MissingKey.Count -gt 1) {

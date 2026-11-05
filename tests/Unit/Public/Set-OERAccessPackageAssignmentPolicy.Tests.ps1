@@ -1630,8 +1630,8 @@ Describe 'Set-OERAccessPackageAssignmentPolicy refuses a successful read without
     BeforeAll {
         $script:Bl161Id = 'cccccccc-0000-0000-0000-000000000011'
         $script:Bl161ExpirationMessage = "Microsoft Graph returned assignment policy '$($script:Bl161Id)' without expiration, and this update does not name the value; the full update would write a default in its place, so nothing was sent. Pass -DurationInDays, -DurationInHours or -ExpirationDateTime to set it."
-        $script:Bl161ApprovalMessage = "Microsoft Graph returned assignment policy '$($script:Bl161Id)' without requestApprovalSettings, and this update does not name every value it holds; the full update would write a default in its place, so nothing was sent. Pass -ApprovalStage (or -RequireApproval), -RequireRequestorJustification and -RequireApprovalForUpdate to set it."
-        $script:Bl161BothMessage = "Microsoft Graph returned assignment policy '$($script:Bl161Id)' without expiration and requestApprovalSettings, and this update does not name every value they hold; the full update would write a default in its place, so nothing was sent. Pass -DurationInDays, -DurationInHours or -ExpirationDateTime and -ApprovalStage (or -RequireApproval), -RequireRequestorJustification and -RequireApprovalForUpdate to set it."
+        $script:Bl161ApprovalMessage = "Microsoft Graph returned assignment policy '$($script:Bl161Id)' without requestApprovalSettings, and this update does not name every value it holds; the full update would write a default in its place, so nothing was sent. Pass -ApprovalStage (an empty list for no stages), -RequireRequestorJustification and -RequireApprovalForUpdate to set it."
+        $script:Bl161BothMessage = "Microsoft Graph returned assignment policy '$($script:Bl161Id)' without expiration and requestApprovalSettings, and this update does not name every value they hold; the full update would write a default in its place, so nothing was sent. Pass -DurationInDays, -DurationInHours or -ExpirationDateTime and -ApprovalStage (an empty list for no stages), -RequireRequestorJustification and -RequireApprovalForUpdate to set it."
         $script:Bl161Stage = New-OERAccessPackageApprovalStage -DurationDays 5 -Manager
         $script:Bl161Read = @{ Expiration = $false; Approval = $false }
     }
@@ -1746,6 +1746,13 @@ Describe 'Set-OERAccessPackageAssignmentPolicy refuses a successful read without
                 $Body.requestApprovalSettings.isApprovalRequiredForUpdate -eq $true -and
                 $Body.requestApprovalSettings.isRequestorJustificationRequired -eq $true -and
                 @($Body.requestApprovalSettings.stages).Count -eq 1
+            }
+        }
+
+        It 'binds an empty -ApprovalStage as named: with the two flags it is not refused and sends no stage' {
+            Set-OERAccessPackageAssignmentPolicy -Id $script:Bl161Id -DisplayName 'Policy' -ApprovalStage @() -RequireRequestorJustification -RequireApprovalForUpdate -Confirm:$false -ErrorAction Stop | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PUT' -and @($Body.requestApprovalSettings.stages).Count -eq 0
             }
         }
     }
