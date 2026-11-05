@@ -23,9 +23,13 @@ function Resolve-OERAccessReviewChange {
     available the recurrence change is reported in NotApplied rather than written half-applied.
 
     Two consequences of how the recurrence object is rebuilt are handled explicitly. A OneTime review
-    carries no recurrence object at all, so it has no range to diff: for an effective OneTime cadence
-    only the cadence itself is compared and no range is written, otherwise a declared startDate would
-    be measured against a live range that cannot exist and would report drift on every single apply.
+    carries a numbered range with no occurrences whose end is its length, so its range is not a
+    cadence range to diff: for an effective OneTime cadence only the cadence itself is compared and
+    no range is written (the length is written through durationInDays, which Set-OERAccessReviewDefinition
+    turns into the range end), otherwise a declared startDate would be measured against a live range
+    the document never declared and would report drift on every single apply. The durationInDays
+    row is compared with the length Microsoft Graph uses (Get-OERAccessReviewDuration): for a OneTime
+    review that is the range, not the raw instanceDurationInDays.
     And because Set-OERAccessReviewDefinition replaces the whole recurrence object -- defaulting the
     range to noEnd when neither -EndDate nor -Occurrences is bound -- a live endDate or numbered range
     is carried forward whenever the document declares neither, so changing only the cadence or the
@@ -69,6 +73,13 @@ function Resolve-OERAccessReviewChange {
     HasReviewers and HasFallbackReviewers flags: a half the document does not declare is seeded from
     the live definition's own object ids instead of being sent empty, so it survives the write
     untouched and never forces an update on its own.
+
+    One exception to the document being authoritative over an unparsed scope: when an unparsed live
+    query names a group (for example '/groups/{id}/owners') and the same group id is one of the half's
+    declared reviewer keys, the whole reviewer unit is left unwritten and reported in NotApplied. An
+    export made before the module skipped such a review wrote the owners reviewer as that group, which
+    reads as its members; writing it back would replace the group's owners with its members. Fields
+    outside the reviewer unit still apply.
 
     A live scope that does NOT parse is kept strictly apart from an absent one. An empty reviewers
     collection is the documented self-review shape; an unparsed scope is a real named reviewer this
@@ -195,7 +206,17 @@ function Resolve-OERAccessReviewChange {
     )
     foreach ($Map in $SettingMap) {
         if (-not (Test-DeclHas $Declared $Map.Decl)) { continue }
-        $Raw = Get-SettingValue -Settings $Current.Settings -Key $Map.Key
+        # The duration is the length Graph uses for the instance, not the raw instanceDurationInDays
+        # (BL-168): a one-time review is governed by its recurrence range (measured 2026-11-05: a PUT
+        # of instanceDurationInDays 7 beside a fourteen day range left the instance ending on the
+        # range end, and the older module shape reads instanceDurationInDays 0 beside a thirty day
+        # range). Get-OERAccessReviewDuration owns that reading.
+        $Raw = if ($Map.Decl -eq 'durationInDays') {
+            Get-OERAccessReviewDuration -Settings $Current.Settings
+        }
+        else {
+            Get-SettingValue -Settings $Current.Settings -Key $Map.Key
+        }
         if ($Map.Kind -eq 'Bool') {
             $DeclaredValue = [bool]$Declared.($Map.Decl)
             $CurrentValue  = if ($null -ne $Raw) { [bool]$Raw } else { $null }
@@ -308,10 +329,40 @@ function Resolve-OERAccessReviewChange {
         if ($PrimaryUnprovable -and -not $DeclaresPrimary) { foreach ($UnQuery in $CurrentReviewerUnparsed) { $Unseedable.Add($UnQuery) } }
         if ($FallbackUnprovable -and -not $DeclaresFallback) { foreach ($UnQuery in $CurrentFallbackUnparsed) { $Unseedable.Add($UnQuery) } }
 
+        # A declared reviewer key that names the group of a live group scope this module cannot write
+        # (for example '/groups/{id}/owners'). An export made before this module skipped such a review
+        # wrote the reviewer as that group (then read as the group's members), and applying it would
+        # replace the group's OWNERS with its MEMBERS -- a different set of people. Local function, one
+        # caller: the grammar is Resolve-OERReviewerScopeQuery's, this only reads the group id that an
+        # Unparsed query names, with the same optional Graph version prefix.
+        function Get-OwnersClash {
+            param([object]$Unparsed, [object]$DeclaredKey)
+            foreach ($UnQuery in @($Unparsed)) {
+                if ([string]$UnQuery -match '^(?:/(?:v\d+(?:\.\d+)?|beta))?/groups/([^/?#]+)') {
+                    $UnGroup = $Matches[1]
+                    if (@($DeclaredKey | Where-Object { [string]$_ -ieq $UnGroup }).Count -gt 0) {
+                        [PSCustomObject]@{ Query = [string]$UnQuery; GroupId = $UnGroup }
+                    }
+                }
+            }
+        }
+        $Clash = [System.Collections.Generic.List[object]]::new()
+        if ($DeclaresPrimary) { foreach ($Item in @(Get-OwnersClash -Unparsed $CurrentReviewerUnparsed -DeclaredKey $DeclaredReviewer.ReviewerKey)) { $Clash.Add($Item) } }
+        if ($DeclaresFallback) { foreach ($Item in @(Get-OwnersClash -Unparsed $CurrentFallbackUnparsed -DeclaredKey $DeclaredReviewer.FallbackKey)) { $Clash.Add($Item) } }
+
         # Only a declared half can force the write; the seeded half rides along unchanged.
         $PrimaryChanged  = $DeclaresPrimary -and ($PrimaryUnprovable -or -not (Test-KeySetEqual $DeclaredReviewer.ReviewerKey $CurrentReviewerKey))
         $FallbackChanged = $DeclaresFallback -and ($FallbackUnprovable -or -not (Test-KeySetEqual $DeclaredReviewer.FallbackKey $CurrentFallbackKey))
-        if (($PrimaryChanged -or $FallbackChanged) -and $Unseedable.Count -gt 0) {
+        if ($Clash.Count -gt 0) {
+            # The whole reviewer unit is left unwritten (the fields outside it still apply).
+            $NotApplied.Add(
+                ("the live definition reviews through '{0}', a scope of group '{1}' that this module cannot write; " -f
+                    $Clash[0].Query, $Clash[0].GroupId) +
+                ("the document's reviewer '{0}' would replace it with that group's members, so the reviewer change was left unapplied. " -f
+                    $Clash[0].GroupId) +
+                'Declare the reviewers again from a current export, or change them with Set-OERAccessReviewDefinition')
+        }
+        elseif (($PrimaryChanged -or $FallbackChanged) -and $Unseedable.Count -gt 0) {
             $NotApplied.Add(
                 ("the live definition carries {0} reviewer scope(s) this module's vocabulary cannot express ({1}); " -f
                     $Unseedable.Count, ($Unseedable -join ', ')) +
@@ -387,11 +438,11 @@ function Resolve-OERAccessReviewChange {
         $DeclaredCadence = if ($HasRecurrence) { [string]$Declared.recurrence } else { $CurrentCadence }
         $CadenceDiffers  = $DeclaredCadence -ine $CurrentCadence
 
-        # A OneTime review carries no recurrence object at all (New-OERAccessReviewRecurrence returns
-        # nothing for OneTime, and Set-OERAccessReviewDefinition then removes the settings.recurrence
-        # key), so it has no range to diff. Comparing a declared startDate against a live range that
-        # cannot exist would report drift on every run and PUT a no-op forever -- for an effective
-        # OneTime cadence only the cadence itself is compared.
+        # A OneTime review carries a numbered range with no occurrences whose end is its length
+        # (New-OERAccessReviewRecurrence -Recurrence OneTime builds it from the start and the
+        # duration), so its range is not a cadence range to diff. Comparing a declared startDate
+        # against it would report drift on every run and PUT a no-op forever -- for an effective
+        # OneTime cadence only the cadence itself is compared; the length goes through durationInDays.
         $IsOneTime = $DeclaredCadence -ieq 'OneTime'
 
         $StartDiffers = $false
@@ -478,7 +529,8 @@ function Resolve-OERAccessReviewChange {
             else {
                 $SetParams.Recurrence = $DeclaredCadence
                 $SetParams.StartDate = $EffectiveStart
-                # A OneTime write drops the recurrence object entirely, so a range is meaningless there.
+                # A OneTime write builds its own numbered range from the start and the duration, so a
+                # cadence range (end date, occurrences) is meaningless there.
                 if (-not $IsOneTime) {
                     if ($HasEndDate) { $SetParams.EndDate = [datetime]$Declared.endDate }
                     elseif ($HasOccurrences) { $SetParams.Occurrences = [int]$Declared.occurrences }
@@ -517,6 +569,20 @@ function Resolve-OERAccessReviewChange {
         $CurrentScope  = [string]$Current.($Map.Cur)
         if ((Test-OERGuid -Value $DeclaredScope) -and $DeclaredScope -ine $CurrentScope) {
             $NotApplied.Add("$($Map.Decl) '$DeclaredScope' differs from the live scope '$CurrentScope'; the review scope is immutable and was not changed")
+        }
+    }
+
+    # A review of a group's members: the same rule for the group id the live scope names. Only a GUID
+    # declared group is compared offline; a group name was checked by the target check (the handler
+    # refuses a review of another group before this diff runs).
+    if (Test-DeclHas $Declared 'group') {
+        $DeclaredGroupScope = [string]$Declared.group
+        if (Test-OERGuid -Value $DeclaredGroupScope) {
+            $LiveGroupId = [string](Resolve-OERAccessReviewGroupScope -Query ([string]$Current.Scope) -ScopeType ([string]$Current.ScopeType)).GroupId
+            if ($DeclaredGroupScope -ine $LiveGroupId) {
+                $LiveGroupText = if ($LiveGroupId) { $LiveGroupId } else { 'none' }
+                $NotApplied.Add("group '$DeclaredGroupScope' differs from the live scope '$LiveGroupText'; the review scope is immutable and was not changed")
+            }
         }
     }
 

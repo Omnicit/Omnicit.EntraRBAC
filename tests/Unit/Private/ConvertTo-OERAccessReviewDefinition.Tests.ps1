@@ -86,6 +86,35 @@ Describe 'ConvertTo-OERAccessReviewDefinition' {
         }
     }
 
+    It 'maps ScopeType from the scope''s @odata.type of a raw hashtable answer' {
+        InModuleScope $script:moduleName {
+            $Raw = @{ id = 'd1'; displayName = 'G'; scope = @{ '@odata.type' = '#microsoft.graph.accessReviewInactiveUsersQueryScope'; query = '/groups/g1/transitiveMembers'; inactiveDuration = 'P30D' } }
+            $R = ConvertTo-OERAccessReviewDefinition -InputObject $Raw
+            $R.ScopeType | Should -BeExactly '#microsoft.graph.accessReviewInactiveUsersQueryScope'
+            $R.Scope | Should -BeExactly '/groups/g1/transitiveMembers'
+        }
+    }
+
+    It 'maps ScopeType from a PSCustomObject scope that carries @odata.type' {
+        InModuleScope $script:moduleName {
+            $Raw = [PSCustomObject]@{ id = 'd1'; displayName = 'G'; scope = [PSCustomObject]@{ '@odata.type' = '#microsoft.graph.accessReviewQueryScope'; query = '/groups/g1/transitiveMembers' } }
+            (ConvertTo-OERAccessReviewDefinition -InputObject $Raw).ScopeType | Should -BeExactly '#microsoft.graph.accessReviewQueryScope'
+        }
+    }
+
+    It 'reports a null ScopeType when the scope carries none, or there is no scope' {
+        InModuleScope $script:moduleName {
+            (ConvertTo-OERAccessReviewDefinition -InputObject @{ id = 'd1'; scope = @{ query = '/groups/g1/transitiveMembers' } }).ScopeType | Should -BeNullOrEmpty
+            (ConvertTo-OERAccessReviewDefinition -InputObject @{ id = 'd2' }).ScopeType | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'places ScopeType directly after Scope' {
+        InModuleScope $script:moduleName {
+            $Names = @((ConvertTo-OERAccessReviewDefinition -InputObject @{ id = 'd1'; scope = @{ query = 'q' } }).PSObject.Properties.Name)
+            $Names[$Names.IndexOf('Scope') + 1] | Should -Be 'ScopeType'
+        }
+    }
     It 'maps Scope from scope.query' {
         InModuleScope $script:moduleName {
             $raw = @{

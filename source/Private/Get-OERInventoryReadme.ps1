@@ -619,7 +619,7 @@ groups the export read. An access package's name is counted among the packages o
 an assignment policy's among the policies of its own access package only; a policy is listed with
 section `assignmentPolicies` as `<package>/<policy>`. The name of an administrative unit, a catalog or
 an access review is counted among the ones this export read, an access review's among the
-access-package reviews it captured. A reference to such an object elsewhere in the document is
+access-package and group-members reviews it captured. A reference to such an object elsewhere in the document is
 written as the object's id: the catalog of an access package, the access package and assignment
 policy of an access review, and a group named as the principal of a role assignment or a directory
 role assignment, written with `principalType` `Group`. A group named in any other place -- an
@@ -896,8 +896,8 @@ includes a predefined prompt that turns it into appliable improvement proposals.
 ## Files
 
 - `inventory.json` -- the canonical, round-trippable inventory, in the exact apply-document shape,
-  subject to the coverage limits below (for example, only access-package-scoped access reviews
-  are captured).
+  subject to the coverage limits below (for example, only access package reviews and reviews
+  of all members of one group are captured).
 - `groups.json`, `administrativeUnits.json`, `catalogs.json`, `accessPackages.json`,
   `accessReviews.json`, `directoryRoleManagementPolicies.json`, `directoryRoleAssignments.json`,
   `roleAssignments.json`, `roleManagementPolicies.json` -- the same data split per area, so you can
@@ -996,9 +996,10 @@ differently -- do not read this bundle as a complete picture of the tenant:
   of being fabricated as a single-stage self review. It never appears in `accessReviews.json` or
   `inventory.json` -- its absence here is not evidence the tenant has none. Manage it directly with
   `New-OERAccessReviewStage`.
-- Only ACCESS-PACKAGE-SCOPED reviews are captured at all, regardless of stage count or the
-  `-AccessReviewFilter` narrowing. A review scoped to a group, an application or a directory role
-  is skipped entirely and never appears in `accessReviews.json` or `inventory.json` -- again, its
+- Only ACCESS-PACKAGE-SCOPED reviews and reviews of all members of one group are captured at all,
+  regardless of stage count or the `-AccessReviewFilter` narrowing. A review scoped to an
+  application, a directory role, or a group in another form (guest-only, direct members, owners) is
+  skipped entirely and never appears in `accessReviews.json` or `inventory.json` -- again, its
   absence here is not evidence the tenant has none.
 
 ## Unread collections

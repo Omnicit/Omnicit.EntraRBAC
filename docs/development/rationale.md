@@ -2966,6 +2966,12 @@ documented self-review shape. Collapsing the two writes `SelfReview` over live n
 
 `./manager` is matched FIRST, always.
 
+**Since Sprint 12 step 6 (BL-137).** The group form is end-anchored. Graph reads a group reviewer
+`/groups/{id}/transitiveMembers` back as `/v1.0/groups/{id}/transitiveMembers/microsoft.graph.user`
+(measured 2026-11-05), so the helper accepts an optional API version segment and that cast, and nothing
+else after the group id. `/groups/{id}/owners` and `/groups/{id}/members` are `Unparsed`: they are not the
+transitive members the module writes, and reading them as a group reviewer would rewrite them on write-back.
+
 ## duration-vocabulary
 
 `-Duration` is a raw ISO 8601 string; `-DurationDays`/`-DurationHours` are whole-unit ints.
@@ -2988,7 +2994,9 @@ Note also that PIM-for-groups rejects an eligible duration of `P1Y`; use `P365D`
 An access review's `recurrence` is a closed vocabulary of six cadences, and each one is a fixed Graph
 pattern type and interval:
 
-- `OneTime` is no recurrence object on the definition at all: a single instance.
+- `OneTime` is a numbered range, not a definition without a recurrence object: pattern null, range
+  `numbered` with `numberOfOccurrences` 0, a start date and an end date the declared length later.
+  See [#access-review-one-time-duration](#access-review-one-time-duration).
 - `Weekly` is pattern type `weekly`, interval 1.
 - `Monthly`, `Quarterly`, `SemiAnnually` and `Annually` are pattern type `absoluteMonthly` with
   interval 1, 3, 6 and 12. The module sends a `dayOfMonth` taken from the start date with them. Read
@@ -12071,8 +12079,8 @@ anchor records the problem, the rulings each with its cost if wrong, and the ids
 **The problem (BL-127).** `Sync-OERStructureAccessReview` finds the live access review definition for
 an `accessReviews[]` entry by `displayName`, in the whole tenant, and access review display names are
 not unique: a review of a group, a directory role or another access package can carry the name a
-document uses for a package review. The export captures only access-package-scoped, single-stage
-reviews, so neither the operator nor a model reading the bundle sees the others. Before this step the
+document uses for a package review. Sprint 11 recorded that the export captured only
+access-package-scoped, single-stage reviews (since Sprint 12 step 6 it also captures reviews of all members of one group, see the end of this anchor), so neither the operator nor a model reading the bundle sees the others. Before this step the
 diff (`Resolve-OERAccessReviewChange`) compared the scope only when the declared value was a GUID, and
 only into its `NotApplied` notes, which the handler reported as a `Skipped` row and a warning, while
 every other declared change was still written to the review it had found, with the full-object PUT.
@@ -12174,6 +12182,149 @@ re-applied unchanged is no longer refused for a shared name. The rule above is u
 that names a shared package or policy is still refused with `AmbiguousName`. The export's lookups are
 a named deviation from the single owner of the policy lookup, held in step by an agreement test
 ([#roster-identity-and-shared-names](#roster-identity-and-shared-names)).
+
+**Since Sprint 12 step 6 (BL-137): the group branch.** An `accessReviews[]` entry may now declare
+`group` (a name or an id) instead of `accessPackage` plus `assignmentPolicy`, for a review of all
+members of a group. `Get-OERAccessReviewTargetMismatch` runs a group branch FIRST for such an entry:
+an entry that mixes the two forms, or whose `group` is empty, is refused; a live scope that
+`Resolve-OERAccessReviewGroupScope` does not call `Members` (a package review, a guest-only or
+direct-members review, any other scope) is refused with no request; a declared id is used as
+written and a name goes through `Resolve-OERGroupId -DisplayName`; a different live group id is
+refused. All of these are `AccessReviewScopeMismatch`, except a name that matches nothing, which is
+the existing `GroupNotFound`; a lookup that throws is published as itself. No new ErrorId. A package
+entry against a live group review stays refused by check 2 above. The group name is looked up in the
+whole tenant: a group the same document creates or renames has no rename map entry (the run's rename
+map holds no groups), so the lookup finds the group by the name it has in the tenant
+when the review is applied. If wrong: a review of a just-created or just-renamed group is refused
+once and applies on the next run. The export now also captures Members-form group reviews (see
+[#access-review-group-scope](#access-review-group-scope)); the sentences above about what the export
+captures describe Sprint 11.
+
+## access-review-one-time-duration
+
+Sprint 12 step 6 (BL-168, P1). A one-time review the module wrote was stored by Microsoft Graph with
+`instanceDurationInDays` 0 and a thirty day `noEnd` range, so a second apply reported it changed and
+the instance ran longer than the document said. `Get-OERAccessReviewDuration` is now the single owner
+of the length Graph uses for an instance; `New-OERAccessReviewRecurrence` is still the only builder.
+
+**Measured live on 2026-11-05** (test tenant, the dedicated app identity; source of the forms:
+Microsoft Learn, "Review access to security groups using access reviews APIs" and
+"accessReviewScheduleSettings resource type"):
+
+| Case | Sent | Stored and effect |
+|---|---|---|
+| M1 (the old module shape) | `instanceDurationInDays` 14, no `recurrence` | duration 0; range `noEnd`, start today, end today+30; the instance ends after 30 days |
+| M2/M5 | pattern null, range `numbered`, `numberOfOccurrences` 0, start S, end S+14, duration 14 | stored as sent; the instance ends at S+14 |
+| M3 | the same without `endDate` | Graph computes `endDate` as S+14 |
+| M4 | range type `endDate`, S to S+14 | stored as sent |
+
+**Why the range governs.** After a PUT of `instanceDurationInDays` 7 with the range kept at S to S+14
+the instance still ended at S+14; a PUT of range end S+10 moved the instance end to S+10. For a
+one-time review the range end is the length; `instanceDurationInDays` is not what Graph acts on.
+
+**The chosen form.** OneTime is written as pattern null and a `numbered` range with
+`numberOfOccurrences` 0, `recurrenceTimeZone` null, `startDate` S and `endDate` S plus the declared
+length (the Learn form, measured as M2/M5). A raw PUT of that form over an M1 review that had not
+started moved the definition and the instance end to start plus 14.
+
+**The Set behaviour.** `Set-OERAccessReviewDefinition -DurationInDays` on a live one-time review
+changed only `instanceDurationInDays` in M1 (range and instance stayed at +30), so it now rebuilds the
+range end from the LIVE start. `-Recurrence OneTime` without a length the cmdlet can read is refused
+with the existing `IncompleteRecurrence`; nothing is guessed.
+
+**The diff and the export.** `Resolve-OERAccessReviewChange` and `Get-OERInventory` read the length
+only through `Get-OERAccessReviewDuration`: for a one-time review the whole days from range start to
+range end (both readable, end not before start), otherwise `instanceDurationInDays`, else `$null`.
+A review an older module wrote (duration 0, `noEnd` range of thirty days) therefore reads as 30 days,
+differs from a declared 14, converges in one update and is Unchanged on the second run. The helper
+reads the settings dictionary-safely, since an ordered dictionary has no `ContainsKey`.
+
+**A range that would end today or in the past (I3).** Only reviews that had NOT started were measured
+(M1 to M5 above, and the raw PUT over a not-yet-started M1 review). For a review that is running, the
+rebuilt end is the LIVE start plus the length, so a review started 20 days ago given 14 days would end
+6 days ago. Microsoft Graph's answer to a one-time range that has already ended was not measured, and
+ending a running review can apply its decisions. `Set-OERAccessReviewDefinition` therefore refuses, in
+both one-time branches (`-Recurrence OneTime -StartDate`, and `-DurationInDays` on a live one-time
+review), a computed end that is not after today's UTC date, with the new ErrorId
+`AccessReviewEndNotInFuture`, before the PUT. The engine reports it as the `Failed` row it writes for a
+failed update. If wrong: a legitimate shortening of a running review is refused and is made in the
+portal or with a length that ends after today.
+
+If wrong: a one-time review is rewritten once more than needed; nothing is written to another review.
+
+## access-review-group-scope
+
+Sprint 12 step 6 (BL-137). Before this step an access review whose scope was a group was invisible to
+the engine: not exportable and not declarable. The step adds the group-members review in both
+directions.
+
+**Measured live on 2026-11-05** (same tenant and identity; forms from Microsoft Learn, "Configure
+access review scope by using Microsoft Graph APIs"). Graph normalizes a scope query on read:
+
+| Written | Read back |
+|---|---|
+| `/groups/{id}/transitiveMembers` (with or without `@odata.type`) | `/v1.0/groups/{id}/transitiveMembers/microsoft.graph.user` |
+| the guest form `/groups/{id}/transitiveMembers/?$filter=(userType eq 'Guest')` | `/v1.0/groups/{id}/transitiveMembers/microsoft.graph.user/?$count=true&$filter=(userType eq 'Guest')` |
+| direct members `/groups/{id}/members` | `/v1.0/groups/{id}/members` |
+
+A description-only `Set-OERAccessReviewDefinition` keeps the scope. A group REVIEWER
+`/groups/{id}/transitiveMembers` reads back with the same cast, primary and fallback alike.
+`ConvertTo-OERAccessReviewDefinition` gives a group review an empty `AccessPackageId` and the read-back
+query as `Scope`.
+
+**The classifier (`Resolve-OERAccessReviewGroupScope`).** The single owner of which scope is a group
+review the module can write back. `Members`: the whole query is `/groups/{guid}/transitiveMembers`
+with an optional leading API version segment and an optional trailing `/microsoft.graph.user` cast.
+`OtherForm`: a GUID group with any other tail (the guest filter, `/members`, `/owners`, a trailing
+slash). `NotGroup`: everything else, including a group id that is not a GUID, an invented root and an
+empty query.
+
+**The scope type (C2).** The query alone does not tell a review of all members from a review of a
+group's inactive users: Microsoft Learn ("Configure access review scope by using Microsoft Graph
+APIs", Example 2) writes the inactive users form with the SAME query `/groups/{id}/transitiveMembers`,
+under the scope type `#microsoft.graph.accessReviewInactiveUsersQueryScope` and an
+`inactiveDuration`. `ConvertTo-OERAccessReviewDefinition` therefore also surfaces the scope's
+`@odata.type` as `ScopeType` (an additive property right after `Scope`; `$null` when the answer
+carries none), and `Resolve-OERAccessReviewGroupScope -ScopeType` calls a group query `Members` only
+when the type is absent, empty or `#microsoft.graph.accessReviewQueryScope` (the type Graph reads back
+for the scope the module writes, measured 2026-11-05, compared without regard to letter case). Any other
+type with a group query is `OtherForm`. The inactive users form itself was not measured.
+
+**Why OtherForm is never written back.** The only scope the module writes for `group` is the
+transitive members of the whole group. Exporting a guest-only, direct-members or inactive-users review
+as `group` would, where the review is created (another tenant, or after a delete), widen it to every
+transitive member of the group: a change of who is reviewed, made by an export. In the same tenant
+the target check refuses the entry against such a live review, so nothing is widened there. So the
+export skips `OtherForm` and every other scope, counts the skips by kind, and the target check refuses
+a document entry against such a live review.
+If wrong: a review the operator expected in the bundle is missing from it.
+
+**Reviewers the module cannot write back (final wave, C1).** A review whose primary or fallback
+reviewers include a scope that carries a query and parses into no reviewer the document can express
+(primary: manager, user, group; fallback: user, group) -- `/groups/{id}/owners`, `./owners`,
+`/servicePrincipals/{id}/owners` -- is skipped by the export, in either form, and counted in the skip
+warning as "review(s) whose reviewers the module cannot write back". Omitting the scope would export
+`reviewers: []` (a self review) or a shorter list, and applying that in the same tenant would rewrite
+the live review; the older per-review warnings that only named the dropped scopes are gone, and the
+queries are named on the verbose stream. For a document exported BEFORE this skip existed, a declared
+reviewer that is the group of a live `/groups/{id}/owners` scope is not written: the diff leaves the
+reviewer unit unapplied (`Resolve-OERAccessReviewChange`, NotApplied) because the write would replace
+the group's owners with its members.
+
+**The anchored reviewer form.** See [#reviewer-scope-query](#reviewer-scope-query): the same read-back
+cast is why the reviewer grammar became end-anchored.
+
+**The target check branch.** See [#access-review-target](#access-review-target): the group branch
+runs first and reuses `AccessReviewScopeMismatch`, `GroupNotFound` and `AmbiguousName`.
+
+**The guest key is deferred.** There is no document key for a guest-only review in this step: the
+read-back form above is measured, but a second key is a product decision not yet taken. Until then a
+guest-only review is skipped by the export and refused by the check, never widened.
+
+**The export writes `group`** as the group's display name when it is unique (BL-131,
+[#roster-identity-and-shared-names](#roster-identity-and-shared-names)), else as its id. The validator
+requires exactly one form per entry: `group`, or `accessPackage` with `assignmentPolicy`.
+`New-OERAccessReviewDefinition -Group` creates the review (`GroupSingleStage` or `GroupMultiStage`).
 
 ## policy-update-keeps-custom-extensions
 

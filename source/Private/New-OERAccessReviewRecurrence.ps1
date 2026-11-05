@@ -5,7 +5,10 @@ function New-OERAccessReviewRecurrence {
 
     .DESCRIPTION
     Maps a friendly recurrence cadence and start/end window to the v1.0 patternedRecurrence shape.
-    OneTime returns nothing (the caller omits the recurrence key, producing a single review instance).
+    OneTime returns the one-time form Microsoft Graph stores unchanged: a null pattern and a numbered
+    range of zero occurrences that starts on -StartDate and ends -DurationInDays days later (Graph
+    reads the length of a one-time review from that range, not from instanceDurationInDays);
+    -DurationInDays is required for it, and -EndDate and -Occurrences are ignored.
     Weekly emits a weekly pattern; Monthly, Quarterly, SemiAnnually and Annually emit an
     absoluteMonthly pattern with interval 1, 3, 6 and 12 respectively and a dayOfMonth taken from the
     start date. The pattern type and interval of each cadence are read from Get-OERAccessReviewCadence,
@@ -25,6 +28,9 @@ function New-OERAccessReviewRecurrence {
     .PARAMETER Occurrences
     Optional number of occurrences; produces a numbered range. Mutually exclusive with -EndDate.
 
+    .PARAMETER DurationInDays
+    The length in days of a one-time review; required for OneTime, ignored by the repeating cadences.
+
     .EXAMPLE
     New-OERAccessReviewRecurrence -Recurrence Quarterly -StartDate (Get-Date)
     Builds a quarterly, never-ending recurrence starting today.
@@ -39,14 +45,34 @@ function New-OERAccessReviewRecurrence {
         [Parameter(Mandatory)][datetime]$StartDate,
         [datetime]$EndDate,
         [ValidateRange(1, [int]::MaxValue)]
-        [int]$Occurrences
+        [int]$Occurrences,
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$DurationInDays
     )
     if ($PSBoundParameters.ContainsKey('EndDate') -and $PSBoundParameters.ContainsKey('Occurrences')) {
         throw 'New-OERAccessReviewRecurrence: -EndDate and -Occurrences are mutually exclusive.'
     }
-    if ($Recurrence -eq 'OneTime') { return }
 
     $Invariant = [System.Globalization.CultureInfo]::InvariantCulture
+    if ($Recurrence -eq 'OneTime') {
+        if (-not $PSBoundParameters.ContainsKey('DurationInDays')) {
+            throw 'New-OERAccessReviewRecurrence: -DurationInDays is required for OneTime.'
+        }
+        # The measured Learn form: Graph reads the length of a one-time review from the range, so the
+        # range ends -DurationInDays days after the start. A null pattern with a numbered range of
+        # zero occurrences is what Graph stores back unchanged.
+        return @{
+            pattern = $null
+            range   = [ordered]@{
+                type                = 'numbered'
+                numberOfOccurrences = 0
+                recurrenceTimeZone  = $null
+                startDate           = $StartDate.ToString('yyyy-MM-dd', $Invariant)
+                endDate             = $StartDate.AddDays($DurationInDays).ToString('yyyy-MM-dd', $Invariant)
+            }
+        }
+    }
+
     # The cadence's pattern type and interval come from the single owner of the cadence table; the
     # day of the month belongs to the monthly pattern only.
     $Shape = Get-OERAccessReviewCadence -Cadence $Recurrence

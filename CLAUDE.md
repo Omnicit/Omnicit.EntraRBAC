@@ -869,6 +869,8 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 - **`Resolve-OERReviewerScopeQuery` is the single owner of the access review reviewer scope query
   grammar.** Never re-implement the `/users/` and `/groups/` regex pair inline; `./manager` is
   matched FIRST, always, and an `Unparsed` scope is NOT the same as an empty reviewers collection.
+  The group form is anchored (an optional version segment and `/microsoft.graph.user` cast, then
+  the end); `/owners` and `/members` are `Unparsed`.
   `Why: docs/development/rationale.md#reviewer-scope-query`
 - **`Get-OERAccessReviewCadence` is the single owner of the access review cadence table.** Never
   spell the interval numbers or an interval `switch` elsewhere: the scan in
@@ -876,6 +878,16 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   but the owner's. `OER_COHORT_SOURCE_ROOT` is never set in CI. Cadence NAMES stay with
   `Resolve-OERStructureEnumCasing` and the vocabulary cohort.
   `Why: docs/development/rationale.md#access-review-cadence`
+- **`Get-OERAccessReviewDuration` is the single owner of the length Microsoft Graph uses for an
+  access review instance:** a one-time review is governed by its range (end minus start), any other
+  by `instanceDurationInDays`. The diff, the export and `Set-OERAccessReviewDefinition` read it
+  there; never compare or write the length inline.
+  `Why: docs/development/rationale.md#access-review-one-time-duration`
+- **`Resolve-OERAccessReviewGroupScope` is the single owner of which review scope is a review of
+  a group's members the module can write back** (`Members`, `OtherForm`, `NotGroup`). Only
+  `Members` is exported as `group`; a guest-only or direct-member review is never widened by an
+  apply.
+  `Why: docs/development/rationale.md#access-review-group-scope`
 - **`Test-OERGuid` is the single GUID predicate:** never re-implement the canonical GUID regex
   inline. Deliberate exceptions: the wider `-as [guid]` cast in `Get-OERInventory` and `New-OERGroup`
   (do not migrate those two), and the places that read a group's `administrativeUnit` the way
@@ -893,9 +905,9 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   root scope.
   `Why: docs/development/rationale.md#root-scope-is-not-in-the-document`
 - **`Get-OERAccessReviewTargetMismatch` is the single owner of whether a live access review found by
-  display name reviews the access package and assignment policy an `accessReviews[]` entry
-  declares**; `Resolve-OERAssignmentPolicyId` owns the assignment policy name lookup it shares with
-  creation (`Resolve-OERAccessReviewScopeTarget`). A review that does not is refused with
+  display name reviews the access package and assignment policy, or the group, an `accessReviews[]`
+  entry declares**; `Resolve-OERAssignmentPolicyId` owns the assignment policy name lookup it
+  shares with creation (`Resolve-OERAccessReviewScopeTarget`). A review that does not is refused with
   `AccessReviewScopeMismatch` before any reviewer lookup or `ShouldProcess`, nothing written to it.
   Never re-implement either check or the policy lookup inline. ONE named deviation, never a second:
   `Get-OERInventory`'s uniqueness check of a review's access package or assignment policy name,

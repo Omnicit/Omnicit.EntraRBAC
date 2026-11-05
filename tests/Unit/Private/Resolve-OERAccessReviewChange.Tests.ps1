@@ -100,6 +100,70 @@ Describe 'Resolve-OERAccessReviewChange' {
         }
     }
 
+    Context 'the length of a one-time review is the one Microsoft Graph uses (BL-168)' {
+        BeforeEach {
+            # Settings carry the recurrence the way Graph returns them: a one-time review has a null
+            # pattern and a range whose end is its length.
+            function script:New-OneTimeCurrent {
+                param([int]$Duration, [string]$RangeType, [string]$End)
+                $Range = @{ type = $RangeType; startDate = '2026-11-05'; endDate = $End }
+                [PSCustomObject]@{
+                    Id = 'ar-1'; DisplayName = 'Q3 AP review'
+                    AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
+                    Reviewers = @(@{ query = '/users/usr-1' }); FallbackReviewers = @()
+                    DurationInDays = $Duration
+                    Recurrence = @{ pattern = $null; range = $Range }
+                    Settings = @{ instanceDurationInDays = $Duration; recurrence = @{ pattern = $null; range = $Range } }
+                }
+            }
+        }
+
+        It 'sends only the length for a review whose range runs thirty days (older module shape)' {
+            $Current = New-OneTimeCurrent -Duration 0 -RangeType 'noEnd' -End '2026-12-05'
+            $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review'; recurrence = 'OneTime'; durationInDays = 14 }
+            InModuleScope $script:moduleName -Parameters @{ Declared = $Declared; Current = $Current } {
+                param($Declared, $Current)
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+                $Change.Changed                  | Should -Be $true
+                $Change.SetParams.DurationInDays | Should -Be 14
+                $Change.SetParams.Keys           | Should -Not -Contain 'Recurrence'
+            }
+        }
+
+        It 'reports no change when the range already runs the declared length' {
+            $Current = New-OneTimeCurrent -Duration 14 -RangeType 'numbered' -End '2026-11-19'
+            $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review'; recurrence = 'OneTime'; durationInDays = 14 }
+            InModuleScope $script:moduleName -Parameters @{ Declared = $Declared; Current = $Current } {
+                param($Declared, $Current)
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+                $Change.Changed              | Should -Be $false
+                $Change.SetParams.Keys.Count | Should -Be 0
+            }
+        }
+
+        It 'lets the range govern: instanceDurationInDays 7 beside a fourteen day range is not a change' {
+            $Current = New-OneTimeCurrent -Duration 7 -RangeType 'endDate' -End '2026-11-19'
+            $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review'; recurrence = 'OneTime'; durationInDays = 14 }
+            InModuleScope $script:moduleName -Parameters @{ Declared = $Declared; Current = $Current } {
+                param($Declared, $Current)
+                (Resolve-OERAccessReviewChange -Declared $Declared -Current $Current).Changed | Should -Be $false
+            }
+        }
+
+        It 'still reads instanceDurationInDays for a repeating review' {
+            $Current = $script:CurrentReview.PSObject.Copy()
+            $Current.Settings = @{
+                instanceDurationInDays = 14
+                recurrence = @{ pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }; range = @{ type = 'noEnd'; startDate = '2026-07-01' } }
+            }
+            $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review'; durationInDays = 14 }
+            InModuleScope $script:moduleName -Parameters @{ Declared = $Declared; Current = $Current } {
+                param($Declared, $Current)
+                (Resolve-OERAccessReviewChange -Declared $Declared -Current $Current).Changed | Should -Be $false
+            }
+        }
+    }
+
     It 'reads a settings value from a PSCustomObject as well as from a Graph dictionary' {
         $Current = $script:CurrentReview.PSObject.Copy()
         $Current.Settings = [PSCustomObject]@{ instanceDurationInDays = 14; defaultDecision = 'None' }
@@ -1212,6 +1276,99 @@ Describe 'Resolve-OERAccessReviewChange' {
             }
         }
 
+        It 'leaves the reviewer unit unwritten when the declared reviewer is the group whose OWNERS review the live definition' {
+            # An export made before the module skipped such reviews wrote the owners reviewer as the
+            # group (read as its members). Applied, it would write /groups/grp-1/transitiveMembers:
+            # the reviewers become every member of the group instead of its owners.
+            $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review' }
+            $Reviewer = [PSCustomObject]@{
+                HasReviewers = $true; HasFallbackReviewers = $false
+                Manager = $false; SelfReview = $false
+                Reviewer = @(); ReviewerGroup = @('grp-1')
+                FallbackReviewer = @(); FallbackReviewerGroup = @()
+                ReviewerKey = @('grp-1'); FallbackKey = @()
+            }
+            $Current = $script:CurrentReview
+            $Current.Reviewers = @(@{ query = '/v1.0/groups/grp-1/owners'; queryType = 'MicrosoftGraph' })
+            $Current.FallbackReviewers = @()
+            InModuleScope $script:moduleName -Parameters @{ Declared = $Declared; Current = $Current; Reviewer = $Reviewer } {
+                param($Declared, $Current, $Reviewer)
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current -DeclaredReviewer $Reviewer
+                $Change.Changed | Should -Be $false
+                foreach ($Name in 'Reviewer', 'ReviewerGroup', 'SelfReview', 'Manager', 'FallbackReviewer', 'FallbackReviewerGroup') {
+                    @($Change.SetParams.Keys) | Should -Not -Contain $Name
+                }
+                @($Change.NotApplied).Count | Should -Be 1
+                [string]$Change.NotApplied[0] | Should -BeExactly ("the live definition reviews through '/v1.0/groups/grp-1/owners', a scope of group 'grp-1' that this module cannot write; " +
+                    "the document's reviewer 'grp-1' would replace it with that group's members, so the reviewer change was left unapplied. " +
+                    'Declare the reviewers again from a current export, or change them with Set-OERAccessReviewDefinition')
+            }
+        }
+
+        It 'still applies the fields outside the reviewer unit when the owners clash leaves the reviewers unwritten' {
+            $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review'; descriptionForAdmins = 'a different admin text' }
+            $Reviewer = [PSCustomObject]@{
+                HasReviewers = $true; HasFallbackReviewers = $false
+                Manager = $false; SelfReview = $false
+                Reviewer = @(); ReviewerGroup = @('grp-1')
+                FallbackReviewer = @(); FallbackReviewerGroup = @()
+                ReviewerKey = @('grp-1'); FallbackKey = @()
+            }
+            $Current = $script:CurrentReview
+            $Current.Reviewers = @(@{ query = '/groups/grp-1/owners' })
+            $Current.FallbackReviewers = @()
+            InModuleScope $script:moduleName -Parameters @{ Declared = $Declared; Current = $Current; Reviewer = $Reviewer } {
+                param($Declared, $Current, $Reviewer)
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current -DeclaredReviewer $Reviewer
+                $Change.Changed | Should -Be $true
+                @($Change.SetParams.Keys) | Should -Be @('DescriptionForAdmins')
+                @($Change.NotApplied).Count | Should -Be 1
+            }
+        }
+
+        It 'keeps the forced replace when the declared reviewer is another group than the live owners scope names' {
+            $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review' }
+            $Reviewer = [PSCustomObject]@{
+                HasReviewers = $true; HasFallbackReviewers = $false
+                Manager = $false; SelfReview = $false
+                Reviewer = @(); ReviewerGroup = @('grp-1')
+                FallbackReviewer = @(); FallbackReviewerGroup = @()
+                ReviewerKey = @('grp-1'); FallbackKey = @()
+            }
+            $Current = $script:CurrentReview
+            $Current.Reviewers = @(@{ query = '/groups/grp-2/owners' })
+            $Current.FallbackReviewers = @()
+            InModuleScope $script:moduleName -Parameters @{ Declared = $Declared; Current = $Current; Reviewer = $Reviewer } {
+                param($Declared, $Current, $Reviewer)
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current -DeclaredReviewer $Reviewer
+                $Change.Changed | Should -Be $true
+                @($Change.SetParams.ReviewerGroup) | Should -Be @('grp-1')
+                @($Change.NotApplied) | Should -BeNullOrEmpty
+                (@($Change.Changes) -join ' ') | Should -Match 'replacing 1 live reviewer scope'
+            }
+        }
+
+        It 'leaves the reviewer unit unwritten when the declared FALLBACK reviewer is the group whose owners are the live fallback' {
+            $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review' }
+            $Reviewer = [PSCustomObject]@{
+                HasReviewers = $false; HasFallbackReviewers = $true
+                Manager = $false; SelfReview = $false
+                Reviewer = @(); ReviewerGroup = @()
+                FallbackReviewer = @(); FallbackReviewerGroup = @('grp-1')
+                ReviewerKey = @(); FallbackKey = @('grp-1')
+            }
+            $Current = $script:CurrentReview
+            $Current.Reviewers = @(@{ query = '/v1.0/users/usr-1' })
+            $Current.FallbackReviewers = @(@{ query = '/v1.0/groups/grp-1/owners' })
+            InModuleScope $script:moduleName -Parameters @{ Declared = $Declared; Current = $Current; Reviewer = $Reviewer } {
+                param($Declared, $Current, $Reviewer)
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current -DeclaredReviewer $Reviewer
+                $Change.Changed | Should -Be $false
+                @($Change.SetParams.Keys) | Should -Not -Contain 'FallbackReviewerGroup'
+                @($Change.NotApplied).Count | Should -Be 1
+                [string]$Change.NotApplied[0] | Should -Match "reviews through '/v1.0/groups/grp-1/owners', a scope of group 'grp-1'"
+            }
+        }
         It 'converges: the same diff run against the normalized post-write definition reports Unchanged' {
             # Symmetry guard. Forcing the change above must not make every apply report drift forever
             # -- after the PUT the definition carries only module-emitted forms (prefixed on read),
@@ -1233,6 +1390,73 @@ Describe 'Resolve-OERAccessReviewChange' {
                 $Change.Changed | Should -Be $false
                 @($Change.NotApplied) | Should -BeNullOrEmpty
             }
+        }
+    }
+}
+
+# Sprint 12 step 6 (BL-137): the immutable scope of a group review.
+Describe 'Resolve-OERAccessReviewChange group scope' {
+    BeforeEach {
+        $script:GrLive = [PSCustomObject]@{
+            Id                      = 'ar-1'
+            DisplayName             = 'Q3 group review'
+            DescriptionForAdmins    = 'admin text'
+            DescriptionForReviewers = 'reviewer text'
+            Scope                   = '/v1.0/groups/11111111-1111-1111-1111-111111111111/transitiveMembers/microsoft.graph.user'
+            AccessPackageId         = $null
+            AssignmentPolicyId      = $null
+            Reviewers               = @(@{ query = '/users/usr-1' })
+            FallbackReviewers       = @()
+            DurationInDays          = 14
+            Recurrence              = @{ pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }; range = @{ type = 'noEnd'; startDate = '2026-07-01' } }
+            Settings                = @{ instanceDurationInDays = 14 }
+        }
+    }
+
+    It 'reports no change for a declared group GUID equal to the live group (<Case>)' -ForEach @(
+        @{ Case = 'same case'; Declared = '11111111-1111-1111-1111-111111111111' }
+        @{ Case = 'other letter case'; Declared = '11111111-1111-1111-1111-111111111111'.ToUpper() }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Live = $script:GrLive; Group = $Declared } {
+            param($Live, $Group)
+            $Change = Resolve-OERAccessReviewChange -Declared ([PSCustomObject]@{ displayName = 'Q3 group review'; group = $Group }) -Current $Live
+            $Change.Changed | Should -Be $false
+            @($Change.NotApplied) | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'leaves a declared group name alone: it is not compared offline' {
+        InModuleScope $script:moduleName -Parameters @{ Live = $script:GrLive } {
+            param($Live)
+            $Change = Resolve-OERAccessReviewChange -Declared ([PSCustomObject]@{ displayName = 'Q3 group review'; group = 'Sales' }) -Current $Live
+            @($Change.NotApplied) | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'reports a declared group GUID that differs from the live group as not applied, writing nothing' {
+        InModuleScope $script:moduleName -Parameters @{ Live = $script:GrLive } {
+            param($Live)
+            $Change = Resolve-OERAccessReviewChange -Declared ([PSCustomObject]@{ displayName = 'Q3 group review'; group = '22222222-2222-2222-2222-222222222222' }) -Current $Live
+            $Change.Changed | Should -Be $false
+            @($Change.NotApplied).Count | Should -Be 1
+            $Change.NotApplied[0] | Should -BeExactly "group '22222222-2222-2222-2222-222222222222' differs from the live scope '11111111-1111-1111-1111-111111111111'; the review scope is immutable and was not changed"
+        }
+    }
+
+    It 'names the live scope as none when it is no group scope' {
+        InModuleScope $script:moduleName -Parameters @{ Live = $script:GrLive } {
+            param($Live)
+            $Live.Scope = '/identityGovernance/entitlementManagement/assignments?$filter=x'
+            $Change = Resolve-OERAccessReviewChange -Declared ([PSCustomObject]@{ displayName = 'Q3 group review'; group = '22222222-2222-2222-2222-222222222222' }) -Current $Live
+            $Change.NotApplied[0] | Should -BeLike "*differs from the live scope 'none'*"
+        }
+    }
+
+    It 'does not look at the group when the entry declares none' {
+        InModuleScope $script:moduleName -Parameters @{ Live = $script:GrLive } {
+            param($Live)
+            $Change = Resolve-OERAccessReviewChange -Declared ([PSCustomObject]@{ displayName = 'Q3 group review'; group = $null }) -Current $Live
+            @($Change.NotApplied) | Should -BeNullOrEmpty
         }
     }
 }

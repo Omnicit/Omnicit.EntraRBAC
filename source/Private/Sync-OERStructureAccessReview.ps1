@@ -69,6 +69,20 @@ function Sync-OERStructureAccessReview {
     A rename is decided without the run's rename map: nothing in a document refers to a review by
     name, so a review's rename is not registered there.
 
+    A review of a group's members (an entry that declares group instead of accessPackage and
+    assignmentPolicy): it is matched, checked, diffed and updated like a package review, and created with
+    New-OERAccessReviewDefinition -Group. It reads nothing in the run's rename map, and it calls no
+    Get-OERStructureRenameTarget: there is no rename map for groups. The group the entry names, and the
+    group a live review of that name reviews, are looked up by name in the tenant by the target check and
+    the create. Known limit: a group the same document creates or renames in this run may not be listed
+    by Microsoft Graph yet, so the lookup fails that run's entry with GroupNotFound (a Failed row), and
+    a later run can create the review once Microsoft Graph lists the group (expected, not measured).
+    A live review with the entry's name that reviews ANOTHER group, or reviews a group in a form this
+    module does not write (guests only, direct members, inactive users, owners), is refused with
+    AccessReviewScopeMismatch before any reviewer lookup or write, in a plan and in a run.
+    A declared group GUID that differs from the live review's group is reported as a not applied
+    change, since the scope is immutable.
+
     An access package or assignment policy the same document renames (BL-128): the entry's
     accessPackage and assignmentPolicy are read in the run's rename map (-RenameMap) first, before any
     Graph call for the entry, through Get-OERStructureRenameTarget -- the access package by its name (a
@@ -113,11 +127,11 @@ function Sync-OERStructureAccessReview {
     additionalNotificationRecipients, neither of which the document models). A writable property added
     to the Microsoft Graph accessReviewScheduleDefinition resource in future and not yet on that
     carry-forward list would still be cleared by the PUT -- see Set-OERAccessReviewDefinition.
-    The review SCOPE (accessPackage, assignmentPolicy) is immutable on an existing definition, and the
+    The review SCOPE (accessPackage, assignmentPolicy, or group) is immutable on an existing definition, and the
     definition was found by display name only (or, for a rename, under the previous name or object id
     the entry declares), so before anything else is done with it -- a rename included -- the handler
     asks Get-OERAccessReviewTargetMismatch whether it reviews the access package and assignment policy
-    the entry declares (BL-127). A live review of a group, a role, another access package or another
+    (or, for an entry that declares group, the members of that group) the entry declares (BL-127). A live review of a group, a role, another access package or another
     policy is REFUSED: the entry is reported Failed with an AccessReviewScopeMismatch error naming both
     targets, and nothing is read further or written for it -- no reviewer lookup, no diff, no update,
     the same in a -WhatIf plan and in a real run. A declared name that matches nothing (AccessPackageNotFound,
@@ -180,8 +194,8 @@ function Sync-OERStructureAccessReview {
 
     Recurrence range and review settings:
     - endDate (an end-date range) or occurrences (a numbered range) -- at most one; if a hand-built
-      item somehow carries both, endDate wins. Both are inert on a OneTime review because it carries
-      no recurrence object.
+      item somehow carries both, endDate wins. Both are inert on a OneTime review because its range is
+      its own numbered range whose end is its length (durationInDays).
     - mailNotification, reminderNotification, requireJustification, recommendationsEnabled and
       autoApplyDecisions map to the matching New-OERAccessReviewDefinition switches and are bound only
       when the document declares them true, so an omitted field keeps the cmdlet default.
@@ -294,8 +308,12 @@ function Sync-OERStructureAccessReview {
         $TranslatedNote = [System.Collections.Generic.List[string]]::new()
         $PackageRef = if (Test-OERDeclaredProperty -Node $Item -Name 'accessPackage') { [string]$Item.accessPackage } else { '' }
         $PolicyRef = if (Test-OERDeclaredProperty -Node $Item -Name 'assignmentPolicy') { [string]$Item.assignmentPolicy } else { '' }
+        # A review of a group's members declares no package or policy: it reads nothing in the rename map
+        # (there is no rename map for groups; a group the document creates or renames is looked up by name
+        # in the tenant, by the target check and the create).
+        $IsGroupReview = Test-OERDeclaredProperty -Node $Item -Name 'group'
         $PackageTarget = $null
-        if (-not (Test-OERGuid -Value $PackageRef)) {
+        if (-not $IsGroupReview -and -not (Test-OERGuid -Value $PackageRef)) {
             $PackageTarget = Get-OERStructureRenameTarget -Section 'accessPackages' -Name $PackageRef -RenameMap $RenameMap
         }
         # BL-147 (R-8): every accessPackages entry registers its package here, not only a rename. An entry
@@ -331,7 +349,10 @@ function Sync-OERStructureAccessReview {
             ConvertTo-OERStructureResult -Section 'accessReviews' -Item $Name -Action 'Failed' -Detail $RefusedDetail -ErrorRecord $PackageErrRec
             return
         }
-        $PolicyTarget = Get-OERStructureRenameTarget -Section 'assignmentPolicies' -Name $PolicyRef -AccessPackage $PackageRef -RenameMap $RenameMap
+        $PolicyTarget = $null
+        if (-not $IsGroupReview) {
+            $PolicyTarget = Get-OERStructureRenameTarget -Section 'assignmentPolicies' -Name $PolicyRef -AccessPackage $PackageRef -RenameMap $RenameMap
+        }
         if ($PolicyTarget -and $PolicyTarget.Refused) {
             $PolicyRefusedDetail = "assignment policy '$PolicyRef' of access package '$PackageRef' was not reconciled in this run: its rename from '$($PolicyTarget.PreviousName)' was refused ($($PolicyTarget.Reason)), so the assignment policy this access review reviews cannot be identified; nothing was created, read or written for it"
             $PolicyErrorId = if ([string]::IsNullOrEmpty([string]$PolicyTarget.ErrorId)) { 'StructureReferenceUnidentified' } else { [string]$PolicyTarget.ErrorId }
@@ -638,6 +659,9 @@ function Sync-OERStructureAccessReview {
                 $Caller.WriteError($TargetMismatch)
                 $MismatchDetail = if (([string]$TargetMismatch.FullyQualifiedErrorId).StartsWith('AccessReviewScopeMismatch', [System.StringComparison]::Ordinal)) {
                     $TargetMismatch.Exception.Message
+                } elseif (Test-OERDeclaredProperty -Node $Item -Name 'group') {
+                    "could not resolve the group of access review '$Name': " +
+                    "$($TargetMismatch.Exception.Message); nothing was written"
                 } else {
                     "could not resolve the access package or assignment policy of access review '$Name': " +
                     "$($TargetMismatch.Exception.Message); nothing was written"
@@ -922,15 +946,22 @@ function Sync-OERStructureAccessReview {
             # its new name, or for an access package any accessPackages entry of this document found or
             # created (BL-147), so the review is created on that package and never on one of that name
             # in another catalog; otherwise the names as declared.
-            AccessPackage           = $TargetItem.accessPackage
-            AssignmentPolicy        = $TargetItem.assignmentPolicy
-            Recurrence              = $MappedRecurrence
+            Recurrence             = $MappedRecurrence
             StartDate               = if (Test-OERDeclaredProperty -Node $Item -Name 'startDate') {
                 [datetime]$Item.startDate
             } else {
                 (Get-Date)
             }
             Confirm                 = $false
+        }
+
+        # What the review reviews: the group whose members it reviews (looked up by name in the tenant by
+        # New-OERAccessReviewDefinition), or the package and policy as $TargetItem carries them.
+        if ($IsGroupReview) {
+            $NewParams.Group = [string]$Item.group
+        } else {
+            $NewParams.AccessPackage = $TargetItem.accessPackage
+            $NewParams.AssignmentPolicy = $TargetItem.assignmentPolicy
         }
 
         if (Test-OERDeclaredProperty -Node $Item -Name 'durationInDays') {

@@ -665,7 +665,7 @@ be included in access packages:
 
 ### Access Reviews (10)
 
-Access review definitions and instances for access packages.
+Access review definitions and instances for access packages and for the members of a group.
 
 - `New-OERAccessReviewDefinition`, `Get-OERAccessReviewDefinition`,
   `Set-OERAccessReviewDefinition`, `Remove-OERAccessReviewDefinition`
@@ -947,8 +947,10 @@ answers to them has not been measured.
 An existing access review is matched by display name, and display names are not unique in a tenant.
 `Invoke-OERStructure` updates the review it finds only when that review reviews the access package
 and assignment policy the entry declares (a GUID compared as written, a name resolved as
-`New-OERAccessReviewDefinition` resolves it). A review of a group, a role, another access package or
-another policy is reported `Failed` with `AccessReviewScopeMismatch`, and nothing is written to it,
+`New-OERAccessReviewDefinition` resolves it). An entry declares either `group` (a name or an id) for a review
+of all members of a group, or `accessPackage` with `assignmentPolicy`, never both; the export writes both
+forms and skips a guest-only, direct-member or other group review, so it is never widened. A review of
+another group, a role, another access package or another policy is reported `Failed` with `AccessReviewScopeMismatch`, and nothing is written to it,
 the same in a `-WhatIf` plan; a name that matches nothing is reported `Failed` with
 `AccessPackageNotFound` or `AssignmentPolicyNotFound`. An access package name is not unique in the
 tenant, nor an assignment policy name in its access package: when such a name is shared, the entry
@@ -1182,7 +1184,7 @@ name is counted over every group in the tenant, Microsoft 365 and distribution g
 access package's among the packages of its catalog; an assignment policy's among the policies of its
 own access package; and the name of an administrative unit, a catalog or an access review among the
 ones read (with `Get-OERInventory -Catalog`, only the catalogs it reads; an access review among the
-access-package reviews captured). The export warns once, and its
+access-package and group-members reviews captured). The export warns once, and its
 `README.md` lists each name, with how many objects carry it, under "Names two or more objects
 share". An access package's `catalog`, an access review's `accessPackage` or `assignmentPolicy`, and
 a group named as the principal of a role assignment or a directory role assignment (with

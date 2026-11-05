@@ -5,8 +5,10 @@ function ConvertTo-OERAccessReviewDefinition {
 
     .DESCRIPTION
     Maps the relevant properties of a Graph access review schedule definition into a [PSCustomObject]
-    tagged Omnicit.EntraRBAC.AccessReviewDefinition. The raw scope query, settings and stage count are
-    surfaced for inspection. ReviewerCount reflects the number of top-level reviewer scope entries, and
+    tagged Omnicit.EntraRBAC.AccessReviewDefinition. The raw scope query, the scope's '@odata.type'
+    (ScopeType, $null when the answer carries none), settings and stage count are surfaced for
+    inspection. ScopeType tells a review of a group's members from one of its inactive users, which
+    share the query (see Resolve-OERAccessReviewGroupScope). ReviewerCount reflects the number of top-level reviewer scope entries, and
     StageCount reflects the number of stageSettings entries (non-zero for multi-stage reviews). Seven
     settings fields are also surfaced as flat, typed members -- MailNotificationsEnabled,
     ReminderNotificationsEnabled, JustificationRequired, RecommendationsEnabled,
@@ -48,6 +50,17 @@ function ConvertTo-OERAccessReviewDefinition {
     )
     process {
         $ScopeQuery = $InputObject.scope.query
+        # The scope's '@odata.type', read dictionary-safely: a raw Graph answer is a hashtable whose
+        # '@odata.type' key is not a member name, and a PSCustomObject fixture carries it as a property.
+        $ScopeNode = $InputObject.scope
+        $ScopeType = $null
+        if ($ScopeNode -is [System.Collections.IDictionary]) {
+            if ($ScopeNode.Contains('@odata.type')) { $ScopeType = $ScopeNode['@odata.type'] }
+        }
+        elseif ($null -ne $ScopeNode -and $null -ne $ScopeNode.PSObject.Properties['@odata.type']) {
+            $ScopeType = $ScopeNode.PSObject.Properties['@odata.type'].Value
+        }
+        if ($null -ne $ScopeType) { $ScopeType = [string]$ScopeType }
         $AccessPackageId = $null
         $AssignmentPolicyId = $null
         if ($ScopeQuery) {
@@ -87,6 +100,7 @@ function ConvertTo-OERAccessReviewDefinition {
             DescriptionForAdmins          = $InputObject.descriptionForAdmins
             DescriptionForReviewers       = $InputObject.descriptionForReviewers
             Scope                         = $ScopeQuery
+            ScopeType                     = $ScopeType
             AccessPackageId               = $AccessPackageId
             AssignmentPolicyId            = $AssignmentPolicyId
             Reviewers                     = @($InputObject.reviewers | Where-Object { $_ })

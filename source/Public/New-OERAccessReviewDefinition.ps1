@@ -1,7 +1,7 @@
 function New-OERAccessReviewDefinition {
     <#
     .SYNOPSIS
-    Creates an access review schedule definition scoped to an access package.
+    Creates an access review schedule definition scoped to an access package or to the members of a group.
 
     .DESCRIPTION
     Creates a v1.0 accessReviewScheduleDefinition via Microsoft Graph, scoped to the assignments
@@ -9,6 +9,8 @@ function New-OERAccessReviewDefinition {
     parameters) and multi-stage (pre-built stage objects from New-OERAccessReviewStage) reviews.
     Recurrence cadences OneTime, Weekly, Monthly, Quarterly, SemiAnnually (every six months) and
     Annually are supported; OneTime produces a single instance.
+    With -Group the review covers the members of a group instead of an access package: every direct
+    and transitive member is reviewed (the review scope query is /groups/{id}/transitiveMembers).
     Scope, reviewer, and catalog ids are resolved from friendly display names or GUIDs. Supports
     -WhatIf and -Confirm.
 
@@ -22,7 +24,13 @@ function New-OERAccessReviewDefinition {
     A description visible to reviewers when they are prompted to review.
 
     .PARAMETER AccessPackage
-    The access package display name or id to scope the review to.
+    The access package display name or id to scope the review to. Not combined with -Group.
+
+    .PARAMETER Group
+    The display name or object id (GUID) of the group whose members are reviewed, in place of an
+    access package: every direct and transitive member is in scope. A display name that several
+    groups share is refused with AmbiguousName, naming their ids; a name matching no group is
+    refused with GroupNotFound. Not combined with -AccessPackage, -AssignmentPolicy or -Catalog.
 
     .PARAMETER AssignmentPolicy
     The assignment policy display name or id whose assignments are reviewed. A display name that
@@ -59,7 +67,8 @@ function New-OERAccessReviewDefinition {
     .PARAMETER Recurrence
     The review cadence: OneTime, Weekly, Monthly, Quarterly, SemiAnnually, or Annually.
     SemiAnnually repeats every six months (Graph absoluteMonthly, interval 6). OneTime schedules a
-    single review instance with no recurrence object on the definition.
+    single review instance from -StartDate that lasts -DurationInDays days; Microsoft Graph reads its
+    length from the recurrence range, so the range ends -DurationInDays days after -StartDate.
 
     .PARAMETER StartDate
     The date the first review instance (or series) begins.
@@ -76,7 +85,8 @@ function New-OERAccessReviewDefinition {
     .PARAMETER DurationInDays
     Number of days reviewers have to complete each review instance. Defaults to 14. Also bindable
     as -DurationDays, the module-standard duration name used by the PIM cmdlets. Must be 1 or greater;
-    a non-positive value fails parameter binding on this cmdlet.
+    a non-positive value fails parameter binding on this cmdlet. For -Recurrence OneTime it is also
+    the length of the whole review: the recurrence range ends this many days after -StartDate.
 
     .PARAMETER MailNotification
     When present, Graph sends email notifications to reviewers about the review.
@@ -122,6 +132,12 @@ function New-OERAccessReviewDefinition {
         -AssignmentPolicy 'Standard' -Reviewer 'manager@contoso.com' `
         -Recurrence SemiAnnually -StartDate (Get-Date '2027-01-01')
     Creates a single-stage access review that repeats every six months, starting on 1 January 2027.
+
+    .EXAMPLE
+    New-OERAccessReviewDefinition -DisplayName 'Sales Team members' -DescriptionForAdmins 'Yearly review' `
+        -DescriptionForReviewers 'Please review membership' -Group 'Sales Team' `
+        -Reviewer 'manager@contoso.com' -Recurrence Annually -StartDate (Get-Date '2027-01-01')
+    Creates a yearly single-stage access review of every direct and transitive member of the group.
     #>
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'SingleStage')]
     [OutputType([PSCustomObject])]
@@ -135,33 +151,49 @@ function New-OERAccessReviewDefinition {
         [Parameter(Mandatory)]
         [string]$DescriptionForReviewers,
 
-        [Parameter(Mandatory)]
+        [Parameter(ParameterSetName = 'SingleStage', Mandatory)]
+        [Parameter(ParameterSetName = 'MultiStage', Mandatory)]
         [string]$AccessPackage,
 
-        [Parameter(Mandatory)]
+        [Parameter(ParameterSetName = 'GroupSingleStage', Mandatory)]
+        [Parameter(ParameterSetName = 'GroupMultiStage', Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Group,
+
+        [Parameter(ParameterSetName = 'SingleStage', Mandatory)]
+        [Parameter(ParameterSetName = 'MultiStage', Mandatory)]
         [string]$AssignmentPolicy,
 
+        [Parameter(ParameterSetName = 'SingleStage')]
+        [Parameter(ParameterSetName = 'MultiStage')]
         [string]$Catalog,
 
         [Parameter(ParameterSetName = 'SingleStage')]
+        [Parameter(ParameterSetName = 'GroupSingleStage')]
         [string[]]$Reviewer,
 
         [Parameter(ParameterSetName = 'SingleStage')]
+        [Parameter(ParameterSetName = 'GroupSingleStage')]
         [string[]]$ReviewerGroup,
 
         [Parameter(ParameterSetName = 'SingleStage')]
+        [Parameter(ParameterSetName = 'GroupSingleStage')]
         [switch]$Manager,
 
         [Parameter(ParameterSetName = 'SingleStage')]
+        [Parameter(ParameterSetName = 'GroupSingleStage')]
         [switch]$SelfReview,
 
         [Parameter(ParameterSetName = 'SingleStage')]
+        [Parameter(ParameterSetName = 'GroupSingleStage')]
         [string[]]$FallbackReviewer,
 
         [Parameter(ParameterSetName = 'SingleStage')]
+        [Parameter(ParameterSetName = 'GroupSingleStage')]
         [string[]]$FallbackReviewerGroup,
 
         [Parameter(ParameterSetName = 'MultiStage', Mandatory)]
+        [Parameter(ParameterSetName = 'GroupMultiStage', Mandatory)]
         [PSCustomObject[]]$Stage,
 
         [Parameter(Mandatory)]
@@ -243,56 +275,75 @@ function New-OERAccessReviewDefinition {
             return
         }
 
-        $ScopeParams = @{ AccessPackage = $AccessPackage; AssignmentPolicy = $AssignmentPolicy }
-        if ($Catalog) { $ScopeParams.Catalog = $Catalog }
-        $Target = Resolve-OERAccessReviewScopeTarget @ScopeParams
-        if ($Target.FailedValue) {
-            # A catalog or assignment policy read that FAILED (a 403, an exhausted 429, a 5xx) is not
-            # evidence that no such catalog or policy exists: re-publish the caught record as itself,
-            # never as "<Kind> '<Value>' not found." The access package branch reports its own failures
-            # through FailedErrorId/FailedCategory below, and sets no FailedRecord.
-            if ($Target.FailedRecord) {
-                $PSCmdlet.WriteError($Target.FailedRecord)
+        if ($PSCmdlet.ParameterSetName -like 'Group*') {
+            # A failed lookup (a 403, an exhausted 429, a 5xx) or an ambiguous name is re-published as
+            # itself; only a name that matched nothing is GroupNotFound.
+            try { $GroupId = Resolve-OERGroupId -DisplayName $Group }
+            catch {
+                Remove-OERErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
                 return
             }
-            # A resolver that supplies its own ErrorId/message knows more about the failure than the
-            # generic "<Kind> '<Value>' not found." construction can express -- prefer it when present.
-            $ScopeErrorId = if ($Target.FailedErrorId) { $Target.FailedErrorId } else { "$($Target.FailedKind)NotFound" }
-            $ScopeMessage = if ($Target.FailedMessage) { $Target.FailedMessage } else { "$($Target.FailedKind) '$($Target.FailedValue)' not found." }
-            # Only an ambiguity is a bad argument. The pre-existing CatalogDerivationFailed and the
-            # plain not-found paths keep ObjectNotFound, so this is additive, not a behaviour change.
-            # A resolver that supplies its own CATEGORY outranks both: a 403 or an exhausted 429 out
-            # of the access-package resolver is neither a bad argument nor a missing object, and the
-            # ErrorId alone cannot say so (it is whatever Graph named the failure).
-            #
-            # WHAT ACTUALLY SUPPLIES A CATEGORY, precisely, since the precedence below turns on it:
-            # Resolve-OERAccessReviewScopeTarget populates FailedCategory on EVERY throw out of
-            # Resolve-OERAccessPackageId -- 'InvalidArgument' on the ambiguity path and the caught
-            # record's own ErrorCategory (PermissionDenied, ObjectNotFound, ...) on every other --
-            # and on an ambiguous assignment policy display name ('InvalidArgument'). It leaves it
-            # $null on every path that comes out of neither: the plain no-match, both catalog
-            # paths, and the assignment policy other than that ambiguity.
-            # A CONSEQUENCE WORTH KNOWING: 'AmbiguousAccessPackageName' therefore never reaches the
-            # elseif below -- the resolver already answered 'InvalidArgument' for it, and the first
-            # arm wins. That arm is kept naming it anyway, and is not dead weight: it is what makes
-            # this cmdlet report an ambiguity as InvalidArgument if the resolver ever stops
-            # supplying a category for one, which is the obvious "only pass a category where the
-            # ErrorId cannot reveal it" simplification. Without it, that edit would silently
-            # downgrade an ambiguous access package to ObjectNotFound with no test going red.
-            # 'AmbiguousCatalogName' does still reach it today: the catalog branch passes no
-            # category at all.
-            $ScopeCategory = if ($Target.FailedCategory) { $Target.FailedCategory }
-            elseif ($ScopeErrorId -in @('AmbiguousAccessPackageName', 'AmbiguousCatalogName')) { 'InvalidArgument' }
-            else { 'ObjectNotFound' }
-            Write-CmdletError `
-                -Message ([System.Exception]::new($ScopeMessage)) `
-                -ErrorId $ScopeErrorId -Category $ScopeCategory `
-                -TargetObject $Target.FailedValue -Cmdlet $PSCmdlet
-            return
+            if (-not $GroupId) {
+                Write-CmdletError `
+                    -Message ([System.Exception]::new("Group '$Group' not found.")) `
+                    -ErrorId 'GroupNotFound' -Category ObjectNotFound -TargetObject $Group -Cmdlet $PSCmdlet
+                return
+            }
+            $Scope = New-OERAccessReviewScopeQuery -GroupId $GroupId
         }
-        $Scope = New-OERAccessReviewScopeQuery `
-            -AccessPackageId $Target.AccessPackageId `
-            -AssignmentPolicyId $Target.AssignmentPolicyId
+        else {
+            $ScopeParams = @{ AccessPackage = $AccessPackage; AssignmentPolicy = $AssignmentPolicy }
+            if ($Catalog) { $ScopeParams.Catalog = $Catalog }
+            $Target = Resolve-OERAccessReviewScopeTarget @ScopeParams
+            if ($Target.FailedValue) {
+                # A catalog or assignment policy read that FAILED (a 403, an exhausted 429, a 5xx) is not
+                # evidence that no such catalog or policy exists: re-publish the caught record as itself,
+                # never as "<Kind> '<Value>' not found." The access package branch reports its own failures
+                # through FailedErrorId/FailedCategory below, and sets no FailedRecord.
+                if ($Target.FailedRecord) {
+                    $PSCmdlet.WriteError($Target.FailedRecord)
+                    return
+                }
+                # A resolver that supplies its own ErrorId/message knows more about the failure than the
+                # generic "<Kind> '<Value>' not found." construction can express -- prefer it when present.
+                $ScopeErrorId = if ($Target.FailedErrorId) { $Target.FailedErrorId } else { "$($Target.FailedKind)NotFound" }
+                $ScopeMessage = if ($Target.FailedMessage) { $Target.FailedMessage } else { "$($Target.FailedKind) '$($Target.FailedValue)' not found." }
+                # Only an ambiguity is a bad argument. The pre-existing CatalogDerivationFailed and the
+                # plain not-found paths keep ObjectNotFound, so this is additive, not a behaviour change.
+                # A resolver that supplies its own CATEGORY outranks both: a 403 or an exhausted 429 out
+                # of the access-package resolver is neither a bad argument nor a missing object, and the
+                # ErrorId alone cannot say so (it is whatever Graph named the failure).
+                #
+                # WHAT ACTUALLY SUPPLIES A CATEGORY, precisely, since the precedence below turns on it:
+                # Resolve-OERAccessReviewScopeTarget populates FailedCategory on EVERY throw out of
+                # Resolve-OERAccessPackageId -- 'InvalidArgument' on the ambiguity path and the caught
+                # record's own ErrorCategory (PermissionDenied, ObjectNotFound, ...) on every other --
+                # and on an ambiguous assignment policy display name ('InvalidArgument'). It leaves it
+                # $null on every path that comes out of neither: the plain no-match, both catalog
+                # paths, and the assignment policy other than that ambiguity.
+                # A CONSEQUENCE WORTH KNOWING: 'AmbiguousAccessPackageName' therefore never reaches the
+                # elseif below -- the resolver already answered 'InvalidArgument' for it, and the first
+                # arm wins. That arm is kept naming it anyway, and is not dead weight: it is what makes
+                # this cmdlet report an ambiguity as InvalidArgument if the resolver ever stops
+                # supplying a category for one, which is the obvious "only pass a category where the
+                # ErrorId cannot reveal it" simplification. Without it, that edit would silently
+                # downgrade an ambiguous access package to ObjectNotFound with no test going red.
+                # 'AmbiguousCatalogName' does still reach it today: the catalog branch passes no
+                # category at all.
+                $ScopeCategory = if ($Target.FailedCategory) { $Target.FailedCategory }
+                elseif ($ScopeErrorId -in @('AmbiguousAccessPackageName', 'AmbiguousCatalogName')) { 'InvalidArgument' }
+                else { 'ObjectNotFound' }
+                Write-CmdletError `
+                    -Message ([System.Exception]::new($ScopeMessage)) `
+                    -ErrorId $ScopeErrorId -Category $ScopeCategory `
+                    -TargetObject $Target.FailedValue -Cmdlet $PSCmdlet
+                return
+            }
+            $Scope = New-OERAccessReviewScopeQuery `
+                -AccessPackageId $Target.AccessPackageId `
+                -AssignmentPolicyId $Target.AssignmentPolicyId
+        }
 
         $Settings = @{
             mailNotificationsEnabled        = [bool]$MailNotification
@@ -305,11 +356,12 @@ function New-OERAccessReviewDefinition {
             autoApplyDecisionsEnabled       = [bool]$AutoApplyDecisions
         }
 
-        $RecArgs = @{ Recurrence = $Recurrence; StartDate = $StartDate }
+        # DurationInDays always goes to the builder: a OneTime review takes its length from the range
+        # the builder writes, and a repeating cadence ignores it.
+        $RecArgs = @{ Recurrence = $Recurrence; StartDate = $StartDate; DurationInDays = $DurationInDays }
         if ($PSBoundParameters.ContainsKey('EndDate'))     { $RecArgs.EndDate = $EndDate }
         if ($PSBoundParameters.ContainsKey('Occurrences')) { $RecArgs.Occurrences = $Occurrences }
-        $RecurrenceObj = New-OERAccessReviewRecurrence @RecArgs
-        if ($RecurrenceObj) { $Settings.recurrence = $RecurrenceObj }
+        $Settings.recurrence = New-OERAccessReviewRecurrence @RecArgs
 
         $Body = @{
             displayName             = $DisplayName
@@ -319,7 +371,7 @@ function New-OERAccessReviewDefinition {
             settings                = $Settings
         }
 
-        if ($PSCmdlet.ParameterSetName -eq 'MultiStage') {
+        if ($PSCmdlet.ParameterSetName -like '*MultiStage') {
             $InvalidStage = $Stage | Where-Object { $null -eq $_.PSObject.Properties['GraphStage'] }
             if ($InvalidStage) {
                 Write-CmdletError `
