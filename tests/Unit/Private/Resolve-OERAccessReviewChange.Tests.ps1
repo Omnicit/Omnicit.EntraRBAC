@@ -1300,3 +1300,70 @@ Describe 'Resolve-OERAccessReviewChange' {
         }
     }
 }
+
+# Sprint 12 step 6 (BL-137): the immutable scope of a group review.
+Describe 'Resolve-OERAccessReviewChange group scope' {
+    BeforeEach {
+        $script:GrLive = [PSCustomObject]@{
+            Id                      = 'ar-1'
+            DisplayName             = 'Q3 group review'
+            DescriptionForAdmins    = 'admin text'
+            DescriptionForReviewers = 'reviewer text'
+            Scope                   = '/v1.0/groups/11111111-1111-1111-1111-111111111111/transitiveMembers/microsoft.graph.user'
+            AccessPackageId         = $null
+            AssignmentPolicyId      = $null
+            Reviewers               = @(@{ query = '/users/usr-1' })
+            FallbackReviewers       = @()
+            DurationInDays          = 14
+            Recurrence              = @{ pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }; range = @{ type = 'noEnd'; startDate = '2026-07-01' } }
+            Settings                = @{ instanceDurationInDays = 14 }
+        }
+    }
+
+    It 'reports no change for a declared group GUID equal to the live group (<Case>)' -ForEach @(
+        @{ Case = 'same case'; Declared = '11111111-1111-1111-1111-111111111111' }
+        @{ Case = 'other letter case'; Declared = '11111111-1111-1111-1111-111111111111'.ToUpper() }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Live = $script:GrLive; Group = $Declared } {
+            param($Live, $Group)
+            $Change = Resolve-OERAccessReviewChange -Declared ([PSCustomObject]@{ displayName = 'Q3 group review'; group = $Group }) -Current $Live
+            $Change.Changed | Should -Be $false
+            @($Change.NotApplied) | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'leaves a declared group name alone: it is not compared offline' {
+        InModuleScope $script:moduleName -Parameters @{ Live = $script:GrLive } {
+            param($Live)
+            $Change = Resolve-OERAccessReviewChange -Declared ([PSCustomObject]@{ displayName = 'Q3 group review'; group = 'Sales' }) -Current $Live
+            @($Change.NotApplied) | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'reports a declared group GUID that differs from the live group as not applied, writing nothing' {
+        InModuleScope $script:moduleName -Parameters @{ Live = $script:GrLive } {
+            param($Live)
+            $Change = Resolve-OERAccessReviewChange -Declared ([PSCustomObject]@{ displayName = 'Q3 group review'; group = '22222222-2222-2222-2222-222222222222' }) -Current $Live
+            $Change.Changed | Should -Be $false
+            @($Change.NotApplied).Count | Should -Be 1
+            $Change.NotApplied[0] | Should -BeExactly "group '22222222-2222-2222-2222-222222222222' differs from the live scope '11111111-1111-1111-1111-111111111111'; the review scope is immutable and was not changed"
+        }
+    }
+
+    It 'names the live scope as none when it is no group scope' {
+        InModuleScope $script:moduleName -Parameters @{ Live = $script:GrLive } {
+            param($Live)
+            $Live.Scope = '/identityGovernance/entitlementManagement/assignments?$filter=x'
+            $Change = Resolve-OERAccessReviewChange -Declared ([PSCustomObject]@{ displayName = 'Q3 group review'; group = '22222222-2222-2222-2222-222222222222' }) -Current $Live
+            $Change.NotApplied[0] | Should -BeLike "*differs from the live scope 'none'*"
+        }
+    }
+
+    It 'does not look at the group when the entry declares none' {
+        InModuleScope $script:moduleName -Parameters @{ Live = $script:GrLive } {
+            param($Live)
+            $Change = Resolve-OERAccessReviewChange -Declared ([PSCustomObject]@{ displayName = 'Q3 group review'; group = $null }) -Current $Live
+            @($Change.NotApplied) | Should -BeNullOrEmpty
+        }
+    }
+}

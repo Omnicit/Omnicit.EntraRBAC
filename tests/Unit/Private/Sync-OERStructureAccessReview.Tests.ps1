@@ -5737,3 +5737,175 @@ Describe 'Sync-OERStructureAccessReview reaches an access package or assignment 
         }
     }
 }
+
+Describe 'Sync-OERStructureAccessReview applies a review of a group''s members (BL-137)' {
+
+    BeforeAll {
+        $script:moduleName = 'Omnicit.EntraRBAC'
+        $script:GsName = 'Q3 group review'
+        $script:GsDefId = 'cccc3333-0000-0000-0000-000000000001'
+        $script:GsGroupId = '11111111-1111-1111-1111-111111111111'
+        $script:GsReadBack = '/v1.0/groups/11111111-1111-1111-1111-111111111111/transitiveMembers/microsoft.graph.user'
+        $script:GsOtherScope = '/v1.0/groups/22222222-2222-2222-2222-222222222222/transitiveMembers/microsoft.graph.user'
+        $script:GsNotUnique = 'Access review display names are not unique: give the entry or the review in the tenant another display name.'
+
+        # The live definition as ConvertTo-OERAccessReviewDefinition shapes a group review.
+        function New-GsLive {
+            param([string]$Scope = $script:GsReadBack, [string]$Description = 'admin text')
+            [PSCustomObject]@{
+                Id                      = $script:GsDefId
+                DisplayName             = $script:GsName
+                Status                  = 'InProgress'
+                DescriptionForAdmins    = $Description
+                DescriptionForReviewers = 'reviewer text'
+                Scope                   = $Scope
+                AccessPackageId         = $null
+                AssignmentPolicyId      = $null
+                Reviewers               = @(@{ query = '/users/usr-1' })
+                FallbackReviewers       = @()
+                DurationInDays          = 14
+                Recurrence              = @{
+                    pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }
+                    range   = @{ type = 'noEnd'; startDate = '2026-07-01' }
+                }
+                Settings                = @{ instanceDurationInDays = 14 }
+            }
+        }
+        function New-GsEntry {
+            param([string]$Group = 'Sales', [string]$DescriptionForAdmins)
+            $Entry = [PSCustomObject]@{
+                displayName    = $script:GsName
+                group          = $Group
+                durationInDays = 14
+                reviewers      = @('person1@example.com')
+            }
+            if ($DescriptionForAdmins) { $Entry | Add-Member -NotePropertyName descriptionForAdmins -NotePropertyValue $DescriptionForAdmins }
+            $Entry
+        }
+        function Invoke-GsSync {
+            param([Parameter(Mandatory)]$Item, [switch]$WhatIf)
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Item = $Item; PlanOnly = $WhatIf.IsPresent } {
+                param($Item, $PlanOnly)
+                function Invoke-SyncArViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet
+                }
+                $Published = $null
+                $Rows = @(Invoke-SyncArViaCaller -Item $Item -WhatIf:$PlanOnly -ErrorAction SilentlyContinue -ErrorVariable Published -WarningAction SilentlyContinue)
+                [PSCustomObject]@{
+                    Rows   = $Rows
+                    Errors = @($Published | Where-Object {
+                            $_ -is [System.Management.Automation.ErrorRecord] -and
+                            ([string]$_.FullyQualifiedErrorId).EndsWith(',Invoke-SyncArViaCaller')
+                        })
+                }
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        $script:GsLiveNow = $null
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { param($Uri) throw "Unexpected Graph request: $Uri" }
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition { $script:GsLiveNow }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERStructurePrincipal { 'usr-1' }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERGroupId { '11111111-1111-1111-1111-111111111111' }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId { throw 'Unexpected access package lookup.' }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId { throw 'Unexpected assignment policy lookup.' }
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERStructureRenameTarget { throw 'Unexpected rename map read.' }
+        Mock -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-new' } }
+        Mock -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition { New-GsLive -Description 'new text' }
+    }
+
+    It 'creates a missing group review with the group and no package or policy, and reads no rename map' {
+        $Run = Invoke-GsSync -Item (New-GsEntry)
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -Be 'Created'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter {
+            $Group -ceq 'Sales' -and $null -eq $AccessPackage -and $null -eq $AssignmentPolicy -and $DurationInDays -eq 14
+        }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERStructureRenameTarget -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERGroupId -Times 0
+    }
+
+    It 'plans a missing group review as Skipped under -WhatIf, with no group lookup and no create' {
+        $Run = Invoke-GsSync -Item (New-GsEntry) -WhatIf
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -Be 'Skipped'
+        $Run.Rows[0].Detail | Should -BeExactly "would create access review 'Q3 group review'"
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERGroupId -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERStructureRenameTarget -Times 0
+    }
+
+    It 'updates an existing group review with a changed description, once' {
+        $script:GsLiveNow = New-GsLive
+        $Run = Invoke-GsSync -Item (New-GsEntry -DescriptionForAdmins 'new text')
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -Be 'Updated'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter { $DescriptionForAdmins -ceq 'new text' }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERStructureRenameTarget -Times 0
+    }
+
+    It 'reports the entry against the read-back group review Unchanged and writes nothing (G8)' {
+        $script:GsLiveNow = New-GsLive
+        $Run = Invoke-GsSync -Item (New-GsEntry)
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -Be 'Unchanged'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+    }
+
+    It 'reports a declared group GUID equal to the live group Unchanged (G8)' {
+        $script:GsLiveNow = New-GsLive
+        $Run = Invoke-GsSync -Item (New-GsEntry -Group '11111111-1111-1111-1111-111111111111')
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -Be 'Unchanged'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+    }
+
+    It 'refuses a live review of ANOTHER group with the entry''s name, in <Mode>, before any write' -ForEach @(
+        @{ Mode = 'a real run'; PlanOnly = $false }
+        @{ Mode = 'a plan under -WhatIf'; PlanOnly = $true }
+    ) {
+        $script:GsLiveNow = New-GsLive -Scope $script:GsOtherScope
+        $Run = Invoke-GsSync -Item (New-GsEntry) -WhatIf:$PlanOnly
+        $Message = ("Access review 'Q3 group review' in the tenant reviews the members of group '22222222-2222-2222-2222-222222222222', not the group " +
+            "'Sales' ('11111111-1111-1111-1111-111111111111') this entry declares, so it is not the review this entry declares. Nothing was written. $($script:GsNotUnique)")
+
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 1 -Exactly
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -Be 'Failed'
+        $Run.Rows[0].Detail | Should -BeExactly $Message
+        [string]$Run.Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'AccessReviewScopeMismatch*'
+        $Run.Errors.Count | Should -Be 1
+        [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewScopeMismatch,Invoke-SyncArViaCaller'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERStructurePrincipal -Times 0
+    }
+
+    It 'refuses a live guest-only review with the entry''s name, with no group lookup' {
+        $script:GsLiveNow = New-GsLive -Scope "/v1.0/groups/11111111-1111-1111-1111-111111111111/transitiveMembers/microsoft.graph.user/?`$count=true&`$filter=(userType eq 'Guest')"
+        $Run = Invoke-GsSync -Item (New-GsEntry)
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -Be 'Failed'
+        [string]$Run.Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'AccessReviewScopeMismatch*'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERGroupId -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+    }
+
+    It 'fails the entry with GroupNotFound when its group name matches no group, writing nothing' {
+        $script:GsLiveNow = New-GsLive
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERGroupId { $null }
+        $Run = Invoke-GsSync -Item (New-GsEntry -Group 'Nobody')
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -Be 'Failed'
+        [string]$Run.Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'GroupNotFound*'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+    }
+}

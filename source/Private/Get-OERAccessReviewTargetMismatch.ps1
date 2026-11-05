@@ -2,7 +2,8 @@ function Get-OERAccessReviewTargetMismatch {
     <#
     .SYNOPSIS
     Tells whether a live access review found by display name reviews the access package and assignment
-    policy an accessReviews[] document entry declares, and builds the error record when it does not.
+    policy, or the group's members, an accessReviews[] document entry declares, and builds the error
+    record when it does not.
 
     .DESCRIPTION
     The single owner of BL-127 (Sprint 11 step 2, Rulings R8 and R9). Sync-OERStructureAccessReview
@@ -13,10 +14,26 @@ function Get-OERAccessReviewTargetMismatch {
     docs/development/rationale.md#access-review-target.
 
     Returns nothing when the live review reviews the access package AND the assignment policy the entry
-    declares. Otherwise returns ONE ErrorRecord, which it never writes (the caller writes it). It writes
-    no error and no warning of its own.
+    declares, or, for an entry that declares group, the members of that group. Otherwise returns ONE
+    ErrorRecord, which it never writes (the caller writes it). It writes no error and no warning of its
+    own.
 
-    The checks run in this order, and the first that fails decides:
+    An entry that declares group (Test-OERDeclaredProperty) is a review of a group's members. It is
+    checked by the group branch alone, which runs first, and the first check that fails decides:
+    g1. An entry that also declares accessPackage or assignmentPolicy, or whose group is empty or white
+        space, is refused: the review cannot be shown to be the one it declares. No request.
+    g2. A live scope that Resolve-OERAccessReviewGroupScope does not classify as Members (a package
+        review, a guest filter, direct members, owners, anything else) is refused, naming the live scope
+        ('none' when empty) and the declared group. No request.
+    g3. The declared group is a GUID verbatim, else it goes through Resolve-OERGroupId -DisplayName. A
+        name that matches nothing returns GroupNotFound, category ObjectNotFound, targeting the declared
+        value ("Group '<value>' not found."). A lookup that throws -- an ambiguous name, a 403 -- is
+        scrubbed with Remove-OERErrorRecord and returned as itself.
+    g4. The declared group id is compared with the live group id (case-insensitively); another group is
+        refused, naming both.
+    A package entry against a live group review stays refused by check 2 below.
+
+    For an entry that declares no group, the checks run in this order, and the first that fails decides:
     1. An entry that declares no accessPackage or no assignmentPolicy (absent, an explicit null, or a
        value that is empty or white space -- the offline validator requires both keys) is refused:
        without both, the review cannot be shown to be the one the entry declares, so the check fails
@@ -40,8 +57,8 @@ function Get-OERAccessReviewTargetMismatch {
     and never as a mismatch.
 
     .PARAMETER Declared
-    One accessReviews[] entry from the structure document. Only displayName, accessPackage and
-    assignmentPolicy are read, the last two through Test-OERDeclaredProperty.
+    One accessReviews[] entry from the structure document. Only displayName, group, accessPackage and
+    assignmentPolicy are read, the last three through Test-OERDeclaredProperty.
 
     .PARAMETER Current
     The live definition as returned by Get-OERAccessReviewDefinition, carrying Scope, AccessPackageId and
@@ -77,6 +94,50 @@ function Get-OERAccessReviewTargetMismatch {
             "${Kind}NotFound",
             [System.Management.Automation.ErrorCategory]::ObjectNotFound,
             $Value)
+    }
+
+    # The group branch: an entry that declares group reviews a group's members, and decides alone.
+    if (Test-OERDeclaredProperty -Node $Declared -Name 'group') {
+        [string]$DeclaredGroup = [string]$Declared.group
+        # g1. A group beside a package or policy, or a group that names nothing, cannot be compared.
+        if ((Test-OERDeclaredProperty -Node $Declared -Name 'accessPackage') -or
+            (Test-OERDeclaredProperty -Node $Declared -Name 'assignmentPolicy') -or
+            [string]::IsNullOrWhiteSpace($DeclaredGroup)) {
+            return (& $NewMismatch ("Access review entry '$Name' declares a group together with an access package or assignment policy, " +
+                    'or declares no group name, so the review in the tenant with that display name cannot be shown to be the one it ' +
+                    'declares. Nothing was written.'))
+        }
+        # g2. Only the members form the module writes is the review this entry declares.
+        $LiveGroupScope = Resolve-OERAccessReviewGroupScope -Query ([string]$Current.Scope)
+        if ($LiveGroupScope.Kind -ne 'Members') {
+            [string]$LiveScopeText = $Current.Scope
+            if (-not $LiveScopeText) { $LiveScopeText = 'none' }
+            return (& $NewMismatch ("Access review '$Name' in the tenant does not review the members of a group in the form this module " +
+                    "writes (its scope is '$LiveScopeText'), so it is not the review this entry declares for group '$DeclaredGroup'. " +
+                    "Nothing was written. $NotUnique"))
+        }
+        # g3. The group, resolved as creation resolves it.
+        if (Test-OERGuid -Value $DeclaredGroup) {
+            $DeclaredGroupId = $DeclaredGroup
+            $GroupLabel = "'$DeclaredGroup'"
+        } else {
+            $DeclaredGroupId = $null
+            try {
+                $DeclaredGroupId = Resolve-OERGroupId -DisplayName $DeclaredGroup
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                # An ambiguous name or a 403 is not evidence about the review: return the record as itself.
+                return $PSItem
+            }
+            if (-not $DeclaredGroupId) { return (& $NewNotFound 'Group' $DeclaredGroup) }
+            $GroupLabel = "'$DeclaredGroup' ('$DeclaredGroupId')"
+        }
+        # g4. Another group is another review.
+        if ($DeclaredGroupId -ine [string]$LiveGroupScope.GroupId) {
+            return (& $NewMismatch ("Access review '$Name' in the tenant reviews the members of group '$($LiveGroupScope.GroupId)', not the " +
+                    "group $GroupLabel this entry declares, so it is not the review this entry declares. Nothing was written. $NotUnique"))
+        }
+        return
     }
 
     # 1. Fail closed on an entry that cannot be compared. Test-OERDeclaredProperty is the single owner of

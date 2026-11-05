@@ -535,6 +535,20 @@ function Resolve-OERAccessReviewChange {
         }
     }
 
+    # A review of a group's members: the same rule for the group id the live scope names. Only a GUID
+    # declared group is compared offline; a group name was checked by the target check (the handler
+    # refuses a review of another group before this diff runs).
+    if (Test-DeclHas $Declared 'group') {
+        $DeclaredGroupScope = [string]$Declared.group
+        if (Test-OERGuid -Value $DeclaredGroupScope) {
+            $LiveGroupId = [string](Resolve-OERAccessReviewGroupScope -Query ([string]$Current.Scope)).GroupId
+            if ($DeclaredGroupScope -ine $LiveGroupId) {
+                $LiveGroupText = if ($LiveGroupId) { $LiveGroupId } else { 'none' }
+                $NotApplied.Add("group '$DeclaredGroupScope' differs from the live scope '$LiveGroupText'; the review scope is immutable and was not changed")
+            }
+        }
+    }
+
     $Out = [PSCustomObject]@{
         Changed    = ($SetParams.Keys.Count -gt 0)
         SetParams  = $SetParams
