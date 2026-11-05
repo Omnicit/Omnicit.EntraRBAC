@@ -817,17 +817,28 @@ write a scoped role, so a proposal may keep it, leave it out, or add it for a ne
 ## Access reviews are matched by name
 
 An `accessReviews[]` entry is matched to a live review by `displayName`, looked up in the whole
-tenant, and access review display names are not unique. The review found is therefore updated only
-when it reviews the `accessPackage` and the `assignmentPolicy` the entry declares: a GUID is
-compared as written, and a name is resolved the way `New-OERAccessReviewDefinition` resolves it when
-it creates a review. The scope of a review cannot be changed on an existing one.
+tenant, and access review display names are not unique. An entry declares ONE of two forms: `group`
+(a display name or an object id), a review of all members of that group, or `accessPackage` together
+with `assignmentPolicy`, a review of an access package assignment policy. The review found is
+therefore updated only when it reviews exactly what the entry declares:
 
-- A review that reviews a group, a role, another access package or another policy is reported
-  `Failed` with `AccessReviewScopeMismatch`, naming what it reviews, and nothing is written to it. A
-  review of no access package at all is refused with no access package or assignment policy lookup.
-- A declared name that matches nothing is reported `Failed` with `AccessPackageNotFound` or
-  `AssignmentPolicyNotFound`; a lookup that fails (an ambiguous name, a 403) is reported `Failed`
-  with its own error. Nothing is written in either case.
+- A `group` entry: the review found must review all transitive members of that group. A review of
+  the same group's guest users only, its direct members only, its inactive users or its owners, and a
+  review of another group, are not that review. The group is looked up the way creation looks it up
+  (an id as written, a name through the tenant).
+- An `accessPackage` and `assignmentPolicy` entry: a GUID is compared as written, and a name is
+  resolved the way `New-OERAccessReviewDefinition` resolves it when it creates a review.
+
+The scope of a review cannot be changed on an existing one.
+
+- A review that reviews anything else than the entry declares (another group or a group in another
+  form, a role, another access package or another policy) is reported `Failed` with
+  `AccessReviewScopeMismatch`, naming what it reviews, and nothing is written to it. A review of no
+  access package at all is refused for a package entry with no access package or assignment policy
+  lookup.
+- A declared name that matches nothing is reported `Failed` with `GroupNotFound`,
+  `AccessPackageNotFound` or `AssignmentPolicyNotFound`; a lookup that fails (an ambiguous name, a
+  403) is reported `Failed` with its own error. Nothing is written in either case.
 - An access package name is not unique in the tenant, nor an assignment policy name in its access
   package: when such a name is shared, the entry is reported `Failed` with `AmbiguousName` until it
   gives the package or the policy by id. The export writes either by id whenever that lookup would
@@ -835,9 +846,13 @@ it creates a review. The scope of a review cannot be changed on an existing one.
 - The check runs before the reviewer lookups and before any confirmation, so a `-WhatIf` plan and a
   real run report the same `Failed` row.
 
-The export captures only single-stage reviews of an access package or of all members of one group, so a name missing from
-`accessReviews.json` may still be in use by a review the bundle leaves out. Give a new review a
-display name no other review in the tenant uses.
+The export captures only single-stage reviews of an access package or of all members of one group,
+and only reviews whose reviewers it can write back, so a name missing from `accessReviews.json` may
+still be in use by a review the bundle leaves out. The export skips, and counts by kind in one
+warning, a review of a group in a form it cannot write back (guest users only, direct members only,
+inactive users, another query), a review of an application, a directory role or another scope, and a
+review whose reviewers it cannot write back (for example the owners of a group, which the document
+has no way to name). Give a new review a display name no other review in the tenant uses.
 
 ## Access package assignment policy schema
 

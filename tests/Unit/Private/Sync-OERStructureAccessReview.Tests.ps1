@@ -5751,7 +5751,7 @@ Describe 'Sync-OERStructureAccessReview applies a review of a group''s members (
 
         # The live definition as ConvertTo-OERAccessReviewDefinition shapes a group review.
         function New-GsLive {
-            param([string]$Scope = $script:GsReadBack, [string]$Description = 'admin text')
+            param([string]$Scope = $script:GsReadBack, [string]$Description = 'admin text', [object[]]$Reviewers = @(@{ query = '/users/usr-1' }), [string]$ScopeType)
             [PSCustomObject]@{
                 Id                      = $script:GsDefId
                 DisplayName             = $script:GsName
@@ -5759,9 +5759,10 @@ Describe 'Sync-OERStructureAccessReview applies a review of a group''s members (
                 DescriptionForAdmins    = $Description
                 DescriptionForReviewers = 'reviewer text'
                 Scope                   = $Scope
+                ScopeType               = $(if ($ScopeType) { $ScopeType } else { $null })
                 AccessPackageId         = $null
                 AssignmentPolicyId      = $null
-                Reviewers               = @(@{ query = '/users/usr-1' })
+                Reviewers               = $Reviewers
                 FallbackReviewers       = @()
                 DurationInDays          = 14
                 Recurrence              = @{
@@ -5772,12 +5773,12 @@ Describe 'Sync-OERStructureAccessReview applies a review of a group''s members (
             }
         }
         function New-GsEntry {
-            param([string]$Group = 'Sales', [string]$DescriptionForAdmins)
+            param([string]$Group = 'Sales', [string]$DescriptionForAdmins, [string[]]$Reviewers = @('person1@example.com'))
             $Entry = [PSCustomObject]@{
                 displayName    = $script:GsName
                 group          = $Group
                 durationInDays = 14
-                reviewers      = @('person1@example.com')
+                reviewers      = $Reviewers
             }
             if ($DescriptionForAdmins) { $Entry | Add-Member -NotePropertyName descriptionForAdmins -NotePropertyValue $DescriptionForAdmins }
             $Entry
@@ -5792,9 +5793,11 @@ Describe 'Sync-OERStructureAccessReview applies a review of a group''s members (
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet
                 }
                 $Published = $null
-                $Rows = @(Invoke-SyncArViaCaller -Item $Item -WhatIf:$PlanOnly -ErrorAction SilentlyContinue -ErrorVariable Published -WarningAction SilentlyContinue)
+                $Warned = $null
+                $Rows = @(Invoke-SyncArViaCaller -Item $Item -WhatIf:$PlanOnly -ErrorAction SilentlyContinue -ErrorVariable Published -WarningAction SilentlyContinue -WarningVariable Warned)
                 [PSCustomObject]@{
                     Rows   = $Rows
+                    Warnings = @($Warned | ForEach-Object { [string]$_.Message })
                     Errors = @($Published | Where-Object {
                             $_ -is [System.Management.Automation.ErrorRecord] -and
                             ([string]$_.FullyQualifiedErrorId).EndsWith(',Invoke-SyncArViaCaller')
@@ -5888,6 +5891,37 @@ Describe 'Sync-OERStructureAccessReview applies a review of a group''s members (
         Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERStructurePrincipal -Times 0
     }
 
+    It 'reports the Skipped row and the warning, and writes nothing, when only the reviewers differ and the live reviewer is a group''s owners (<Mode>)' -ForEach @(
+        @{ Mode = 'a real run'; PlanOnly = $false }
+        @{ Mode = 'a plan under -WhatIf'; PlanOnly = $true }
+    ) {
+        # An export made before the module skipped such reviews wrote the owners reviewer as the group.
+        $script:GsLiveNow = New-GsLive -Reviewers @(@{ query = '/v1.0/groups/22222222-2222-2222-2222-222222222222/owners'; queryType = 'MicrosoftGraph' })
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERStructurePrincipal { '22222222-2222-2222-2222-222222222222' }
+        $Run = Invoke-GsSync -Item (New-GsEntry -Reviewers @('Reviewers group')) -WhatIf:$PlanOnly
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -Be 'Skipped'
+        $Run.Rows[0].Detail | Should -BeLike "the live definition reviews through '/v1.0/groups/22222222-2222-2222-2222-222222222222/owners', a scope of group '22222222-2222-2222-2222-222222222222' that this module cannot write;*"
+        $Run.Warnings.Count | Should -Be 1
+        $Run.Warnings[0] | Should -BeLike "Sync-OERStructureAccessReview: access review 'Q3 group review' -- the live definition reviews through*"
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+    }
+    It 'refuses a live review of the group''s INACTIVE users that shares the members query, in <Mode>, before any write' -ForEach @(
+        @{ Mode = 'a real run'; PlanOnly = $false }
+        @{ Mode = 'a plan under -WhatIf'; PlanOnly = $true }
+    ) {
+        $script:GsLiveNow = New-GsLive -Scope '/v1.0/groups/11111111-1111-1111-1111-111111111111/transitiveMembers' -ScopeType '#microsoft.graph.accessReviewInactiveUsersQueryScope'
+        $Run = Invoke-GsSync -Item (New-GsEntry) -WhatIf:$PlanOnly
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -Be 'Failed'
+        [string]$Run.Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'AccessReviewScopeMismatch*'
+        $Run.Rows[0].Detail | Should -BeLike "*its scope type is '#microsoft.graph.accessReviewInactiveUsersQueryScope'*"
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERGroupId -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+    }
+
     It 'refuses a live guest-only review with the entry''s name, with no group lookup' {
         $script:GsLiveNow = New-GsLive -Scope "/v1.0/groups/11111111-1111-1111-1111-111111111111/transitiveMembers/microsoft.graph.user/?`$count=true&`$filter=(userType eq 'Guest')"
         $Run = Invoke-GsSync -Item (New-GsEntry)
@@ -5905,6 +5939,7 @@ Describe 'Sync-OERStructureAccessReview applies a review of a group''s members (
         $Run.Rows.Count | Should -Be 1
         $Run.Rows[0].Action | Should -Be 'Failed'
         [string]$Run.Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'GroupNotFound*'
+        $Run.Rows[0].Detail | Should -BeExactly "could not resolve the group of access review 'Q3 group review': Group 'Nobody' not found.; nothing was written"
         Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
         Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
     }

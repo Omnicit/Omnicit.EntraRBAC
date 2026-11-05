@@ -76,9 +76,10 @@ function Sync-OERStructureAccessReview {
     group a live review of that name reviews, are looked up by name in the tenant by the target check and
     the create. Known limit: a group the same document creates or renames in this run may not be listed
     by Microsoft Graph yet, so the lookup fails that run's entry with GroupNotFound (a Failed row), and
-    the next run creates the review. A live review with the entry's name that reviews ANOTHER group, or
-    reviews a group in a form this module does not write (guests only, direct members, owners), is
-    refused with AccessReviewScopeMismatch before any reviewer lookup or write, in a plan and in a run.
+    a later run can create the review once Microsoft Graph lists the group (expected, not measured).
+    A live review with the entry's name that reviews ANOTHER group, or reviews a group in a form this
+    module does not write (guests only, direct members, inactive users, owners), is refused with
+    AccessReviewScopeMismatch before any reviewer lookup or write, in a plan and in a run.
     A declared group GUID that differs from the live review's group is reported as a not applied
     change, since the scope is immutable.
 
@@ -658,6 +659,9 @@ function Sync-OERStructureAccessReview {
                 $Caller.WriteError($TargetMismatch)
                 $MismatchDetail = if (([string]$TargetMismatch.FullyQualifiedErrorId).StartsWith('AccessReviewScopeMismatch', [System.StringComparison]::Ordinal)) {
                     $TargetMismatch.Exception.Message
+                } elseif (Test-OERDeclaredProperty -Node $Item -Name 'group') {
+                    "could not resolve the group of access review '$Name': " +
+                    "$($TargetMismatch.Exception.Message); nothing was written"
                 } else {
                     "could not resolve the access package or assignment policy of access review '$Name': " +
                     "$($TargetMismatch.Exception.Message); nothing was written"
