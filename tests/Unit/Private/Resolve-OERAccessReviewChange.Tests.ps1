@@ -1276,6 +1276,99 @@ Describe 'Resolve-OERAccessReviewChange' {
             }
         }
 
+        It 'leaves the reviewer unit unwritten when the declared reviewer is the group whose OWNERS review the live definition' {
+            # An export made before the module skipped such reviews wrote the owners reviewer as the
+            # group (read as its members). Applied, it would write /groups/grp-1/transitiveMembers:
+            # the reviewers become every member of the group instead of its owners.
+            $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review' }
+            $Reviewer = [PSCustomObject]@{
+                HasReviewers = $true; HasFallbackReviewers = $false
+                Manager = $false; SelfReview = $false
+                Reviewer = @(); ReviewerGroup = @('grp-1')
+                FallbackReviewer = @(); FallbackReviewerGroup = @()
+                ReviewerKey = @('grp-1'); FallbackKey = @()
+            }
+            $Current = $script:CurrentReview
+            $Current.Reviewers = @(@{ query = '/v1.0/groups/grp-1/owners'; queryType = 'MicrosoftGraph' })
+            $Current.FallbackReviewers = @()
+            InModuleScope $script:moduleName -Parameters @{ Declared = $Declared; Current = $Current; Reviewer = $Reviewer } {
+                param($Declared, $Current, $Reviewer)
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current -DeclaredReviewer $Reviewer
+                $Change.Changed | Should -Be $false
+                foreach ($Name in 'Reviewer', 'ReviewerGroup', 'SelfReview', 'Manager', 'FallbackReviewer', 'FallbackReviewerGroup') {
+                    @($Change.SetParams.Keys) | Should -Not -Contain $Name
+                }
+                @($Change.NotApplied).Count | Should -Be 1
+                [string]$Change.NotApplied[0] | Should -BeExactly ("the live definition reviews through '/v1.0/groups/grp-1/owners', a scope of group 'grp-1' that this module cannot write; " +
+                    "the document's reviewer 'grp-1' would replace it with that group's members, so the reviewer change was left unapplied. " +
+                    'Declare the reviewers again from a current export, or change them with Set-OERAccessReviewDefinition')
+            }
+        }
+
+        It 'still applies the fields outside the reviewer unit when the owners clash leaves the reviewers unwritten' {
+            $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review'; descriptionForAdmins = 'a different admin text' }
+            $Reviewer = [PSCustomObject]@{
+                HasReviewers = $true; HasFallbackReviewers = $false
+                Manager = $false; SelfReview = $false
+                Reviewer = @(); ReviewerGroup = @('grp-1')
+                FallbackReviewer = @(); FallbackReviewerGroup = @()
+                ReviewerKey = @('grp-1'); FallbackKey = @()
+            }
+            $Current = $script:CurrentReview
+            $Current.Reviewers = @(@{ query = '/groups/grp-1/owners' })
+            $Current.FallbackReviewers = @()
+            InModuleScope $script:moduleName -Parameters @{ Declared = $Declared; Current = $Current; Reviewer = $Reviewer } {
+                param($Declared, $Current, $Reviewer)
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current -DeclaredReviewer $Reviewer
+                $Change.Changed | Should -Be $true
+                @($Change.SetParams.Keys) | Should -Be @('DescriptionForAdmins')
+                @($Change.NotApplied).Count | Should -Be 1
+            }
+        }
+
+        It 'keeps the forced replace when the declared reviewer is another group than the live owners scope names' {
+            $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review' }
+            $Reviewer = [PSCustomObject]@{
+                HasReviewers = $true; HasFallbackReviewers = $false
+                Manager = $false; SelfReview = $false
+                Reviewer = @(); ReviewerGroup = @('grp-1')
+                FallbackReviewer = @(); FallbackReviewerGroup = @()
+                ReviewerKey = @('grp-1'); FallbackKey = @()
+            }
+            $Current = $script:CurrentReview
+            $Current.Reviewers = @(@{ query = '/groups/grp-2/owners' })
+            $Current.FallbackReviewers = @()
+            InModuleScope $script:moduleName -Parameters @{ Declared = $Declared; Current = $Current; Reviewer = $Reviewer } {
+                param($Declared, $Current, $Reviewer)
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current -DeclaredReviewer $Reviewer
+                $Change.Changed | Should -Be $true
+                @($Change.SetParams.ReviewerGroup) | Should -Be @('grp-1')
+                @($Change.NotApplied) | Should -BeNullOrEmpty
+                (@($Change.Changes) -join ' ') | Should -Match 'replacing 1 live reviewer scope'
+            }
+        }
+
+        It 'leaves the reviewer unit unwritten when the declared FALLBACK reviewer is the group whose owners are the live fallback' {
+            $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review' }
+            $Reviewer = [PSCustomObject]@{
+                HasReviewers = $false; HasFallbackReviewers = $true
+                Manager = $false; SelfReview = $false
+                Reviewer = @(); ReviewerGroup = @()
+                FallbackReviewer = @(); FallbackReviewerGroup = @('grp-1')
+                ReviewerKey = @(); FallbackKey = @('grp-1')
+            }
+            $Current = $script:CurrentReview
+            $Current.Reviewers = @(@{ query = '/v1.0/users/usr-1' })
+            $Current.FallbackReviewers = @(@{ query = '/v1.0/groups/grp-1/owners' })
+            InModuleScope $script:moduleName -Parameters @{ Declared = $Declared; Current = $Current; Reviewer = $Reviewer } {
+                param($Declared, $Current, $Reviewer)
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current -DeclaredReviewer $Reviewer
+                $Change.Changed | Should -Be $false
+                @($Change.SetParams.Keys) | Should -Not -Contain 'FallbackReviewerGroup'
+                @($Change.NotApplied).Count | Should -Be 1
+                [string]$Change.NotApplied[0] | Should -Match "reviews through '/v1.0/groups/grp-1/owners', a scope of group 'grp-1'"
+            }
+        }
         It 'converges: the same diff run against the normalized post-write definition reports Unchanged' {
             # Symmetry guard. Forcing the change above must not make every apply report drift forever
             # -- after the PUT the definition carries only module-emitted forms (prefixed on read),

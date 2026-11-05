@@ -74,6 +74,13 @@ function Resolve-OERAccessReviewChange {
     the live definition's own object ids instead of being sent empty, so it survives the write
     untouched and never forces an update on its own.
 
+    One exception to the document being authoritative over an unparsed scope: when an unparsed live
+    query names a group (for example '/groups/{id}/owners') and the same group id is one of the half's
+    declared reviewer keys, the whole reviewer unit is left unwritten and reported in NotApplied. An
+    export made before the module skipped such a review wrote the owners reviewer as that group, which
+    reads as its members; writing it back would replace the group's owners with its members. Fields
+    outside the reviewer unit still apply.
+
     A live scope that does NOT parse is kept strictly apart from an absent one. An empty reviewers
     collection is the documented self-review shape; an unparsed scope is a real named reviewer this
     module's vocabulary cannot express, and reading it as a self review would write SelfReview back
@@ -322,10 +329,40 @@ function Resolve-OERAccessReviewChange {
         if ($PrimaryUnprovable -and -not $DeclaresPrimary) { foreach ($UnQuery in $CurrentReviewerUnparsed) { $Unseedable.Add($UnQuery) } }
         if ($FallbackUnprovable -and -not $DeclaresFallback) { foreach ($UnQuery in $CurrentFallbackUnparsed) { $Unseedable.Add($UnQuery) } }
 
+        # A declared reviewer key that names the group of a live group scope this module cannot write
+        # (for example '/groups/{id}/owners'). An export made before this module skipped such a review
+        # wrote the reviewer as that group (then read as the group's members), and applying it would
+        # replace the group's OWNERS with its MEMBERS -- a different set of people. Local function, one
+        # caller: the grammar is Resolve-OERReviewerScopeQuery's, this only reads the group id that an
+        # Unparsed query names, with the same optional Graph version prefix.
+        function Get-OwnersClash {
+            param([object]$Unparsed, [object]$DeclaredKey)
+            foreach ($UnQuery in @($Unparsed)) {
+                if ([string]$UnQuery -match '^(?:/(?:v\d+(?:\.\d+)?|beta))?/groups/([^/?#]+)') {
+                    $UnGroup = $Matches[1]
+                    if (@($DeclaredKey | Where-Object { [string]$_ -ieq $UnGroup }).Count -gt 0) {
+                        [PSCustomObject]@{ Query = [string]$UnQuery; GroupId = $UnGroup }
+                    }
+                }
+            }
+        }
+        $Clash = [System.Collections.Generic.List[object]]::new()
+        if ($DeclaresPrimary) { foreach ($Item in @(Get-OwnersClash -Unparsed $CurrentReviewerUnparsed -DeclaredKey $DeclaredReviewer.ReviewerKey)) { $Clash.Add($Item) } }
+        if ($DeclaresFallback) { foreach ($Item in @(Get-OwnersClash -Unparsed $CurrentFallbackUnparsed -DeclaredKey $DeclaredReviewer.FallbackKey)) { $Clash.Add($Item) } }
+
         # Only a declared half can force the write; the seeded half rides along unchanged.
         $PrimaryChanged  = $DeclaresPrimary -and ($PrimaryUnprovable -or -not (Test-KeySetEqual $DeclaredReviewer.ReviewerKey $CurrentReviewerKey))
         $FallbackChanged = $DeclaresFallback -and ($FallbackUnprovable -or -not (Test-KeySetEqual $DeclaredReviewer.FallbackKey $CurrentFallbackKey))
-        if (($PrimaryChanged -or $FallbackChanged) -and $Unseedable.Count -gt 0) {
+        if ($Clash.Count -gt 0) {
+            # The whole reviewer unit is left unwritten (the fields outside it still apply).
+            $NotApplied.Add(
+                ("the live definition reviews through '{0}', a scope of group '{1}' that this module cannot write; " -f
+                    $Clash[0].Query, $Clash[0].GroupId) +
+                ("the document's reviewer '{0}' would replace it with that group's members, so the reviewer change was left unapplied. " -f
+                    $Clash[0].GroupId) +
+                'Declare the reviewers again from a current export, or change them with Set-OERAccessReviewDefinition')
+        }
+        elseif (($PrimaryChanged -or $FallbackChanged) -and $Unseedable.Count -gt 0) {
             $NotApplied.Add(
                 ("the live definition carries {0} reviewer scope(s) this module's vocabulary cannot express ({1}); " -f
                     $Unseedable.Count, ($Unseedable -join ', ')) +
@@ -541,7 +578,7 @@ function Resolve-OERAccessReviewChange {
     if (Test-DeclHas $Declared 'group') {
         $DeclaredGroupScope = [string]$Declared.group
         if (Test-OERGuid -Value $DeclaredGroupScope) {
-            $LiveGroupId = [string](Resolve-OERAccessReviewGroupScope -Query ([string]$Current.Scope)).GroupId
+            $LiveGroupId = [string](Resolve-OERAccessReviewGroupScope -Query ([string]$Current.Scope) -ScopeType ([string]$Current.ScopeType)).GroupId
             if ($DeclaredGroupScope -ine $LiveGroupId) {
                 $LiveGroupText = if ($LiveGroupId) { $LiveGroupId } else { 'none' }
                 $NotApplied.Add("group '$DeclaredGroupScope' differs from the live scope '$LiveGroupText'; the review scope is immutable and was not changed")

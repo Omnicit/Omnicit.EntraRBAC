@@ -2078,12 +2078,12 @@ Describe 'Get-OERInventory' {
             (@($ArDurationWarning) -join ' ') | Should -Match '400'
         }
 
-        It 'warns when live reviewer scopes project to nothing instead of exporting a silent self review' {
+        It 'skips a package review whose only reviewer scope projects to nothing instead of exporting a silent self review' {
             # './owners' is a documented reviewer scope (Learn: "Configure access reviewers using access
             # reviews APIs", example 4) that none of the three query forms this module emits matches.
-            # The raw collection is non-empty, so the 'self' default does not fire and the projection
-            # emits reviewers: [] -- which Learn defines as a self review. Same fabrication class as the
-            # multi-stage skip above, so it must not be silent.
+            # Exporting it would write reviewers: [] -- which Learn defines as a self review, and which
+            # applied in the same tenant would rewrite the live review. The review is skipped instead
+            # and counted as a review whose reviewers the module cannot write back.
             Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
                 [PSCustomObject]@{
                     Id = 'ar-owners'; DisplayName = 'Owner Review'
@@ -2093,16 +2093,13 @@ Describe 'Get-OERInventory' {
                 }
             }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
-            $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x' -WarningVariable ArReviewerWarning -WarningAction SilentlyContinue).AccessReviews[0]
-            $ar.displayName | Should -Be 'Owner Review'
-            $ar.PSObject.Properties.Name | Should -Contain 'reviewers'
-            # @($null).Count is 1, so this only passes on a genuinely empty array, never on a missing one.
-            @($ar.reviewers).Count | Should -Be 0
-            @($ArReviewerWarning) | Should -Not -BeNullOrEmpty
-            (@($ArReviewerWarning) -join ' ') | Should -Match 'self review'
-            (@($ArReviewerWarning) -join ' ') | Should -Match '\./owners'
+            $Inv = Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x' -WarningVariable ArReviewerWarning -WarningAction SilentlyContinue
+            @($Inv.AccessReviews).Count | Should -Be 0
+            @($ArReviewerWarning).Count | Should -Be 1
+            [string]$ArReviewerWarning[0] | Should -BeExactly ('Get-OERInventory: skipped 1 access review definition(s) the apply document cannot declare: ' +
+                '1 review(s) whose reviewers the module cannot write back (for example a group''s owners). ' +
+                'Access package reviews and reviews of all members of one group round-trip through Invoke-OERStructure.')
         }
-
         It 'warns once with a count when access reviews were skipped as not access-package-scoped' {
             Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
                 [PSCustomObject]@{ Id = 'ar-ap'; DisplayName = 'AP Review'; AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'; Reviewers = @(); Recurrence = $null }
@@ -2131,9 +2128,10 @@ Describe 'Get-OERInventory' {
             $script:GrId = '33333333-3333-3333-3333-333333333333'
             $script:GrUri = 'v1.0/groups/33333333-3333-3333-3333-333333333333?$select=id,displayName'
             $script:NewGrLive = {
-                param([string]$Name = 'Q3 group review', [string]$Scope = '/v1.0/groups/33333333-3333-3333-3333-333333333333/transitiveMembers/microsoft.graph.user')
+                param([string]$Name = 'Q3 group review', [string]$Scope = '/v1.0/groups/33333333-3333-3333-3333-333333333333/transitiveMembers/microsoft.graph.user', [string]$ScopeType)
                 [PSCustomObject]@{
                     Id = 'ar-grp'; DisplayName = $Name; Scope = $Scope
+                    ScopeType = $(if ($ScopeType) { $ScopeType } else { $null })
                     AccessPackageId = $null; AssignmentPolicyId = $null
                     Reviewers = @(@{ query = '/users/usr-1' }); FallbackReviewers = @()
                     StageCount = 0; DurationInDays = 14
@@ -2209,6 +2207,7 @@ Describe 'Get-OERInventory' {
             $Marker = [PSCustomObject]@{ ExpectedErrorCode = 'Request_ResourceNotFound'; StatusCode = 404; Message = 'Request_ResourceNotFound: not found'; Uri = 'x' }
             $Marker.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GraphExpectedError')
             $script:GrMarker = $Marker
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "Unexpected Graph request: $Uri" }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $script:GrMarker } -ParameterFilter { $Uri -eq $script:GrUri }
             $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
             @($Inv.AccessReviews)[0].group | Should -BeExactly $script:GrId
@@ -2217,6 +2216,7 @@ Describe 'Get-OERInventory' {
 
         It 'writes the id and names accessReviews/<name>/group as unread when the group read fails' {
             Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "Unexpected Graph request: $Uri" }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
                 throw (& $script:NewGrFailure 'Insufficient privileges to complete the operation (group).' 'Authorization_RequestDenied')
             } -ParameterFilter { $Uri -eq $script:GrUri }
@@ -2257,6 +2257,73 @@ Describe 'Get-OERInventory' {
             [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 1 access review definition(s) the apply document cannot declare: ' +
                 '1 review(s) of an application, a directory role or another scope. ' +
                 'Access package reviews and reviews of all members of one group round-trip through Invoke-OERStructure.')
+        }
+
+        It 'skips a group review whose only reviewer is the group''s owners, and exports no entry for it' {
+            $Live = & $script:NewGrLive
+            $Live.Reviewers = @(@{ query = '/v1.0/groups/33333333-3333-3333-3333-333333333333/owners'; queryType = 'MicrosoftGraph' })
+            $script:GrLive = @($Live)
+            $Inv = Get-OERInventory -Include AccessReviews -WarningVariable Warned -WarningAction SilentlyContinue
+            @($Inv.AccessReviews).Count | Should -Be 0
+            @($Warned).Count | Should -Be 1
+            [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 1 access review definition(s) the apply document cannot declare: ' +
+                '1 review(s) whose reviewers the module cannot write back (for example a group''s owners). ' +
+                'Access package reviews and reviews of all members of one group round-trip through Invoke-OERStructure.')
+        }
+
+        It 'skips a group review with a user reviewer beside an owners scope' {
+            $Live = & $script:NewGrLive
+            $Live.Reviewers = @(@{ query = '/users/usr-1' }, @{ query = '/v1.0/groups/33333333-3333-3333-3333-333333333333/owners' })
+            $script:GrLive = @($Live)
+            $Inv = Get-OERInventory -Include AccessReviews -WarningAction SilentlyContinue
+            @($Inv.AccessReviews).Count | Should -Be 0
+        }
+
+        It 'skips a group review whose only unparsed scope is in the fallback half' {
+            $Live = & $script:NewGrLive
+            $Live.FallbackReviewers = @(@{ query = './owners' })
+            $script:GrLive = @($Live)
+            $Inv = Get-OERInventory -Include AccessReviews -WarningAction SilentlyContinue
+            @($Inv.AccessReviews).Count | Should -Be 0
+        }
+
+        It 'words the skip warning for the unwritable-reviewers kind beside the two other kinds' {
+            $Owners = & $script:NewGrLive -Name 'Owners'
+            $Owners.Reviewers = @(@{ query = '/v1.0/groups/33333333-3333-3333-3333-333333333333/owners' })
+            $script:GrLive = @(
+                (& $script:NewGrLive -Name 'Direct' -Scope '/v1.0/groups/33333333-3333-3333-3333-333333333333/members'),
+                (& $script:NewGrLive -Name 'Role' -Scope '/v1.0/roleManagement/directory/roleDefinitions/abc'),
+                $Owners
+            )
+            $null = Get-OERInventory -Include AccessReviews -WarningVariable Warned -WarningAction SilentlyContinue
+            [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 3 access review definition(s) the apply document cannot declare: ' +
+                '1 review(s) of a group in a form the module cannot write back (guest users only, direct members only, or another query), ' +
+                '1 review(s) of an application, a directory role or another scope, ' +
+                '1 review(s) whose reviewers the module cannot write back (for example a group''s owners). ' +
+                'Access package reviews and reviews of all members of one group round-trip through Invoke-OERStructure.')
+        }
+
+        It 'sends no name lookup for a review it skips for its reviewers' {
+            $Live = & $script:NewGrLive
+            $Live.Reviewers = @(@{ query = './owners' })
+            $script:GrLive = @($Live)
+            $null = Get-OERInventory -Include AccessReviews -WarningAction SilentlyContinue
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+        }
+        It 'skips a review of the group''s inactive users that shares the members query, counted as a group review in a form the module cannot write back' {
+            $script:GrLive = @(& $script:NewGrLive -Name 'Inactive' -Scope '/v1.0/groups/33333333-3333-3333-3333-333333333333/transitiveMembers' -ScopeType '#microsoft.graph.accessReviewInactiveUsersQueryScope')
+            $Inv = Get-OERInventory -Include AccessReviews -WarningVariable Warned -WarningAction SilentlyContinue
+            @($Inv.AccessReviews).Count | Should -Be 0
+            [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 1 access review definition(s) the apply document cannot declare: ' +
+                '1 review(s) of a group in a form the module cannot write back (guest users only, direct members only, or another query). ' +
+                'Access package reviews and reviews of all members of one group round-trip through Invoke-OERStructure.')
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+        }
+
+        It 'still exports the members query read back with the plain query scope type' {
+            $script:GrLive = @(& $script:NewGrLive -ScopeType '#microsoft.graph.accessReviewQueryScope')
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue
+            @($Inv.AccessReviews).Count | Should -Be 1
         }
 
         It 'skips a multi-stage group review with the multi-stage warning' {
@@ -2428,10 +2495,10 @@ Describe 'Get-OERInventory' {
             @($PrefixWarning).Count | Should -Be 0
         }
 
-        It 'still warns, naming only the offending query, when one scope of several does not parse' {
-            # An unparsed scope is data loss even when the OTHER scopes projected fine. Before this
-            # fix the warning only fired when the whole list projected to nothing, so a partial drop
-            # was silent.
+        It 'skips a review, naming only the offending query on the verbose stream, when one scope of several does not parse' {
+            # An unparsed scope is data loss even when the OTHER scopes projected fine: the exported
+            # list would name fewer reviewers than the live review, and an apply in the same tenant
+            # would drop the owners scope. The review is skipped, not shortened.
             Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
                 [PSCustomObject]@{
                     Id = 'ar-mixed'; DisplayName = 'Mixed Review'
@@ -2443,20 +2510,18 @@ Describe 'Get-OERInventory' {
                     Recurrence = $null; DurationInDays = 14
                 }
             }
-            $Inv = Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x' -WarningVariable MixedWarning -WarningAction SilentlyContinue
-            $Ar = $Inv.AccessReviews[0]
-            $Ar.reviewers | Should -Contain 'anna@contoso.com'
-            @($MixedWarning) | Should -Not -BeNullOrEmpty
-            $Joined = @($MixedWarning) -join ' '
-            $Joined | Should -Match '\./owners'
-            $Joined | Should -Match 'has 1 live reviewer scope'
-            # The prefixed user scope parsed, so it is not one of the offending queries.
-            $Joined | Should -Not -Match '00000000-0000-0000-0000-000000000049'
-            # A partial drop is not a self review, so that clause must not appear.
-            $Joined | Should -Not -Match 'reads as a self review'
+            $Inv = Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x' -WarningVariable MixedWarning -WarningAction SilentlyContinue -Verbose 4>&1
+            $Streams = @($Inv)
+            $Result = @($Streams | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })
+            @($Result | ForEach-Object { $_.AccessReviews } | Where-Object { $null -ne $_ }).Count | Should -Be 0
+            $Verbose = (@($Streams | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message }) -join ' ')
+            $Verbose | Should -Match '\./owners'
+            $Verbose | Should -Not -Match '00000000-0000-0000-0000-000000000049'
+            @($MixedWarning).Count | Should -Be 1
+            [string]$MixedWarning[0] | Should -Match '1 review\(s\) whose reviewers the module cannot write back'
         }
 
-        It 'warns when a fallback reviewer scope does not parse' {
+        It 'skips a review whose only unparsed scope is in the fallback half' {
             Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
                 [PSCustomObject]@{
                     Id = 'ar-fb'; DisplayName = 'Fallback Review'
@@ -2467,15 +2532,41 @@ Describe 'Get-OERInventory' {
                 }
             }
             $Inv = Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x' -WarningVariable FbWarning -WarningAction SilentlyContinue
-            $Ar = $Inv.AccessReviews[0]
-            $Ar.reviewers | Should -Contain 'manager'
-            $Ar.PSObject.Properties.Name | Should -Not -Contain 'fallbackReviewers'
-            @($FbWarning) | Should -Not -BeNullOrEmpty
-            $Joined = @($FbWarning) -join ' '
-            $Joined | Should -Match 'fallback reviewer scope'
-            $Joined | Should -Match '\./owners'
+            @($Inv.AccessReviews).Count | Should -Be 0
+            @($FbWarning).Count | Should -Be 1
+            [string]$FbWarning[0] | Should -Match '1 review\(s\) whose reviewers the module cannot write back'
         }
 
+        It 'skips a review whose fallback is a manager scope, which the document cannot express there' {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{
+                    Id = 'ar-fbm'; DisplayName = 'Fallback Manager Review'
+                    AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
+                    Reviewers = @([PSCustomObject]@{ query = '/v1.0/users/00000000-0000-0000-0000-000000000049' })
+                    FallbackReviewers = @([PSCustomObject]@{ query = './manager' })
+                    Recurrence = $null; DurationInDays = 14
+                }
+            }
+            $Inv = Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x' -WarningAction SilentlyContinue
+            @($Inv.AccessReviews).Count | Should -Be 0
+        }
+
+        It 'still exports a review whose reviewers all parse, and warns about nothing' {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{
+                    Id = 'ar-ok'; DisplayName = 'Parsed Review'
+                    AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
+                    Reviewers = @([PSCustomObject]@{ query = './manager' })
+                    FallbackReviewers = @([PSCustomObject]@{ query = '/v1.0/users/fb-9' })
+                    Recurrence = $null; DurationInDays = 14
+                }
+            }
+            $Inv = Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x' -WarningVariable OkWarning -WarningAction SilentlyContinue
+            @($Inv.AccessReviews).Count | Should -Be 1
+            @($Inv.AccessReviews[0].reviewers) | Should -Be @('manager')
+            @($Inv.AccessReviews[0].fallbackReviewers) | Should -Be @('fallback@contoso.com')
+            @($OkWarning).Count | Should -Be 0
+        }
         It 'keeps a genuinely empty reviewer collection as the self-review shape' {
             # The counterpart guard: fixing the unparsed case must not make an ACTUALLY empty
             # reviewers collection stop projecting 'self'.

@@ -155,9 +155,12 @@ function Get-OERInventory {
     Only single-stage review definitions of an access package or of all members of one group are
     captured; a review of all members of one group is written with a group key (the group's name when
     the tenant's group name index was read and exactly this group carries it, else its object id)
-    and no accessPackage or assignmentPolicy. A review of guest users only or of direct members
-    only, an application, a directory-role, another scope or a multi-stage review is skipped, with an
-    aggregate warning naming how many were skipped, counted by kind. The AccessReviews projection
+    and no accessPackage or assignmentPolicy. A review of guest users only, of direct members only
+    or of inactive users, an application, a directory-role, another scope or a multi-stage review is
+    skipped, and so is a review (of either form) with a reviewer scope the document cannot express
+    (for example the owners of a group): exporting it would drop that reviewer, and applying the
+    export would rewrite the live review. The skips are named in one aggregate warning, counted by
+    kind (the offending reviewer queries are on the verbose stream). The AccessReviews projection
     carries accessPackage and assignmentPolicy (or group), reviewers and
     recurrence so a captured review round-trips through Invoke-OERStructure (create-or-update: a
     review is matched by displayName and created when it does not exist; when it does, it is
@@ -407,8 +410,10 @@ function Get-OERInventory {
     The building-block sections to read. Defaults to Groups, AdministrativeUnits, Catalogs and
     AccessPackages. AccessReviews captures only single-stage review
     definitions of an access package or of all members of one group (optionally narrowed by
-    -AccessReviewFilter); a review of guest users only or of direct members only, an application, a
-    directory-role, another scope or a multi-stage review is skipped with a warning, counted by kind. DirectoryRoleManagementPolicies and
+    -AccessReviewFilter); a review of guest users only, of direct members only or of inactive users, an
+    application, a directory-role, another scope, a multi-stage review, or a review with a reviewer
+    scope the document cannot express (a group's owners, for example) is skipped with a warning,
+    counted by kind. DirectoryRoleManagementPolicies and
     DirectoryRoleAssignments read Microsoft Entra directory roles through Microsoft Graph and need no
     ARM token. RoleAssignments and RoleManagementPolicies need an ARM token and their targeting
     parameters: with a -Scope or a -Subscription the token is acquired up front, as -IncludeARM does
@@ -2135,6 +2140,7 @@ function Get-OERInventory {
             $ArItems = @()
             $SkippedReviewCount = 0
             $SkippedGroupFormCount = 0
+            $SkippedReviewerCount = 0
             # -ErrorAction SilentlyContinue + a LOCAL -ErrorVariable, not -ErrorAction Stop -- the
             # same fix, for the same mechanism, as the existence probe in
             # Sync-OERStructureAccessReview. Get-OERAccessReviewDefinition reports "nothing matched"
@@ -2223,7 +2229,7 @@ function Get-OERInventory {
                 $IsPackageReview = [bool]($Ar.AccessPackageId -and $Ar.AssignmentPolicyId)
                 $GroupScope = $null
                 if (-not $IsPackageReview) {
-                    $GroupScope = Resolve-OERAccessReviewGroupScope -Query ([string]$Ar.Scope)
+                    $GroupScope = Resolve-OERAccessReviewGroupScope -Query ([string]$Ar.Scope) -ScopeType ([string]$Ar.ScopeType)
                     if ($GroupScope.Kind -ne 'Members') {
                         if ($GroupScope.Kind -eq 'OtherForm') {
                             Write-Verbose "Skipping access review '$($Ar.DisplayName)': a group review in a form the module cannot write back (does not round-trip)."
@@ -2242,16 +2248,41 @@ function Get-OERInventory {
                 # when stageSettings is present. Projecting it would emit reviewers ["self"] below --
                 # asserting a self review that was never configured. The apply schema models no stages,
                 # so such a review cannot round-trip at all; skip it visibly rather than fabricate it.
-                # Warned separately from the not-access-package-scoped skip above: the two have
-                # different causes and different remedies, so folding them into one count could name
-                # neither.
+                # Warned separately from the skips by form above (counted into one warning at the end): a
+                # multi-stage review has a different cause and a different remedy, so folding it into
+                # one count could name neither.
                 if ([int]$Ar.StageCount -gt 0) {
                     Write-Warning "Get-OERInventory: skipping multi-stage access review '$($Ar.DisplayName)' ($($Ar.StageCount) stages). Its reviewers live in stageSettings, which the apply document does not model -- exporting it would misreport it as a single-stage self review. Manage it with New-OERAccessReviewStage."
                     continue
                 }
 
-                $Proj = [ordered]@{ displayName = $Ar.DisplayName }
+                # Reviewers the document cannot express. Every query is parsed through
+                # Resolve-OERReviewerScopeQuery, the module's single owner of that grammar (it also
+                # tolerates the API version prefix Graph adds when it NORMALIZES a reviewer scope on
+                # read: a scope written as '/users/{id}' reads back as '/v1.0/users/{id}'). A scope that
+                # carries a query and parses into no reviewer the document can express (primary:
+                # manager, user, group; fallback: user, group) -- './owners', '/groups/{id}/owners',
+                # '/servicePrincipals/{id}/owners', a filtered query -- is NOT dropped: dropping it would
+                # export reviewers: [] (a self review by the schema's reading) or a shorter list, and
+                # applying that export in the same tenant would rewrite the live review. The whole
+                # review is skipped and counted instead (a review in a form the module cannot write
+                # back); the offending queries are named on the verbose stream. A scope object with no
+                # query names no reviewer and is filtered, as before (@($null).Count is 1).
+                $RawReviewers = @($Ar.Reviewers | Where-Object { $_ })
+                $ParsedReviewers = @(foreach ($Rv in $RawReviewers) { Resolve-OERReviewerScopeQuery -Query ([string]$Rv.query) })
+                $RawFallback = @($Ar.FallbackReviewers | Where-Object { $_ })
+                $ParsedFallback = @(foreach ($Fb in $RawFallback) { Resolve-OERReviewerScopeQuery -Query ([string]$Fb.query) })
+                $UnwritableQueries = @(
+                    @($ParsedReviewers | Where-Object { $_.Kind -eq 'Unparsed' -and $_.Query } | ForEach-Object { [string]$_.Query })
+                    @($ParsedFallback | Where-Object { -not $_.Id -and $_.Query } | ForEach-Object { [string]$_.Query })
+                )
+                if ($UnwritableQueries.Count -gt 0) {
+                    Write-Verbose "Skipping access review '$($Ar.DisplayName)': reviewer scope(s) the module cannot write back ($($UnwritableQueries -join ', '))."
+                    $SkippedReviewerCount++
+                    continue
+                }
 
+                $Proj = [ordered]@{ displayName = $Ar.DisplayName }
                 if (-not $IsPackageReview) {
                     # group: the name of the group whose members the review covers, written under the
                     # BL-131 rule (Get-GroupPrincipalReference): the name only when the tenant's group
@@ -2270,55 +2301,47 @@ function Get-OERInventory {
                     $Proj.group = $GroupReviewRef
                 }
                 else {
-                # accessPackage + assignmentPolicy: resolve ids to names (fallback to the id). Both ids
-                # are present here (the form check above requires them). A deleted target is written by id
-                # and reported nowhere; a FAILED read is written by id too and reported as an unread
-                # collection -- see Get-AccessReviewReferenceName, which owns the rule and the reason
-                # these are transport reads rather than calls to the Get-OER* readers.
-                $Proj.accessPackage = Get-AccessReviewReferenceName `
-                    -Uri ('v1.0/identityGovernance/entitlementManagement/accessPackages/{0}?$expand=catalog' -f $Ar.AccessPackageId) `
-                    -NotFoundCode 'AccessPackageNotFound', 'NotFound' `
-                    -Id ([string]$Ar.AccessPackageId) -ReviewName ([string]$Ar.DisplayName) `
-                    -Part 'accessPackage' -Label 'access package'
-                # BL-142: a NAME (not the id) stays only when the engine's tenant-wide lookup of it
-                # (Resolve-OERAccessPackageId, same URI, the name escaped the same way) finds exactly this
-                # access package.
-                # Named deviation, held in step with the resolver by the Get-OERInventory.Tests.ps1 Context "the export's review-reference lookups agree with the resolvers (named deviation)".
-                if ([string]$Proj.accessPackage -ne [string]$Ar.AccessPackageId) {
-                    $ApLookupName = [string]$Proj.accessPackage
-                    $Proj.accessPackage = Get-AccessReviewUniqueReference -Name $ApLookupName -Id ([string]$Ar.AccessPackageId) `
-                        -Uri ("v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq '{0}'&`$select=id,displayName" -f (ConvertTo-OERODataFilterValue -Value $ApLookupName)) `
-                        -CacheKey $ApLookupName.ToLowerInvariant() -Cache $ArPackageNameLookup `
-                        -MatchOf { param($Answer) @($Answer.value | Where-Object { $null -ne $_ }) } `
-                        -ReviewName ([string]$Ar.DisplayName) -Part 'accessPackage' -Label 'access package'
-                }
-                $Proj.assignmentPolicy = Get-AccessReviewReferenceName `
-                    -Uri ('v1.0/identityGovernance/entitlementManagement/assignmentPolicies/{0}?$expand=accessPackage' -f $Ar.AssignmentPolicyId) `
-                    -NotFoundCode 'PolicyNotFound', 'NotFound' `
-                    -Id ([string]$Ar.AssignmentPolicyId) -ReviewName ([string]$Ar.DisplayName) `
-                    -Part 'assignmentPolicy' -Label 'assignment policy'
-                # BL-142: a NAME (not the id) stays only when exactly one policy of the review's access
-                # package carries it, compared as Resolve-OERAssignmentPolicyId compares (-eq), and that
-                # policy is this one. The listing is the resolver's, by the review's access package id.
-                # Named deviation, held in step with the resolver by the Get-OERInventory.Tests.ps1 Context "the export's review-reference lookups agree with the resolvers (named deviation)".
-                if ([string]$Proj.assignmentPolicy -ne [string]$Ar.AssignmentPolicyId) {
-                    $Proj.assignmentPolicy = Get-AccessReviewUniqueReference -Name ([string]$Proj.assignmentPolicy) -Id ([string]$Ar.AssignmentPolicyId) `
-                        -Uri ("v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq '{0}'" -f $Ar.AccessPackageId) `
-                        -CacheKey ([string]$Ar.AccessPackageId).ToLowerInvariant() -Cache $ArPolicyListLookup `
-                        -MatchOf { param($Answer, $ForName) @(@($Answer.value) | Where-Object { $_.displayName -eq $ForName }) } `
-                        -ReviewName ([string]$Ar.DisplayName) -Part 'assignmentPolicy' -Label 'assignment policy'
-                }
+                    # accessPackage + assignmentPolicy: resolve ids to names (fallback to the id). Both ids
+                    # are present here (the form check above requires them). A deleted target is written by id
+                    # and reported nowhere; a FAILED read is written by id too and reported as an unread
+                    # collection -- see Get-AccessReviewReferenceName, which owns the rule and the reason
+                    # these are transport reads rather than calls to the Get-OER* readers.
+                    $Proj.accessPackage = Get-AccessReviewReferenceName `
+                        -Uri ('v1.0/identityGovernance/entitlementManagement/accessPackages/{0}?$expand=catalog' -f $Ar.AccessPackageId) `
+                        -NotFoundCode 'AccessPackageNotFound', 'NotFound' `
+                        -Id ([string]$Ar.AccessPackageId) -ReviewName ([string]$Ar.DisplayName) `
+                        -Part 'accessPackage' -Label 'access package'
+                    # BL-142: a NAME (not the id) stays only when the engine's tenant-wide lookup of it
+                    # (Resolve-OERAccessPackageId, same URI, the name escaped the same way) finds exactly this
+                    # access package.
+                    # Named deviation, held in step with the resolver by the Get-OERInventory.Tests.ps1 Context "the export's review-reference lookups agree with the resolvers (named deviation)".
+                    if ([string]$Proj.accessPackage -ne [string]$Ar.AccessPackageId) {
+                        $ApLookupName = [string]$Proj.accessPackage
+                        $Proj.accessPackage = Get-AccessReviewUniqueReference -Name $ApLookupName -Id ([string]$Ar.AccessPackageId) `
+                            -Uri ("v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq '{0}'&`$select=id,displayName" -f (ConvertTo-OERODataFilterValue -Value $ApLookupName)) `
+                            -CacheKey $ApLookupName.ToLowerInvariant() -Cache $ArPackageNameLookup `
+                            -MatchOf { param($Answer) @($Answer.value | Where-Object { $null -ne $_ }) } `
+                            -ReviewName ([string]$Ar.DisplayName) -Part 'accessPackage' -Label 'access package'
+                    }
+                    $Proj.assignmentPolicy = Get-AccessReviewReferenceName `
+                        -Uri ('v1.0/identityGovernance/entitlementManagement/assignmentPolicies/{0}?$expand=accessPackage' -f $Ar.AssignmentPolicyId) `
+                        -NotFoundCode 'PolicyNotFound', 'NotFound' `
+                        -Id ([string]$Ar.AssignmentPolicyId) -ReviewName ([string]$Ar.DisplayName) `
+                        -Part 'assignmentPolicy' -Label 'assignment policy'
+                    # BL-142: a NAME (not the id) stays only when exactly one policy of the review's access
+                    # package carries it, compared as Resolve-OERAssignmentPolicyId compares (-eq), and that
+                    # policy is this one. The listing is the resolver's, by the review's access package id.
+                    # Named deviation, held in step with the resolver by the Get-OERInventory.Tests.ps1 Context "the export's review-reference lookups agree with the resolvers (named deviation)".
+                    if ([string]$Proj.assignmentPolicy -ne [string]$Ar.AssignmentPolicyId) {
+                        $Proj.assignmentPolicy = Get-AccessReviewUniqueReference -Name ([string]$Proj.assignmentPolicy) -Id ([string]$Ar.AssignmentPolicyId) `
+                            -Uri ("v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq '{0}'" -f $Ar.AccessPackageId) `
+                            -CacheKey ([string]$Ar.AccessPackageId).ToLowerInvariant() -Cache $ArPolicyListLookup `
+                            -MatchOf { param($Answer, $ForName) @(@($Answer.value) | Where-Object { $_.displayName -eq $ForName }) } `
+                            -ReviewName ([string]$Ar.DisplayName) -Part 'assignmentPolicy' -Label 'assignment policy'
+                    }
                 }
 
-                # reviewers -> friendly tokens (manager / self / resolved name). Every query is parsed
-                # through Resolve-OERReviewerScopeQuery, the module's single owner of that grammar. It
-                # is also what tolerates the API version prefix Graph adds when it NORMALIZES a reviewer
-                # scope on read: a scope written as '/users/{id}' reads back as '/v1.0/users/{id}'.
-                # Filtered: @($null).Count is 1, so an absent Reviewers property would otherwise read
-                # as ONE scope -- a scope with no query, which would then count as an unparsed one and
-                # both suppress the self default and raise a warning naming an empty string.
-                $RawReviewers = @($Ar.Reviewers | Where-Object { $_ })
-                $ParsedReviewers = @(foreach ($Rv in $RawReviewers) { Resolve-OERReviewerScopeQuery -Query ([string]$Rv.query) })
+                # reviewers -> friendly tokens (manager / self / resolved name), from the queries parsed above.
                 $ReviewerIds = [System.Collections.Generic.List[string]]::new()
                 foreach ($Parsed in $ParsedReviewers) {
                     if ($Parsed.Id) { $ReviewerIds.Add([string]$Parsed.Id) }
@@ -2329,46 +2352,21 @@ function Get-OERInventory {
                     foreach ($K in $ResolvedRev.Keys) { $PrincipalNameCache[$K] = $ResolvedRev[$K] }
                 }
                 $Reviewers = [System.Collections.Generic.List[string]]::new()
-                $UnparsedReviewers = [System.Collections.Generic.List[string]]::new()
                 foreach ($Parsed in $ParsedReviewers) {
                     if ($Parsed.Kind -eq 'Manager') { $Reviewers.Add('manager'); continue }
-                    # A scope object carrying no query at all names no reviewer, so it is dropped
-                    # rather than reported -- naming an empty string in the warning helps nobody.
-                    if ($Parsed.Kind -eq 'Unparsed') {
-                        if ($Parsed.Query) { $UnparsedReviewers.Add([string]$Parsed.Query) }
-                        continue
-                    }
+                    # A scope object carrying no query at all names no reviewer, so it is dropped (a
+                    # scope WITH a query that does not parse skipped the whole review above).
+                    if ($Parsed.Kind -eq 'Unparsed') { continue }
                     $RvId = [string]$Parsed.Id
                     $Reviewers.Add($(if ($PrincipalNameCache.ContainsKey($RvId)) { $PrincipalNameCache[$RvId] } else { $RvId }))
                 }
                 if ($RawReviewers.Count -eq 0) { $Reviewers.Add('self') }
-                elseif ($UnparsedReviewers.Count -gt 0) {
-                    # An UNPARSED scope is not an ABSENT one. No scope at all is the documented
-                    # self-review shape (Learn: "To configure a self-review, don't specify the reviewers
-                    # property or supply an empty object"); an unparsed scope means a real reviewer
-                    # exists that this module's vocabulary cannot express. Microsoft Learn documents
-                    # forms a portal-created review can carry that this module never emits -- './owners',
-                    # '/servicePrincipals/{id}/owners', a filtered owners query. Dropping one silently
-                    # would either fabricate a self review (when it was the only scope) or quietly shrink
-                    # the reviewer set (when it was not), so name the offending queries in both cases.
-                    # This warning is what surfaced the version-prefix defect -- keep it, and keep it
-                    # naming the queries.
-                    $UnparsedDetail = "Get-OERInventory: access review '$($Ar.DisplayName)' has $($UnparsedReviewers.Count) live reviewer scope(s) that this module's vocabulary cannot express ($($UnparsedReviewers -join ', '))"
-                    if ($Reviewers.Count -eq 0) {
-                        Write-Warning "$UnparsedDetail; exporting an empty reviewers list, which reads as a self review."
-                    }
-                    else {
-                        Write-Warning "$UnparsedDetail; they are omitted from the exported reviewers list, which therefore names fewer reviewers than the live review."
-                    }
-                }
                 $Proj.reviewers = @($Reviewers)
 
                 # fallbackReviewers -> friendly tokens (resolved user/group name; manager is never a
                 # fallback). A manager review carries a required fallback, so project it for round-trip.
-                # Filtered for the same @($null).Count is 1 reason as the primary half above.
-                $RawFallback = @($Ar.FallbackReviewers | Where-Object { $_ })
+                # Read and parsed above, filtered for the @($null).Count is 1 reason.
                 if ($RawFallback.Count -gt 0) {
-                    $ParsedFallback = @(foreach ($Fb in $RawFallback) { Resolve-OERReviewerScopeQuery -Query ([string]$Fb.query) })
                     $FbIds = [System.Collections.Generic.List[string]]::new()
                     foreach ($Parsed in $ParsedFallback) {
                         if ($Parsed.Id) { $FbIds.Add([string]$Parsed.Id) }
@@ -2379,21 +2377,14 @@ function Get-OERInventory {
                         foreach ($K in $ResolvedFb.Keys) { $PrincipalNameCache[$K] = $ResolvedFb[$K] }
                     }
                     $Fallbacks = [System.Collections.Generic.List[string]]::new()
-                    $UnparsedFallback = [System.Collections.Generic.List[string]]::new()
                     foreach ($Parsed in $ParsedFallback) {
-                        # Anything with no object id is unexpressible HERE, including a './manager'
-                        # scope: the document's fallbackReviewers vocabulary is user and group only.
+                        # Anything with no object id and no query names no reviewer; one WITH a query
+                        # (a './manager' scope included: the document's fallbackReviewers vocabulary is
+                        # user and group only) skipped the whole review above.
                         if ($Parsed.Id) {
                             $FbId = [string]$Parsed.Id
                             $Fallbacks.Add($(if ($PrincipalNameCache.ContainsKey($FbId)) { $PrincipalNameCache[$FbId] } else { $FbId }))
                         }
-                        elseif ($Parsed.Query) { $UnparsedFallback.Add([string]$Parsed.Query) }
-                    }
-                    # Same rule as the primary half: a silently dropped fallback is data loss, and a
-                    # manager review whose only fallback did not parse exports with no fallbackReviewers
-                    # at all -- which Microsoft Graph rejects on the way back in.
-                    if ($UnparsedFallback.Count -gt 0) {
-                        Write-Warning "Get-OERInventory: access review '$($Ar.DisplayName)' has $($UnparsedFallback.Count) live fallback reviewer scope(s) that this module's vocabulary cannot express ($($UnparsedFallback -join ', ')); they are omitted from the exported fallbackReviewers list."
                     }
                     if ($Fallbacks.Count -gt 0) { $Proj.fallbackReviewers = @($Fallbacks) }
                 }
@@ -2491,7 +2482,7 @@ function Get-OERInventory {
                 if ($IncludeId) { $Proj.id = $Ar.Id }
                 $AccessReviews.Add([PSCustomObject]$Proj)
             }
-            $SkippedAllCount = $SkippedGroupFormCount + $SkippedReviewCount
+            $SkippedAllCount = $SkippedGroupFormCount + $SkippedReviewCount + $SkippedReviewerCount
             if ($SkippedAllCount -gt 0) {
                 $SkippedParts = [System.Collections.Generic.List[string]]::new()
                 if ($SkippedGroupFormCount -gt 0) {
@@ -2499,6 +2490,9 @@ function Get-OERInventory {
                 }
                 if ($SkippedReviewCount -gt 0) {
                     $SkippedParts.Add("$SkippedReviewCount review(s) of an application, a directory role or another scope")
+                }
+                if ($SkippedReviewerCount -gt 0) {
+                    $SkippedParts.Add("$SkippedReviewerCount review(s) whose reviewers the module cannot write back (for example a group's owners)")
                 }
                 Write-Warning "Get-OERInventory: skipped $SkippedAllCount access review definition(s) the apply document cannot declare: $($SkippedParts -join ', '). Access package reviews and reviews of all members of one group round-trip through Invoke-OERStructure."
             }
