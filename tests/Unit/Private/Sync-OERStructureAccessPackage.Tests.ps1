@@ -7888,7 +7888,7 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
 
         It 'marks a package whose create a declined confirmation skipped CreatePending, with the same Reason, in a script with no try (A12)' {
             # The create is confirmed through a real host that answers No (OERConfirmHost). The stubs live in
-            # the module's own scope (function:script:) and their length is printed before the call, so a
+            # the module's own scope (function:script:) and each is checked before the call (the script aborts otherwise), so a
             # real Initialize-OERAuth or New-OERAccessPackage can never be the command that runs.
             $Scenario = [scriptblock]::Create(@'
 Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
@@ -7905,7 +7905,9 @@ $Module = Get-Module Omnicit.EntraRBAC
     }
 }
 foreach ($StubName in 'Initialize-OERAuth', 'Get-OERAccessPackage', 'Resolve-OERCatalogId', 'New-OERAccessPackage') {
-    "STUB:${StubName}:" + (& $Module { param($N) (Get-Command $N -CommandType Function).ScriptBlock.ToString().Length } $StubName)
+    $StubLength = & $Module { param($N) (Get-Command $N -CommandType Function).ScriptBlock.ToString().Length } $StubName
+    if ($StubLength -ge 300) { throw 'STUBS NOT IN PLACE' }
+    "STUB:${StubName}:$StubLength"
 }
 $Item = '{ "displayName": "AP", "catalog": "CAT" }' | ConvertFrom-Json
 $Map = & $Module { [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase) }

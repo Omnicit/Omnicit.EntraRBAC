@@ -4568,7 +4568,6 @@ Describe 'Invoke-OERStructure: an access review reaches the access package its a
         Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
     }
 
-
     Context 'in a script with no try above it' {
         # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere
         # above it, as at a prompt. The script installs its own fakes in ITS copy of the module scope and
@@ -4613,10 +4612,12 @@ Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
     Set-Item -Path function:script:New-OERAccessReviewDefinition -Value { [System.IO.File]::AppendAllText('#LOG#', "NEW review`n") }
     Set-Item -Path function:script:Invoke-OERGraphRequest -Value { [System.IO.File]::AppendAllText('#LOG#', "GRAPH`n") }
 }
-# The stubs are checked before the call: the command that resolves in the module is the short stub, never
+# The stubs are checked before the call and the script aborts when one is not the short stub, never
 # the real function (a real Initialize-OERAuth would try to sign in).
 foreach ($StubName in 'Initialize-OERAuth', 'Invoke-OERGraphRequest', 'New-OERAccessPackage') {
-    "STUB:${StubName}:" + (& (Get-Module Omnicit.EntraRBAC) { param($N) (Get-Command $N -CommandType Function).ScriptBlock.ToString().Length } $StubName)
+    $StubLength = & (Get-Module Omnicit.EntraRBAC) { param($N) (Get-Command $N -CommandType Function).ScriptBlock.ToString().Length } $StubName
+    if ($StubLength -ge 300) { throw 'STUBS NOT IN PLACE' }
+    "STUB:${StubName}:$StubLength"
 }
 $Json = '#JSON#'
 Invoke-OERStructure -Json $Json #FLAGS# | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
@@ -4677,6 +4678,9 @@ Invoke-OERStructure -Json $Json #FLAGS# | ForEach-Object { "ROW:$($_.Action):$($
             $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
             $Run = Invoke-OERWithConfirmAnswer -Answer '&No' -Script (New-TwNoTryScenario -Log $Log -Flags '-Confirm')
 
+            $StubLines = @($Run.Output | Where-Object { $_ -like 'STUB:*' })
+            $StubLines.Count | Should -Be 3
+            foreach ($Line in $StubLines) { [int]($Line -split ':')[-1] | Should -BeLessThan 300 }
             $Run.Output[-1] | Should -BeExactly 'END'
             @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
                 'ROW:Skipped:would create access package AP-Twin'

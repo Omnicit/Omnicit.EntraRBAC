@@ -2050,7 +2050,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy refuses a successful read without
     }
 
     Context 'convergence (G8)' {
-        It 'a second run on what the first PUT stored sends the same body, requestorSettings (<Name>)' -ForEach @(
+        It 'a second run on what the first PUT stored sends the same body, <Name>' -ForEach @(
             @{ Name = 'requestorSettings'; Lacking = 'Requestor' }
             @{ Name = 'notificationSettings'; Lacking = 'Notification' }
         ) {
