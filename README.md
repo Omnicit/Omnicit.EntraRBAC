@@ -435,8 +435,8 @@ them. `organizations`, which the module uses when no tenant is named and there i
 no tenant and is not checked against one. When a sign-in under it acquires an Azure Resource Manager
 token, that token must come from the same tenant as the session's Microsoft Graph token, or it is
 refused with `TenantMismatch`. When only the Microsoft Graph token is renewed, the session keeps its
-Azure Resource Manager token only if the renewed Microsoft Graph token comes from the same tenant;
-otherwise it drops it and, as soon as a command needs Azure Resource Manager, acquires a new one,
+Azure Resource Manager token only if the renewed Microsoft Graph token comes from the same tenant and
+the same account; otherwise it drops it and, as soon as a command needs Azure Resource Manager, acquires a new one,
 checked the same way.
 
 The module also warns before a client secret sign-in for the same application when the tenant you

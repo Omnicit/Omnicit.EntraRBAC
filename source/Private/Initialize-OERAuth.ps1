@@ -141,9 +141,10 @@ function Initialize-OERAuth {
     still compared with the known account; any other sign-in records its own token's oid.
     SignInAccountId is the fifth term of the sign-in identity (Get-OERSignInIdentity); a renewal or a
     continuation carries it over, and any other sign-in sets it to the new token's oid when that is a
-    GUID. Every Azure Resource Manager token is held to the session's account (SignedInObjectId):
-    one acquired by a renewal, or by a continuation, is refused as above (SignInSuperseded) and one
-    acquired by any other sign-in with a terminating ArmAccountMismatch, before it is cached; the
+    GUID. Every Azure Resource Manager token is held to the session's account (SignedInObjectId): one
+    that is another account's (both object ids GUIDs and different) is refused before it is cached,
+    by a renewal or a continuation with SignInSuperseded as above, by any other sign-in with a
+    terminating ArmAccountMismatch; the
     Microsoft Graph half of such a sign-in stands, the caller stays latched and the session uncertain,
     and no Azure Resource Manager request is sent with that token. The silent renewal (A22) is unchanged; its own
     check of the object id still comes first.

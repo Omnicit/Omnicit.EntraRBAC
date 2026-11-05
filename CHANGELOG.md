@@ -29,10 +29,11 @@ writes an error record, so `$?` is false and `-ErrorAction Stop` ends the run.
 `New-OERAccessPackage -Catalog` refuses a package of another catalog, and
 `Set-OERAccessPackageAssignmentPolicy` a policy read lacking a setting.
 
-Microsoft Graph and Azure Resource Manager now always act as one account. Signing in as another
-account, `Connect-OER -Force` included, drops the previous account's Azure token, and an Azure token
-issued to another account than the Microsoft Graph token is refused (`ArmAccountMismatch`) and never
-cached, also on the first sign-in and in `Connect-OER -IncludeARM`.
+Microsoft Graph and Azure Resource Manager now act as one account. Signing in as another account,
+`Connect-OER -Force` included, drops the previous account's Azure token, and an Azure token issued to
+another account than the Microsoft Graph token is never cached: the first sign-in and
+`Connect-OER -IncludeARM` now refuse it with `ArmAccountMismatch`, as a renewal already did with
+`SignInSuperseded`.
 
 ## [1.3.1] - 2026-10-23
 

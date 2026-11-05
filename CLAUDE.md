@@ -657,7 +657,7 @@ requested tenant, but an ARM token acquired under it is compared with the sessio
 
 Never carry the cached ARM token into a rebuilt state (a Graph token renewal, a transport's refresh,
 `Connect-OER`) on the tenant label alone (`organizations` stays `organizations` across a renewal answered
-from another tenant), nor when the rebuilt session's `SignedInObjectId` is not the old one's, both the same
+from another tenant), nor unless the rebuilt session's `SignedInObjectId` and the old one's are the same
 GUID (`$ArmTokenKept`; BL-163): an explicit sign-in as another account of the same tenant, method, client
 and cloud drops it. `Initialize-OERAuth` only warns, before the call, for a client secret switch it can
 predict will not take effect (a `-WarningAction Stop` caller, or one with a global `$WarningPreference = 'Stop'`, is

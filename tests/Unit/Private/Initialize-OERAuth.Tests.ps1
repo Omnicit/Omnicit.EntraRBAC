@@ -8405,6 +8405,25 @@ Describe 'Initialize-OERAuth never continues a renewal as another account (BL-11
             $After.Oid | Should -BeExactly $script:A119OidB
         }
 
+        It 'refuses an ARM token of another account on Connect-OER as the same account: the carried ARM token of the session stays, the refused one is not cached' {
+            Start-A119Session -Method DeviceCode -Arm
+            $Before = Get-A119Info
+            $Before.HasArm | Should -BeTrue
+            # The Graph token is A's (the session's own account), so the rebuild carries A's EARLIER ARM
+            # token ($ArmTokenKept); the new ARM token is B's and is refused, never cached.
+            $script:A119GraphOid = $script:A119OidA
+            $script:A119ArmOid = $script:A119OidB
+
+            $Probe = Invoke-A119Probe @{ TenantId = $script:A119Tenant; AuthMethod = 'DeviceCode'; ReclaimGraphSession = $true; ForceRefresh = $true; IncludeARM = $true }
+
+            $Probe.Caught.FullyQualifiedErrorId | Should -BeExactly 'ArmAccountMismatch,Initialize-OERAuth'
+            $Probe.Latched | Should -BeTrue
+            $After = Get-A119Info
+            $After.HasArm | Should -BeTrue -Because 'the earlier ARM token of the session''s own account is carried, not replaced'
+            $After.ArmTenant | Should -BeExactly $Before.ArmTenant
+            $After.Oid | Should -BeExactly $script:A119OidA
+        }
+
         It 'refuses a switch of method whose ARM token is another account''s than the new Graph token' {
             Start-A119Session -Method Interactive
             $script:A119GraphOid = $script:A119OidB

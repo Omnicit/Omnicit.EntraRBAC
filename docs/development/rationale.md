@@ -6074,7 +6074,10 @@ method, client or cloud -- is refused with the new terminating `ArmAccountMismat
 the session stays the account it was, which is false after a first sign-in or a `Connect-OER` whose
 Graph half was accepted. The half state is the same as after an ARM `TenantMismatch`: the Graph
 sign-in stands, the caller stays latched and the session-uncertain marker stays set; that is safe
-since the ARM token is not cached, so no Azure request is sent with it; the message says to sign
+since the ARM token is not cached, so no Azure request is sent with it ("not cached" means the
+refused token: an earlier ARM token of the session's own account that the rebuild carried stays,
+which the test `refuses an ARM token of another account on Connect-OER as the same account` pins);
+the message says to sign
 in again and choose the same account for both, for example with `Connect-OER -IncludeARM -Force`. What remains: a
 token without an oid, on either side, is not compared and is cached; the ARM token of a session
 whose account is unknown (no `SignInAccountId` or `SignedInObjectId` GUID) is not carried over a new
