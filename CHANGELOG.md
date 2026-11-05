@@ -35,6 +35,13 @@ another account than the Microsoft Graph token is never cached: the first sign-i
 `Connect-OER -IncludeARM` now refuse it with `ArmAccountMismatch`, as a renewal already did with
 `SignInSuperseded`.
 
+A one-time access review now lasts the days it declares; Microsoft Graph stored 30, and every later
+apply sent an update it did not keep. An `accessReviews` entry can declare `group` (a name or an id)
+to review all members of a group: `Get-OERInventory` exports such a review, `Invoke-OERStructure`
+applies it and refuses one of another group with `AccessReviewScopeMismatch`, and
+`New-OERAccessReviewDefinition -Group` creates one. A group's owners as reviewers are no longer read
+as its members.
+
 ## [1.3.1] - 2026-10-23
 
 More failed inventory reads are now reported. `Get-OERInventory` names a failed role assignment or
