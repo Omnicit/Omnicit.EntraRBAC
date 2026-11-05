@@ -58,6 +58,35 @@ Describe 'Resolve-OERAccessReviewGroupScope' {
         }
     }
 
+    It 'reads the members query with the scope type <Case> as <Kind>' -ForEach @(
+        @{ Case = 'the plain query scope'; Type = '#microsoft.graph.accessReviewQueryScope'; Kind = 'Members' }
+        @{ Case = 'the plain query scope in other letter case'; Type = '#MICROSOFT.graph.accessreviewqueryscope'; Kind = 'Members' }
+        @{ Case = 'empty'; Type = ''; Kind = 'Members' }
+        @{ Case = 'the inactive users scope'; Type = '#microsoft.graph.accessReviewInactiveUsersQueryScope'; Kind = 'OtherForm' }
+        @{ Case = 'an unknown scope'; Type = '#microsoft.graph.somethingNew'; Kind = 'OtherForm' }
+    ) {
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ Type = $Type; Kind = $Kind; G = $script:G } {
+            param($Type, $Kind, $G)
+            $R = Resolve-OERAccessReviewGroupScope -Query "/v1.0/groups/$G/transitiveMembers/microsoft.graph.user" -ScopeType $Type
+            $R.Kind | Should -Be $Kind
+            $R.GroupId | Should -Be $G
+        }
+    }
+
+    It 'reads the members query with a null scope type as Members' {
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ G = $script:G } {
+            param($G)
+            $R = Resolve-OERAccessReviewGroupScope -Query "/groups/$G/transitiveMembers" -ScopeType $null
+            $R.Kind | Should -Be 'Members'
+        }
+    }
+
+    It 'does not let a scope type make a query that is no group scope one' {
+        InModuleScope Omnicit.EntraRBAC {
+            (Resolve-OERAccessReviewGroupScope -Query '/roleManagement/directory/roleDefinitions/R' -ScopeType '#microsoft.graph.accessReviewInactiveUsersQueryScope').Kind | Should -Be 'NotGroup'
+        }
+    }
+
     It 'reads a null query as NotGroup' {
         InModuleScope Omnicit.EntraRBAC {
             (Resolve-OERAccessReviewGroupScope -Query $null).Kind | Should -Be 'NotGroup'

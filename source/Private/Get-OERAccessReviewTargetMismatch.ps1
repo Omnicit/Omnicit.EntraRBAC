@@ -22,8 +22,9 @@ function Get-OERAccessReviewTargetMismatch {
     checked by the group branch alone, which runs first, and the first check that fails decides:
     g1. An entry that also declares accessPackage or assignmentPolicy, or whose group is empty or white
         space, is refused: the review cannot be shown to be the one it declares. No request.
-    g2. A live scope that Resolve-OERAccessReviewGroupScope does not classify as Members (a package
-        review, a guest filter, direct members, owners, anything else) is refused, naming the live scope
+    g2. A live scope that Resolve-OERAccessReviewGroupScope (given the live ScopeType) does not classify as
+        Members (a package review, a guest filter, direct members, owners, an inactive users scope,
+        anything else) is refused, naming the live scope
         ('none' when empty) and the declared group. No request.
     g3. The declared group is a GUID verbatim, else it goes through Resolve-OERGroupId -DisplayName. A
         name that matches nothing returns GroupNotFound, category ObjectNotFound, targeting the declared
@@ -108,12 +109,16 @@ function Get-OERAccessReviewTargetMismatch {
                     'declares. Nothing was written.'))
         }
         # g2. Only the members form the module writes is the review this entry declares.
-        $LiveGroupScope = Resolve-OERAccessReviewGroupScope -Query ([string]$Current.Scope)
+        $LiveGroupScope = Resolve-OERAccessReviewGroupScope -Query ([string]$Current.Scope) -ScopeType ([string]$Current.ScopeType)
         if ($LiveGroupScope.Kind -ne 'Members') {
             [string]$LiveScopeText = $Current.Scope
             if (-not $LiveScopeText) { $LiveScopeText = 'none' }
+            # A scope of another type (a review of a group's INACTIVE users shares the members query) is
+            # named beside the query, or the message would describe the members form it is not.
+            [string]$LiveScopeType = $Current.ScopeType
+            $TypeText = if ($LiveScopeType -and $LiveScopeType -ine '#microsoft.graph.accessReviewQueryScope') { " and its scope type is '$LiveScopeType'" } else { '' }
             return (& $NewMismatch ("Access review '$Name' in the tenant does not review the members of a group in the form this module " +
-                    "writes (its scope is '$LiveScopeText'), so it is not the review this entry declares for group '$DeclaredGroup'. " +
+                    "writes (its scope is '$LiveScopeText'$TypeText), so it is not the review this entry declares for group '$DeclaredGroup'. " +
                     "Nothing was written. $NotUnique"))
         }
         # g3. The group, resolved as creation resolves it.

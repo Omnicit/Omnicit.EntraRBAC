@@ -304,11 +304,12 @@ Describe 'Get-OERAccessReviewTargetMismatch for an entry that declares group' {
         $script:GrNotUnique = 'Access review display names are not unique: give the entry or the review in the tenant another display name.'
 
         function New-GrLive {
-            param([string]$Scope)
+            param([string]$Scope, [string]$ScopeType)
             [PSCustomObject]@{
                 AccessReviewDefinitionId = 'cccc3333-0000-0000-0000-000000000001'
                 DisplayName              = $script:GrName
                 Scope                    = $Scope
+                ScopeType                = $(if ($ScopeType) { $ScopeType } else { $null })
                 AccessPackageId          = $null
                 AssignmentPolicyId       = $null
             }
@@ -405,6 +406,24 @@ Describe 'Get-OERAccessReviewTargetMismatch for an entry that declares group' {
             "Nothing was written. $($script:GrNotUnique)")
         Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERGroupId -Times 0
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+    }
+
+    It 'refuses a review of the group''s INACTIVE users that shares the members query, naming its scope type, with no request and no lookup' {
+        $R = Invoke-GrCheck -Declared (New-GrEntry -Group $script:GrId) `
+            -Current (New-GrLive -Scope '/v1.0/groups/11111111-1111-1111-1111-111111111111/transitiveMembers' -ScopeType '#microsoft.graph.accessReviewInactiveUsersQueryScope')
+        $R.Out.Count | Should -Be 1
+        [string]$R.Out[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewScopeMismatch'
+        $R.Out[0].Exception.Message | Should -BeExactly ("Access review 'Q3 group review' in the tenant does not review the members of a group in the form this module " +
+            "writes (its scope is '/v1.0/groups/11111111-1111-1111-1111-111111111111/transitiveMembers' and its scope type is '#microsoft.graph.accessReviewInactiveUsersQueryScope'), " +
+            "so it is not the review this entry declares for group '11111111-1111-1111-1111-111111111111'. Nothing was written. $($script:GrNotUnique)")
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERGroupId -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+    }
+
+    It 'accepts the members query read back with the plain query scope type' {
+        $R = Invoke-GrCheck -Declared (New-GrEntry -Group $script:GrId) `
+            -Current (New-GrLive -Scope '/v1.0/groups/11111111-1111-1111-1111-111111111111/transitiveMembers/microsoft.graph.user' -ScopeType '#microsoft.graph.accessReviewQueryScope')
+        $R.Out.Count | Should -Be 0
     }
 
     It 'refuses an entry that declares group beside <Name>, with no request' -ForEach @(

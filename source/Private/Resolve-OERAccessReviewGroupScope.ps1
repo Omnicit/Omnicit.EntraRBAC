@@ -22,11 +22,17 @@ function Resolve-OERAccessReviewGroupScope {
 
     - 'Members': the whole query is the group-members form, with an optional leading Graph API version
       segment ('/v1.0', '/beta', and the same shape for a future version) and an optional trailing
-      '/microsoft.graph.user' cast, and the group id is a GUID. This is the only form the module writes,
-      so it is the only one that may be exported as a declared 'group'.
+      '/microsoft.graph.user' cast, the group id is a GUID, and the scope type (-ScopeType) is absent
+      or the plain query scope. This is the only form the module writes, so it is the only one that
+      may be exported as a declared 'group'.
     - 'OtherForm': the query addresses a group with a GUID id but is not the Members form -- the guest
-      filter, direct '/members', '/owners', a trailing slash or anything else. Reading such a review as
-      a members review would widen it to all transitive members on apply, so it is never 'Members'.
+      filter, direct '/members', '/owners', a trailing slash, a scope of another type or anything else.
+      Reading such a review as a members review would widen it to all transitive members on apply, so
+      it is never 'Members'. A review of a group's INACTIVE users is the case that needs the scope
+      type: Microsoft Learn ("Configure access review scope by using Microsoft Graph APIs", Example 2)
+      writes it with the same query '/groups/{id}/transitiveMembers' under the scope type
+      '#microsoft.graph.accessReviewInactiveUsersQueryScope' (with inactiveDuration), so the query
+      alone cannot tell it from a review of all members.
     - 'NotGroup': anything else, including a group id that is not a GUID, an invented root such as
       '/tenants/x/groups/{id}/transitiveMembers', and a $null or empty query.
 
@@ -37,6 +43,14 @@ function Resolve-OERAccessReviewGroupScope {
     .PARAMETER Query
     The raw scope query string, read from an access review definition's scope query property. A $null
     or an empty value is accepted and reported as 'NotGroup' rather than rejected.
+
+    .PARAMETER ScopeType
+    The scope's '@odata.type', as ConvertTo-OERAccessReviewDefinition surfaces it in ScopeType. $null
+    and an empty value are accepted and read as the plain query scope (an older caller, or a definition
+    that does not report the type). '#microsoft.graph.accessReviewQueryScope' (the type Microsoft Graph
+    reads back for the scope this module writes, measured 2026-11-05) is the plain query scope too,
+    compared without regard to letter case. Any other type, such as the inactive users scope
+    '#microsoft.graph.accessReviewInactiveUsersQueryScope', makes a group query 'OtherForm'.
 
     .EXAMPLE
     Resolve-OERAccessReviewGroupScope -Query '/v1.0/groups/00000000-0000-0000-0000-000000000011/transitiveMembers/microsoft.graph.user'
@@ -52,7 +66,12 @@ function Resolve-OERAccessReviewGroupScope {
         [Parameter(Position = 0)]
         [AllowNull()]
         [AllowEmptyString()]
-        [string]$Query
+        [string]$Query,
+
+        [Parameter()]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$ScopeType
     )
 
     $VersionPrefix = '(?:/(?:v\d+(?:\.\d+)?|beta))?'
@@ -63,7 +82,9 @@ function Resolve-OERAccessReviewGroupScope {
     if ($Text) {
         if ($Text -match ('^' + $VersionPrefix + '/groups/([^/?#]+)') -and (Test-OERGuid -Value $Matches[1])) {
             $GroupId = $Matches[1]
-            if ($Text -match ('^' + $VersionPrefix + '/groups/[^/?#]+/transitiveMembers(?:/microsoft\.graph\.user)?$')) {
+            $PlainScope = [string]::IsNullOrEmpty($ScopeType) -or
+                $ScopeType.Equals('#microsoft.graph.accessReviewQueryScope', [System.StringComparison]::OrdinalIgnoreCase)
+            if ($PlainScope -and $Text -match ('^' + $VersionPrefix + '/groups/[^/?#]+/transitiveMembers(?:/microsoft\.graph\.user)?$')) {
                 $Kind = 'Members'
             }
             else {
