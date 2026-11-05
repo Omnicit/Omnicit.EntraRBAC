@@ -651,9 +651,11 @@ lookup above, by domain), within two limits: a token whose tenant AzAuth does no
 requested tenant, but an ARM token acquired under it is compared with the session's Graph token
 (`TokenTenantId`) when both are GUIDs, and refused with the same `TenantMismatch` when they differ.
 
-Never carry the cached ARM token into a rebuilt state (a Graph token renewal, a transport's refresh)
-on the tenant label alone (`organizations` stays `organizations` across a renewal answered from
-another tenant). `Initialize-OERAuth` only warns, before the call, for a client secret switch it can
+Never carry the cached ARM token into a rebuilt state (a Graph token renewal, a transport's refresh,
+`Connect-OER`) on the tenant label alone (`organizations` stays `organizations` across a renewal answered
+from another tenant), nor when the rebuilt session's `SignedInObjectId` is not the old one's, both the same
+GUID (`$ArmTokenKept`; BL-163): an explicit sign-in as another account of the same tenant, method, client
+and cloud drops it. `Initialize-OERAuth` only warns, before the call, for a client secret switch it can
 predict will not take effect (a `-WarningAction Stop` caller, or one with a global `$WarningPreference = 'Stop'`, is
 stopped at that `Write-Warning`, before any token request). The post-call warning that compared
 granted tenants is retired; do not bring it back. `Connect-OER -Force` is the only public lever that

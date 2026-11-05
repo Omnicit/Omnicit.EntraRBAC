@@ -659,6 +659,9 @@ Describe 'Initialize-OERAuth carries an ARM token over a renewal only for the re
             }
         }
         Mock -ModuleName $script:moduleName Connect-MgGraph { }
+        # BL-163: the carry also needs the session's account (a GUID) to be the same before and after, so
+        # every fake token of this Describe is the one account's.
+        Mock -ModuleName $script:moduleName Get-OERTokenObjectId { '88888888-8888-8888-8888-888888888888' }
     }
 
     It '(a) drops the ARM token when a Microsoft Graph-only renewal of an organizations session is answered from another tenant' {
@@ -8367,6 +8370,85 @@ Describe 'Initialize-OERAuth never continues a renewal as another account (BL-11
             $Probe.Caught | Should -BeNullOrEmpty
             $Probe.Latched | Should -BeFalse
             (Get-A119Info).HasArm | Should -BeTrue
+        }
+    }
+
+    Context 'the cached Azure Resource Manager token follows the account (BL-163)' {
+        It 'drops the ARM token when Connect-OER signs in as another account without -IncludeARM' {
+            Start-A119Session -Method DeviceCode -Arm
+            $script:A119GraphOid = $script:A119OidB
+
+            $Probe = Invoke-A119Probe @{ TenantId = $script:A119Tenant; AuthMethod = 'DeviceCode'; ReclaimGraphSession = $true; ForceRefresh = $true }
+
+            $Probe.Caught | Should -BeNullOrEmpty
+            $After = Get-A119Info
+            $After.AccountId | Should -BeExactly $script:A119OidB
+            $After.Oid | Should -BeExactly $script:A119OidB
+            $After.HasArm | Should -BeFalse
+            $After.ArmTenant | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly -ParameterFilter { [string]$Resource -like '*management*' }
+        }
+
+        It 'acquires a new ARM token for the new account on the next -IncludeARM sign-in' {
+            Start-A119Session -Method DeviceCode -Arm
+            $script:A119GraphOid = $script:A119OidB
+            $First = Invoke-A119Probe @{ TenantId = $script:A119Tenant; AuthMethod = 'DeviceCode'; ReclaimGraphSession = $true; ForceRefresh = $true }
+            $First.Caught | Should -BeNullOrEmpty
+            (Get-A119Info).HasArm | Should -BeFalse
+            $script:A119ArmOid = $script:A119OidB
+
+            $Probe = Invoke-A119Probe @{ TenantId = $script:A119Tenant; IncludeARM = $true }
+
+            $Probe.Caught | Should -BeNullOrEmpty
+            (Get-A119Info).HasArm | Should -BeTrue
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly -ParameterFilter { [string]$Resource -like '*management*' }
+        }
+
+        It 'acquires the new account''s ARM token in the same call under -IncludeARM' {
+            Start-A119Session -Method DeviceCode -Arm
+            $script:A119GraphOid = $script:A119OidB
+            $script:A119ArmOid = $script:A119OidB
+
+            $Probe = Invoke-A119Probe @{ TenantId = $script:A119Tenant; AuthMethod = 'DeviceCode'; IncludeARM = $true; ReclaimGraphSession = $true; ForceRefresh = $true }
+
+            $Probe.Caught | Should -BeNullOrEmpty
+            (Get-A119Info).HasArm | Should -BeTrue
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly -ParameterFilter { [string]$Resource -like '*management*' }
+        }
+
+        It 'keeps the ARM token when the same account signs in again without -IncludeARM' {
+            Start-A119Session -Method DeviceCode -Arm
+            $Before = Get-A119Info
+
+            $Probe = Invoke-A119Probe @{ TenantId = $script:A119Tenant; AuthMethod = 'DeviceCode'; ReclaimGraphSession = $true; ForceRefresh = $true }
+
+            $Probe.Caught | Should -BeNullOrEmpty
+            $After = Get-A119Info
+            $After.HasArm | Should -BeTrue
+            $After.ArmTenant | Should -BeExactly $Before.ArmTenant
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly -ParameterFilter { [string]$Resource -like '*management*' }
+        }
+
+        It 'carries no ARM token over a renewal of a session whose account is unknown' {
+            Start-A119Session -Method DeviceCode -Arm -GraphOid ''
+            (Get-A119Info).HasArm | Should -BeTrue
+            Set-A119Expiry -GraphMinutes 2
+
+            $Probe = Invoke-A119Probe @{}
+
+            $Probe.Caught | Should -BeNullOrEmpty
+            (Get-A119Info).HasArm | Should -BeFalse
+        }
+
+        It 'carries no ARM token when the account goes from unknown to known' {
+            Start-A119Session -Method DeviceCode -Arm -GraphOid ''
+            Set-A119Expiry -GraphMinutes 2
+            $script:A119GraphOid = $script:A119OidA
+
+            $Probe = Invoke-A119Probe @{}
+
+            $Probe.Caught | Should -BeNullOrEmpty
+            (Get-A119Info).HasArm | Should -BeFalse
         }
     }
 
