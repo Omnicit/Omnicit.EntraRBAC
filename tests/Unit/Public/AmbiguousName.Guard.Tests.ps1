@@ -264,6 +264,16 @@ BeforeDiscovery {
             }
         }
         @{
+            Cmdlet = 'New-OERAccessReviewDefinition'; Resolver = 'Resolve-OERGroupId'
+            ErrorId = 'AmbiguousName'; Pre = @{}
+            Invoke = {
+                New-OERAccessReviewDefinition -DisplayName 'Q3' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
+                    -Group 'Dup' -SelfReview -Recurrence OneTime -StartDate ([datetime]'2026-07-05') `
+                    -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
             Cmdlet = 'Remove-OERAccessPackage'; Resolver = 'Resolve-OERAccessPackageId'
             ErrorId = 'AmbiguousAccessPackageName'; Pre = @{}
             Invoke = {
