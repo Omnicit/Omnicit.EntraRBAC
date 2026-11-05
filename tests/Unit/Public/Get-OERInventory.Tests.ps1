@@ -2000,6 +2000,65 @@ Describe 'Get-OERInventory' {
             $ar.PSObject.Properties.Name | Should -Not -Contain 'durationInDays'
         }
 
+        It 'exports the length of a one-time review from its range, not from instanceDurationInDays (BL-168)' {
+            # M1 (older module shape): instanceDurationInDays 0 and a noEnd range thirty days long; M2: the
+            # numbered range whose end is the length. Graph ends the instance on the range end.
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                $M1 = @{ pattern = $null; range = @{ type = 'noEnd'; startDate = '2026-11-05'; endDate = '2026-12-05' } }
+                $M2 = @{ pattern = $null; range = @{ type = 'numbered'; numberOfOccurrences = 0; startDate = '2026-11-05'; endDate = '2026-11-19' } }
+                [PSCustomObject]@{
+                    Id = 'ar-m1'; DisplayName = 'One-time M1'
+                    AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
+                    Reviewers = @(); Recurrence = $M1; DurationInDays = 0
+                    Settings = @{ instanceDurationInDays = 0; recurrence = $M1 }
+                }
+                [PSCustomObject]@{
+                    Id = 'ar-m2'; DisplayName = 'One-time M2'
+                    AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
+                    Reviewers = @(); Recurrence = $M2; DurationInDays = 14
+                    Settings = @{ instanceDurationInDays = 14; recurrence = $M2 }
+                }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            $Reviews = @((Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x').AccessReviews)
+            $Reviews.Count | Should -Be 2
+            ($Reviews | Where-Object displayName -eq 'One-time M1').durationInDays | Should -Be 30
+            ($Reviews | Where-Object displayName -eq 'One-time M2').durationInDays | Should -Be 14
+        }
+
+        It 'exports a repeating review instanceDurationInDays as before' {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                $Rec = @{ pattern = @{ type = 'absoluteMonthly'; interval = 3 }; range = @{ type = 'noEnd'; startDate = '2026-07-01' } }
+                [PSCustomObject]@{
+                    Id = 'ar-rep'; DisplayName = 'Repeating'
+                    AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
+                    Reviewers = @(); Recurrence = $Rec; DurationInDays = 9
+                    Settings = @{ instanceDurationInDays = 9; recurrence = $Rec }
+                }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x').AccessReviews[0]
+            $ar.durationInDays | Should -Be 9
+        }
+
+        It 'warns and omits durationInDays for a one-time range longer than 365 days' {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                $Rec = @{ pattern = $null; range = @{ type = 'endDate'; startDate = '2026-11-05'; endDate = '2027-12-05' } }
+                [PSCustomObject]@{
+                    Id = 'ar-long1'; DisplayName = 'Long One-time'
+                    AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
+                    Reviewers = @(); Recurrence = $Rec; DurationInDays = 5
+                    Settings = @{ instanceDurationInDays = 5; recurrence = $Rec }
+                }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x' -WarningVariable ArLongWarning -WarningAction SilentlyContinue).AccessReviews[0]
+            $ar.displayName | Should -Be 'Long One-time'
+            $ar.PSObject.Properties.Name | Should -Not -Contain 'durationInDays'
+            (@($ArLongWarning) -join ' ') | Should -Match 'Long One-time'
+            (@($ArLongWarning) -join ' ') | Should -Match '395'
+        }
+
         It 'warns and emits no durationInDays for a live duration above the schema maximum' {
             # Unlike the 0 sentinel above, a positive out-of-band duration is real configuration being
             # dropped, so it has to be visible rather than silently absent from the bundle.

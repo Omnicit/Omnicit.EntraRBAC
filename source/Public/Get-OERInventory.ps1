@@ -2394,7 +2394,18 @@ function Get-OERInventory {
                 # a real 0, not a missing key. Omitting the key instead is the correct round-trip --
                 # absent means "leave untouched" to Sync-OERStructureAccessReview -- and is the same
                 # treatment the numbered-range occurrences below already gets for a live zero.
-                $LiveDurationInDays = $Ar.DurationInDays -as [int]
+                #
+                # The length is read through Get-OERAccessReviewDuration (BL-168): a one-time review is
+                # governed by its recurrence range (the older module shape reads instanceDurationInDays
+                # 0 beside a thirty day range, and the instance ends after thirty days), so the helper
+                # returns the range length there and instanceDurationInDays otherwise. A definition
+                # object without a Settings bag falls back to the projected DurationInDays.
+                $LiveDurationInDays = if ($null -ne $Ar.Settings) {
+                    Get-OERAccessReviewDuration -Settings $Ar.Settings
+                }
+                else {
+                    $Ar.DurationInDays -as [int]
+                }
                 if ($LiveDurationInDays -ge 1 -and $LiveDurationInDays -le 365) {
                     $Proj.durationInDays = $LiveDurationInDays
                 }
@@ -2427,7 +2438,7 @@ function Get-OERInventory {
 
                 # Recurrence range: emit at most one of endDate / occurrences (the schema and
                 # Test-OERStructureSchema treat them as mutually exclusive) and neither for a OneTime
-                # review, which carries no recurrence object at all. A live numbered range can report
+                # review, whose range is its length (exported as durationInDays above). A live numbered range can report
                 # zero occurrences, which the schema forbids -- emit nothing rather than an invalid value.
                 if ($Cadence -ne 'OneTime') {
                     $RangeType = [string]$Ar.Recurrence.range.type

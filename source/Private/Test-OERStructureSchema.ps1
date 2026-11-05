@@ -140,7 +140,8 @@ function Test-OERStructureSchema {
     durationInDays as an integer 1-365, occurrences as an integer >= 1, and startDate/endDate as
     parseable date/time strings. endDate and occurrences are mutually exclusive (Error); either one
     declared alongside an absent or OneTime recurrence has no effect and is a Warning, since
-    New-OERAccessReviewRecurrence never builds a recurrence object for a OneTime review. A manager
+    New-OERAccessReviewRecurrence builds a OneTime review's own numbered range (its end is the
+    review's length, from durationInDays), never a cadence range. A manager
     reviewer -- declared explicitly in reviewers, or the handler's default when reviewers is omitted or
     present with an explicit null -- without a fallbackReviewers entry is a Warning, since Microsoft
     Graph rejects a manager reviewer with no fallback. A fallbackReviewers key DECLARED but EMPTY is no
@@ -1861,7 +1862,8 @@ function Test-OERStructureSchema {
                     Add-Finding -Section 'accessReviews' -Item $ARItem -Path $ARPath `
                         -Message "'endDate' and 'occurrences' at $ARPath are mutually exclusive; declare at most one."
                 }
-                # A OneTime review has no recurrence object at all, so a range is silently inert.
+                # A OneTime review's range is its own numbered range whose end is its length (from
+                # durationInDays), so a declared cadence range is silently inert.
                 if (($HasEndDate -or $HasOccurrences) -and
                     (-not (Test-HasProp -Node $AR -Name 'recurrence') -or [string]$AR.recurrence -ieq 'OneTime')) {
                     $RangePath = if ($HasEndDate) { "$ARPath.endDate" } else { "$ARPath.occurrences" }

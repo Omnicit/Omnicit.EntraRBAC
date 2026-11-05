@@ -8,7 +8,8 @@ function New-OERAccessReviewRecurrence {
     OneTime returns the one-time form Microsoft Graph stores unchanged: a null pattern and a numbered
     range of zero occurrences that starts on -StartDate and ends -DurationInDays days later (Graph
     reads the length of a one-time review from that range, not from instanceDurationInDays);
-    -DurationInDays is required for it, and -EndDate and -Occurrences are ignored. Weekly emits a weekly pattern; Monthly, Quarterly, SemiAnnually and Annually emit an
+    -DurationInDays is required for it, and -EndDate and -Occurrences are ignored.
+    Weekly emits a weekly pattern; Monthly, Quarterly, SemiAnnually and Annually emit an
     absoluteMonthly pattern with interval 1, 3, 6 and 12 respectively and a dayOfMonth taken from the
     start date. The pattern type and interval of each cadence are read from Get-OERAccessReviewCadence,
     the single owner of that table. The range is noEnd by default, endDate when -EndDate is supplied,

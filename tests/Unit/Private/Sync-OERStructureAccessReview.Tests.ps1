@@ -1199,6 +1199,63 @@ Describe 'Sync-OERStructureAccessReview' {
             }
         }
 
+        It 'converges a one-time review written by an older module in ONE update, and the second run is Unchanged (BL-168)' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncArViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                # M1: what Graph stored for the old OneTime body -- instanceDurationInDays 0 and a noEnd
+                # range thirty days long. The instance really ends after thirty days.
+                $script:OneTimeM1 = [PSCustomObject]@{
+                    Id = 'ar-1'; DisplayName = 'Q3 AP review'
+                    AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
+                    Reviewers = @(@{ query = '/users/usr-1' }); FallbackReviewers = @()
+                    DurationInDays = 0
+                    Recurrence = @{ pattern = $null; range = @{ type = 'noEnd'; startDate = '2026-11-05'; endDate = '2026-12-05' } }
+                    Settings = @{
+                        instanceDurationInDays = 0
+                        recurrence = @{ pattern = $null; range = @{ type = 'noEnd'; startDate = '2026-11-05'; endDate = '2026-12-05' } }
+                    }
+                }
+                # M2: the numbered range whose end is the length, as Graph stores the corrected write.
+                $script:OneTimeM2 = [PSCustomObject]@{
+                    Id = 'ar-1'; DisplayName = 'Q3 AP review'
+                    AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
+                    Reviewers = @(@{ query = '/users/usr-1' }); FallbackReviewers = @()
+                    DurationInDays = 14
+                    Recurrence = @{ pattern = $null; range = @{ type = 'numbered'; numberOfOccurrences = 0; startDate = '2026-11-05'; endDate = '2026-11-19' } }
+                    Settings = @{
+                        instanceDurationInDays = 14
+                        recurrence = @{ pattern = $null; range = @{ type = 'numbered'; numberOfOccurrences = 0; startDate = '2026-11-05'; endDate = '2026-11-19' } }
+                    }
+                }
+                $Item = [PSCustomObject]@{
+                    displayName = 'Q3 AP review'; accessPackage = 'AP-Sales'; assignmentPolicy = 'Standard'
+                    recurrence = 'OneTime'; durationInDays = 14
+                }
+                Mock Initialize-OERAuth {}
+                Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-new' } }
+
+                Mock Get-OERAccessReviewDefinition { $script:OneTimeM1 }
+                Mock Set-OERAccessReviewDefinition { $script:OneTimeM2 }
+                $First = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item $Item)
+                Should -Invoke Set-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter {
+                    $Id -eq 'ar-1' -and $DurationInDays -eq 14 -and $null -eq $Recurrence -and $null -eq $StartDate
+                }
+                $First.Action | Should -Contain 'Updated'
+
+                Mock Get-OERAccessReviewDefinition { $script:OneTimeM2 }
+                Mock Set-OERAccessReviewDefinition { $script:OneTimeM2 }
+                $Second = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item $Item)
+                # The mock call count is cumulative inside this It: still the ONE write of the first run.
+                Should -Invoke Set-OERAccessReviewDefinition -Times 1 -Exactly
+                $Second.Action | Should -Contain 'Unchanged'
+                $Second.Action | Should -Not -Contain 'Updated'
+            }
+        }
+
         It 'sends only the drifted field and leaves the rest of the definition alone' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncArViaCaller {

@@ -180,8 +180,8 @@ function Sync-OERStructureAccessReview {
 
     Recurrence range and review settings:
     - endDate (an end-date range) or occurrences (a numbered range) -- at most one; if a hand-built
-      item somehow carries both, endDate wins. Both are inert on a OneTime review because it carries
-      no recurrence object.
+      item somehow carries both, endDate wins. Both are inert on a OneTime review because its range is
+      its own numbered range whose end is its length (durationInDays).
     - mailNotification, reminderNotification, requireJustification, recommendationsEnabled and
       autoApplyDecisions map to the matching New-OERAccessReviewDefinition switches and are bound only
       when the document declares them true, so an omitted field keeps the cmdlet default.

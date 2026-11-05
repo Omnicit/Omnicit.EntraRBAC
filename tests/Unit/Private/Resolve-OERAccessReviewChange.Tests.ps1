@@ -100,6 +100,70 @@ Describe 'Resolve-OERAccessReviewChange' {
         }
     }
 
+    Context 'the length of a one-time review is the one Microsoft Graph uses (BL-168)' {
+        BeforeEach {
+            # Settings carry the recurrence the way Graph returns them: a one-time review has a null
+            # pattern and a range whose end is its length.
+            function script:New-OneTimeCurrent {
+                param([int]$Duration, [string]$RangeType, [string]$End)
+                $Range = @{ type = $RangeType; startDate = '2026-11-05'; endDate = $End }
+                [PSCustomObject]@{
+                    Id = 'ar-1'; DisplayName = 'Q3 AP review'
+                    AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
+                    Reviewers = @(@{ query = '/users/usr-1' }); FallbackReviewers = @()
+                    DurationInDays = $Duration
+                    Recurrence = @{ pattern = $null; range = $Range }
+                    Settings = @{ instanceDurationInDays = $Duration; recurrence = @{ pattern = $null; range = $Range } }
+                }
+            }
+        }
+
+        It 'sends only the length for a review whose range runs thirty days (older module shape)' {
+            $Current = New-OneTimeCurrent -Duration 0 -RangeType 'noEnd' -End '2026-12-05'
+            $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review'; recurrence = 'OneTime'; durationInDays = 14 }
+            InModuleScope $script:moduleName -Parameters @{ Declared = $Declared; Current = $Current } {
+                param($Declared, $Current)
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+                $Change.Changed                  | Should -Be $true
+                $Change.SetParams.DurationInDays | Should -Be 14
+                $Change.SetParams.Keys           | Should -Not -Contain 'Recurrence'
+            }
+        }
+
+        It 'reports no change when the range already runs the declared length' {
+            $Current = New-OneTimeCurrent -Duration 14 -RangeType 'numbered' -End '2026-11-19'
+            $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review'; recurrence = 'OneTime'; durationInDays = 14 }
+            InModuleScope $script:moduleName -Parameters @{ Declared = $Declared; Current = $Current } {
+                param($Declared, $Current)
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+                $Change.Changed              | Should -Be $false
+                $Change.SetParams.Keys.Count | Should -Be 0
+            }
+        }
+
+        It 'lets the range govern: instanceDurationInDays 7 beside a fourteen day range is not a change' {
+            $Current = New-OneTimeCurrent -Duration 7 -RangeType 'endDate' -End '2026-11-19'
+            $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review'; recurrence = 'OneTime'; durationInDays = 14 }
+            InModuleScope $script:moduleName -Parameters @{ Declared = $Declared; Current = $Current } {
+                param($Declared, $Current)
+                (Resolve-OERAccessReviewChange -Declared $Declared -Current $Current).Changed | Should -Be $false
+            }
+        }
+
+        It 'still reads instanceDurationInDays for a repeating review' {
+            $Current = $script:CurrentReview.PSObject.Copy()
+            $Current.Settings = @{
+                instanceDurationInDays = 14
+                recurrence = @{ pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }; range = @{ type = 'noEnd'; startDate = '2026-07-01' } }
+            }
+            $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review'; durationInDays = 14 }
+            InModuleScope $script:moduleName -Parameters @{ Declared = $Declared; Current = $Current } {
+                param($Declared, $Current)
+                (Resolve-OERAccessReviewChange -Declared $Declared -Current $Current).Changed | Should -Be $false
+            }
+        }
+    }
+
     It 'reads a settings value from a PSCustomObject as well as from a Graph dictionary' {
         $Current = $script:CurrentReview.PSObject.Copy()
         $Current.Settings = [PSCustomObject]@{ instanceDurationInDays = 14; defaultDecision = 'None' }

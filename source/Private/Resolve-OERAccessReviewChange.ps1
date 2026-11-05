@@ -23,9 +23,13 @@ function Resolve-OERAccessReviewChange {
     available the recurrence change is reported in NotApplied rather than written half-applied.
 
     Two consequences of how the recurrence object is rebuilt are handled explicitly. A OneTime review
-    carries no recurrence object at all, so it has no range to diff: for an effective OneTime cadence
-    only the cadence itself is compared and no range is written, otherwise a declared startDate would
-    be measured against a live range that cannot exist and would report drift on every single apply.
+    carries a numbered range with no occurrences whose end is its length, so its range is not a
+    cadence range to diff: for an effective OneTime cadence only the cadence itself is compared and
+    no range is written (the length is written through durationInDays, which Set-OERAccessReviewDefinition
+    turns into the range end), otherwise a declared startDate would be measured against a live range
+    the document never declared and would report drift on every single apply. The durationInDays
+    row is compared with the length Microsoft Graph uses (Get-OERAccessReviewDuration): for a OneTime
+    review that is the range, not the raw instanceDurationInDays.
     And because Set-OERAccessReviewDefinition replaces the whole recurrence object -- defaulting the
     range to noEnd when neither -EndDate nor -Occurrences is bound -- a live endDate or numbered range
     is carried forward whenever the document declares neither, so changing only the cadence or the
@@ -195,7 +199,17 @@ function Resolve-OERAccessReviewChange {
     )
     foreach ($Map in $SettingMap) {
         if (-not (Test-DeclHas $Declared $Map.Decl)) { continue }
-        $Raw = Get-SettingValue -Settings $Current.Settings -Key $Map.Key
+        # The duration is the length Graph uses for the instance, not the raw instanceDurationInDays
+        # (BL-168): a one-time review is governed by its recurrence range (measured 2026-11-05: a PUT
+        # of instanceDurationInDays 7 beside a fourteen day range left the instance ending on the
+        # range end, and the older module shape reads instanceDurationInDays 0 beside a thirty day
+        # range). Get-OERAccessReviewDuration owns that reading.
+        $Raw = if ($Map.Decl -eq 'durationInDays') {
+            Get-OERAccessReviewDuration -Settings $Current.Settings
+        }
+        else {
+            Get-SettingValue -Settings $Current.Settings -Key $Map.Key
+        }
         if ($Map.Kind -eq 'Bool') {
             $DeclaredValue = [bool]$Declared.($Map.Decl)
             $CurrentValue  = if ($null -ne $Raw) { [bool]$Raw } else { $null }
@@ -387,11 +401,11 @@ function Resolve-OERAccessReviewChange {
         $DeclaredCadence = if ($HasRecurrence) { [string]$Declared.recurrence } else { $CurrentCadence }
         $CadenceDiffers  = $DeclaredCadence -ine $CurrentCadence
 
-        # A OneTime review carries no recurrence object at all (New-OERAccessReviewRecurrence returns
-        # nothing for OneTime, and Set-OERAccessReviewDefinition then removes the settings.recurrence
-        # key), so it has no range to diff. Comparing a declared startDate against a live range that
-        # cannot exist would report drift on every run and PUT a no-op forever -- for an effective
-        # OneTime cadence only the cadence itself is compared.
+        # A OneTime review carries a numbered range with no occurrences whose end is its length
+        # (New-OERAccessReviewRecurrence -Recurrence OneTime builds it from the start and the
+        # duration), so its range is not a cadence range to diff. Comparing a declared startDate
+        # against it would report drift on every run and PUT a no-op forever -- for an effective
+        # OneTime cadence only the cadence itself is compared; the length goes through durationInDays.
         $IsOneTime = $DeclaredCadence -ieq 'OneTime'
 
         $StartDiffers = $false
@@ -478,7 +492,8 @@ function Resolve-OERAccessReviewChange {
             else {
                 $SetParams.Recurrence = $DeclaredCadence
                 $SetParams.StartDate = $EffectiveStart
-                # A OneTime write drops the recurrence object entirely, so a range is meaningless there.
+                # A OneTime write builds its own numbered range from the start and the duration, so a
+                # cadence range (end date, occurrences) is meaningless there.
                 if (-not $IsOneTime) {
                     if ($HasEndDate) { $SetParams.EndDate = [datetime]$Declared.endDate }
                     elseif ($HasOccurrences) { $SetParams.Occurrences = [int]$Declared.occurrences }
