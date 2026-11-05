@@ -80,9 +80,10 @@ function Initialize-OERAuth {
     GUID or by domain. 'organizations' names no tenant and is not compared with one; an Azure
     Resource Manager token the sign-in acquires under it is compared with the session's Microsoft
     Graph token instead, and refused with TenantMismatch when the two report different tenant IDs.
-    A cached Azure Resource Manager token is carried over a renewal of the Microsoft Graph token only
-    when it was issued for the tenant the renewed Graph token was issued for, both tenant IDs (GUIDs);
-    otherwise it is dropped, and acquired again and compared as above when a call next needs one.
+    A cached Azure Resource Manager token is carried over a new Microsoft Graph token only when it was
+    issued for the tenant that Graph token was issued for, both tenant IDs (GUIDs), and the session's
+    account (SignedInObjectId) is the same object id, a GUID, before and after; otherwise it is dropped,
+    and acquired again and compared as above when a call next needs one.
 
     The module's Microsoft Graph calls go out under whichever Microsoft Graph PowerShell SDK session the
     process holds, so every entry, the cached return included, first compares that session with the
@@ -140,10 +141,12 @@ function Initialize-OERAuth {
     still compared with the known account; any other sign-in records its own token's oid.
     SignInAccountId is the fifth term of the sign-in identity (Get-OERSignInIdentity); a renewal or a
     continuation carries it over, and any other sign-in sets it to the new token's oid when that is a
-    GUID. An Azure Resource Manager token acquired by a renewal, or by a continuation whose Microsoft
-    Graph token was acquired in the same call, is held
-    to the same rule against the session's SignedInObjectId: another account's is refused the same way
-    and is not cached, and the state is left as it is. The silent renewal (A22) is unchanged; its own
+    GUID. Every Azure Resource Manager token is held to the session's account (SignedInObjectId): one
+    that is another account's (both object ids GUIDs and different) is refused before it is cached,
+    by a renewal or a continuation with SignInSuperseded as above, by any other sign-in with a
+    terminating ArmAccountMismatch; the
+    Microsoft Graph half of such a sign-in stands, the caller stays latched and the session uncertain,
+    and no Azure Resource Manager request is sent with that token. The silent renewal (A22) is unchanged; its own
     check of the object id still comes first.
 
     Every other entry then latches the command that called this function (Lock-OERSignIn), and only a
@@ -1526,26 +1529,6 @@ function Initialize-OERAuth {
                     -Terminating
             }
 
-            # SEC (A13, BL-95): the cached ARM token is carried into the rebuilt state below only when it
-            # was issued for the tenant this new Graph token was issued for, both GUIDs -- besides the
-            # unchanged tenant label, identity and cloud ($ArmIdentityUnchanged). The label alone does not
-            # name a tenant on a session that names none ('organizations'): there a renewal of the Graph
-            # token -- near its expiry, or a transport's refresh -- can be answered by an account of another
-            # tenant, and the carried token left the session with that tenant's Graph token beside the first
-            # tenant's ARM token under one sign-in identity (BL-77), so a later Invoke-OERStructure -Prune
-            # without -TenantId removed Azure role assignments in the first tenant. A token that is not
-            # carried is acquired again -- by the ARM step below in this very call under -IncludeARM, which
-            # reads $ArmTokenKept, or else by the next call that needs one -- and that token is compared with
-            # the tenant named, or with this Graph token when none is (F3). A tenant that is not a GUID on
-            # either side proves nothing, so that token is not carried either: the new Graph token's tenant
-            # must be a GUID, and the ARM token's must equal it, which makes it the same GUID -- a second
-            # GUID test on the ARM side would add nothing an input could falsify. Two tenants that are
-            # both absent compare equal, which is what the GUID term refuses. Every term on its own line
-            # and independently deletable, so each stays mutation-provable.
-            $ArmTokenKept = $ArmIdentityUnchanged -and
-                (Test-OERGuid -Value $GrantedTenant) -and
-                $script:_OERAuthState.ArmTokenTenantId -eq $GrantedTenant
-
             # SEC (BL-119): the account the rebuilt session is established as (the identity's fifth term,
             # Get-OERSignInIdentity). A sign-in that continues the session ($ContinuesSession: a renewal, or
             # the same application, method, cloud and tenant under another label) carries the old state's
@@ -1581,6 +1564,36 @@ function Initialize-OERAuth {
                 $NewObjectId
             }
 
+            # SEC (A13, BL-95): the cached ARM token is carried into the rebuilt state below only when it
+            # was issued for the tenant this new Graph token was issued for, both GUIDs -- besides the
+            # unchanged tenant label, identity and cloud ($ArmIdentityUnchanged). The label alone does not
+            # name a tenant on a session that names none ('organizations'): there a renewal of the Graph
+            # token -- near its expiry, or a transport's refresh -- can be answered by an account of another
+            # tenant, and the carried token left the session with that tenant's Graph token beside the first
+            # tenant's ARM token under one sign-in identity (BL-77), so a later Invoke-OERStructure -Prune
+            # without -TenantId removed Azure role assignments in the first tenant. A token that is not
+            # carried is acquired again -- by the ARM step below in this very call under -IncludeARM, which
+            # reads $ArmTokenKept, or else by the next call that needs one -- and that token is compared with
+            # the tenant named, or with this Graph token when none is (F3). A tenant that is not a GUID on
+            # either side proves nothing, so that token is not carried either: the new Graph token's tenant
+            # must be a GUID, and the ARM token's must equal it, which makes it the same GUID -- a second
+            # GUID test on the ARM side would add nothing an input could falsify. Two tenants that are
+            # both absent compare equal, which is what the GUID term refuses.
+            # SEC (BL-163): the account is a term too. A cached ARM token is carried only when the rebuilt
+            # session's account ($NewSignedInObjectId) is the same GUID as the old session's
+            # SignedInObjectId (the state is still the OLD one here); otherwise it is dropped and, under
+            # -IncludeARM, acquired again in the same call (the ARM step reads $ArmTokenKept), else by the
+            # next call that needs one. Without it Connect-OER -Force (or any explicit sign-in) as another
+            # account of the same tenant, method, client and cloud, without -IncludeARM, left the previous
+            # account's ARM token in the new account's session. A session whose account is unknown (no GUID
+            # on either side) carries no ARM token either -- the same rule the tenant term applies. Every
+            # term on its own line and independently deletable, so each stays mutation-provable.
+            $ArmTokenKept = $ArmIdentityUnchanged -and
+                (Test-OERGuid -Value $GrantedTenant) -and
+                $script:_OERAuthState.ArmTokenTenantId -eq $GrantedTenant -and
+                (Test-OERGuid -Value $NewSignedInObjectId) -and
+                $NewSignedInObjectId -eq $script:_OERAuthState.SignedInObjectId
+
             $script:_OERAuthState = @{
                 TenantId         = $EffectiveTenant
                 AuthMethod       = $EffectiveMethod
@@ -1615,7 +1628,8 @@ function Initialize-OERAuth {
                 # compared -- and refused when someone else's appears.
                 GraphSessionFingerprint = Get-OERGraphSessionFingerprint
                 # SEC: carry the cached ARM token into the rebuilt state ONLY when the tenant and auth
-                # identity are unchanged and the token was issued for the new Graph token's tenant
+                # identity are unchanged, the token was issued for the new Graph token's tenant and the
+                # session's account (SignedInObjectId) is the same GUID before and after
                 # ($ArmTokenKept, above). Otherwise drop it, so the next -IncludeARM call re-acquires for
                 # the tenant actually being targeted instead of inheriting the previous customer's token.
                 ArmToken         = if ($ArmTokenKept) { $script:_OERAuthState.ArmToken } else { $null }
@@ -1775,27 +1789,49 @@ function Initialize-OERAuth {
                     -Terminating
             }
 
-            # SEC (BL-119): the ARM token of a sign-in that continues the session ($ContinuesSession: a
-            # renewal, or the same session under another tenant label when this call acquired the Graph
-            # token too; $RenewsSession when only this ARM token was acquired) is held to the same account
-            # rule as the Graph one. Its ARM request opens the same account picker, so another account could answer it while
-            # the Graph token stayed the first one's (or was cached): the session would then hold one
-            # account's Graph token and another's ARM token under one sign-in identity. An ARM token whose
-            # oid is a GUID that differs from the session's SignedInObjectId (a GUID) is refused with the
-            # same terminating SignInSuperseded (-AccountChanged), above the assignments below so nothing
-            # is cached, and the state is left as it is: no identity moves here, the ARM token is simply
-            # not accepted. Terminating for the reason the tenant checks above give. A token without an
-            # oid, or a session without one, never refuses. Not applied to a first sign-in or to
-            # Connect-OER (-ReclaimGraphSession), which do not continue a session (known limit). Every term on its
-            # own line and independently deletable, so each stays mutation-provable.
+            # SEC (BL-119, BL-163): every ARM token is held to the session's account, the Graph token's.
+            # Its ARM request opens the same account picker, so another account could answer it while the
+            # Graph token stayed the first one's (or was cached, or was acquired as another account in
+            # this very call): the session would then hold one account's Graph token and another's ARM
+            # token. An ARM token whose oid is a GUID that differs from the session's SignedInObjectId (a
+            # GUID; the rebuilt state's when this call acquired the Graph token, else the cached
+            # session's) is refused above the assignments below, so nothing is cached. A renewal or a
+            # continuation ($ContinuesSession: a renewal, or the same session under another tenant label
+            # when this call acquired the Graph token too; $RenewsSession when only this ARM token was
+            # acquired) keeps the terminating SignInSuperseded (-AccountChanged), whose text (the session
+            # stays the account it was) holds there. Any other sign-in (a first sign-in, a Connect-OER, a
+            # switch of tenant, method, client or cloud) is refused with the terminating
+            # ArmAccountMismatch (a new id only for a refusal), since that text would be false there:
+            # the Graph half of that sign-in has already been accepted and stands, which is the state the
+            # ARM TenantMismatch refusal above leaves too. Terminating for the reason the tenant checks
+            # above give. A token without an oid, or a session without one, never refuses. Every term on
+            # its own line and independently deletable, so each stays mutation-provable.
             $ArmSecureToken = [System.Net.NetworkCredential]::new('', $ArmToken.Token).SecurePassword
             $ArmObjectId = Get-OERTokenObjectId -Token $ArmSecureToken
-            if ($ContinuesSession -and
-                (Test-OERGuid -Value $ArmObjectId) -and
+            [bool]$ArmAccountDiffers = (Test-OERGuid -Value $ArmObjectId) -and
                 (Test-OERGuid -Value $script:_OERAuthState.SignedInObjectId) -and
-                $ArmObjectId -ne $script:_OERAuthState.SignedInObjectId) {
+                $ArmObjectId -ne $script:_OERAuthState.SignedInObjectId
+            if ($ArmAccountDiffers -and
+                $ContinuesSession) {
                 [string]$ArmChangedCaller = if ($SignInCaller -and $SignInCaller.MyCommand.Name) { $SignInCaller.MyCommand.Name } else { 'a script block' }
                 Write-CmdletError -ErrorRecord (New-OERSignInSupersededError -Command $ArmChangedCaller -AccountChanged) -Cmdlet $PSCmdlet -Terminating
+                return
+            }
+            if ($ArmAccountDiffers) {
+                $ArmSecureToken = $null
+                $ArmToken = $null
+                Write-CmdletError `
+                    -Message ([System.Exception]::new(
+                        "The Azure Resource Manager token was issued to another account than the session's Microsoft " +
+                        "Graph token. Omnicit.EntraRBAC refuses to cache it, so no Azure Resource Manager request is " +
+                        "sent with it: every later Azure call would act as one account while every Microsoft Graph " +
+                        "call acts as another. The Microsoft Graph sign-in stands. Sign in again and choose the same " +
+                        "account for both, for example with Connect-OER -IncludeARM -Force.")) `
+                    -ErrorId 'ArmAccountMismatch' `
+                    -Category AuthenticationError `
+                    -TargetObject $EffectiveTenant `
+                    -Cmdlet $PSCmdlet `
+                    -Terminating
                 return
             }
 

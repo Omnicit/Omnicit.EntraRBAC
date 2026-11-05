@@ -559,7 +559,11 @@ with or without `-TenantId`, runs as the other account (`$ContinuesSession` deci
 token whose tenant is not a tenant ID is not compared on another label, and a command naming the
 tenant by another label inherits nothing, so it is compared only after an Interactive sign-in with
 the default application in the Global cloud); only `Connect-OER`
-(`-ReclaimGraphSession`, never refused by it) signs in as another account. The marker is set as
+(`-ReclaimGraphSession`, never refused by it) signs in as another account. Every OTHER sign-in with
+`-IncludeARM` -- a first one, `Connect-OER`, a switch of tenant, method, client or cloud -- whose ARM
+token's oid differs from the session's `SignedInObjectId`, both GUIDs, is refused for its ARM half with
+`ArmAccountMismatch` before that token is cached (BL-163): the Graph half stands, the caller stays
+latched and the session uncertain, and no ARM request is sent with that token. The marker is set as
 after every refusal, but it is not what keeps the session: a command that names its tenant is never
 refused by it. A token without oid never refuses anything, and on either never replaces
 `SignedInObjectId`. Never let a renewal make the session another account's; never key the account
@@ -651,9 +655,11 @@ lookup above, by domain), within two limits: a token whose tenant AzAuth does no
 requested tenant, but an ARM token acquired under it is compared with the session's Graph token
 (`TokenTenantId`) when both are GUIDs, and refused with the same `TenantMismatch` when they differ.
 
-Never carry the cached ARM token into a rebuilt state (a Graph token renewal, a transport's refresh)
-on the tenant label alone (`organizations` stays `organizations` across a renewal answered from
-another tenant). `Initialize-OERAuth` only warns, before the call, for a client secret switch it can
+Never carry the cached ARM token into a rebuilt state (a Graph token renewal, a transport's refresh,
+`Connect-OER`) on the tenant label alone (`organizations` stays `organizations` across a renewal answered
+from another tenant), nor unless the rebuilt session's `SignedInObjectId` and the old one's are the same
+GUID (`$ArmTokenKept`; BL-163): an explicit sign-in as another account of the same tenant, method, client
+and cloud drops it. `Initialize-OERAuth` only warns, before the call, for a client secret switch it can
 predict will not take effect (a `-WarningAction Stop` caller, or one with a global `$WarningPreference = 'Stop'`, is
 stopped at that `Write-Warning`, before any token request). The post-call warning that compared
 granted tenants is retired; do not bring it back. `Connect-OER -Force` is the only public lever that

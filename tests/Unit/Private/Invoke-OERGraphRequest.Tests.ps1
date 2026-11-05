@@ -5787,7 +5787,13 @@ $global:OERA20ArmRejections = 0
         if ($Kind -eq 'graph') { $global:OERA20GraphTenant = $Granted }
         $Minutes = if ($global:OERA20TokenMinutes.Count -gt 0) { $global:OERA20TokenMinutes.Dequeue() } else { 60 }
         [pscustomobject]@{
-            Token     = 'NOT-A-REAL-TOKEN-' + $Kind
+            # BL-163: the Graph token carries one account's oid (a JWT payload of oid 8888...), since a
+            # cached ARM token is carried over a Graph rebuild only for a known, unchanged account.
+            # Built at run time, as New-TestToken in Initialize-OERAuth.Tests.ps1 does.
+            Token     = if ($Kind -eq 'graph') {
+                $Enc = { param([string]$Json) [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Json)).TrimEnd('=').Replace('+', '-').Replace('/', '_') }
+                '{0}.{1}.NOT-A-REAL-TOKEN-graph' -f (& $Enc '{"alg":"none","typ":"JWT"}'), (& $Enc '{"oid":"88888888-8888-8888-8888-888888888888"}')
+            } else { 'NOT-A-REAL-TOKEN-arm' }
             ExpiresOn = [System.DateTimeOffset]::UtcNow.AddMinutes($Minutes)
             Identity  = 'oer-a20-probe'
             TenantId  = $Granted
