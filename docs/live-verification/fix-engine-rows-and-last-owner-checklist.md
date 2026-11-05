@@ -872,3 +872,275 @@ Verdict: PASS. A minute after T.1 the sweep is 0 with 0 unread kinds, and no mod
 [oer-s124] Sweep: 0 object(s) with the prefix; unread kinds: 0
 [oer-s124] No module session is left: True
 ```
+
+## Round 1 (A12): the plan of a new review, and a policy read without its settings
+
+Round 1 of the step (the architect's decision A12 after the review of PR 77) changes two things:
+
+- **H. A plan's review of a package the run would create** ("A plan's review of a package the run
+  would create writes no error record"). Under `-WhatIf` (or after a declined confirmation of the
+  package's create) the review of a package the same document creates is `Failed` as in 1.3.1 --
+  "has no id in this run" -- but writes NO error record any more, so the plan of a new document has
+  `$?` true and does not stop under `-ErrorAction Stop`; the real run creates the package and then the
+  review. A real refusal (a refused or undecided rename, `-Include`, an entry that stopped first) keeps
+  its record.
+- **I. A policy read without `requestorSettings` or `notificationSettings`**
+  (`Set-OERAccessPackageAssignmentPolicy`). Such a read is refused with `AssignmentPolicyValueUnknown`
+  unless the call names the value (`-RequestorSettings`, `-DisableAssignmentNotifications`). Class B,
+  like G: Microsoft Graph v1.0 answers with both keys, so only the unit tests reach the shape.
+
+**What round 1 writes to the tenant.** Only objects whose name starts with `oer-s1241-`, all created
+by check R1.2 through `Invoke-OERStructure`: one catalog, one access package in it with one assignment
+policy (admin assignment only, so nobody can request it), and one one-time self review of that policy.
+The prerequisite script `Initialize-OerS1241Prereq.ps1` creates nothing: it writes the baseline (the
+prefix must be empty) and owns the teardown. Raw output goes to `docs/live-verification/raw/s1241/`.
+
+The document every check applies (built in each block):
+
+```json
+{ "version": "1.0",
+  "catalogs": [ { "displayName": "oer-s1241-cat", "description": "Sprint 12 step 4 round 1 live check" } ],
+  "accessPackages": [ { "displayName": "oer-s1241-pkg", "catalog": "oer-s1241-cat",
+      "description": "Sprint 12 step 4 round 1 live check", "resourceRoles": [],
+      "assignmentPolicies": [ { "displayName": "oer-s1241-policy",
+          "requestorScope": { "scope": "NotSpecified" }, "durationInDays": 30 } ] } ],
+  "accessReviews": [ { "displayName": "oer-s1241-review", "accessPackage": "oer-s1241-pkg",
+      "assignmentPolicy": "oer-s1241-policy", "reviewers": [], "recurrence": "OneTime",
+      "durationInDays": 14 } ] }
+```
+
+### R1.S. The build carries round 1, and the prefix is empty
+
+- [ ] **R1.S** The worktree's build carries H and I, and the prerequisite script's baseline finds no `oer-s1241-` object. #type/subtask
+
+```powershell
+pwsh -NoProfile -File (Join-Path $env:OER_LIVE_DIR 'Initialize-OerS1241Prereq.ps1') -Unattended
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s1241-' -ConfigDirectory $VaultDir
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+Write-OerLiveStep "Worktree: branch $(git -C $Cfg.Repo branch --show-current); HEAD $(git -C $Cfg.Repo log -1 --format='%h %s'); tracked changes: $(@(git -C $Cfg.Repo status --porcelain --untracked-files=no).Count)"
+$Psd1 = Get-ChildItem -Path (Join-Path $Cfg.Repo 'output\module\Omnicit.EntraRBAC\*\Omnicit.EntraRBAC.psd1') | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$Psm1 = Join-Path $Psd1.DirectoryName 'Omnicit.EntraRBAC.psm1'
+foreach ($Marker in @(@('H', 'CreatePending'), @('I', 'RequestorSettingsUnknown'))) {
+    Write-OerLiveStep "The worktree's build carries $($Marker[0]): $([bool](Select-String -LiteralPath $Psm1 -SimpleMatch $Marker[1] -Quiet))"
+}
+```
+
+**Expect:** `Baseline sweep: 0 object(s) with the prefix, 0 unread kind(s)`; `Baseline written: True`;
+`The prefix is empty, as check R1.1 needs: True`; the worktree on this branch with 0 tracked changes;
+H and I `True`.
+**Failure looks like:** an object with the prefix -- run the teardown first; a marker `False` -- build
+the worktree (`./build.ps1 -Tasks build`), never while the gate runs.
+
+Result:
+
+### R1.1. The plan of the new document writes no error record
+
+- [ ] **R1.1** `Invoke-OERStructure -WhatIf` on the document: the catalog and the package are planned, the review is `Failed` with "has no id in this run" and no error record, `$?` is `True`, the same plan under `-ErrorAction Stop` completes, and nothing is written. #type/subtask
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s1241-' -ConfigDirectory $VaultDir
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+Connect-OerLive -Arm
+$Module = Get-Module -Name Omnicit.EntraRBAC
+Write-OerLiveStep "The module is the worktree's build: $($Module.ModuleBase.StartsWith((Join-Path $Cfg.Repo 'output\module'), [System.StringComparison]::OrdinalIgnoreCase))"
+function global:Get-AzToken { throw 'S1241 fence: no token request is expected after the sign-in.' }
+Write-OerLiveStep "Token fence in place: $((& $Module { Get-Command Get-AzToken }).CommandType -eq 'Function')"
+& $Module {
+    $script:S1241Log = [System.Collections.Generic.List[string]]::new()
+    $script:S1241Fence = $true
+    $script:S1241Real = ${function:Invoke-OERGraphRequest}
+    function script:Invoke-OERGraphRequest {
+        [CmdletBinding()]
+        param([string]$Method = 'GET', [Parameter(Mandatory)][string]$Uri, [hashtable]$Body, [switch]$All, [string[]]$ExpectedErrorCode, [switch]$RequireValue)
+        $Read = ($Method -eq 'GET') -or ($Uri -match 'getByIds|getMemberGroups|checkMember')
+        $script:S1241Log.Add($(if ($Read) { 'read' } else { "write $Method" }))
+        if (-not $Read -and $script:S1241Fence) { throw "S1241 fence: a $Method request was refused; this check expects no write." }
+        & $script:S1241Real @PSBoundParameters
+    }
+}
+function Get-S1241Count { & (Get-Module -Name Omnicit.EntraRBAC) { '{0} read(s), {1} write(s)' -f @($script:S1241Log | Where-Object { $_ -eq 'read' }).Count, @($script:S1241Log | Where-Object { $_ -ne 'read' }).Count } }
+$Doc = [ordered]@{
+    version        = '1.0'
+    catalogs       = @([ordered]@{ displayName = 'oer-s1241-cat'; description = 'Sprint 12 step 4 round 1 live check' })
+    accessPackages = @([ordered]@{
+            displayName = 'oer-s1241-pkg'; catalog = 'oer-s1241-cat'; description = 'Sprint 12 step 4 round 1 live check'; resourceRoles = @()
+            assignmentPolicies = @([ordered]@{ displayName = 'oer-s1241-policy'; requestorScope = @{ scope = 'NotSpecified' }; durationInDays = 30 })
+        })
+    accessReviews  = @([ordered]@{ displayName = 'oer-s1241-review'; accessPackage = 'oer-s1241-pkg'; assignmentPolicy = 'oer-s1241-policy'; reviewers = @(); recurrence = 'OneTime'; durationInDays = 14 })
+} | ConvertTo-Json -Depth 8
+$null = Invoke-OERStructure -Json $Doc -WhatIf -OutVariable Rows -ErrorVariable Err -WarningVariable Warn 3>$null
+$Ok = $?
+foreach ($R in $Rows) { Write-OerLiveStep ("row: {0} | {1} | {2} | {3} | record: {4}" -f $R.Section, $R.Item, $R.Action, $R.Detail, $(if ($R.Error) { ([string]$R.Error.FullyQualifiedErrorId -split ',')[0] } else { 'none' })) }
+Write-OerLiveStep "Plan: rows $(@($Rows).Count); `$? $Ok; error records: $(@($Err).Count); warnings: $(@($Warn).Count)"
+$StopOutcome = try {
+    $null = Invoke-OERStructure -Json $Doc -WhatIf -ErrorAction Stop -OutVariable StopRows 3>$null
+    "completed with $(@($StopRows).Count) rows"
+} catch { "stopped: $(([string]$PSItem.FullyQualifiedErrorId -split ',')[0])" }
+Write-OerLiveStep "Plan under -ErrorAction Stop: $StopOutcome"
+Write-OerLiveStep "Requests over both plans: $(Get-S1241Count)"
+Disconnect-OerLive
+```
+
+**Expect:** the module is the build `True`, the token fence `True`; rows `catalogs | oer-s1241-cat |
+Skipped | would create catalog ...`, `accessPackages | oer-s1241-pkg | Skipped | would create access
+package oer-s1241-pkg`, and `accessReviews | oer-s1241-review | Failed | access package 'oer-s1241-pkg'
+has no id in this run (the accessPackages entry would create it, and the create was not carried out:
+-WhatIf, or a declined confirmation), ...` with `record: none`; `$? True`; 0 error records; the plan
+under Stop `completed` with the same number of rows; 0 writes.
+**Failure looks like:** `record: StructureReferenceUnidentified` or `$? False` -- the plan still
+writes the refusal as an error; `stopped:` -- the plan stops under Stop although the real run succeeds.
+
+Result:
+
+### R1.2. The real run of the same document creates the package and then the review
+
+- [ ] **R1.2** The same document with `-Confirm:$false`: the catalog, the package, its policy and the review are `Created`, `$?` is `True`, and the review read back reviews that package. #type/subtask
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s1241-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s1241'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+Connect-OerLive -Arm
+$Module = Get-Module -Name Omnicit.EntraRBAC
+Write-OerLiveStep "The module is the worktree's build: $($Module.ModuleBase.StartsWith((Join-Path $Cfg.Repo 'output\module'), [System.StringComparison]::OrdinalIgnoreCase))"
+function global:Get-AzToken { throw 'S1241 fence: no token request is expected after the sign-in.' }
+& $Module {
+    $script:S1241Log = [System.Collections.Generic.List[string]]::new()
+    $script:S1241Real = ${function:Invoke-OERGraphRequest}
+    function script:Invoke-OERGraphRequest {
+        [CmdletBinding()]
+        param([string]$Method = 'GET', [Parameter(Mandatory)][string]$Uri, [hashtable]$Body, [switch]$All, [string[]]$ExpectedErrorCode, [switch]$RequireValue)
+        $Read = ($Method -eq 'GET') -or ($Uri -match 'getByIds|getMemberGroups|checkMember')
+        if (-not $Read -and $Body -and $Body.ContainsKey('displayName') -and -not ([string]$Body.displayName).StartsWith('oer-s1241-')) { throw "S1241 fence: a $Method of an object without the prefix was refused." }
+        $script:S1241Log.Add($(if ($Read) { 'read' } else { "write $Method" }))
+        & $script:S1241Real @PSBoundParameters
+    }
+}
+function Get-S1241Count { & (Get-Module -Name Omnicit.EntraRBAC) { '{0} read(s), {1} write(s)' -f @($script:S1241Log | Where-Object { $_ -eq 'read' }).Count, @($script:S1241Log | Where-Object { $_ -ne 'read' }).Count } }
+$Doc = [ordered]@{
+    version        = '1.0'
+    catalogs       = @([ordered]@{ displayName = 'oer-s1241-cat'; description = 'Sprint 12 step 4 round 1 live check' })
+    accessPackages = @([ordered]@{
+            displayName = 'oer-s1241-pkg'; catalog = 'oer-s1241-cat'; description = 'Sprint 12 step 4 round 1 live check'; resourceRoles = @()
+            assignmentPolicies = @([ordered]@{ displayName = 'oer-s1241-policy'; requestorScope = @{ scope = 'NotSpecified' }; durationInDays = 30 })
+        })
+    accessReviews  = @([ordered]@{ displayName = 'oer-s1241-review'; accessPackage = 'oer-s1241-pkg'; assignmentPolicy = 'oer-s1241-policy'; reviewers = @(); recurrence = 'OneTime'; durationInDays = 14 })
+} | ConvertTo-Json -Depth 8
+$null = Invoke-OERStructure -Json $Doc -Confirm:$false -OutVariable Rows -ErrorVariable Err -WarningVariable Warn 3>$null
+$Ok = $?
+foreach ($R in $Rows) { Write-OerLiveStep ("row: {0} | {1} | {2} | {3}" -f $R.Section, $R.Item, $R.Action, $R.Detail) }
+Write-OerLiveStep "Run: rows $(@($Rows).Count); `$? $Ok; error records: $(@($Err).Count); warnings: $(@($Warn).Count); requests: $(Get-S1241Count)"
+# The ids this run created, for the teardown: from the rows and from the prefix sweep.
+$Ids = @{}
+foreach ($Hit in @(Find-OerLivePrefixed -Quiet | Where-Object { $_.Kind -ne 'unread' })) { $Ids["$($Hit.Kind)|$($Hit.Name)"] = @{ Kind = $Hit.Kind; Id = [string]$Hit.Id } }
+$PkgRow = @($Rows | Where-Object { $_.Section -eq 'accessPackages' -and $_.Action -eq 'Created' -and $_.Detail -like 'created access package*' }) | Select-Object -First 1
+if ($PkgRow -and $PkgRow.Detail -match '\(([0-9a-fA-F-]{36})\)') { $Ids['access package|oer-s1241-pkg'] = @{ Kind = 'access package'; Id = $Matches[1] } }
+$null = New-Item -ItemType Directory -Force -Path $Raw
+$Ids | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $Raw 'known-ids.json') -Encoding utf8NoBOM
+Write-OerLiveStep "Ids recorded: $(@($Ids.Keys | Sort-Object) -join ', ')"
+$PkgId = [string]$Ids['access package|oer-s1241-pkg'].Id
+$RevId = [string]$Ids['access review definition|oer-s1241-review'].Id
+$Rev = if ($RevId) { Invoke-OerLiveRetry -Activity 'read the review' -ScriptBlock { Invoke-OerLiveGraph -Uri "v1.0/identityGovernance/accessReviews/definitions/$RevId`?`$select=id,displayName,scope" } }
+$Query = if ($Rev -and $Rev.Ok) { [string]$Rev.Body.scope.query } else { '' }
+Write-OerLiveStep "Read back: the review oer-s1241-review exists: $([bool]($Rev -and $Rev.Ok)); its scope names the created package: $([bool]($PkgId -and $Query.Contains($PkgId)))"
+Disconnect-OerLive
+```
+
+**Expect:** rows `Created` for the catalog, the package (with its id), the policy and the review;
+`$? True`; 0 error records; the ids recorded for the catalog, the package and the review; read back:
+the review exists `True` and its scope names the created package `True`.
+**Failure looks like:** the review `Failed` with a not-found record -- Microsoft Graph had not yet
+replicated the new policy (run R1.2 again a minute later and record both runs here); the review
+missing from the read back.
+
+Result:
+
+### R1.3. A second real run reports only Unchanged (G8)
+
+- [ ] **R1.3** The same document again with `-Confirm:$false`: every row is `Unchanged`, `$?` is `True`, and no write request is made. #type/subtask
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s1241-' -ConfigDirectory $VaultDir
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+Connect-OerLive -Arm
+$Module = Get-Module -Name Omnicit.EntraRBAC
+Write-OerLiveStep "The module is the worktree's build: $($Module.ModuleBase.StartsWith((Join-Path $Cfg.Repo 'output\module'), [System.StringComparison]::OrdinalIgnoreCase))"
+function global:Get-AzToken { throw 'S1241 fence: no token request is expected after the sign-in.' }
+& $Module {
+    $script:S1241Log = [System.Collections.Generic.List[string]]::new()
+    $script:S1241Real = ${function:Invoke-OERGraphRequest}
+    function script:Invoke-OERGraphRequest {
+        [CmdletBinding()]
+        param([string]$Method = 'GET', [Parameter(Mandatory)][string]$Uri, [hashtable]$Body, [switch]$All, [string[]]$ExpectedErrorCode, [switch]$RequireValue)
+        $Read = ($Method -eq 'GET') -or ($Uri -match 'getByIds|getMemberGroups|checkMember')
+        $script:S1241Log.Add($(if ($Read) { 'read' } else { "write $Method" }))
+        if (-not $Read) { throw "S1241 fence: a $Method request was refused; this run expects no write." }
+        & $script:S1241Real @PSBoundParameters
+    }
+}
+function Get-S1241Count { & (Get-Module -Name Omnicit.EntraRBAC) { '{0} read(s), {1} write(s)' -f @($script:S1241Log | Where-Object { $_ -eq 'read' }).Count, @($script:S1241Log | Where-Object { $_ -ne 'read' }).Count } }
+$Doc = [ordered]@{
+    version        = '1.0'
+    catalogs       = @([ordered]@{ displayName = 'oer-s1241-cat'; description = 'Sprint 12 step 4 round 1 live check' })
+    accessPackages = @([ordered]@{
+            displayName = 'oer-s1241-pkg'; catalog = 'oer-s1241-cat'; description = 'Sprint 12 step 4 round 1 live check'; resourceRoles = @()
+            assignmentPolicies = @([ordered]@{ displayName = 'oer-s1241-policy'; requestorScope = @{ scope = 'NotSpecified' }; durationInDays = 30 })
+        })
+    accessReviews  = @([ordered]@{ displayName = 'oer-s1241-review'; accessPackage = 'oer-s1241-pkg'; assignmentPolicy = 'oer-s1241-policy'; reviewers = @(); recurrence = 'OneTime'; durationInDays = 14 })
+} | ConvertTo-Json -Depth 8
+$null = Invoke-OERStructure -Json $Doc -Confirm:$false -OutVariable Rows -ErrorVariable Err -WarningVariable Warn 3>$null
+$Ok = $?
+foreach ($R in $Rows) { Write-OerLiveStep ("row: {0} | {1} | {2} | {3}" -f $R.Section, $R.Item, $R.Action, $R.Detail) }
+Write-OerLiveStep "Run 2: rows $(@($Rows).Count); every row Unchanged: $(@($Rows | Where-Object { $_.Action -ne 'Unchanged' }).Count -eq 0); `$? $Ok; error records: $(@($Err).Count); warnings: $(@($Warn).Count); requests: $(Get-S1241Count)"
+Disconnect-OerLive
+```
+
+**Expect:** every row `Unchanged` (`every row Unchanged: True`); `$? True`; 0 error records; 0 writes.
+**Failure looks like:** an `Updated` row or a fence refusal -- the run is not convergent.
+
+Result:
+
+### R1.T1. Remove every object with the round's prefix
+
+- [ ] **R1.T1** The prerequisite script's teardown removes the review, the package (with its policy) and the catalog, and its sweep ends at 0. #type/subtask
+
+```powershell
+pwsh -NoProfile -File (Join-Path $env:OER_LIVE_DIR 'Initialize-OerS1241Prereq.ps1') -Teardown -Unattended
+```
+
+**Expect:** `Teardown summary` with `Residue 0`; `Sweep: 0 object(s) with the prefix, 0 unread kind(s).`;
+`Teardown complete: the sweep is 0.`
+**Failure looks like:** residue or a sweep above 0 after five minutes -- run `-Teardown` again later
+and record the residue here.
+
+Result:
+
+### R1.T2. The sweep is still 0 a minute later, and raw output is removed
+
+- [ ] **R1.T2** A minute after R1.T1 the prefix sweep is still 0 and no session is left; `raw\s1241` is deleted after the results are copied here. #type/subtask
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s1241-' -ConfigDirectory $VaultDir
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+Connect-OerLive -Arm
+$Left = @(Find-OerLivePrefixed -Quiet)
+Write-OerLiveStep "Sweep: $(@($Left | Where-Object { $_.Kind -ne 'unread' }).Count) object(s) with the prefix; unread kinds: $(@($Left | Where-Object { $_.Kind -eq 'unread' }).Count)"
+Disconnect-OerLive
+Write-OerLiveStep "No module session is left: $($null -eq (& (Get-Module -Name Omnicit.EntraRBAC -ErrorAction SilentlyContinue) { $script:_OERAuthState } 2>$null))"
+```
+
+**Expect:** `Sweep: 0 object(s) with the prefix; unread kinds: 0`; no session left `True`. Then delete
+`raw\s1241` (after every Result above is written).
+**Failure looks like:** an object listed -- run R1.T1 again.
+
+Result:
