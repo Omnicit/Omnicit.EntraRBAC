@@ -59,7 +59,8 @@ function New-OERAccessReviewDefinition {
     .PARAMETER Recurrence
     The review cadence: OneTime, Weekly, Monthly, Quarterly, SemiAnnually, or Annually.
     SemiAnnually repeats every six months (Graph absoluteMonthly, interval 6). OneTime schedules a
-    single review instance with no recurrence object on the definition.
+    single review instance from -StartDate that lasts -DurationInDays days; Microsoft Graph reads its
+    length from the recurrence range, so the range ends -DurationInDays days after -StartDate.
 
     .PARAMETER StartDate
     The date the first review instance (or series) begins.
@@ -76,7 +77,8 @@ function New-OERAccessReviewDefinition {
     .PARAMETER DurationInDays
     Number of days reviewers have to complete each review instance. Defaults to 14. Also bindable
     as -DurationDays, the module-standard duration name used by the PIM cmdlets. Must be 1 or greater;
-    a non-positive value fails parameter binding on this cmdlet.
+    a non-positive value fails parameter binding on this cmdlet. For -Recurrence OneTime it is also
+    the length of the whole review: the recurrence range ends this many days after -StartDate.
 
     .PARAMETER MailNotification
     When present, Graph sends email notifications to reviewers about the review.
@@ -305,11 +307,12 @@ function New-OERAccessReviewDefinition {
             autoApplyDecisionsEnabled       = [bool]$AutoApplyDecisions
         }
 
-        $RecArgs = @{ Recurrence = $Recurrence; StartDate = $StartDate }
+        # DurationInDays always goes to the builder: a OneTime review takes its length from the range
+        # the builder writes, and a repeating cadence ignores it.
+        $RecArgs = @{ Recurrence = $Recurrence; StartDate = $StartDate; DurationInDays = $DurationInDays }
         if ($PSBoundParameters.ContainsKey('EndDate'))     { $RecArgs.EndDate = $EndDate }
         if ($PSBoundParameters.ContainsKey('Occurrences')) { $RecArgs.Occurrences = $Occurrences }
-        $RecurrenceObj = New-OERAccessReviewRecurrence @RecArgs
-        if ($RecurrenceObj) { $Settings.recurrence = $RecurrenceObj }
+        $Settings.recurrence = New-OERAccessReviewRecurrence @RecArgs
 
         $Body = @{
             displayName             = $DisplayName

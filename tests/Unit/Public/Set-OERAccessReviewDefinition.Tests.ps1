@@ -789,3 +789,202 @@ Describe 'Set-OERAccessReviewDefinition refuses an ambiguous display name' {
         }
     }
 }
+
+Describe 'Set-OERAccessReviewDefinition: the one-time review length (BL-168)' {
+    # A one-time review's length is its recurrence range (measured against Microsoft Graph): a PUT of
+    # instanceDurationInDays alone leaves the instance ending where the range ends. The live definition
+    # is a raw Graph dictionary, so the fixtures below are hashtables shaped like Graph's answer.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+    }
+
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId { param($DisplayName) $DisplayName }
+        Mock -ModuleName Omnicit.EntraRBAC ConvertTo-OERAccessReviewDefinition { }
+    }
+
+    It 'a live one-time review written by an older module takes -DurationInDays into its range' {
+        # The M1 shape: instanceDurationInDays 0 and a noEnd range thirty days long.
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            if ($Method -eq 'PUT') { return $null }
+            return @{
+                id = 'd1'; displayName = 'Old'; descriptionForAdmins = 'oa'; descriptionForReviewers = 'or'
+                scope = @{ query = 'q' }
+                settings = @{
+                    instanceDurationInDays = 0
+                    recurrence = @{ pattern = $null; range = @{ type = 'noEnd'; numberOfOccurrences = 0; startDate = '2026-11-05'; endDate = '2026-12-05' } }
+                }
+                reviewers = @(@{ query = '/users/u1'; queryType = 'MicrosoftGraph' })
+            }
+        }
+        Set-OERAccessReviewDefinition -Id 'd1' -DurationInDays 14 -Confirm:$false
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'PUT' -and
+            $Body.settings.instanceDurationInDays -eq 14 -and
+            $Body.settings.recurrence.ContainsKey('pattern') -and
+            $null -eq $Body.settings.recurrence.pattern -and
+            $Body.settings.recurrence.range.type -eq 'numbered' -and
+            $Body.settings.recurrence.range.numberOfOccurrences -eq 0 -and
+            $Body.settings.recurrence.range.startDate -eq '2026-11-05' -and
+            $Body.settings.recurrence.range.endDate -eq '2026-11-19'
+        }
+    }
+
+    It 'a live repeating review keeps its recurrence when -DurationInDays is given' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            if ($Method -eq 'PUT') { return $null }
+            return @{
+                id = 'd1'; displayName = 'Old'; descriptionForAdmins = 'oa'; descriptionForReviewers = 'or'
+                scope = @{ query = 'q' }
+                settings = @{
+                    instanceDurationInDays = 14
+                    recurrence = @{
+                        pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 5 }
+                        range   = @{ type = 'noEnd'; startDate = '2026-11-05'; endDate = '9999-12-31' }
+                    }
+                }
+                reviewers = @(@{ query = '/users/u1'; queryType = 'MicrosoftGraph' })
+            }
+        }
+        Set-OERAccessReviewDefinition -Id 'd1' -DurationInDays 10 -Confirm:$false
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'PUT' -and
+            $Body.settings.instanceDurationInDays -eq 10 -and
+            $Body.settings.recurrence.pattern.type -eq 'absoluteMonthly' -and
+            $Body.settings.recurrence.pattern.interval -eq 3 -and
+            $Body.settings.recurrence.range.type -eq 'noEnd' -and
+            $Body.settings.recurrence.range.endDate -eq '9999-12-31'
+        }
+    }
+
+    It 'a live one-time review without a readable start keeps the old behaviour: only instanceDurationInDays' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            if ($Method -eq 'PUT') { return $null }
+            return @{
+                id = 'd1'; displayName = 'Old'; descriptionForAdmins = 'oa'; descriptionForReviewers = 'or'
+                scope = @{ query = 'q' }
+                settings = @{
+                    instanceDurationInDays = 7
+                    recurrence = @{ pattern = $null; range = @{ type = 'noEnd' } }
+                }
+                reviewers = @(@{ query = '/users/u1'; queryType = 'MicrosoftGraph' })
+            }
+        }
+        Set-OERAccessReviewDefinition -Id 'd1' -DurationInDays 10 -Confirm:$false
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'PUT' -and
+            $Body.settings.instanceDurationInDays -eq 10 -and
+            $Body.settings.recurrence.range.type -eq 'noEnd' -and
+            -not $Body.settings.recurrence.range.ContainsKey('endDate')
+        }
+    }
+
+    It '-Recurrence OneTime -StartDate keeps the live length when -DurationInDays is not given' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            if ($Method -eq 'PUT') { return $null }
+            return @{
+                id = 'd1'; displayName = 'Old'; descriptionForAdmins = 'oa'; descriptionForReviewers = 'or'
+                scope = @{ query = 'q' }
+                settings = @{
+                    instanceDurationInDays = 14
+                    recurrence = @{
+                        pattern = @{ type = 'weekly'; interval = 1 }
+                        range   = @{ type = 'noEnd'; startDate = '2026-01-05'; endDate = '9999-12-31' }
+                    }
+                }
+                reviewers = @(@{ query = '/users/u1'; queryType = 'MicrosoftGraph' })
+            }
+        }
+        Set-OERAccessReviewDefinition -Id 'd1' -Recurrence OneTime -StartDate ([datetime]'2026-12-01') -Confirm:$false
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'PUT' -and
+            $Body.settings.instanceDurationInDays -eq 14 -and
+            $null -eq $Body.settings.recurrence.pattern -and
+            $Body.settings.recurrence.range.type -eq 'numbered' -and
+            $Body.settings.recurrence.range.startDate -eq '2026-12-01' -and
+            $Body.settings.recurrence.range.endDate -eq '2026-12-15'
+        }
+    }
+
+    It '-Recurrence OneTime -StartDate with -DurationInDays writes that length to the range and the duration' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            if ($Method -eq 'PUT') { return $null }
+            return @{
+                id = 'd1'; displayName = 'Old'; descriptionForAdmins = 'oa'; descriptionForReviewers = 'or'
+                scope = @{ query = 'q' }
+                settings = @{ instanceDurationInDays = 0 }
+                reviewers = @(@{ query = '/users/u1'; queryType = 'MicrosoftGraph' })
+            }
+        }
+        Set-OERAccessReviewDefinition -Id 'd1' -Recurrence OneTime -StartDate ([datetime]'2026-12-01') -DurationInDays 5 -Confirm:$false
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'PUT' -and
+            $Body.settings.instanceDurationInDays -eq 5 -and
+            $Body.settings.recurrence.range.endDate -eq '2026-12-06'
+        }
+    }
+
+    It '-Recurrence OneTime -StartDate on a live review with no length to keep is refused IncompleteRecurrence and sends no PUT' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            if ($Method -eq 'PUT') { return $null }
+            return @{
+                id = 'd1'; displayName = 'Old'; descriptionForAdmins = 'oa'; descriptionForReviewers = 'or'
+                scope = @{ query = 'q' }
+                settings = @{ instanceDurationInDays = 0 }
+                reviewers = @(@{ query = '/users/u1'; queryType = 'MicrosoftGraph' })
+            }
+        }
+        $Err = $null
+        Set-OERAccessReviewDefinition -Id 'd1' -Recurrence OneTime -StartDate ([datetime]'2026-12-01') -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err
+        # The catch site was reached: the record is observed, with the id, the category and the target.
+        $Own = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'IncompleteRecurrence,Set-OERAccessReviewDefinition' })
+        $Own.Count | Should -Be 1
+        $Own[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Own[0].TargetObject | Should -Be 'd1'
+        $Own[0].Exception.Message | Should -Be '-Recurrence OneTime needs -DurationInDays: the live definition carries no review length of one day or more to keep.'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PUT' }
+    }
+
+    It 'the refusal also stops a script with no try: under Stop no PUT is sent, and the control sends one' {
+        $Script = {
+            param([string]$Log, [string]$Extra)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERAccessReviewDefinitionId -Value { param($DisplayName) $DisplayName }
+    Set-Item -Path function:script:ConvertTo-OERAccessReviewDefinition -Value { }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        [System.IO.File]::AppendAllText('#LOG#', "$Method`n")
+        if ($Method -eq 'PUT') { return $null }
+        @{
+            id = 'd1'; displayName = 'Old'; descriptionForAdmins = 'oa'; descriptionForReviewers = 'or'
+            scope = @{ query = 'q' }; settings = @{ instanceDurationInDays = 0 }
+            reviewers = @(@{ query = '/users/u1'; queryType = 'MicrosoftGraph' })
+        }
+    }
+}
+Set-OERAccessReviewDefinition -Id 'd1' -Recurrence OneTime -StartDate ([datetime]'2026-12-01') #EXTRA# -Confirm:$false
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#EXTRA#', $Extra))
+        }
+        # Refused under Stop: the first error ends the script, so the runner throws to its caller.
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Refused = & $Script -Log $Log -Extra '-ErrorAction Stop'
+        $Thrown = { Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Refused } | Should -Throw -PassThru
+        $Thrown.Exception.InnerException.ErrorRecord.FullyQualifiedErrorId | Should -BeExactly 'IncompleteRecurrence,Set-OERAccessReviewDefinition'
+        @(Get-Content -LiteralPath $Log) | Should -Be @('GET')
+
+        # The control: the same script given a length sends the PUT, so the log would show one.
+        $Log2 = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Control = & $Script -Log $Log2 -Extra '-DurationInDays 5 -ErrorAction Stop'
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Control
+        ($Run.Output -join '|') | Should -Be 'END'
+        @(Get-Content -LiteralPath $Log2) | Should -Be @('GET', 'PUT', 'GET')
+    }
+}

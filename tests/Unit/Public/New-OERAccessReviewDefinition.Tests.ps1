@@ -107,12 +107,31 @@ Describe 'New-OERAccessReviewDefinition' {
         }
     }
 
-    It 'omits settings.recurrence when -Recurrence OneTime' {
+    It 'writes the one-time form: a null pattern and a numbered range ending -DurationInDays after -StartDate' {
+        New-OERAccessReviewDefinition -DisplayName 'Q3' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
+            -AccessPackage 'AP' -AssignmentPolicy 'Standard' -SelfReview `
+            -Recurrence OneTime -StartDate ([datetime]'2026-07-05') -DurationInDays 14
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'POST' -and
+            $Body.settings.ContainsKey('recurrence') -and
+            $Body.settings.recurrence.ContainsKey('pattern') -and
+            $null -eq $Body.settings.recurrence.pattern -and
+            $Body.settings.recurrence.range.type -eq 'numbered' -and
+            $Body.settings.recurrence.range.numberOfOccurrences -eq 0 -and
+            $Body.settings.recurrence.range.startDate -eq '2026-07-05' -and
+            $Body.settings.recurrence.range.endDate -eq '2026-07-19' -and
+            $Body.settings.instanceDurationInDays -eq 14
+        }
+    }
+
+    It 'uses the default length of 14 days for the one-time range when -DurationInDays is not given' {
         New-OERAccessReviewDefinition -DisplayName 'Q3' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
             -AccessPackage 'AP' -AssignmentPolicy 'Standard' -SelfReview `
             -Recurrence OneTime -StartDate ([datetime]'2026-07-05')
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -ParameterFilter {
-            -not $Body.settings.ContainsKey('recurrence')
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'POST' -and
+            $Body.settings.recurrence.range.endDate -eq '2026-07-19' -and
+            $Body.settings.instanceDurationInDays -eq 14
         }
     }
 

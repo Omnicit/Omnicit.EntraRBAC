@@ -9,9 +9,40 @@ AfterAll {
 }
 
 Describe 'New-OERAccessReviewRecurrence' {
-    It 'returns null for OneTime' {
+    It 'builds the measured one-time form: a null pattern and a numbered range ending DurationInDays after the start' {
         InModuleScope Omnicit.EntraRBAC {
-            New-OERAccessReviewRecurrence -Recurrence OneTime -StartDate ([datetime]'2026-07-01') | Should -BeNullOrEmpty
+            $r = New-OERAccessReviewRecurrence -Recurrence OneTime -StartDate ([datetime]'2026-11-12') -DurationInDays 14
+            $r.ContainsKey('pattern')    | Should -BeTrue
+            $r.pattern                   | Should -BeNullOrEmpty
+            $r.range.type                | Should -Be 'numbered'
+            $r.range.numberOfOccurrences | Should -Be 0
+            $r.range.Keys                | Should -Contain 'recurrenceTimeZone'
+            $r.range.recurrenceTimeZone  | Should -BeNullOrEmpty
+            $r.range.startDate           | Should -Be '2026-11-12'
+            $r.range.endDate             | Should -Be '2026-11-26'
+        }
+    }
+    It 'throws for OneTime without -DurationInDays' {
+        InModuleScope Omnicit.EntraRBAC {
+            { New-OERAccessReviewRecurrence -Recurrence OneTime -StartDate ([datetime]'2026-11-12') } |
+                Should -Throw 'New-OERAccessReviewRecurrence: -DurationInDays is required for OneTime.'
+        }
+    }
+    It 'ignores -EndDate and -Occurrences for OneTime' {
+        InModuleScope Omnicit.EntraRBAC {
+            $r = New-OERAccessReviewRecurrence -Recurrence OneTime -StartDate ([datetime]'2026-11-12') -DurationInDays 3 -Occurrences 5
+            $r.range.numberOfOccurrences | Should -Be 0
+            $r.range.endDate             | Should -Be '2026-11-15'
+        }
+    }
+    It 'leaves a repeating cadence unchanged with and without -DurationInDays' {
+        InModuleScope Omnicit.EntraRBAC {
+            foreach ($Cadence in 'Weekly', 'Monthly', 'Quarterly', 'SemiAnnually', 'Annually') {
+                $Without = New-OERAccessReviewRecurrence -Recurrence $Cadence -StartDate ([datetime]'2026-07-05')
+                $With    = New-OERAccessReviewRecurrence -Recurrence $Cadence -StartDate ([datetime]'2026-07-05') -DurationInDays 14
+                ($With | ConvertTo-Json -Depth 5 -Compress) | Should -Be ($Without | ConvertTo-Json -Depth 5 -Compress)
+                $With.range.type | Should -Be 'noEnd'
+            }
         }
     }
     It 'builds a weekly noEnd recurrence' {

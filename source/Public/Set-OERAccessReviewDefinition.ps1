@@ -22,6 +22,14 @@ function Set-OERAccessReviewDefinition {
     This means only the parameters you supply change; all other properties are preserved exactly
     as they were in Graph.
 
+    A one-time review's length is its recurrence range: Microsoft Graph ends the single instance on
+    the range's end date and ignores instanceDurationInDays for it. So -DurationInDays on a live
+    one-time review rewrites the range (from the live start date, ending that many days later) as
+    well as instanceDurationInDays, and -Recurrence OneTime -StartDate writes a range of -DurationInDays
+    days, or of the length the live definition already carries when -DurationInDays is not given. When
+    the live definition carries no length of one day or more to keep, -Recurrence OneTime without
+    -DurationInDays is refused with IncompleteRecurrence and nothing is sent.
+
     RESIDUAL LIMITATION: the carry-forward list is explicit, never a blanket copy of the GET (the
     read-only properties id, status, createdDateTime, lastModifiedDateTime, createdBy, instances and
     the @odata.* annotations must not be sent back). A writable top-level property added to the
@@ -90,7 +98,8 @@ function Set-OERAccessReviewDefinition {
     .PARAMETER Recurrence
     New recurrence cadence: OneTime, Weekly, Monthly, Quarterly, SemiAnnually (every six months),
     or Annually.
-    Must be supplied together with -StartDate.
+    Must be supplied together with -StartDate. OneTime writes a single-instance range that starts on
+    -StartDate and lasts -DurationInDays days (the live length when -DurationInDays is not given).
 
     .PARAMETER StartDate
     New start date for the recurrence series. Must be supplied together with -Recurrence.
@@ -107,7 +116,8 @@ function Set-OERAccessReviewDefinition {
     .PARAMETER DurationInDays
     Number of days reviewers have to complete each review instance. Also bindable as -DurationDays,
     the module-standard duration name used by the PIM cmdlets. Must be 1 or greater; a non-positive
-    value fails parameter binding on this cmdlet.
+    value fails parameter binding on this cmdlet. On a one-time review it also moves the end of the
+    recurrence range, which is what sets the length of its instance.
 
     .PARAMETER MailNotification
     When present, Graph sends email notifications to reviewers.
@@ -364,15 +374,50 @@ function Set-OERAccessReviewDefinition {
         }
         if ($RecBound -and $DateBound) {
             $RecArgs = @{ Recurrence = $Recurrence; StartDate = $StartDate }
+            if ($Recurrence -eq 'OneTime') {
+                # A one-time review's length is its recurrence range, so the builder needs a length:
+                # the one the caller gave, else the one the live definition carries (Graph reads it from
+                # the range of a one-time review, from instanceDurationInDays otherwise). With neither,
+                # the call is refused before the PUT rather than guessing a length.
+                $OneTimeDays = if ($PSBoundParameters.ContainsKey('DurationInDays')) { $DurationInDays }
+                else { Get-OERAccessReviewDuration -Settings $Current.settings }
+                if ($null -eq $OneTimeDays -or $OneTimeDays -lt 1) {
+                    Write-CmdletError `
+                        -Message ([System.Exception]::new('-Recurrence OneTime needs -DurationInDays: the live definition carries no review length of one day or more to keep.')) `
+                        -ErrorId 'IncompleteRecurrence' -Category InvalidArgument `
+                        -TargetObject $Id -Cmdlet $PSCmdlet
+                    return
+                }
+                $RecArgs.DurationInDays = $OneTimeDays
+                $Settings.instanceDurationInDays = $OneTimeDays
+            }
             if ($PSBoundParameters.ContainsKey('EndDate'))     { $RecArgs.EndDate = $EndDate }
             if ($PSBoundParameters.ContainsKey('Occurrences')) { $RecArgs.Occurrences = $Occurrences }
-            $RecurrenceObj = New-OERAccessReviewRecurrence @RecArgs
-            if ($RecurrenceObj) {
-                $Settings.recurrence = $RecurrenceObj
-            }
-            else {
-                # OneTime -- remove any existing recurrence key
-                $null = $Settings.Remove('recurrence')
+            $Settings.recurrence = New-OERAccessReviewRecurrence @RecArgs
+        }
+        elseif ($PSBoundParameters.ContainsKey('DurationInDays')) {
+            # -DurationInDays alone on a live ONE-TIME review (a recurrence with a null pattern): its
+            # length is the recurrence range, so the range is rewritten from the live start; writing
+            # instanceDurationInDays alone leaves the instance ending where the range ends. A one-time
+            # review whose start cannot be read keeps writing instanceDurationInDays only.
+            $LiveRecurrence = $Current.settings.recurrence
+            if ($null -ne $LiveRecurrence -and $null -eq $LiveRecurrence.pattern) {
+                $LiveStartRaw = $LiveRecurrence.range.startDate
+                $LiveStart = $null
+                if ($LiveStartRaw -is [datetime]) {
+                    $LiveStart = $LiveStartRaw
+                }
+                elseif ($null -ne $LiveStartRaw) {
+                    $ParsedStart = [datetime]::MinValue
+                    if ([datetime]::TryParse([string]$LiveStartRaw, [System.Globalization.CultureInfo]::InvariantCulture,
+                            [System.Globalization.DateTimeStyles]::RoundtripKind, [ref]$ParsedStart)) {
+                        $LiveStart = $ParsedStart
+                    }
+                }
+                if ($null -ne $LiveStart) {
+                    $Settings.recurrence = New-OERAccessReviewRecurrence -Recurrence OneTime `
+                        -StartDate $LiveStart -DurationInDays $DurationInDays
+                }
             }
         }
 
