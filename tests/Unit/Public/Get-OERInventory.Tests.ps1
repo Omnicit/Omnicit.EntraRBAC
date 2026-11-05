@@ -2126,6 +2126,178 @@ Describe 'Get-OERInventory' {
         }
     }
 
+    Context 'access reviews of a group''s members are exported as group (BL-137)' {
+        BeforeAll {
+            $script:GrId = '33333333-3333-3333-3333-333333333333'
+            $script:GrUri = 'v1.0/groups/33333333-3333-3333-3333-333333333333?$select=id,displayName'
+            $script:NewGrLive = {
+                param([string]$Name = 'Q3 group review', [string]$Scope = '/v1.0/groups/33333333-3333-3333-3333-333333333333/transitiveMembers/microsoft.graph.user')
+                [PSCustomObject]@{
+                    Id = 'ar-grp'; DisplayName = $Name; Scope = $Scope
+                    AccessPackageId = $null; AssignmentPolicyId = $null
+                    Reviewers = @(@{ query = '/users/usr-1' }); FallbackReviewers = @()
+                    StageCount = 0; DurationInDays = 14
+                    MailNotificationsEnabled = $false; ReminderNotificationsEnabled = $false
+                    JustificationRequired = $false; RecommendationsEnabled = $false
+                    AutoApplyDecisionsEnabled = $false
+                    Settings = @{
+                        instanceDurationInDays = 14
+                        mailNotificationsEnabled = $false; reminderNotificationsEnabled = $false
+                        justificationRequiredOnApproval = $false; recommendationsEnabled = $false
+                        autoApplyDecisionsEnabled = $false
+                    }
+                    Recurrence = [PSCustomObject]@{
+                        pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 3 }
+                        range   = [PSCustomObject]@{ type = 'noEnd'; startDate = '2026-07-01' }
+                    }
+                }
+            }
+            $script:NewGrFailure = {
+                param([string]$Message, [string]$Id)
+                [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new($Message), $Id,
+                    [System.Management.Automation.ErrorCategory]::NotSpecified, $null)
+            }
+        }
+
+        BeforeEach {
+            $script:GrLive = @(& $script:NewGrLive)
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition { $script:GrLive }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{ 'usr-1' = 'person1@example.com' } }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "Unexpected Graph request: $Uri" }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = '33333333-3333-3333-3333-333333333333'; displayName = 'Sales' } } -ParameterFilter { $Uri -eq $script:GrUri }
+            Mock -ModuleName $script:moduleName Get-OERGroupNameIndex { & $script:NewGroupNameIndexOf @{ '33333333-3333-3333-3333-333333333333' = 'Sales' } }
+        }
+
+        It 'writes group as the name when the index holds it once, with no package or policy key' {
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Ar = @($Inv.AccessReviews)
+            $Ar.Count | Should -Be 1
+            $Ar[0].displayName | Should -Be 'Q3 group review'
+            $Ar[0].group | Should -BeExactly 'Sales'
+            $Ar[0].PSObject.Properties.Name | Should -Not -Contain 'accessPackage'
+            $Ar[0].PSObject.Properties.Name | Should -Not -Contain 'assignmentPolicy'
+            @($Ar[0].reviewers) | Should -Be @('person1@example.com')
+            $Ar[0].recurrence | Should -Be 'Quarterly'
+            $Ar[0].durationInDays | Should -Be 14
+            $Ar[0].startDate | Should -Be '2026-07-01'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq $script:GrUri -and (@($ExpectedErrorCode) -join ',') -eq 'Request_ResourceNotFound,NotFound,ResourceNotFound'
+            }
+            @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+        }
+
+        It 'writes group as the id when the group name index could not be read' {
+            Mock -ModuleName $script:moduleName Get-OERGroupNameIndex {
+                $Index = [PSCustomObject]@{ Read = $false; IdsByName = $null; Message = 'listing refused' }
+                $Index.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GroupNameIndex')
+                $Index
+            }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue
+            @($Inv.AccessReviews)[0].group | Should -BeExactly $script:GrId
+        }
+
+        It 'writes group as the id when two groups carry the name' {
+            Mock -ModuleName $script:moduleName Get-OERGroupNameIndex {
+                & $script:NewGroupNameIndexOf @{ '33333333-3333-3333-3333-333333333333' = 'Sales'; '44444444-4444-4444-4444-444444444444' = 'Sales' }
+            }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue
+            @($Inv.AccessReviews)[0].group | Should -BeExactly $script:GrId
+        }
+
+        It 'writes the id and reports nothing when the group read answers not found' {
+            $Marker = [PSCustomObject]@{ ExpectedErrorCode = 'Request_ResourceNotFound'; StatusCode = 404; Message = 'Request_ResourceNotFound: not found'; Uri = 'x' }
+            $Marker.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GraphExpectedError')
+            $script:GrMarker = $Marker
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $script:GrMarker } -ParameterFilter { $Uri -eq $script:GrUri }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.AccessReviews)[0].group | Should -BeExactly $script:GrId
+            @($InvErr).Count | Should -Be 0 -Because 'a deleted group is a fact about the review, not a failed read'
+        }
+
+        It 'writes the id and names accessReviews/<name>/group as unread when the group read fails' {
+            Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                throw (& $script:NewGrFailure 'Insufficient privileges to complete the operation (group).' 'Authorization_RequestDenied')
+            } -ParameterFilter { $Uri -eq $script:GrUri }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.AccessReviews)[0].group | Should -BeExactly $script:GrId
+            $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Be 'accessReviews/Q3 group review/group'
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
+        }
+
+        It 'skips a guest-only and a direct-members review of a group, and a role review, counting each kind' {
+            $script:GrLive = @(
+                (& $script:NewGrLive -Name 'Guests' -Scope '/v1.0/groups/33333333-3333-3333-3333-333333333333/transitiveMembers/microsoft.graph.user/?$count=true&$filter=(userType eq ''Guest'')'),
+                (& $script:NewGrLive -Name 'Direct' -Scope '/v1.0/groups/33333333-3333-3333-3333-333333333333/members'),
+                (& $script:NewGrLive -Name 'Role' -Scope '/v1.0/roleManagement/directory/roleDefinitions/abc')
+            )
+            $Inv = Get-OERInventory -Include AccessReviews -WarningVariable Warned -WarningAction SilentlyContinue
+            @($Inv.AccessReviews).Count | Should -Be 0
+            @($Warned).Count | Should -Be 1
+            [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 3 access review definition(s) the apply document cannot declare: ' +
+                '2 review(s) of a group in a form the module cannot write back (guest users only, direct members only, or another query), ' +
+                '1 review(s) of an application, a directory role or another scope. ' +
+                'Access package reviews and reviews of all members of one group round-trip through Invoke-OERStructure.')
+        }
+
+        It 'words the skip warning for the group-form kind alone' {
+            $script:GrLive = @(& $script:NewGrLive -Name 'Direct' -Scope '/v1.0/groups/33333333-3333-3333-3333-333333333333/members')
+            $null = Get-OERInventory -Include AccessReviews -WarningVariable Warned -WarningAction SilentlyContinue
+            [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 1 access review definition(s) the apply document cannot declare: ' +
+                '1 review(s) of a group in a form the module cannot write back (guest users only, direct members only, or another query). ' +
+                'Access package reviews and reviews of all members of one group round-trip through Invoke-OERStructure.')
+        }
+
+        It 'words the skip warning for the other-scope kind alone' {
+            $script:GrLive = @(& $script:NewGrLive -Name 'Role' -Scope '/v1.0/roleManagement/directory/roleDefinitions/abc')
+            $null = Get-OERInventory -Include AccessReviews -WarningVariable Warned -WarningAction SilentlyContinue
+            [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 1 access review definition(s) the apply document cannot declare: ' +
+                '1 review(s) of an application, a directory role or another scope. ' +
+                'Access package reviews and reviews of all members of one group round-trip through Invoke-OERStructure.')
+        }
+
+        It 'skips a multi-stage group review with the multi-stage warning' {
+            $Live = & $script:NewGrLive
+            $Live.StageCount = 2
+            $script:GrLive = @($Live)
+            $Inv = Get-OERInventory -Include AccessReviews -WarningVariable Warned -WarningAction SilentlyContinue
+            @($Inv.AccessReviews).Count | Should -Be 0
+            @($Warned | Where-Object { $_ -match 'multi-stage' }).Count | Should -Be 1
+        }
+
+        It 'round-trips: the entry passes the schema and the engine reports it Unchanged with no write' {
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue
+            $Entry = @($Inv.AccessReviews)[0]
+            $Entry.group | Should -BeExactly 'Sales'
+            $Doc = [PSCustomObject]@{ version = '1.0'; accessReviews = @($Entry) }
+            $V = InModuleScope $script:moduleName -Parameters @{ D = $Doc } { param($D) Test-OERStructureSchema -Document $D }
+            @($V.Errors | ForEach-Object { "$($_.Severity): $($_.Path): $($_.Message)" }) | Should -Be @()
+            Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal { 'usr-1' }
+            Mock -ModuleName $script:moduleName Resolve-OERGroupId { '33333333-3333-3333-3333-333333333333' }
+            Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId { throw 'Unexpected access package lookup.' }
+            Mock -ModuleName $script:moduleName Resolve-OERAssignmentPolicyId { throw 'Unexpected assignment policy lookup.' }
+            Mock -ModuleName $script:moduleName Get-OERStructureRenameTarget { throw 'Unexpected rename map read.' }
+            Mock -ModuleName $script:moduleName New-OERAccessReviewDefinition { }
+            Mock -ModuleName $script:moduleName Set-OERAccessReviewDefinition { }
+            $Rows = @(InModuleScope $script:moduleName -Parameters @{ Item = $Entry } {
+                    param($Item)
+                    function Invoke-RoundTripSync {
+                        [CmdletBinding(SupportsShouldProcess)]
+                        param([PSCustomObject]$Item)
+                        Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet
+                    }
+                    Invoke-RoundTripSync -Item $Item -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
+                })
+            $Rows.Count | Should -Be 1
+            $Rows[0].Action | Should -Be 'Unchanged' -Because ([string]$Rows[0].Detail)
+            Should -Invoke -ModuleName $script:moduleName Set-OERAccessReviewDefinition -Times 0 -Exactly
+            Should -Invoke -ModuleName $script:moduleName New-OERAccessReviewDefinition -Times 0 -Exactly
+        }
+    }
+
     Context 'access review list read through the real transport' {
         # Moved out of 'AccessReviews and RoleManagementPolicies sections', unchanged. That Context now
         # mocks Invoke-OERGraphRequest for every review's by-id name read, and this test needs the

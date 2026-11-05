@@ -896,8 +896,8 @@ includes a predefined prompt that turns it into appliable improvement proposals.
 ## Files
 
 - `inventory.json` -- the canonical, round-trippable inventory, in the exact apply-document shape,
-  subject to the coverage limits below (for example, only access-package-scoped access reviews
-  are captured).
+  subject to the coverage limits below (for example, only access package reviews and reviews
+  of all members of one group are captured).
 - `groups.json`, `administrativeUnits.json`, `catalogs.json`, `accessPackages.json`,
   `accessReviews.json`, `directoryRoleManagementPolicies.json`, `directoryRoleAssignments.json`,
   `roleAssignments.json`, `roleManagementPolicies.json` -- the same data split per area, so you can

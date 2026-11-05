@@ -152,9 +152,13 @@ function Get-OERInventory {
     nothing) -- never under the name the catalog recorded when the resource was added, which Graph
     keeps after a rename, except as described above when the names cannot be read.
     Invoke-OERStructure identifies such a resource by the object id its name resolves to.
-    Only access-package-scoped, single-stage review definitions are captured: a group, application,
-    directory-role or multi-stage review is skipped, with an aggregate warning naming how many were
-    skipped. The AccessReviews projection carries accessPackage, assignmentPolicy, reviewers and
+    Only single-stage review definitions of an access package or of all members of one group are
+    captured; a review of all members of one group is written with a group key (the group's name when
+    the tenant's group name index was read and exactly this group carries it, else its object id)
+    and no accessPackage or assignmentPolicy. A review of guest users only or of direct members
+    only, an application, a directory-role, another scope or a multi-stage review is skipped, with an
+    aggregate warning naming how many were skipped, counted by kind. The AccessReviews projection
+    carries accessPackage and assignmentPolicy (or group), reviewers and
     recurrence so a captured review round-trips through Invoke-OERStructure (create-or-update: a
     review is matched by displayName and created when it does not exist; when it does, it is
     reconciled field by field only if it reviews the accessPackage and assignmentPolicy the entry
@@ -401,9 +405,10 @@ function Get-OERInventory {
 
     .PARAMETER Include
     The building-block sections to read. Defaults to Groups, AdministrativeUnits, Catalogs and
-    AccessPackages. AccessReviews captures only access-package-scoped, single-stage review
-    definitions (optionally narrowed by -AccessReviewFilter); a group, application, directory-role
-    or multi-stage review is skipped with a warning. DirectoryRoleManagementPolicies and
+    AccessPackages. AccessReviews captures only single-stage review
+    definitions of an access package or of all members of one group (optionally narrowed by
+    -AccessReviewFilter); a review of guest users only or of direct members only, an application, a
+    directory-role, another scope or a multi-stage review is skipped with a warning, counted by kind. DirectoryRoleManagementPolicies and
     DirectoryRoleAssignments read Microsoft Entra directory roles through Microsoft Graph and need no
     ARM token. RoleAssignments and RoleManagementPolicies need an ARM token and their targeting
     parameters: with a -Scope or a -Subscription the token is acquired up front, as -IncludeARM does
@@ -2129,6 +2134,7 @@ function Get-OERInventory {
         if ($Include -contains 'AccessReviews') {
             $ArItems = @()
             $SkippedReviewCount = 0
+            $SkippedGroupFormCount = 0
             # -ErrorAction SilentlyContinue + a LOCAL -ErrorVariable, not -ErrorAction Stop -- the
             # same fix, for the same mechanism, as the existence probe in
             # Sync-OERStructureAccessReview. Get-OERAccessReviewDefinition reports "nothing matched"
@@ -2207,14 +2213,28 @@ function Get-OERInventory {
             $ArPackageNameLookup = @{}
             $ArPolicyListLookup = @{}
             foreach ($Ar in $ArItems) {
-                # Only access-package-scoped reviews round-trip: the apply schema requires both
-                # accessPackage and assignmentPolicy, and Invoke-OERStructure models access-package
-                # reviews only. A review without both (for example a directory-role or group review)
-                # cannot be applied and would make the inventory fail apply-schema validation, so skip it.
-                if (-not $Ar.AccessPackageId -or -not $Ar.AssignmentPolicyId) {
-                    Write-Verbose "Skipping access review '$($Ar.DisplayName)': not access-package-scoped (does not round-trip)."
-                    $SkippedReviewCount++
-                    continue
+                # Two review forms round-trip: an access package review (the apply schema requires both
+                # accessPackage and assignmentPolicy) and a review of ALL members of one group (group;
+                # Resolve-OERAccessReviewGroupScope owns which query that is). A review of a group in a
+                # form the module cannot write back (guest users only, direct members only, another
+                # query) is NEVER exported as group: on apply it would widen to all transitive members.
+                # Anything else (a directory role, an application, another scope) cannot be applied and
+                # would make the inventory fail apply-schema validation, so it is skipped and counted.
+                $IsPackageReview = [bool]($Ar.AccessPackageId -and $Ar.AssignmentPolicyId)
+                $GroupScope = $null
+                if (-not $IsPackageReview) {
+                    $GroupScope = Resolve-OERAccessReviewGroupScope -Query ([string]$Ar.Scope)
+                    if ($GroupScope.Kind -ne 'Members') {
+                        if ($GroupScope.Kind -eq 'OtherForm') {
+                            Write-Verbose "Skipping access review '$($Ar.DisplayName)': a group review in a form the module cannot write back (does not round-trip)."
+                            $SkippedGroupFormCount++
+                        }
+                        else {
+                            Write-Verbose "Skipping access review '$($Ar.DisplayName)': not access-package-scoped and not a review of a group's members (does not round-trip)."
+                            $SkippedReviewCount++
+                        }
+                        continue
+                    }
                 }
 
                 # A multi-stage review's reviewers live in stageSettings; the definition's top-level
@@ -2232,8 +2252,26 @@ function Get-OERInventory {
 
                 $Proj = [ordered]@{ displayName = $Ar.DisplayName }
 
+                if (-not $IsPackageReview) {
+                    # group: the name of the group whose members the review covers, written under the
+                    # BL-131 rule (Get-GroupPrincipalReference): the name only when the tenant's group
+                    # name index was read and exactly this group carries it, else the id, which the
+                    # apply engine takes verbatim. A deleted group (404) is written by id and reported
+                    # nowhere; a FAILED read is written by id and named as an unread collection.
+                    $GroupReviewId = [string]$GroupScope.GroupId
+                    $GroupReviewRef = Get-AccessReviewReferenceName `
+                        -Uri ('v1.0/groups/{0}?$select=id,displayName' -f $GroupReviewId) `
+                        -NotFoundCode 'Request_ResourceNotFound', 'NotFound', 'ResourceNotFound' `
+                        -Id $GroupReviewId -ReviewName ([string]$Ar.DisplayName) `
+                        -Part 'group' -Label 'group'
+                    if ([string]$GroupReviewRef -ne $GroupReviewId) {
+                        $GroupReviewRef = Get-GroupPrincipalReference -Id $GroupReviewId -Name ([string]$GroupReviewRef)
+                    }
+                    $Proj.group = $GroupReviewRef
+                }
+                else {
                 # accessPackage + assignmentPolicy: resolve ids to names (fallback to the id). Both ids
-                # are present here (the skip above requires them). A deleted target is written by id
+                # are present here (the form check above requires them). A deleted target is written by id
                 # and reported nowhere; a FAILED read is written by id too and reported as an unread
                 # collection -- see Get-AccessReviewReferenceName, which owns the rule and the reason
                 # these are transport reads rather than calls to the Get-OER* readers.
@@ -2269,6 +2307,7 @@ function Get-OERInventory {
                         -CacheKey ([string]$Ar.AccessPackageId).ToLowerInvariant() -Cache $ArPolicyListLookup `
                         -MatchOf { param($Answer, $ForName) @(@($Answer.value) | Where-Object { $_.displayName -eq $ForName }) } `
                         -ReviewName ([string]$Ar.DisplayName) -Part 'assignmentPolicy' -Label 'assignment policy'
+                }
                 }
 
                 # reviewers -> friendly tokens (manager / self / resolved name). Every query is parsed
@@ -2452,8 +2491,16 @@ function Get-OERInventory {
                 if ($IncludeId) { $Proj.id = $Ar.Id }
                 $AccessReviews.Add([PSCustomObject]$Proj)
             }
-            if ($SkippedReviewCount -gt 0) {
-                Write-Warning "Get-OERInventory: skipped $SkippedReviewCount access review definition(s) that are not access-package-scoped. Only access-package reviews round-trip through Invoke-OERStructure; group, application and directory-role reviews are not captured."
+            $SkippedAllCount = $SkippedGroupFormCount + $SkippedReviewCount
+            if ($SkippedAllCount -gt 0) {
+                $SkippedParts = [System.Collections.Generic.List[string]]::new()
+                if ($SkippedGroupFormCount -gt 0) {
+                    $SkippedParts.Add("$SkippedGroupFormCount review(s) of a group in a form the module cannot write back (guest users only, direct members only, or another query)")
+                }
+                if ($SkippedReviewCount -gt 0) {
+                    $SkippedParts.Add("$SkippedReviewCount review(s) of an application, a directory role or another scope")
+                }
+                Write-Warning "Get-OERInventory: skipped $SkippedAllCount access review definition(s) the apply document cannot declare: $($SkippedParts -join ', '). Access package reviews and reviews of all members of one group round-trip through Invoke-OERStructure."
             }
         }
 

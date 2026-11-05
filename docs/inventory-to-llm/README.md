@@ -835,7 +835,7 @@ it creates a review. The scope of a review cannot be changed on an existing one.
 - The check runs before the reviewer lookups and before any confirmation, so a `-WhatIf` plan and a
   real run report the same `Failed` row.
 
-The export captures only access-package-scoped, single-stage reviews, so a name missing from
+The export captures only single-stage reviews of an access package or of all members of one group, so a name missing from
 `accessReviews.json` may still be in use by a review the bundle leaves out. Give a new review a
 display name no other review in the tenant uses.
 
