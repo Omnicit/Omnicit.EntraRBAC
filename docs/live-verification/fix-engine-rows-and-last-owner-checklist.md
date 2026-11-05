@@ -911,7 +911,7 @@ The document every check applies (built in each block):
 
 ### R1.S. The build carries round 1, and the prefix is empty
 
-- [ ] **R1.S** The worktree's build carries H and I, and the prerequisite script's baseline finds no `oer-s1241-` object. #type/subtask
+- [x] **R1.S** The worktree's build carries H and I, and the prerequisite script's baseline finds no `oer-s1241-` object. #type/subtask
 
 ```powershell
 pwsh -NoProfile -File (Join-Path $env:OER_LIVE_DIR 'Initialize-OerS1241Prereq.ps1') -Unattended
@@ -933,11 +933,33 @@ H and I `True`.
 **Failure looks like:** an object with the prefix -- run the teardown first; a marker `False` -- build
 the worktree (`./build.ps1 -Tasks build`), never while the gate runs.
 
-Result:
+Result: 2026-11-05 05:50 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The prerequisite script signed in as oer-live-cc (every identity line True; Connect-OerLive -Graph loads the main clone's older build, Graph reads only), found 0 objects with the prefix and 0 unread kinds, wrote the baseline, and touched none of the 5 residue rows of other prefixes. The worktree is on this branch at 0e8c2bc with 0 tracked changes; its build (gated green at 0e8c2bc: 13634 passed, 0 failed, coverage 96.43 %) carries H and I.
+
+[oer-s1241] Transcript (redacted): raw\s1241\prereq-20261105-055007Z.log; OerLive 1.1.0.
+[oer-s1241] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s1241] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s1241] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s1241] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s1241] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s1241] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s1241] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s1241] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s1241] Residue: raw\residue.json holds 5 row(s); 0 carry the prefix 'oer-s1241-', the other 5 are left untouched.
+[oer-s1241] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s1241-' is left.
+[oer-s1241] Baseline sweep: 0 object(s) with the prefix, 0 unread kind(s).
+[oer-s1241] Baseline written: True
+[oer-s1241] The prefix is empty, as check R1.1 needs: True
+[oer-s1241] Worktree: branch fix/engine-rows-and-last-owner; HEAD 0e8c2bc Correct the release note, the R1.1 expectation and the assignment policy known limit; tracked changes: 0
+[oer-s1241] The worktree's build carries H: True
+[oer-s1241] The worktree's build carries I: True
+```
 
 ### R1.1. The plan of the new document writes no error record
 
-- [ ] **R1.1** `Invoke-OERStructure -WhatIf` on the document: the catalog and the package are planned, the review is `Failed` with "has no id in this run" and no error record, `$?` is `True`, the same plan under `-ErrorAction Stop` completes, and nothing is written. #type/subtask
+- [x] **R1.1** `Invoke-OERStructure -WhatIf` on the document: the catalog and the package are planned, the review is `Failed` with "has no id in this run" and no error record, `$?` is `True`, the same plan under `-ErrorAction Stop` completes, and nothing is written. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -995,11 +1017,39 @@ under Stop `completed` with the same number of rows; 0 writes.
 **Failure looks like:** `record: StructureReferenceUnidentified` or `$? False` -- the plan still
 writes the refusal as an error; `stopped:` -- the plan stops under Stop although the real run succeeds.
 
-Result:
+Result: 2026-11-05 05:50 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. As oer-live-cc (every identity line True), the build in the worktree, token fence in place. The plan of the new document: catalog, package and policy Skipped (would create), the review Failed with 'has no id in this run' and no error record; $? True, 0 error records, 0 warnings; the same plan under -ErrorAction Stop completed with 4 rows; 2 reads and 0 writes over both plans. The What if lines are the engine's own ShouldProcess text.
+
+[oer-s1241] Omnicit.EntraRBAC 1.3.2 loaded from REPO\.claude\worktrees\s12-steg4-r1\output\module\Omnicit.EntraRBAC\1.3.2.
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s1241] The module is the worktree's build: True
+[oer-s1241] Token fence in place: True
+What if: Performing the operation "Create catalog" on target "oer-s1241-cat".
+What if: Performing the operation "Create access package" on target "oer-s1241-pkg".
+[oer-s1241] row: catalogs | oer-s1241-cat | Skipped | would create catalog oer-s1241-cat | record: none
+[oer-s1241] row: accessPackages | oer-s1241-pkg | Skipped | would create access package oer-s1241-pkg | record: none
+[oer-s1241] row: accessPackages | oer-s1241-pkg | Skipped | would create assignmentPolicy 'oer-s1241-policy' after access package is created | record: none
+[oer-s1241] row: accessReviews | oer-s1241-review | Failed | access package 'oer-s1241-pkg' has no id in this run (the accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined confirmation), so the access package this access review reviews cannot be identified; nothing was created, read or written for it | record: none
+[oer-s1241] Plan: rows 4; $? True; error records: 0; warnings: 0
+What if: Performing the operation "Create catalog" on target "oer-s1241-cat".
+What if: Performing the operation "Create access package" on target "oer-s1241-pkg".
+[oer-s1241] Plan under -ErrorAction Stop: completed with 4 rows
+[oer-s1241] Requests over both plans: 2 read(s), 0 write(s)
+```
 
 ### R1.2. The real run of the same document creates the package and then the review
 
-- [ ] **R1.2** The same document with `-Confirm:$false`: the catalog, the package, its policy and the review are `Created`, `$?` is `True`, and the review read back reviews that package. #type/subtask
+- [x] **R1.2** The same document with `-Confirm:$false`: the catalog, the package, its policy and the review are `Created`, `$?` is `True`, and the review read back reviews that package. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -1060,11 +1110,34 @@ the review exists `True` and its scope names the created package `True`.
 replicated the new policy (run R1.2 again a minute later and record both runs here); the review
 missing from the read back.
 
-Result:
+Result: 2026-11-05 05:51 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The real run of the same document (-Confirm:$false), right after the plan of R1.1: the catalog, the package (with its id), the policy and then the review Created; $? True, 0 error records, 0 warnings; 13 reads and 4 writes, all of prefixed objects (the fence refuses any other). The ids of the catalog, the package and the review are recorded for the teardown; the review read back by id exists and its scope names the created package.
+
+[oer-s1241] Omnicit.EntraRBAC 1.3.2 loaded from REPO\.claude\worktrees\s12-steg4-r1\output\module\Omnicit.EntraRBAC\1.3.2.
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s1241] The module is the worktree's build: True
+[oer-s1241] row: catalogs | oer-s1241-cat | Created | created catalog oer-s1241-cat (00000000-0000-0000-0000-000000000003)
+[oer-s1241] row: accessPackages | oer-s1241-pkg | Created | created access package oer-s1241-pkg (00000000-0000-0000-0000-000000000004)
+[oer-s1241] row: accessPackages | oer-s1241-pkg | Created | created assignmentPolicy 'oer-s1241-policy'
+[oer-s1241] row: accessReviews | oer-s1241-review | Created | created access review 'oer-s1241-review' (recurrence: OneTime)
+[oer-s1241] Run: rows 4; $? True; error records: 0; warnings: 0; requests: 13 read(s), 4 write(s)
+[oer-s1241] Ids recorded: access package|oer-s1241-pkg, access review definition|oer-s1241-review, catalog|oer-s1241-cat
+[oer-s1241] Read back: the review oer-s1241-review exists: True; its scope names the created package: True
+```
 
 ### R1.3. A second real run reports only Unchanged (G8)
 
-- [ ] **R1.3** The same document again with `-Confirm:$false`: every row is `Unchanged`, `$?` is `True`, and no write request is made. #type/subtask
+- [~] **R1.3** The same document again with `-Confirm:$false`: every row is `Unchanged`, `$?` is `True`, and no write request is made. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -1107,11 +1180,157 @@ Disconnect-OerLive
 **Expect:** every row `Unchanged` (`every row Unchanged: True`); `$? True`; 0 error records; 0 writes.
 **Failure looks like:** an `Updated` row or a fence refusal -- the run is not convergent.
 
-Result:
+Result: 2026-11-05 05:53 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PARTIAL (not a defect of this round). The catalog, the package and the policy are Unchanged, but the review is not: the run wanted to PUT it (the fence refused the request, nothing was written; $? False and 8 error records are the fence's refusal). A read-only plan names the field: durationInDays=14. Read back by id, Microsoft Graph stored the one-time review with instanceDurationInDays 0 and a range of 30 days from the start, not the 14 days the document declares, so every later run differs on that field. New-OERAccessReviewDefinition and the review diff are unchanged on this branch against main (an older defect: a one-time review drops a declared durationInDays). Reported in the round's findings; R1.3b proves the rest of the path converges.
+
+[oer-s1241] Omnicit.EntraRBAC 1.3.2 loaded from REPO\.claude\worktrees\s12-steg4-r1\output\module\Omnicit.EntraRBAC\1.3.2.
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s1241] The module is the worktree's build: True
+     | S1241 fence: a PUT request was refused; this run expects no write.
+[oer-s1241] row: catalogs | oer-s1241-cat | Unchanged | catalog properties match
+[oer-s1241] row: accessPackages | oer-s1241-pkg | Unchanged | access package properties match
+[oer-s1241] row: accessPackages | oer-s1241-pkg | Unchanged | assignmentPolicy 'oer-s1241-policy' matches
+[oer-s1241] row: accessReviews | oer-s1241-review | Failed | access review update failed: S1241 fence: a PUT request was refused; this run expects no write.
+[oer-s1241] Run 2: rows 4; every row Unchanged: False; $? False; error records: 8; warnings: 0; requests: 12 read(s), 1 write(s)
+
+Read-only plan of the same document:
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s1241] Omnicit.EntraRBAC 1.3.2 loaded from REPO\.claude\worktrees\s12-steg4-r1\output\module\Omnicit.EntraRBAC\1.3.2.
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s1241] The module is the worktree's build: True
+[oer-s1241] Token fence in place: True
+What if: Performing the operation "Update access review definition" on target "oer-s1241-review".
+[oer-s1241] row: catalogs | oer-s1241-cat | Unchanged | catalog properties match | record: none
+[oer-s1241] row: accessPackages | oer-s1241-pkg | Unchanged | access package properties match | record: none
+[oer-s1241] row: accessPackages | oer-s1241-pkg | Unchanged | assignmentPolicy 'oer-s1241-policy' matches | record: none
+[oer-s1241] row: accessReviews | oer-s1241-review | Skipped | would update access review 'oer-s1241-review' (durationInDays=14) | record: none
+[oer-s1241] Plan: rows 4; $? True; error records: 0; warnings: 0
+catch: HOME\.claude\jobs\c3d10296\tmp\live-R1.3diag.ps1:42
+Line |
+  42 |  } catch { "stopped: $(([string]$PSItem.FullyQualifiedErrorId -split ' …
+     |    ~~~~~
+     | The term 'catch' is not recognized as a name of a cmdlet, function, script file, or executable program. Check
+     | the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[oer-s1241] Requests over both plans: 11 read(s), 0 write(s)
+
+
+Read back of the review (by id):
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s1241] Omnicit.EntraRBAC 1.3.2 loaded from REPO\.claude\worktrees\s12-steg4-r1\output\module\Omnicit.EntraRBAC\1.3.2.
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s1241] status: NotStarted; instanceDurationInDays: 0; recurrence: {"range":{"numberOfOccurrences":0,"endDate":"2026-12-05","recurrenceTimeZone":null,"startDate":"2026-11-05","type":"noEnd"},"pattern":null}
+[oer-s1241] instance: status NotStarted; start 11/05/2026 05:51:05; end 12/05/2026 05:51:05
+[oer-s1241] module view: DurationInDays 0; Recurrence System.Collections.Hashtable; Settings.instanceDurationInDays 0
+```
+
+### R1.3b. Without the review's durationInDays, two more runs report only Unchanged (G8)
+
+- [x] **R1.3b** The document of R1.1 without the review's `durationInDays` (the field R1.3 found Microsoft Graph does not store for a one-time review), applied twice with `-Confirm:$false`: every row `Unchanged`, `$?` `True`, no write request. #type/subtask
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s1241-' -ConfigDirectory $VaultDir
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+Connect-OerLive -Arm
+$Module = Get-Module -Name Omnicit.EntraRBAC
+Write-OerLiveStep "The module is the worktree's build: $($Module.ModuleBase.StartsWith((Join-Path $Cfg.Repo 'output\module'), [System.StringComparison]::OrdinalIgnoreCase))"
+function global:Get-AzToken { throw 'S1241 fence: no token request is expected after the sign-in.' }
+& $Module {
+    $script:S1241Log = [System.Collections.Generic.List[string]]::new()
+    $script:S1241Real = ${function:Invoke-OERGraphRequest}
+    function script:Invoke-OERGraphRequest {
+        [CmdletBinding()]
+        param([string]$Method = 'GET', [Parameter(Mandatory)][string]$Uri, [hashtable]$Body, [switch]$All, [string[]]$ExpectedErrorCode, [switch]$RequireValue)
+        $Read = ($Method -eq 'GET') -or ($Uri -match 'getByIds|getMemberGroups|checkMember')
+        $script:S1241Log.Add($(if ($Read) { 'read' } else { "write $Method" }))
+        if (-not $Read) { throw "S1241 fence: a $Method request was refused; this run expects no write." }
+        & $script:S1241Real @PSBoundParameters
+    }
+}
+function Get-S1241Count { & (Get-Module -Name Omnicit.EntraRBAC) { '{0} read(s), {1} write(s)' -f @($script:S1241Log | Where-Object { $_ -eq 'read' }).Count, @($script:S1241Log | Where-Object { $_ -ne 'read' }).Count } }
+$Doc = [ordered]@{
+    version        = '1.0'
+    catalogs       = @([ordered]@{ displayName = 'oer-s1241-cat'; description = 'Sprint 12 step 4 round 1 live check' })
+    accessPackages = @([ordered]@{
+            displayName = 'oer-s1241-pkg'; catalog = 'oer-s1241-cat'; description = 'Sprint 12 step 4 round 1 live check'; resourceRoles = @()
+            assignmentPolicies = @([ordered]@{ displayName = 'oer-s1241-policy'; requestorScope = @{ scope = 'NotSpecified' }; durationInDays = 30 })
+        })
+    accessReviews  = @([ordered]@{ displayName = 'oer-s1241-review'; accessPackage = 'oer-s1241-pkg'; assignmentPolicy = 'oer-s1241-policy'; reviewers = @(); recurrence = 'OneTime' })
+} | ConvertTo-Json -Depth 8
+foreach ($Run in 1, 2) {
+$null = Invoke-OERStructure -Json $Doc -Confirm:$false -OutVariable Rows -ErrorVariable Err -WarningVariable Warn 3>$null
+$Ok = $?
+foreach ($R in $Rows) { Write-OerLiveStep ("run $Run row: {0} | {1} | {2} | {3}" -f $R.Section, $R.Item, $R.Action, $R.Detail) }
+Write-OerLiveStep "Run $Run`: rows $(@($Rows).Count); every row Unchanged: $(@($Rows | Where-Object { $_.Action -ne 'Unchanged' }).Count -eq 0); `$? $Ok; error records: $(@($Err).Count); warnings: $(@($Warn).Count); requests so far: $(Get-S1241Count)"
+}
+Disconnect-OerLive
+```
+
+**Expect:** each run 4 rows, `every row Unchanged: True`, `$? True`, 0 error records; 0 writes over
+both runs.
+**Failure looks like:** an `Updated` row or a fence refusal -- another field of the path does not
+converge.
+
+Result: 2026-11-05 05:54 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The document without the review's durationInDays, applied twice for real under a fence that refuses every write: both runs give 4 rows, every row Unchanged (the catalog, the package, the policy and the review), $? True, 0 error records, 0 warnings; 22 reads and 0 writes over both runs. The path the round changed converges; only the one-time review's durationInDays (R1.3, an older defect) does not.
+
+[oer-s1241] Omnicit.EntraRBAC 1.3.2 loaded from REPO\.claude\worktrees\s12-steg4-r1\output\module\Omnicit.EntraRBAC\1.3.2.
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s1241] The module is the worktree's build: True
+[oer-s1241] run 1 row: catalogs | oer-s1241-cat | Unchanged | catalog properties match
+[oer-s1241] run 1 row: accessPackages | oer-s1241-pkg | Unchanged | access package properties match
+[oer-s1241] run 1 row: accessPackages | oer-s1241-pkg | Unchanged | assignmentPolicy 'oer-s1241-policy' matches
+[oer-s1241] run 1 row: accessReviews | oer-s1241-review | Unchanged | access review 'oer-s1241-review' already matches
+[oer-s1241] Run 1: rows 4; every row Unchanged: True; $? True; error records: 0; warnings: 0; requests so far: 11 read(s), 0 write(s)
+[oer-s1241] run 2 row: catalogs | oer-s1241-cat | Unchanged | catalog properties match
+[oer-s1241] run 2 row: accessPackages | oer-s1241-pkg | Unchanged | access package properties match
+[oer-s1241] run 2 row: accessPackages | oer-s1241-pkg | Unchanged | assignmentPolicy 'oer-s1241-policy' matches
+[oer-s1241] run 2 row: accessReviews | oer-s1241-review | Unchanged | access review 'oer-s1241-review' already matches
+[oer-s1241] Run 2: rows 4; every row Unchanged: True; $? True; error records: 0; warnings: 0; requests so far: 22 read(s), 0 write(s)
+```
 
 ### R1.T1. Remove every object with the round's prefix
 
-- [ ] **R1.T1** The prerequisite script's teardown removes the review, the package (with its policy) and the catalog, and its sweep ends at 0. #type/subtask
+- [x] **R1.T1** The prerequisite script's teardown removes the review, the package (with its policy) and the catalog, and its sweep ends at 0. #type/subtask
 
 ```powershell
 pwsh -NoProfile -File (Join-Path $env:OER_LIVE_DIR 'Initialize-OerS1241Prereq.ps1') -Teardown -Unattended
@@ -1122,11 +1341,43 @@ pwsh -NoProfile -File (Join-Path $env:OER_LIVE_DIR 'Initialize-OerS1241Prereq.ps
 **Failure looks like:** residue or a sweep above 0 after five minutes -- run `-Teardown` again later
 and record the residue here.
 
-Result:
+Result: 2026-11-05 05:54 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The prerequisite script's teardown (as oer-live-cc, every identity line True; Connect-OerLive -Graph loads the main clone's older build) removed every oer-s1241- object: 4 removed (the review definition, the package's assignment policy, the package, the catalog), residue 0, unreadable 0, already gone 0, skipped 0; the 5 residue rows of other prefixes were left untouched; the sweep was 0 on its first pass.
+
+[oer-s1241] Transcript (redacted): raw\s1241\prereq-teardown-20261105-055422Z.log; OerLive 1.1.0.
+[oer-s1241] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s1241] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s1241] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s1241] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s1241] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s1241] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s1241] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s1241] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s1241] Residue: raw\residue.json holds 5 row(s); 0 carry the prefix 'oer-s1241-', the other 5 are left untouched.
+[oer-s1241] Teardown: Remove-OerLiveTestObjects for the prefix with 3 recorded id(s).
+[oer-s1241] Teardown of 'oer-s1241-': users 0, groups 0, access packages 1, access review definitions 1, catalogs 1; administrative units 0 and app registrations 0 are reported only.
+[oer-s1241] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s1241] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s1241] Teardown 3/6: access review definitions, access package resource roles, access packages, catalog resources, catalogs.
+[oer-s1241] Deleted: access review definition oer-s1241-review (204).
+[oer-s1241] Deleted: oer-s1241-pkg: assignment policy 'oer-s1241-policy' (204).
+[oer-s1241] Deleted: access package oer-s1241-pkg (204, 1 attempt(s)).
+[oer-s1241] Deleted: catalog oer-s1241-cat (204, 1 attempt(s)).
+[oer-s1241] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s1241] Teardown 5/6: the prefixed groups.
+[oer-s1241] Teardown 6/6: the prefixed users.
+[oer-s1241] Teardown of 'oer-s1241-': removed 4, residue 0, unreadable 0, already gone 0, skipped 0.
+[oer-s1241] Teardown summary: Removed 4, Residue 0, Unreadable 0, Unread 0, AlreadyGone 0, Skipped 0
+[oer-s1241] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s1241-' is left.
+[oer-s1241] Sweep: 0 object(s) with the prefix, 0 unread kind(s).
+[oer-s1241] Teardown complete: the sweep is 0.
+```
 
 ### R1.T2. The sweep is still 0 a minute later, and raw output is removed
 
-- [ ] **R1.T2** A minute after R1.T1 the prefix sweep is still 0 and no session is left; `raw\s1241` is deleted after the results are copied here. #type/subtask
+- [x] **R1.T2** A minute after R1.T1 the prefix sweep is still 0 and no session is left; `raw\s1241` is deleted after the results are copied here. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -1144,4 +1395,22 @@ Write-OerLiveStep "No module session is left: $($null -eq (& (Get-Module -Name O
 `raw\s1241` (after every Result above is written).
 **Failure looks like:** an object listed -- run R1.T1 again.
 
-Result:
+Result: 2026-11-05 05:57 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The prefix sweep was 0 with 0 unread kinds three times after R1.T1 (about 25 s, 50 s and, the run below, over two minutes later), and no module session is left. raw\s1241 is deleted after the results were copied into the repository checklist.
+
+[oer-s1241] Omnicit.EntraRBAC 1.3.2 loaded from REPO\.claude\worktrees\s12-steg4-r1\output\module\Omnicit.EntraRBAC\1.3.2.
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s1241] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s1241] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s1241-' is left.
+[oer-s1241] Sweep: 0 object(s) with the prefix; unread kinds: 0
+[oer-s1241] No module session is left: True
+```
