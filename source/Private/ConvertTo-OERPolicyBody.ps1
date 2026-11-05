@@ -41,8 +41,9 @@ function ConvertTo-OERPolicyBody {
     -DurationInDays, -DurationInHours or -ExpirationDateTime is given, and one with no
     requestApprovalSettings throws unless -ApprovalStage, -RequireRequestorJustification and
     -RequireApprovalForUpdate are all given (a backstop for the refusal
-    Set-OERAccessPackageAssignmentPolicy makes first); the builder default is never written over a
-    live value. Without -Existing (New) the defaults stay.
+    Set-OERAccessPackageAssignmentPolicy makes first); for those two keys the builder default is never
+    written over a live value. The defaults for requestorSettings and notificationSettings are still
+    written when -Existing lacks them. Without -Existing (New) the defaults stay.
 
     .PARAMETER DisplayName
     The policy display name.

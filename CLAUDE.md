@@ -969,7 +969,9 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Set-OERAccessPackageAssignmentPolicy` refuses a successful read lacking `expiration` or
   `requestApprovalSettings` with `AssignmentPolicyValueUnknown` before `ShouldProcess` and the PUT
   unless the call names every value the missing block holds, `ConvertTo-OERPolicyBody` throwing the
-  same two conditions as a backstop. Known and NOT fixed, outside this cmdlet (unmeasured): an empty
+  same two conditions as a backstop. Known and NOT fixed, outside this rule (unmeasured):
+  `ConvertTo-OERPolicyBody` still writes its defaults for `requestorSettings` (a self-service default
+  that enables self-add) and `notificationSettings` when a successful read lacks them, and an empty
   Azure Resource Manager body makes `Set-OERResourceGroup` send an empty location.
   `Why: docs/development/rationale.md#a-set-cmdlets-own-read-decides-a-written-value`
 - **`Send-OERPimRulePatch` is the single owner of sending a Microsoft Graph PIM rule set, one PATCH
