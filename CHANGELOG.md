@@ -21,7 +21,13 @@ still returned: `RoleAssignments` (`Get-OERResource`, `Get-OERResourceGroup`), `
 an ambiguous role as `AmbiguousName`. A role `-CommonRoles` cannot read is an error, not a warning,
 and `Get-OERInventory` reports that section unread.
 
-`Invoke-OERStructure -Prune` keeps a group's last standing owner when every other owner holds, or is eligible for, ownership through PIM for Groups. It writes the validator's warnings before signing in (a Warning preference of Stop ends the run), reports rows a handler wrote before failing, and plans an invalid derived mail alias as Failed. A review whose package is refused through a rename or an `-Include` writes an error record (`$?` false, `-ErrorAction Stop` ends the run); a plan that would create the package is unchanged from 1.3.1. `New-OERAccessPackage -Catalog` refuses a package of another catalog; `Set-OERAccessPackageAssignmentPolicy` refuses a read lacking expiration, approval, requestor or notification settings unless the call names them.
+`Invoke-OERStructure -Prune` keeps a group's last standing owner when every other owner holds, or
+is eligible for, ownership through PIM for Groups. It writes the validator's warnings before
+signing in, reports rows a handler wrote before failing, and plans an invalid derived mail alias as
+Failed. A reference refused through a rename or an `-Include` writes an error record, so `$?` is
+false and `-ErrorAction Stop` ends the run. `New-OERAccessPackage -Catalog` refuses a package of
+another catalog; `Set-OERAccessPackageAssignmentPolicy` refuses a read lacking a setting it would
+replace with a default.
 
 ## [1.3.1] - 2026-10-23
 
