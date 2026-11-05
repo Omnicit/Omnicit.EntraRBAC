@@ -117,9 +117,11 @@ function Invoke-OERStructure {
     above), existing ones included -- even when the rename was done in an earlier run: include the
     section, or remove previousDisplayName once the new name resolves. Leaving out the accessPackages
     section refuses, besides, every access review that names an access package the document declares
-    by its display name, whether or not that entry renames (see the next paragraph). A refusal
-    because -Include leaves the section out publishes no error record, only the Failed row, so
-    -ErrorAction Stop and $? do not see it: check the rows. Test-OERStructure warns on a reference
+    by its display name, whether or not that entry renames (see the next paragraph). Each such
+    refusal writes a non-terminating error record of its own beside the Failed row: the refused
+    rename's error id, or StructureReferenceUnidentified when the run could not decide the rename or
+    -Include leaves the section out. A caller's -ErrorVariable and $? see it, and under
+    -ErrorAction Stop the call stops at the refusal. Test-OERStructure warns on a reference
     that still names a renamed object by its previous name, and refuses a document in which an access
     review names by display name an access package that two or more accessPackages entries declare,
     renamed or not (the map keys a package by its name alone): name that package by its object id.
@@ -134,10 +136,11 @@ function Invoke-OERStructure {
     a create that returned another catalog's package), when the -WhatIf plan would create the package
     or a declined confirmation skipped its create (the plan then reports the review Failed although a
     real run creates the package first and then the review), and when -Include leaves out the
-    AccessPackages section, whether or not the entry renames. Such a refusal publishes no error record
-    of its own, only the review's Failed row (an entry that stopped on an error carries that error on
-    its own row), so -ErrorAction Stop and $? do not see it: check the rows. A review that names a
-    package the document does not declare, or names it by object id, is resolved as before.
+    AccessPackages section, whether or not the entry renames. Such a refusal writes an error record
+    of its own, StructureReferenceUnidentified, beside the review's Failed row (an entry that stopped
+    on an error carries that error on its own row too), so -ErrorVariable and $? see it and under
+    -ErrorAction Stop the call stops at the refusal. A review that names a package the document does
+    not declare, or names it by object id, is resolved as before.
 
     Per-item continuation: a handler error (thrown exception) is caught, written as a non-
     terminating error, recorded as a Failed StructureResult, and the engine continues to the next
@@ -553,12 +556,13 @@ function Invoke-OERStructure {
     the apply run (for example -Include Groups,Catalogs to skip Azure sections). A section left out
     still matters when its entries declare previousDisplayName: a group created into such a unit, an
     access package in such a catalog, or an access review that names such an access package or such
-    an assignment policy by its new name, is reported Failed with no error record (one that names the
-    access package by object id looks such a policy up by name; see References to a renamed object
-    above). Leaving out AccessPackages matters for every access review besides (BL-147): a review that
-    names, by its display name, an access package the document declares -- renamed or not -- is
-    reported Failed with no error record, so -ErrorAction Stop and $? do not see it, and nothing is
-    read or written for it; a review that names the package by its object id, or names one the
+    an assignment policy by its new name, is reported Failed with an error record of its own (the
+    refused rename's error id, or StructureReferenceUnidentified when the run could not decide it;
+    one that names the access package by object id looks such a policy up by name; see References to
+    a renamed object above). Leaving out AccessPackages matters for every access review besides
+    (BL-147): a review that names, by its display name, an access package the document declares --
+    renamed or not -- is reported Failed with a StructureReferenceUnidentified error record, and
+    nothing is read or written for it; under -ErrorAction Stop the call stops at the refusal. A review that names the package by its object id, or names one the
     document does not declare, is resolved as before (see An access review and the access package the
     same document declares, above).
 

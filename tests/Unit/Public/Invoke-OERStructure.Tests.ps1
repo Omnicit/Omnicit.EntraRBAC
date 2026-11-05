@@ -4292,7 +4292,8 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
             '{ "displayName": "", "previousDisplayName": "POL-Old" }, { "displayName": "POL-A", "previousDisplayName": "" }, null, ' +
             '{ "displayName": "POL-New", "previousDisplayName": "POL-Old" } ] } ], ' +
             '"accessReviews": [ ' + $script:RvReview.Replace('#PKG#', 'AP-1').Replace('#POL#', 'POL-New') + ' ] }')
-        $Rows = @(Invoke-OERStructure -Json $Doc -Include AccessReviews -Confirm:$false -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+        $Errs = $null
+        $Rows = @(Invoke-OERStructure -Json $Doc -Include AccessReviews -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Errs -WarningAction SilentlyContinue)
 
         # Positive proof that the marking ran past the skipped entries: the last entry is registered, so the
         # review that names it is refused -- for its package, which since BL-147 is marked whether or not it
@@ -4301,6 +4302,9 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
         $Rows[0].Section | Should -BeExactly 'accessReviews'
         $Rows[0].Action | Should -BeExactly 'Failed'
         $Rows[0].Detail | Should -BeLike "access package 'AP-1' has no id in this run (the accessPackages section is not selected by -Include), *"
+        # BL-145a: the refusal writes its own error record (it would stop the call under -ErrorAction Stop).
+        @($Errs | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -eq 'StructureReferenceUnidentified,Invoke-OERStructure' }).Count | Should -Be 1
+        ($Rows[0].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
         Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
     }
 }
@@ -6639,6 +6643,100 @@ $RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OER
             @($Run.Errors).Count | Should -Be 3
             # Each handler asked once and wrote nothing.
             @(Get-Content -LiteralPath $Log) | Should -Be @('AUTH', 'TENANTCHECK', 'ASK unit AU-1 ensure=True', 'ASK group g1', 'ASK unit AU-1 ensure=False')
+        }
+
+        # BL-145a: the REAL group and access package handlers refuse a reference to a unit or catalog whose
+        # rename this run could not decide (-Include leaves its section out) and write their own error
+        # record, StructureReferenceUnidentified. Only the sign-in, the tenant check, the host question and
+        # the lookups and cmdlets the handlers call are stubbed, in the module's own scope; each stub logs.
+        # Nothing is written: the refusal comes before any ShouldProcess, so there is no write to converge
+        # (G8 not applicable). The tripwire of the runspace stays installed by Invoke-CuDefaultHostScript.
+        BeforeAll {
+            function script:New-CuRefScript {
+                param([string]$Log, [string]$Json, [string]$Call, [string]$Stubs, [string]$Marker)
+                [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { [System.IO.File]::AppendAllText('#LOG#', "AUTH`n") }
+    Set-Item -Path function:script:Get-OERDocumentTenantMismatch -Value { param($Document, $Target, $RequestedTenantId, [switch]$IncludeARM) }
+    Set-Item -Path function:script:Test-OERHostCanConfirm -Value { $true }
+#STUBS#
+}
+# The stubs must be the ones the module's own calls resolve to, and the handler the real one, before the engine runs.
+$Resolved = & (Get-Module Omnicit.EntraRBAC) {
+    (Get-Command Initialize-OERAuth).ScriptBlock.ToString().Contains('AUTH') -and
+    (Get-Command #MARKERCMD#).ScriptBlock.ToString().Contains('LOOKUP') -and
+    (Get-Command #HANDLER#).ScriptBlock.ToString().Contains('StructureReferenceUnidentified')
+}
+if (-not $Resolved) { throw 'stubs do not resolve in module scope' }
+$Json = '#JSON#'
+#CALL#
+'@).Replace('#STUBS#', $Stubs).Replace('#MARKERCMD#', $Marker.Split('|')[0]).Replace('#HANDLER#', $Marker.Split('|')[1]).Replace('#CALL#', $Call).Replace('#JSON#', $Json.Replace("'", "''")).Replace('#LOG#', $Log.Replace("'", "''")))
+            }
+            $script:CuRefGroupStubs = '    Set-Item -Path function:script:Resolve-OERGroupId -Value { [CmdletBinding()] param($DisplayName) [System.IO.File]::AppendAllText(''#LOG#'', "LOOKUP $DisplayName`n") }' + "`n" +
+                '    Set-Item -Path function:script:New-OERGroup -Value { [System.IO.File]::AppendAllText(''#LOG#'', "WRITE New-OERGroup`n") }'
+            $script:CuRefGroupJson = '{ "version": "1.0", "groups": [ { "displayName": "g1", "administrativeUnit": "AU-New" } ], "administrativeUnits": [ { "displayName": "AU-New", "previousDisplayName": "AU-Old" } ] }'
+            $script:CuRefCatStubs = '    Set-Item -Path function:script:Resolve-OERCatalogId -Value { [CmdletBinding()] param($DisplayName) [System.IO.File]::AppendAllText(''#LOG#'', "LOOKUP $DisplayName`n") }' + "`n" +
+                '    foreach ($Name in @(''Get-OERAccessPackage'', ''New-OERAccessPackage'', ''Set-OERAccessPackage'', ''Get-OERCatalogResource'', ''Invoke-OERGraphRequest'')) {' + "`n" +
+                '        Set-Item -Path "function:script:$Name" -Value ([scriptblock]::Create("[System.IO.File]::AppendAllText(''#LOG#'', ''CALL $Name'' + [char]10)"))' + "`n" +
+                '    }'
+            $script:CuRefCatJson = '{ "version": "1.0", "catalogs": [ { "displayName": "CAT-New", "previousDisplayName": "CAT-Old", "resources": [] } ], "accessPackages": [ { "displayName": "AP-1", "catalog": "CAT-New", "resourceRoles": [] } ] }'
+        }
+
+        It 'publishes the group''s refusal through a rename-map reference to -ErrorVariable and carries on, in a script with no try above it (BL-145a)' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Script = New-CuRefScript -Log $Log -Json $script:CuRefGroupJson -Stubs $script:CuRefGroupStubs.Replace('#LOG#', $Log.Replace("'", "''")) -Marker 'Resolve-OERGroupId|Sync-OERStructureGroup' -Call @'
+$Rows = @(Invoke-OERStructure -Json $Json -Include Groups -ErrorVariable RunErrors)
+$Ok = $?
+$Rows | ForEach-Object { "ROW:$($_.Section):$($_.Item):$($_.Action)" }
+"OK:$Ok"
+$RunErrors | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
+'AFTER'
+'@
+            $Run = Invoke-CuDefaultHostScript -Script $Script
+            $Why = "output:`n$($Run.Output -join "`n")`nerrors:`n$($Run.Errors -join "`n")"
+
+            $Run.Output[-1] | Should -BeExactly 'AFTER' -Because $Why
+            @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -BeExactly @('ROW:groups:g1:Failed') -Because $Why
+            $Run.Output | Should -Contain 'OK:False' -Because $Why
+            @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -BeExactly @('ERRID:StructureReferenceUnidentified,Invoke-OERStructure') -Because $Why
+            # The handler looked the group up, found none, and wrote nothing.
+            @(Get-Content -LiteralPath $Log) | Should -Be @('AUTH', 'LOOKUP g1')
+        }
+
+        It 'stops the call at the group''s refusal under -ErrorAction Stop, so nothing after it in the script runs and nothing is written (BL-145a)' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Script = New-CuRefScript -Log $Log -Json $script:CuRefGroupJson -Stubs $script:CuRefGroupStubs.Replace('#LOG#', $Log.Replace("'", "''")) -Marker 'Resolve-OERGroupId|Sync-OERStructureGroup' -Call @'
+Invoke-OERStructure -Json $Json -Include Groups -ErrorAction Stop | ForEach-Object { "ROW:$($_.Section):$($_.Item):$($_.Action)" }
+'AFTER'
+'@
+            $Thrown = $null
+            $Run = $null
+            try { $Run = Invoke-CuDefaultHostScript -Script $Script } catch { $Thrown = $PSItem }
+
+            # Measured: the handler's WriteError is terminating under Stop; the script ends there, so its
+            # AFTER line and every row are never produced, and the stop carries the refusal's text.
+            $Thrown | Should -Not -BeNullOrEmpty
+            $Thrown.Exception.Message | Should -BeLike "*group not created: administrative unit 'AU-New' was not reconciled in this run*" -Because "thrown: $($Thrown.Exception.Message)"
+            $Run | Should -BeNullOrEmpty
+            @(Get-Content -LiteralPath $Log) | Should -Be @('AUTH', 'LOOKUP g1')
+        }
+
+        It 'stops the call at the access package''s refusal under -ErrorAction Stop, so nothing after it in the script runs and nothing is read or written (BL-145a)' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Script = New-CuRefScript -Log $Log -Json $script:CuRefCatJson -Stubs $script:CuRefCatStubs.Replace('#LOG#', $Log.Replace("'", "''")) -Marker 'Resolve-OERCatalogId|Sync-OERStructureAccessPackage' -Call @'
+Invoke-OERStructure -Json $Json -Include AccessPackages -ErrorAction Stop | ForEach-Object { "ROW:$($_.Section):$($_.Item):$($_.Action)" }
+'AFTER'
+'@
+            $Thrown = $null
+            $Run = $null
+            try { $Run = Invoke-CuDefaultHostScript -Script $Script } catch { $Thrown = $PSItem }
+
+            $Thrown | Should -Not -BeNullOrEmpty
+            $Thrown.Exception.Message | Should -BeLike "*catalog 'CAT-New' was not reconciled in this run*" -Because "thrown: $($Thrown.Exception.Message)"
+            $Run | Should -BeNullOrEmpty
+            # The refusal comes before any lookup or call for the package: only the sign-in was logged.
+            @(Get-Content -LiteralPath $Log) | Should -Be @('AUTH')
         }
     }
 }

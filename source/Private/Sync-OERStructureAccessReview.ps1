@@ -283,8 +283,8 @@ function Sync-OERStructureAccessReview {
         # or its object id, which the package handler registers too once it knows the id).
         # A refused entry means the object this review names cannot be identified, and a name lookup
         # could reach another object that carries the new name: one Failed row and its own error
-        # record (BL-145a), no read, no write, the same under -WhatIf. The package is read first, so a refused package stops the entry
-        # before its policy is read. An id the map holds replaces the name in a COPY of the entry that
+        # record (BL-145a), no read, no write, the same under -WhatIf. The package is read first, so a
+        # refused package stops the entry before its policy is read. An id the map holds replaces the name in a COPY of the entry that
         # only the target check and the create read; $Item and the diff's $DeclaredItem keep the names
         # (the diff compares a GUID only, and the target check has refused any other scope first).
         $TargetItem = $Item
