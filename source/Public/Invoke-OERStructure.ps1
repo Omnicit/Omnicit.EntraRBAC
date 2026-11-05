@@ -393,7 +393,10 @@ function Invoke-OERStructure {
     object above), and any other name is resolved as New-OERAccessReviewDefinition resolves it. A
     review that does not is reported Failed with the error AccessReviewScopeMismatch, and nothing is
     written to it; a review that reviews no access package at all is refused with no access package
-    or assignment policy lookup. A name compared as the map's id is named by that id in the error the
+    or assignment policy lookup. An entry that declares group (a name or an id) instead is a review
+    of all members of that group and is updated only when the live review is a review of exactly that
+    group's transitive members; a review of another group, a package or a guest-only or direct-member
+    scope is refused with the same error. A name compared as the map's id is named by that id in the error the
     check publishes, and the Failed row says which declared name was read as which id. A name that
     matches nothing is reported Failed with AccessPackageNotFound or AssignmentPolicyNotFound, and a
     lookup that fails (an ambiguous name, a 403) with its own error, and nothing is written either.

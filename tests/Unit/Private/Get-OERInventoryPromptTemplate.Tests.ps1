@@ -256,7 +256,7 @@ Describe 'Get-OERInventoryPromptTemplate' {
             # Regression guard: a group/application/directory-role review is excluded regardless
             # of stage count -- a different cause from the multi-stage skip above, so it needs its
             # own bullet rather than being folded into that one.
-            $T | Should -Match 'a group, an application or a directory role'
+            $T | Should -Match 'or a group in another form'
         }
     }
 

@@ -1031,7 +1031,7 @@ at most once, never once per Azure scope. An
 access package's name is counted among the packages of its catalog, an assignment policy's among the
 policies of its own access package only, and the name of an administrative unit, a catalog or an
 access review among the ones read (with `Get-OERInventory -Catalog`, only the catalogs it reads; an
-access review among the access-package reviews captured). Leaving an
+access review among the access-package and group-members reviews captured). Leaving an
 object out changes nothing in the tenant: `-Prune` acts on child collections only, and the apply
 engine never removes an assignment policy.
 
