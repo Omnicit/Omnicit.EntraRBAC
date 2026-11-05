@@ -76,7 +76,7 @@ token each one carried.
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is never switched.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is never switched.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -104,13 +104,22 @@ Write-OerLiveStep "The worktree's build carries A (the account term): $A; B (Arm
 clone; any other `False` -- build the worktree first (`./build.ps1 -Tasks build`), never while the
 gate runs.
 
-Result:
+Result: 2026-11-05 UTC, run by Claude Code as oer-live-cc and oer-live-cc-noperm through the redacting runner (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Run 2026-11-05 UTC, no sign-in. The session's Repo is the step's own worktree, not the main clone; the main clone is on main, never switched; the worktree is on this branch at ac12150 (the checklist commit; its code is feb0a33's, built there and gated green: 13647 passed, 0 failed, coverage 96.43 %) with 0 tracked changes; the build carries A (the account term) and B (ArmAccountMismatch).
+
+[oer-s125] The module loads from a worktree that is not the main clone: True
+[oer-s125] Main clone: branch main
+[oer-s125] Worktree: branch fix/arm-token-account; HEAD ac12150 docs: add the live checklist for one account across Graph and Azure; tracked changes: 0
+[oer-s125] The worktree's build carries A (the account term): True; B (ArmAccountMismatch): True
+```
 
 ## 1. One account for Graph and Azure, across a switch of identity
 
 ### 1.1. oer-live-cc with Azure, then oer-live-cc-noperm without it, then back
 
-- [ ] **1.1** In one process: `Connect-OER -IncludeARM` as `oer-live-cc` and an Azure Resource Manager read; `Connect-OER` as `oer-live-cc-noperm` without `-IncludeARM`; an Azure Resource Manager read then sends nothing with the first account's token; `Connect-OER -IncludeARM` as `oer-live-cc-noperm` and a read whose every request carries its own token; back as `oer-live-cc` with `-IncludeARM`, and a read succeeds with its own token.
+- [x] **1.1** In one process: `Connect-OER -IncludeARM` as `oer-live-cc` and an Azure Resource Manager read; `Connect-OER` as `oer-live-cc-noperm` without `-IncludeARM`; an Azure Resource Manager read then sends nothing with the first account's token; `Connect-OER -IncludeARM` as `oer-live-cc-noperm` and a read whose every request carries its own token; back as `oer-live-cc` with `-IncludeARM`, and a read succeeds with its own token.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -214,7 +223,7 @@ every one with oer-live-cc's token, 0 with noperm's and 0 with neither.
 1.1c: `AppOnlySessionCredentialUnavailable` (an inherited app-only session cannot mint an ARM token:
 the module never keeps the certificate) and `SignInRefused` (the transport refuses the latched
 command), 0 ARM token requests, 0 ARM requests sent -- and above all 0 sent with oer-live-cc's token.
-1.1d: `errors: none`, one Graph and one ARM token request; state `True`, the ARM token the same account
+1.1d: `errors: none`, 0 Graph token requests (the same identity's Graph token is cached; corrected after the run) and one ARM token request; state `True`, the ARM token the same account
 `True`; the read sends every request with noperm's token and 0 with oer-live-cc's (noperm holds no Azure
 role, so its subscription count is reported as it is).
 1.1e: as 1.1a.
@@ -222,13 +231,43 @@ role, so its subscription count is reported as it is).
 a 401 or 403 as oer-live-cc -- STOP; any request sent with oer-live-cc's token in 1.1c or 1.1d, or
 with noperm's in 1.1a or 1.1e -- the defect this branch closes.
 
-Result:
+Result: 2026-11-05 UTC, run by Claude Code as oer-live-cc and oer-live-cc-noperm through the redacting runner (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Run 2026-11-05 UTC in one process (every identity line True; both service principals read and told apart; both fences shadow the module's calls). 1.1a oer-live-cc with -IncludeARM: no error, one Graph and one ARM token request, the ARM token the same account as the Graph token; one ARM request, sent with oer-live-cc's token. 1.1b oer-live-cc-noperm without -IncludeARM, no disconnect in between: no error, the module holds no ARM token. 1.1c an ARM read then: AppOnlySessionCredentialUnavailable and SignInRefused, 0 ARM token requests, 0 ARM requests -- nothing sent with oer-live-cc's token. 1.1d noperm with -IncludeARM: no error and ONE ARM token request but 0 Graph token requests (the Expect said one: Connect-OER without -Force answers the Graph half from the same identity's cached token, so only the ARM token was requested and compared with the session's account -- the ARM-only path of the new check; the Expect is corrected below); the ARM token the same account; the read sent its one request with noperm's token, 0 with oer-live-cc's (0 subscriptions: noperm holds no Azure role). 1.1e back as oer-live-cc with -IncludeARM: as 1.1a. As the file states, the two identities are two applications, so the drop in 1.1b also follows from the client term on main; the account term and ArmAccountMismatch themselves are class B.
+
+[oer-s125] Omnicit.EntraRBAC 1.3.2 loaded from REPO\.claude\worktrees\s12-steg5\output\module\Omnicit.EntraRBAC\1.3.2.
+[oer-s125] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s125] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s125] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s125] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s125] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s125] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s125] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s125] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s125] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s125] The module is the worktree's build: True
+[oer-s125] Both service principals read: True; two different objects: True
+[oer-s125] The module resolves the two fenced commands to the fences: True
+[oer-s125] 1.1a Connect-OER -IncludeARM as oer-live-cc: errors: none; Graph token requests: 1; ARM token requests: 1
+[oer-s125] 1.1a state: the client is the expected app: True; the signed-in object is the expected service principal: True; the Graph token was issued for the test tenant: True; the module holds an ARM token: True; that ARM token is the same account as the Graph token: True
+[oer-s125] 1.1a Get-OERSubscription: errors: none; subscriptions returned: 1; ARM token requests: 0; ARM requests sent: 1; sent with oer-live-cc's token: 1; sent with oer-live-cc-noperm's token: 0; sent with a token of neither: 0
+[oer-s125] 1.1b Connect-OER as oer-live-cc-noperm (no -IncludeARM): errors: none; Graph token requests: 1; ARM token requests: 0
+[oer-s125] 1.1b state: the client is the expected app: True; the signed-in object is the expected service principal: True; the Graph token was issued for the test tenant: True; the module holds an ARM token: False; that ARM token is the same account as the Graph token: no token
+[oer-s125] 1.1c Get-OERSubscription: errors: AppOnlySessionCredentialUnavailable, SignInRefused; subscriptions returned: 0; ARM token requests: 0; ARM requests sent: 0; sent with oer-live-cc's token: 0; sent with oer-live-cc-noperm's token: 0; sent with a token of neither: 0
+[oer-s125] 1.1d Connect-OER -IncludeARM as oer-live-cc-noperm: errors: none; Graph token requests: 0; ARM token requests: 1
+[oer-s125] 1.1d state: the client is the expected app: True; the signed-in object is the expected service principal: True; the Graph token was issued for the test tenant: True; the module holds an ARM token: True; that ARM token is the same account as the Graph token: True
+[oer-s125] 1.1d Get-OERSubscription: errors: none; subscriptions returned: 0; ARM token requests: 0; ARM requests sent: 1; sent with oer-live-cc's token: 0; sent with oer-live-cc-noperm's token: 1; sent with a token of neither: 0
+[oer-s125] 1.1e Connect-OER -IncludeARM as oer-live-cc: errors: none; Graph token requests: 1; ARM token requests: 1
+[oer-s125] 1.1e state: the client is the expected app: True; the signed-in object is the expected service principal: True; the Graph token was issued for the test tenant: True; the module holds an ARM token: True; that ARM token is the same account as the Graph token: True
+[oer-s125] 1.1e Get-OERSubscription: errors: none; subscriptions returned: 1; ARM token requests: 0; ARM requests sent: 1; sent with oer-live-cc's token: 1; sent with oer-live-cc-noperm's token: 0; sent with a token of neither: 0
+```
 
 ## Teardown
 
 ### T.1. Nothing carries the prefix, no session is left, the main clone was never switched
 
-- [ ] **T.1** No object carries `oer-s125-`, the module holds no session, and the raw folder for the step is deleted after the results are copied.
+- [x] **T.1** No object carries `oer-s125-`, the module holds no session, and the raw folder for the step is deleted after the results are copied.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -251,4 +290,23 @@ a session after Disconnect-OerLive: False`; the main clone on `main`.
 **Failure looks like:** a count above 0 -- this file creates nothing, so an object with the prefix is
 not this run's: STOP.
 
-Result:
+Result: 2026-11-05 UTC, run by Claude Code as oer-live-cc and oer-live-cc-noperm through the redacting runner (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Run 2026-11-05 UTC as oer-live-cc. No user, group, administrative unit, catalog, access package, access review definition or app registration carries oer-s125- (0), every collection was read (0 unread), the module holds no session after Disconnect-OerLive, and the main clone is on main. The runner kept its raw capture in its own scratch folder and deleted it after redaction; no raw\s125 folder was created.
+
+[oer-s125] Omnicit.EntraRBAC 1.3.2 loaded from REPO\.claude\worktrees\s12-steg5\output\module\Omnicit.EntraRBAC\1.3.2.
+[oer-s125] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s125] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s125] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s125] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s125] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s125] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s125] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s125] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s125] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s125] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s125-' is left.
+[oer-s125] T.1 objects carrying the prefix: 0; collections that could not be read: 0
+[oer-s125] T.1 the module holds a session after Disconnect-OerLive: False
+[oer-s125] T.1 main clone: branch main
+```
