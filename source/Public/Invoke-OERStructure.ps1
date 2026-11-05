@@ -6,7 +6,10 @@ function Invoke-OERStructure {
     .DESCRIPTION
     The top-level apply engine for Phase 5 JSON Orchestration. Reads a structure document from
     -Path or -Json, validates it offline with Test-OERStructureSchema (aborting before any write
-    if invalid), authenticates, then iterates every declared section in dependency order --
+    if invalid; the validator's warnings are written, one Write-Warning each, before anything is
+    confirmed, signed in to, read or written -- except the omitted-key ones, which the engine's own
+    -Prune warning covers), authenticates, then iterates every declared
+    section in dependency order --
     Groups, AdministrativeUnits, Catalogs, AccessPackages, AccessReviews,
     DirectoryRoleManagementPolicies, DirectoryRoleAssignments, RoleAssignments, RoleManagementPolicies
     -- and calls the matching Sync-OERStructure* handler for each item.
@@ -115,9 +118,11 @@ function Invoke-OERStructure {
     above), existing ones included -- even when the rename was done in an earlier run: include the
     section, or remove previousDisplayName once the new name resolves. Leaving out the accessPackages
     section refuses, besides, every access review that names an access package the document declares
-    by its display name, whether or not that entry renames (see the next paragraph). A refusal
-    because -Include leaves the section out publishes no error record, only the Failed row, so
-    -ErrorAction Stop and $? do not see it: check the rows. Test-OERStructure warns on a reference
+    by its display name, whether or not that entry renames (see the next paragraph). Each such
+    refusal writes a non-terminating error record of its own beside the Failed row: the refused
+    rename's error id, or StructureReferenceUnidentified when the run could not decide the rename or
+    -Include leaves the section out. A caller's -ErrorVariable and $? see it, and under
+    -ErrorAction Stop the call stops at the refusal. Test-OERStructure warns on a reference
     that still names a renamed object by its previous name, and refuses a document in which an access
     review names by display name an access package that two or more accessPackages entries declare,
     renamed or not (the map keys a package by its name alone): name that package by its object id.
@@ -129,17 +134,22 @@ function Invoke-OERStructure {
     tenant, where a package of that name in another catalog would be found. Until the entry has that
     id, the review is refused, Failed with nothing created, read or written for it, under -WhatIf too:
     when the entry stops first (its catalog refused, a failed or ambiguous lookup, a failed create, or
-    a create that returned another catalog's package), when the -WhatIf plan would create the package
+    a create refused with AccessPackageInAnotherCatalog), when the -WhatIf plan would create the package
     or a declined confirmation skipped its create (the plan then reports the review Failed although a
     real run creates the package first and then the review), and when -Include leaves out the
-    AccessPackages section, whether or not the entry renames. Such a refusal publishes no error record
-    of its own, only the review's Failed row (an entry that stopped on an error carries that error on
-    its own row), so -ErrorAction Stop and $? do not see it: check the rows. A review that names a
+    AccessPackages section, whether or not the entry renames. Such a refusal writes an error record
+    of its own, StructureReferenceUnidentified, beside the review's Failed row (an entry that stopped
+    on an error carries that error on its own row too), so -ErrorVariable and $? see it and under
+    -ErrorAction Stop the call stops at the refusal -- except the package the run would create: the
+    -WhatIf plan, or a declined confirmation of its create, reports the review Failed with NO error
+    record, since the only reason is that the package does not exist yet and the real run creates it
+    first (the plan has $? true and does not stop under -ErrorAction Stop). A review that names a
     package the document does not declare, or names it by object id, is resolved as before.
 
     Per-item continuation: a handler error (thrown exception) is caught, written as a non-
     terminating error, recorded as a Failed StructureResult, and the engine continues to the next
-    item. A single bad item never aborts the run.
+    item. A single bad item never aborts the run. Rows a handler wrote before the error are kept, in
+    order, ahead of the handler-error row.
 
     Failed live reads: a live read that decides what is written is never taken as "nothing there". A
     roleManagementPolicies entry whose live policy read fails, or returns no policy, is reported Failed
@@ -462,9 +472,10 @@ function Invoke-OERStructure {
     reported Extra without -Prune, with a hint that -Prune leaves it in place, and Skipped, with a
     Detail starting "prune withheld:", with -Prune, with no warning and no ShouldProcess prompt. A
     principal that is a standing member and also eligible for member access is covered too. An owner
-    withheld this way still counts as an owner in the group for the rules that the last owner and the
-    last user owner are not removed (below), so -Prune can remove the last standing owner while an
-    activated or time-bound owner remains, and when that activation ends the group has no owner.
+    withheld this way does not count as a standing owner for the rules that the last owner and the
+    last user owner are not removed (below), so -Prune never removes the last standing owner while
+    only an activated, time-bound or eligible owner remains: it is reported Skipped, with a Detail
+    starting "prune withheld:" that names the last standing owner.
     While the PIM for Groups assignments or the eligibility of a group that already existed cannot be
     read, no member or owner is removed from that group: each undeclared one is reported Skipped, with
     a Detail starting "prune withheld:", with or without -Prune, and one warning for the group names
@@ -478,8 +489,8 @@ function Invoke-OERStructure {
     the last remaining owner of any other type (the module's own rule): no warning, no ShouldProcess
     prompt and no request. A -WhatIf plan counts each removal it reports as done, so it holds back the
     same owner a run does; a removal declined at the confirmation prompt, or one that fails, leaves
-    its owner standing. A service principal owner, and an owner withheld for PIM for Groups, count as
-    owners still standing, and a withheld user owner as a user owner. An owner the same run adds
+    its owner standing. A service principal owner counts as an owner still standing, and a withheld
+    user owner as a user owner; an owner withheld for PIM for Groups does not. An owner the same run adds
     counts as one standing too, and as a user owner when the document names it by user principal name
     (an owner named by object id names no type, so it counts for the last-owner rule only), so a
     document that replaces a user owner with one named that way completes in one run. A -WhatIf plan
@@ -542,21 +553,23 @@ function Invoke-OERStructure {
     administrative unit whose conversion to dynamic is not applied in this run (-WhatIf, a declined
     prompt, a failed update, or no membershipRule available), still has its omitted members pruned,
     and this warning does not list them. Test-OERStructure reports the same omissions as Warning
-    findings.
+    findings; Invoke-OERStructure writes this -Prune warning for them in place of the validator's, so
+    those findings are not written twice.
 
     .PARAMETER Include
     Restricts the sections the engine dispatches. Defaults to all nine sections. Pass a subset to limit
     the apply run (for example -Include Groups,Catalogs to skip Azure sections). A section left out
     still matters when its entries declare previousDisplayName: a group created into such a unit, an
     access package in such a catalog, or an access review that names such an access package or such
-    an assignment policy by its new name, is reported Failed with no error record (one that names the
-    access package by object id looks such a policy up by name; see References to a renamed object
-    above). Leaving out AccessPackages matters for every access review besides (BL-147): a review that
-    names, by its display name, an access package the document declares -- renamed or not -- is
-    reported Failed with no error record, so -ErrorAction Stop and $? do not see it, and nothing is
-    read or written for it; a review that names the package by its object id, or names one the
-    document does not declare, is resolved as before (see An access review and the access package the
-    same document declares, above).
+    an assignment policy by its new name, is reported Failed with an error record of its own (the
+    refused rename's error id, or StructureReferenceUnidentified when the run could not decide it;
+    one that names the access package by object id looks such a policy up by name; see References to
+    a renamed object above). Leaving out AccessPackages matters for every access review besides
+    (BL-147): a review that names, by its display name, an access package the document declares --
+    renamed or not -- is reported Failed with a StructureReferenceUnidentified error record, and
+    nothing is read or written for it; under -ErrorAction Stop the call stops at the refusal. A review
+    that names the package by its object id, or names one the document does not declare, is resolved as
+    before (see An access review and the access package the same document declares, above).
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth. Without it
@@ -645,6 +658,21 @@ function Invoke-OERStructure {
             Write-CmdletError -Message ([System.Exception]::new("Structure document failed validation: $Msgs")) `
                 -ErrorId 'StructureValidationFailed' -Category InvalidData -TargetObject $DocumentTarget -Cmdlet $PSCmdlet
             return
+        }
+        # The validator's warnings stand here, in its order, before the confirmation check, the sign-in
+        # and every read or write, so a -WhatIf plan, a -Confirm prompt and a -WarningAction Stop
+        # caller all meet them first (BL-143a). A document with errors is refused above without them.
+        # Rule 13 (an omitted key that -Prune still reconciles) is the one exception: the engine writes
+        # its own -Prune warning for exactly those keys, filtered by -Prune and -Include, so the
+        # validator's finding would only duplicate it. Such a finding is told by its path AND its text.
+        $OmittedFindingStart = @{}
+        foreach ($OmittedCollection in @(Get-OEROmittedPruneCollection -Document $Document)) {
+            $OmittedFindingStart["$($OmittedCollection.Path).$($OmittedCollection.Collection)"] = "'$($OmittedCollection.Collection)' is omitted at "
+        }
+        foreach ($Finding in @($Validation.Errors | Where-Object { $_.Severity -eq 'Warning' })) {
+            if ($OmittedFindingStart.ContainsKey([string]$Finding.Path) -and
+                ([string]$Finding.Message).StartsWith($OmittedFindingStart[[string]$Finding.Path], [System.StringComparison]::Ordinal)) { continue }
+            Write-Warning "Invoke-OERStructure: structure document warning at $($Finding.Path): $($Finding.Message)"
         }
 
         # -- 2a. Refuse a run this host cannot confirm (BL-53) -----------------------------
@@ -890,15 +918,22 @@ function Invoke-OERStructure {
         if ($AuNamesNeeded.Count -gt 0) {
             foreach ($AuItem in @($Document.administrativeUnits)) {
                 if (@($AuNamesNeeded) -notcontains [string]$AuItem.displayName) { continue }
+                $HandlerRows = $null
                 try {
-                    $Records = Sync-OERStructureAdministrativeUnit -Item $AuItem -Caller $PSCmdlet -EnsureOnly -TenantAlias $TenantAlias -RenameMap $RenameMap
-                    foreach ($Rec in @($Records)) { $Results.Add($Rec) }
+                    # BL-159a: -OutVariable keeps the rows the handler wrote before a throw (an assignment
+                    # would lose them); a pipeline into the list would lose the handler's -WarningVariable.
+                    $null = Sync-OERStructureAdministrativeUnit -Item $AuItem -Caller $PSCmdlet -EnsureOnly -TenantAlias $TenantAlias -RenameMap $RenameMap -OutVariable HandlerRows
+                    if ($null -ne $HandlerRows) { foreach ($Rec in $HandlerRows) { $Results.Add($Rec) } }
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
+                    if ($null -ne $HandlerRows) { foreach ($Rec in $HandlerRows) { $Results.Add($Rec) } }
                     $PSCmdlet.WriteError($PSItem)
                     # BL-53 (R-4): a handler stopped at a confirmation prompt this host could not show.
                     $FailureText = if (Test-OERConfirmPromptFailure -Record $PSItem) { $ConfirmPromptFailureText -f $PSItem.Exception.InnerException.Message } else { $PSItem.Exception.Message }
-                    $Results.Add((ConvertTo-OERStructureResult -Section 'administrativeUnits' -Item ([string]$AuItem.displayName) -Action 'Failed' -Detail "pre-pass handler error: $FailureText" -ErrorRecord $PSItem))
+                    # BL-161d: -Item is mandatory and non-empty; the main loop's last-resort label.
+                    $AuLabel = [string]$AuItem.displayName
+                    if ([string]::IsNullOrWhiteSpace($AuLabel)) { $AuLabel = '(item)' }
+                    $Results.Add((ConvertTo-OERStructureResult -Section 'administrativeUnits' -Item $AuLabel -Action 'Failed' -Detail "pre-pass handler error: $FailureText" -ErrorRecord $PSItem))
                 }
             }
         }
@@ -1034,11 +1069,14 @@ function Invoke-OERStructure {
                 if ($Section.IncludeName -in @('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews')) {
                     $ExtraParams.RenameMap = $RenameMap
                 }
+                $HandlerRows = $null
                 try {
-                    $Records = & $Section.Handler -Item $It -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias @ExtraParams
-                    foreach ($Rec in @($Records)) { $Results.Add($Rec) }
+                    # BL-159a: as in the pre-pass.
+                    $null = & $Section.Handler -Item $It -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias @ExtraParams -OutVariable HandlerRows
+                    if ($null -ne $HandlerRows) { foreach ($Rec in $HandlerRows) { $Results.Add($Rec) } }
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
+                    if ($null -ne $HandlerRows) { foreach ($Rec in $HandlerRows) { $Results.Add($Rec) } }
                     $PSCmdlet.WriteError($PSItem)
                     # Name the item. This used to be the literal '(item)', which lost the identity of
                     # every entry whose handler threw -- exactly the row an operator has to act on,

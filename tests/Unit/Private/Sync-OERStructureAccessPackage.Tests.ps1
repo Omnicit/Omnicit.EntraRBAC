@@ -5135,6 +5135,7 @@ Describe 'Sync-OERStructureAccessPackage -- every Microsoft Graph v1.0 requestor
                     isRequestorJustificationRequired = $false
                     stages                           = @()
                 }
+                requestorSettings       = @{ enableTargetsToSelfAddAccess = $false }
                 notificationSettings    = @{ isAssignmentNotificationDisabled = $false }
             }
         }
@@ -6337,9 +6338,14 @@ Describe 'Sync-OERStructureAccessPackage -previousDisplayName and the rename map
                 $r[0].Item | Should -BeExactly 'AP'
                 $r[0].Action | Should -BeExactly 'Failed'
                 $r[0].Detail | Should -BeExactly "catalog 'CAT-New' was not reconciled in this run: its rename from 'CAT-Old' was refused ($ErrorId), so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it"
-                # R9: the catalog's own row carries the refusal; this row publishes no record.
-                $r[0].Error | Should -BeNullOrEmpty
-                @($Err).Count | Should -Be 0
+                # BL-145a: the refusal writes its own error record, the rename's ErrorId, and the row carries it.
+                @($Err).Count | Should -Be 1
+                ($Err[0].FullyQualifiedErrorId -split ',')[0] | Should -BeExactly $ErrorId
+                $Err[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
+                $Err[0].TargetObject | Should -BeExactly 'AP'
+                $Err[0].Exception.Message | Should -BeExactly $r[0].Detail
+                $r[0].Error | Should -Not -BeNullOrEmpty
+                $r[0].Error.FullyQualifiedErrorId | Should -BeExactly $Err[0].FullyQualifiedErrorId
                 Should -Invoke Get-OERAccessPackage -Times 0
                 Should -Invoke Resolve-OERAccessPackageId -Times 0
                 Should -Invoke New-OERAccessPackage -Times 0
@@ -6379,8 +6385,11 @@ Describe 'Sync-OERStructureAccessPackage -previousDisplayName and the rename map
                 $r[0].Action | Should -BeExactly 'Failed'
                 $r[0].Detail | Should -BeExactly ("catalog 'CAT-New' was not reconciled in this run: its rename from 'CAT-Old' was refused (its previous name could not be looked up), " +
                     'so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it')
-                $r[0].Error | Should -BeNullOrEmpty
-                @($Err).Count | Should -Be 0
+                # BL-145a: no ErrorId in the entry, so the record carries StructureReferenceUnidentified.
+                @($Err).Count | Should -Be 1
+                ($Err[0].FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
+                $r[0].Error | Should -Not -BeNullOrEmpty
+                ($r[0].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
                 Should -Invoke Get-OERAccessPackage -Times 0
                 Should -Invoke Resolve-OERAccessPackageId -Times 0
                 Should -Invoke New-OERAccessPackage -Times 0
@@ -6534,6 +6543,7 @@ Describe 'Sync-OERStructureAccessPackage -- assignment policies renamed through 
                     isRequestorJustificationRequired = $false
                     stages                           = @()
                 }
+                requestorSettings       = @{ enableTargetsToSelfAddAccess = $false }
                 notificationSettings    = @{ isAssignmentNotificationDisabled = $false }
             }
         }
@@ -6690,6 +6700,9 @@ Describe 'Sync-OERStructureAccessPackage -- assignment policies renamed through 
                     gracePeriodBeforeAccessRemoval             = 'P7D'
                 }
                 expiration                   = @{ type = 'noExpiration' }
+                requestApprovalSettings      = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }
+                requestorSettings            = @{ enableTargetsToSelfAddAccess = $false }
+                notificationSettings         = @{ isAssignmentNotificationDisabled = $false }
                 customExtensionStageSettings = @(@{
                         id              = 'aaaaaaaa-0000-0000-0000-000000000072'
                         stage           = 'assignmentRequestCreated'
@@ -6739,6 +6752,35 @@ Describe 'Sync-OERStructureAccessPackage -- assignment policies renamed through 
             $Body.automaticRequestSettings.gracePeriodBeforeAccessRemoval | Should -BeExactly 'P7D'
         }
 
+        It 'refuses an update through the real Set when the live policy read has no expiration: one Failed row carrying AssignmentPolicyValueUnknown, the record written once, no PUT (BL-161a)' {
+            $Raw = @{
+                id                      = 'pol-noexp'
+                displayName             = 'POL-Old'
+                description             = 'live description'
+                accessPackage           = @{ id = 'ap-1' }
+                allowedTargetScope      = 'allMemberUsers'
+                requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }
+                requestorSettings       = @{ enableTargetsToSelfAddAccess = $false }
+                notificationSettings    = @{ isAssignmentNotificationDisabled = $false }
+            }
+            # A rename names no expiration, so the full update would write a default in its place.
+            $Item = [PSCustomObject]@{
+                displayName        = 'AP'
+                catalog            = 'CAT'
+                assignmentPolicies = @([PSCustomObject]@{ displayName = 'POL-New'; previousDisplayName = 'POL-Old' })
+            }
+
+            $Run = Invoke-PolSync -Item $Item -Live @($Raw)
+
+            @($Run.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 1
+            $Failed = @($Run.Rows | Where-Object { $_.Action -eq 'Failed' })[0]
+            $Failed.Detail | Should -BeLike '*without expiration*'
+            $Run.Sent.Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PUT' }
+            # The engine re-publishes the record under its caller; the cmdlet wrote its own exactly once.
+            $Own = @($Run.Published | Where-Object { [string]$_.FullyQualifiedErrorId -ceq 'AssignmentPolicyValueUnknown,Set-OERAccessPackageAssignmentPolicy' })
+            $Own.Count | Should -Be 1
+        }
         It 'reports Unchanged and sends nothing when the policy already carries the new name (the second run)' {
             $Item = [PSCustomObject]@{
                 displayName        = 'AP'
@@ -7687,7 +7729,9 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
 
             @($Run.Rows).Count | Should -Be 1
             $Run.Rows[0].Detail | Should -BeLike "catalog 'CAT' was not reconciled in this run*"
-            $Run.Published.Count | Should -Be 0
+            # BL-145a: the one record is the catalog refusal's own; the mark block publishes none.
+            $Run.Published.Count | Should -Be 1
+            $Run.Published[0].Exception.Message | Should -BeLike "catalog 'CAT' was not reconciled in this run*"
             # The map's keys are lower case, as Resolve-OERStructureRename builds them. The package, which
             # renames nothing here, is marked as an entry that has not found its package (BL-147).
             @($Map.Keys | Sort-Object) | Should -BeExactly @(@('catalogs|cat', 'accesspackages|ap') + @($Marked | ForEach-Object { $_.ToLowerInvariant() }) | Sort-Object)
@@ -7826,6 +7870,75 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
             $Target.PreviousName | Should -BeNullOrEmpty
             $Target.Reason | Should -BeExactly $script:PkgPlanned
             Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
+        }
+
+        It 'marks a package the plan would create CreatePending, with the same Reason (A12)' {
+            Mock -ModuleName $script:moduleName New-OERAccessPackage { throw 'unexpected access package create' }
+            $Map = New-PolMap
+
+            $Run = Invoke-PolSync -Item ([PSCustomObject]@{ displayName = 'AP'; catalog = 'CAT' }) -Packages @() -UseWhatIf $true -RenameMap $Map
+
+            $Run.Rows[0].Detail | Should -BeExactly 'would create access package AP'
+            $Target = Get-PkgTarget -RenameMap $Map
+            $Target.Refused | Should -BeTrue
+            $Target.CreatePending | Should -BeTrue
+            $Target.Reason | Should -BeExactly $script:PkgPlanned
+            Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
+        }
+
+        It 'marks a package whose create a declined confirmation skipped CreatePending, with the same Reason, in a script with no try (A12)' {
+            # The create is confirmed through a real host that answers No (OERConfirmHost). The stubs live in
+            # the module's own scope (function:script:) and each is checked before the call (the script aborts otherwise), so a
+            # real Initialize-OERAuth or New-OERAccessPackage can never be the command that runs.
+            $Scenario = [scriptblock]::Create(@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Get-OERAccessPackage -Value { param($Catalog, $Id) @() }
+    Set-Item -Path function:script:Resolve-OERCatalogId -Value { 'cat-1' }
+    Set-Item -Path function:script:New-OERAccessPackage -Value { throw 'unexpected access package create' }
+    function script:Invoke-SyncApAsk {
+        [CmdletBinding(SupportsShouldProcess)]
+        param([PSCustomObject]$Item, $RenameMap)
+        Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -RenameMap $RenameMap
+    }
+}
+foreach ($StubName in 'Initialize-OERAuth', 'Get-OERAccessPackage', 'Resolve-OERCatalogId', 'New-OERAccessPackage') {
+    $StubLength = & $Module { param($N) (Get-Command $N -CommandType Function).ScriptBlock.ToString().Length } $StubName
+    if ($StubLength -ge 300) { throw 'STUBS NOT IN PLACE' }
+    "STUB:${StubName}:$StubLength"
+}
+$Item = '{ "displayName": "AP", "catalog": "CAT" }' | ConvertFrom-Json
+$Map = & $Module { [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase) }
+& $Module { param($Item, $Map) Invoke-SyncApAsk -Item $Item -RenameMap $Map -Confirm } $Item $Map | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+$Entry = $Map['accesspackages|ap']
+"ENTRY:$($Entry.Refused):$($Entry.CreatePending):$($Entry.Reason)"
+'END'
+'@)
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&No' -Script $Scenario
+
+            $StubLines = @($Run.Output | Where-Object { $_ -like 'STUB:*' })
+            $StubLines.Count | Should -Be 4
+            foreach ($Line in $StubLines) { [int]($Line -split ':')[-1] | Should -BeLessThan 300 }
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Prompts).Count | Should -BeGreaterOrEqual 1
+            @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @('ROW:Skipped:would create access package AP')
+            @($Run.Output | Where-Object { $_ -like 'ENTRY:*' }) | Should -Be @("ENTRY:True:True:$($script:PkgPlanned)")
+            @($Run.Errors).Count | Should -Be 0
+        }
+
+        It 'does not mark an entry that stopped first CreatePending (A12)' {
+            Mock -ModuleName $script:moduleName New-OERAccessPackage { throw 'create refused' }
+            Mock -ModuleName $script:moduleName Resolve-OERCatalogId { 'cat-1' }
+            $Map = New-PolMap
+
+            $null = Invoke-PolSync -Item ([PSCustomObject]@{ displayName = 'AP'; catalog = 'CAT' }) -Packages @() -RenameMap $Map
+
+            $Target = Get-PkgTarget -RenameMap $Map
+            $Target.Refused | Should -BeTrue
+            $Target.Reason | Should -BeExactly $script:PkgUnidentified
+            $Target.CreatePending | Should -BeFalse
         }
 
         It 'leaves the package refused when the entry stops before it has found or created it (<Case>)' -ForEach @(

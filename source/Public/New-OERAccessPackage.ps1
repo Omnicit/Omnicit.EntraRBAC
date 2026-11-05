@@ -8,7 +8,11 @@ function New-OERAccessPackage {
     -DisplayName, or composed from -Name (and optional -Prefix) through Resolve-OERName using -Template.
     -Catalog selects the parent catalog (id or display name, resolved via Resolve-OERCatalogId).
     -Description sets the description; -Hidden sets isHidden. The command is idempotent: when a package
-    with the resolved display name already exists it is returned and nothing is created. Output is a tagged
+    with the resolved display name already exists in the SAME catalog it is returned and nothing is
+    created. The name is looked up in the whole tenant, but access package names are unique only within
+    a catalog: a package of that name in another catalog (or one whose catalog cannot be read) is never
+    returned -- the command writes AccessPackageInAnotherCatalog, returns nothing and creates nothing,
+    under -WhatIf too. Output is a tagged
     Omnicit.EntraRBAC.AccessPackage object. Supports -WhatIf and -Confirm.
 
     Both output paths return a populated CatalogId. The v1.0 accessPackage entity has no catalogId
@@ -48,7 +52,7 @@ function New-OERAccessPackage {
 
     .EXAMPLE
     New-OERAccessPackage -DisplayName 'AP-Sales' -Catalog 'CAT-IT-Core' -Description 'Sales tooling'
-    Creates the access package, or returns it if it already exists.
+    Creates the access package, or returns it if it already exists in that catalog.
 
     .EXAMPLE
     New-OERAccessPackage -Name 'Sales' -Catalog 'CAT-IT-Core'
@@ -153,6 +157,26 @@ function New-OERAccessPackage {
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
                 $PSCmdlet.WriteError($PSItem)
+                return
+            }
+            # The name was looked up in the whole tenant, and access package names are unique only
+            # within a catalog, so the package found may belong to another catalog. Returning it would
+            # hand the caller a package of the wrong catalog; refuse instead (nothing is created).
+            $ExistingCatalogId = [string]$Existing.catalog.id
+            if (-not $ExistingCatalogId) {
+                $Reason = "Access package '$ResolvedName' exists ($ExistingId), but its catalog could not be read, so it cannot be told whether it is in catalog '$Catalog' ($CatalogId); it was not returned and nothing was created."
+            } elseif (-not [string]::Equals($ExistingCatalogId, [string]$CatalogId, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $Reason = "Access package '$ResolvedName' exists in another catalog ($ExistingCatalogId), not in catalog '$Catalog' ($CatalogId), so it was not returned and nothing was created. Access package names are unique only within a catalog, and this command looks the name up in the whole tenant; use a name no other access package carries."
+            } else {
+                $Reason = $null
+            }
+            if ($Reason) {
+                Write-CmdletError `
+                    -Message ([System.Exception]::new($Reason)) `
+                    -ErrorId 'AccessPackageInAnotherCatalog' `
+                    -Category ResourceExists `
+                    -TargetObject $ResolvedName `
+                    -Cmdlet $PSCmdlet
                 return
             }
             Write-Verbose "[New-OERAccessPackage] Package '$ResolvedName' already exists ($ExistingId); returning existing."

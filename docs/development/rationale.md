@@ -3648,6 +3648,42 @@ lacks, and `Set-OERResourceGroup` sends an empty location when Azure Resource Ma
 empty body. Cost if R-14 is wrong: a direct caller whose live read fails is refused instead of warned,
 which is the safe direction.
 
+**The assignment policy residual, closed for four keys (Sprint 12 step 4, BL-161a; round 1, A12).** The
+first of those two shapes was refused in step 4 for `expiration` and `requestApprovalSettings`, and
+is refused since round 1 for `requestorSettings` and `notificationSettings` too (see the end of this
+subsection). `Set-OERAccessPackageAssignmentPolicy` reads the policy it updates and sends the whole
+policy back; when that read succeeds but has no `expiration` (absent or null), or no
+`requestApprovalSettings`, there is nothing to carry forward and `ConvertTo-OERPolicyBody` used to
+write its builder default in its place (`noExpiration`, approval off, no stages, both flags false).
+The cmdlet now refuses with `AssignmentPolicyValueUnknown` (category InvalidData, target the policy
+id), after the read and before `ConvertTo-OERPolicyBody` and `ShouldProcess`, so it reads the same
+under `-WhatIf` and no PUT is sent. The expiration is unknown unless `-DurationInDays`,
+`-DurationInHours` or `-ExpirationDateTime` is bound; the approval block is unknown unless the call
+names every value it holds: the stages and approval for add (`-ApprovalStage`, an empty list for no
+stages), `-RequireRequestorJustification` and `-RequireApprovalForUpdate`. One record names
+both keys when both are missing. `ConvertTo-OERPolicyBody` throws the same two conditions when called
+with `-Existing`, as a backstop for a caller that skips the cmdlet's check; without `-Existing`
+(`New-OERAccessPackageAssignmentPolicy`) the defaults stay. The text of the CLAUDE.md bullet below is
+the frozen quote of Sprint 11 step 11; the bullet itself now carries this sentence in place of the
+"Known and NOT fixed" half for these four keys.
+
+*Sprint 12 step 4 round 1 (A12).* Step 4 left `requestorSettings` and `notificationSettings` open: when
+a successful read lacked one, `ConvertTo-OERPolicyBody` wrote its default, and the `requestorSettings`
+default is a self-service one that turns self-add on, so an update could widen access. Both are now
+refused with the same `AssignmentPolicyValueUnknown`, unless the call names the value: a bound
+`-RequestorSettings` (the builder states every key it models, so the block is known even when the read
+lacked it) or a bound `-DisableAssignmentNotifications`, either value. One record names every missing
+key ("a, b and c"), with each remedy readable on its own and joined by a semicolon when a new key is
+among them; the messages for expiration and requestApprovalSettings alone are unchanged. The builder
+throws the same conditions with `-Existing` as a backstop; without `-Existing` the defaults stay. The
+refusal is the safe direction: the case is latent, since Graph v1.0 answers with both keys. Cost if
+wrong: a caller whose read lacks a key must name the value, where it used to get the default.
+
+Known limit: the apply engine calls `Set-OERAccessPackageAssignmentPolicy` only after its own
+`ShouldProcess`, so under `-WhatIf` a policy whose read lacks one of the four keys is planned as
+"would update assignmentPolicy ...", while the real run reports it `Failed` with
+`AssignmentPolicyValueUnknown`. Latent: Microsoft Graph v1.0 answers with the keys.
+
 #### CLAUDE.md text for a-set-cmdlets-own-read-decides-a-written-value
 
 What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
@@ -10521,7 +10557,9 @@ the catalog, is refused instead of landing wherever a name lookup leads. A group
 is unaffected, and the error of a refused rename stays on the unit's or catalog's own row. The
 reference rows publish no error record of their own, and a rename left undecided by `-Include` has no
 row and no error record at all, so that refusal reaches the operator as a Failed row only:
-`-ErrorAction Stop` and `$?` do not see it. If wrong: a reference to a new name that another object
+`-ErrorAction Stop` and `$?` do not see it. (Sprint 12 step 4, BL-145a, changed that: each reference now
+writes its own error record, see [#review-package-in-the-same-run](#review-package-in-the-same-run).)
+If wrong: a reference to a new name that another object
 already carries would be created into, or read from, that other object, with nothing to say so. The
 cost, accepted: while `-Include` leaves the section out and the entry still declares
 `previousDisplayName`, every reference to its new name is refused -- for a catalog every package
@@ -11727,12 +11765,12 @@ place, without it; no warning and no `ShouldProcess` call. When the hold could n
 undeclared candidate in that collection is `Skipped` with "prune withheld:" with or without `-Prune`
 (`-PimUnread`), like an unresolved declared entry, and the item's one warning names the cause. The
 order of the withholds is the unresolved entry, the service principal, the synchronized group, the
-PIM hold and, for owners, the last-owner guards, and a withheld owner counts as an owner still
-standing (a withheld user owner as a user owner too, for the user-owner floor Sprint 11 step 11
-added, [#last-user-owner](#last-user-owner)). So `-Prune` can remove the last STANDING owner while an
-activated or time-bound owner remains, and when that activation ends the group has no owner: the
-guard follows Graph's current state (recorded, not changed). If the hold rule is wrong: a removal the
-operator wanted is withheld.
+PIM hold and, for owners, the last-owner guards. A service principal or synchronized-group owner
+counts as an owner still standing (a withheld user owner as a user owner too, for the user-owner
+floor Sprint 11 step 11 added, [#last-user-owner](#last-user-owner)); an owner the PIM hold withholds
+no longer does: Sprint 12 step 4 (BL-140b) takes it out of both counts, so `-Prune` no longer removes
+the last STANDING owner while only an activated or time-bound owner remains (it was recorded, not
+changed, before). If the hold rule is wrong: a removal the operator wanted is withheld.
 
 **Rule 8 (the bundle).** The bundle `README.md` has a section, "Members and owners left out as PIM for
 Groups access", that lists by group name, never by principal, how many members and owners were left
@@ -12302,9 +12340,16 @@ does not validate it, and Microsoft Graph refuses a bad one at the create; the d
 what catches it for a document (Rule 3). If wrong: moved before the lookup, the check would refuse an
 existing group; moved after the unit lookup, it would spend requests on a call that cannot succeed.
 A document group that declares no `mailNickname` and whose name derives to an invalid alias is not
-caught offline: `Test-OERStructure` and the `-WhatIf` plan accept it, since the plan reports
-`would create group` without calling `New-OERGroup`, and the real run reports the entry `Failed` with
-`DerivedMailNicknameInvalid`. That is a known limit, not a decision.
+caught offline: `Test-OERStructure` accepts it. The plan no longer promises the create (BL-143b, Sprint 12
+step 4): `Get-OERDerivedMailNicknameProblem` is the single owner of the condition and the text (the
+derivation through `Get-OERDerivedMailNickname`, 1 to 64 characters), `New-OERGroup` publishes its text,
+and `Sync-OERStructureGroup` asks it in the create branch, after the administrative unit refusal and
+before `ShouldProcess`, when the entry declares no non-empty `mailNickname`. A refused entry is one
+`Failed` row (Detail `group not created: <message>`) with the non-terminating `DerivedMailNicknameInvalid`
+(category `InvalidArgument`, target the name), under `-WhatIf` and in a real run alike, with no
+`New-OERGroup` call and no member, owner, eligibility or pimPolicy row. A declared non-empty
+`mailNickname` is sent as given and not checked there. If wrong: checked after `ShouldProcess`, the plan
+shows `would create group` for a create the run refuses. The validator still cannot see it offline.
 
 **Rule 3 (the validator refuses what Graph was measured to refuse, and a little more; R8).** A declared `mailNickname` that is a string is
 an `Error` at its path when it is empty, when it is longer than 64 characters (the message names the
@@ -12333,7 +12378,9 @@ declare. A `previousDisplayName` that is an object id, and a template-based grou
 
 ### CLAUDE.md text for mail-nickname
 
-What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself (a frozen
+older quote; Sprint 12 step 4 added `Get-OERDerivedMailNicknameProblem` as the owner of the refusal's
+condition and text, see Rule 2, and CLAUDE.md names it):
 
 - **`Get-OERDerivedMailNickname` is the single owner of the mail alias `New-OERGroup` derives from a
   display name** (every character outside A-Z, a-z, 0-9, '.', '_' and '-' removed). `New-OERGroup`
@@ -12470,7 +12517,8 @@ before any Graph call for the entry, for its `accessPackage` (by name; a GUID is
 key) and its `assignmentPolicy` (by name within the package as the review names it, by the package's
 name or its object id). An entry that is refused -- a rename that conflicted or found nothing, or a
 mark -- gives one `Failed` row naming the refused rename and its reason, no error record of its own
-(the rename's own row carries one when it was refused, as step 4's R9 rules), and nothing is
+(the rename's own row carries one when it was refused, as step 4's R9 rules; BL-145a of Sprint 12 step 4
+later gave the reference one of its own), and nothing is
 created, read or written for the review, under `-WhatIf` too; the package is read first, so a refused
 package stops the review before its policy is read. An entry with an id replaces the name in a copy
 of the review entry that only the target check and the create read, so the check compares that id as
@@ -12859,12 +12907,15 @@ older than this step, for every catalog named uniquely; the catalog id written h
 package whose catalog's name is shared (refused as ambiguous before), a pair only a tenant from
 before Microsoft Graph's refusal can hold (measurement C). The handler now compares the
 catalog of the package `New-OERAccessPackage` returns with the declared catalog, as ids without
-regard to letter case -- an id as written, a name looked up once with `Resolve-OERCatalogId` -- and
+regard to letter case (Sprint 12 step 4, BL-148a: `New-OERAccessPackage` itself now refuses to return
+a package of another catalog, or one whose catalog the read did not carry, with the new ErrorId
+`AccessPackageInAnotherCatalog`, nothing created, `-WhatIf` included; its own comparison is the same
+ordinal ignore-case one on the `$expand=catalog` read) -- an id as written, a name looked up once with `Resolve-OERCatalogId` -- and
 when they differ reports the entry as one `Failed` row and returns, with nothing written to that
 package or for the entry; a lookup that fails is scrubbed first and reported `Failed` with its error,
 nothing further written. A package with no catalog in the answer is one the create sent into the
-declared catalog whose confirmation read did not answer, and is reported `Created` as before. No
-ErrorId was added. Residual: none. (d) `Get-OERInventory` reads the listing of every group once per
+declared catalog whose confirmation read did not answer, and is reported `Created` as before. The handler added no
+ErrorId (Sprint 12 step 4 added one to the cmdlet, above). Residual: none. (d) `Get-OERInventory` reads the listing of every group once per
 invocation that meets a group principal whose name was read, and `Export-OERInventory` makes one
 invocation per Azure scope, whose role assignment read returns inherited assignments too: one group
 assignment at a management group costs ceil(G/999) requests at every scope beneath it (about 9,300
@@ -13564,8 +13615,8 @@ What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule
 Sprint 11 step 6 (BL-147, ruling R-8) put every `accessPackages` entry's package into the run's rename
 map, so an access review reaches the package its own document's entry found or created, and never one
 of that name in another catalog. This anchor records the problem, the rulings, the residual R-8 accepts
-and the known limits. `Resolve-OERStructureRename` stays the single owner of the map's keys. No ErrorId
-and no public parameter was added. The rules were derived from the code and proven with mocked tests;
+and the known limits. `Resolve-OERStructureRename` stays the single owner of the map's keys. No public
+parameter was added, and the one ErrorId added since (`StructureReferenceUnidentified`) is recorded below. The rules were derived from the code and proven with mocked tests;
 nothing here was measured live.
 
 **The problem (BL-147).** The map held only a package the document renames
@@ -13601,8 +13652,8 @@ neither looks the name up, and the policy is resolved within the package by that
 the target check says "accessPackage '...' was read as '...', the access package its accessPackages
 entry resolved in this run". A refusal is one `Failed` row, "access package '...' has no id in this run
 (reason), so the access package this access review reviews cannot be identified; nothing was created,
-read or written for it", with no error record and nothing read: it does not speak of a rename. Cost if
-wrong: a review the operator expected to apply is refused, and never written to the wrong package.
+read or written for it", with an error record of its own (BL-145a, below) and nothing read: it does not
+speak of a rename. Cost if wrong: a review the operator expected to apply is refused, and never written to the wrong package.
 
 **Rule 15, widened.** Every entry now registers its package under the name key, so two entries of one
 display name in two catalogs would replace each other's registration whether or not one renames. The
@@ -13616,12 +13667,14 @@ the review's package by its object id.
 registered refused ("the accessPackages entry would create it, and the create was not carried out:
 -WhatIf, or a declined confirmation"), and the plan reports the review `Failed` while a real run creates
 the package first and then the review. A declined confirmation of the package's create gives the same
-refusal. Accepted: the plan errs towards refusing, never towards a review on another package.
+refusal. Accepted: the plan errs towards refusing, never towards a review on another package. Since
+Sprint 12 step 4 round 1 (A12) that refusal writes no error record (see the last paragraph of BL-145a
+below): the row alone stands.
 
 **The `-Include` refusal.** With `-Include` leaving out AccessPackages, nothing is read for the
 package entries, so the run cannot know which package a declared name means: every review that names a
-declared package by display name is refused, renamed or not, with no error record, so `-ErrorAction
-Stop` and `$?` do not see it. A review that names the package by object id, or a package the document
+declared package by display name is refused, renamed or not, with an error record of its own
+(`StructureReferenceUnidentified`, BL-145a below). A review that names the package by object id, or a package the document
 does not declare, is resolved as before. Cost: a run that selects `AccessReviews` without
 `AccessPackages` refuses reviews it applied before; include `AccessPackages`, or name the package by
 its object id.
@@ -13637,6 +13690,42 @@ R-5), but it names a review's access package by its object id whenever another p
 carries that name ([#access-review-target](#access-review-target), since Sprint 11 step 5), and Rule
 15 never reads a reference that is an object id. The refusal names the entries and says to name the
 package by its object id.
+
+### A refusal through the rename map writes its own error record (BL-145a)
+
+Sprint 12 step 4. Four handler sites refuse an entry because a rename-map entry (`Get-OERStructureRenameTarget`)
+is `Refused`: `Sync-OERStructureGroup` (the administrative unit of a group it creates),
+`Sync-OERStructureAccessPackage` (its catalog) and `Sync-OERStructureAccessReview` (its access package and
+its assignment policy). Each wrote only a `Failed` row, so a rename refused because `-Include` leaves its
+section out, or because the run could not decide it, reached neither `-ErrorAction Stop`, a caller's
+`-ErrorVariable` nor `$?`: a script that checked those saw a clean run. Each site now builds an
+`ErrorRecord` first, writes it with `$Caller.WriteError`, and the `Failed` row keeps its Detail
+byte-identical and carries the record. The message is the row's Detail, the category `ObjectNotFound`,
+the target the entry's own name. The id is the entry's `ErrorId` when the rename was refused
+(`AdministrativeUnitRenameConflict`, `CatalogRenameNotFound` and the like, so the unit's own row and the
+reference report one id), and otherwise the new `StructureReferenceUnidentified`: the run could not decide
+the rename (R12, `-Include` leaving the section out included), or an `accessPackages` entry has no id yet
+(`-Unidentified`). The id is new only for this refusal (A9); no published id changed. Nothing else changed:
+no read, no write, the same `return`. Measured in a runspace with no try above the call: without a
+preference, `-ErrorVariable` holds the record and `$?` is false and the script goes on; under
+`-ErrorAction Stop` the handler's `WriteError` is terminating and the call stops with the refusal's text,
+so nothing after it in the script runs. Nothing is written, so no convergence test applies.
+
+**Sprint 12 step 4 round 1 (A12): the plan's review of a package the run would create writes no error
+record.** Step 4's Ruling 8 made the `-WhatIf` plan write the record for a review of a package its own
+`accessPackages` entry would create, so a plan of a new document had `$?` false and stopped under
+`-ErrorAction Stop`, although the real run creates the package first and succeeds. That broke the rule
+that the plan says what the run does (BL-113). The only reason for that refusal is that the package does
+not exist yet in this run, so it is no error. `Resolve-OERStructureRename -Unidentified -CreatePending`
+marks that one entry (the would-create branch of `Sync-OERStructureAccessPackage`: `-WhatIf`, and a
+declined confirmation of the create, which share one Reason and one registration call) and the map entry
+carries `CreatePending`; `Sync-OERStructureAccessReview` then emits the `Failed` row exactly as before
+step 4 (same Detail, no `-ErrorRecord`, no `WriteError`) and returns. Every other refusal keeps its record:
+a refused or undecided rename, the `-Include` mark, and the entry's first mark when it stopped first. The
+assignment policy, administrative unit and catalog refusals are unchanged: the map holds those only for a
+rename, never for an object the run would create. Cost if wrong: a caller that relied on the plan's
+`$?` or `-ErrorAction Stop` to learn that a review names a package not yet created now sees a clean plan
+with a `Failed` review row; the row, its Detail and the real run are unchanged.
 
 ### CLAUDE.md text for review-package-in-the-same-run
 
@@ -14243,6 +14332,23 @@ that failed, or one declined at the confirmation prompt, counts nowhere.
 Each owner is counted once by its id, so a reference declared twice cannot count twice. Cost if wrong:
 an owner added by object id beside the last user owner leaves that removal to a later run.
 
+### Sprint 12 step 4: only standing owners count (BL-140b)
+
+The floors counted every owner the read found, an owner PIM for Groups holds or makes eligible
+included, so `-Prune` could remove the last standing owner while only such an owner remained; when
+the activation ended the group had no owner. Now `Get-PimHoldReason -AccessType owner` (the rule is
+`Get-OERGroupPimHeldAccess`'s) decides, once per item, at the first undeclared owner that reaches the
+floors: every owner of `$CurrentOwners` it names is taken out of the any-type count, and a user
+owner out of the user count too. That covers an activation, a time-bound assignment, an
+unrecognized assignment and an eligibility alike, also an owner that is a direct owner and eligible
+at once (the safer direction). A service principal, a synchronized group's or an unresolved
+owner still counts as standing; an owner this run added still counts. No extra PIM read: the state
+was read before the first undeclared owner got this far. A floor that refuses with at least one
+owner excluded gives a `prune withheld:` Detail naming the last standing owner and the number of
+excluded owners; with none excluded the two older Details are unchanged. The plan and the run give
+the same rows. Cost if wrong: a removal the operator wanted waits until the other owner is made
+standing or the operator removes it with `Remove-OERGroupMember`.
+
 ## unknown-allowed-target-scope
 
 Sprint 11 step 11 (BL-49, decision A24, ruling R-13).
@@ -14455,6 +14561,27 @@ access review or another reference that names it reads the GUID as an object id.
 the directory role guard's "eligible for" wording, is under
 [#directory-role-assignments](#directory-role-assignments).
 
+### The engine writes the validator's warnings (Sprint 12 step 4, BL-143a)
+
+`Invoke-OERStructure` validated the document and wrote only its errors; a Warning finding never
+reached the operator, so the two warnings of this anchor (BL-54, BL-24) and every other were
+invisible to an apply. It now
+writes one `Write-Warning` per Warning finding, in the validator's order, with the text
+`Invoke-OERStructure: structure document warning at <Path>: <Message>`, directly after a valid
+validation and BEFORE the `ConfirmationUnavailable` check, the sign-in and every read or write. The
+placement is the warning-before-confirmation rule: `-WhatIf` shows them, a `-Confirm` prompt is
+answered with them on screen, and a `-WarningAction Stop` caller stops before anything is signed in
+to. A document with an error is refused as before and writes none of its warnings. The test file
+holds the order, the stop before `Initialize-OERAuth` and every handler, and both no-warning cases.
+
+One exclusion (final review, ruled): the omitted-key finding (Rule 13 of the validator, an omitted
+collection key that `-Prune` still reconciles) is NOT written. The engine already writes its own
+`-Prune` warning for exactly those keys, filtered by `-Prune` and `-Include` (without `-Prune` nothing
+is removed), so the validator's finding would be a second, unfiltered copy of it. The engine tells such
+a finding by both its path (`<Path>.<Collection>` of a record `Get-OEROmittedPruneCollection` returns)
+and the start of its text (`'<Collection>' is omitted at `), so another rule's warning at the same path
+is still written. `Test-OERStructure` still reports the omitted keys as Warning findings.
+
 ## run-right-after-a-write
 
 Sprint 11 step 11 (BL-121, second point): documented, no code.
@@ -14470,6 +14597,31 @@ more -- but its row reads `Updated` again instead of `Unchanged`, so two runs in
 prove convergence. A run after the reads settle reports `Unchanged`, and the live checklists wait for
 that before a convergence check. The help of `Invoke-OERStructure` says so. Cost: none in the tenant; a
 row that overstates the second run.
+
+## handler-rows-before-an-error
+
+Sprint 12 step 4 (BL-159a, BL-161d).
+
+Measured on PowerShell 7.6.7 with a plain function that writes two rows and then throws: an assignment
+`$Records = & F` never completes, so the rows the function wrote are lost and `$Records` keeps its
+previous value; `& F | ForEach-Object { $List.Add($_) }` leaves both rows in the list and the catch sees
+the same error record (the `FullyQualifiedErrorId` unchanged, also for `ThrowTerminatingError`);
+`-OutVariable` also keeps them. The engine collected a handler's rows with the assignment, so a handler
+that wrote a row (a `Created` or `Updated`) and then threw lost that row and the report showed only
+`handler error:`, hiding a write that had happened.
+
+The engine now calls the handler as `$null = & Handler ... -OutVariable HandlerRows` and adds
+`$HandlerRows` to the results in the `try` and again first in the `catch`, before the
+`handler error:` row, so the report holds the rows written before the error, in order. The pipeline
+form (`| ForEach-Object { $Results.Add($PSItem) }`) was tried first and rejected: a handler run under
+it no longer reached the caller's `-WarningVariable` (two `-Prune` tests failed on the warning they
+count). `$HandlerRows` is reset to `$null` before each call, so a binding failure never reads the
+previous entry's rows, and a null `$HandlerRows` (the handler failed before the variable was populated, a binding failure) adds no row. All nine handlers are advanced functions, so `-OutVariable` binds.
+
+BL-161d: the pre-pass catch passed `[string]$AuItem.displayName` as the mandatory, non-empty `-Item`
+of `ConvertTo-OERStructureResult`; a unit entry without a name replaced the original error with a
+binding error. It uses the main loop's last-resort label `(item)` for a null, empty or white space name.
+The validator refuses such an entry, so this is a defence, proven with the validator mocked Valid.
 
 ## claude-md-preamble
 

@@ -2447,6 +2447,127 @@ $Item = '{ "displayName": "grp-luo", "owners": [ "person2@example.com" ] }' | Co
         }
     }
 
+    Context 'the alias the creation would derive is checked in the plan and the run (BL-143b)' {
+        # Get-OERDerivedMailNicknameProblem owns the condition and the text; New-OERGroup publishes the
+        # same text. The plan must not promise a create the run refuses.
+        It 'refuses under -WhatIf a name whose alias derives empty: one Failed row, the error in -ErrorVariable, no create row' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = $DisplayName } }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{ displayName = '!!!'; members = @('person1@example.com') }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -WhatIf -ErrorVariable Ev -ErrorAction SilentlyContinue)
+                $Msg = Get-OERDerivedMailNicknameProblem -DisplayName '!!!'
+                $Msg | Should -Not -BeNullOrEmpty
+                $r.Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "group not created: $Msg"
+                @($r | Where-Object { $_.Detail -like 'would create group*' }).Count | Should -Be 0
+                $Own = @($Ev | Where-Object { $_.FullyQualifiedErrorId -like 'DerivedMailNicknameInvalid*' })
+                $Own.Count | Should -Be 1
+                $Own[0].Exception.Message | Should -BeExactly $Msg
+                $Own[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidArgument)
+                $Own[0].TargetObject | Should -BeExactly '!!!'
+                Should -Invoke New-OERGroup -Times 0
+            }
+        }
+
+        It 'refuses the same in a real run: an identical row, no New-OERGroup call' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = $DisplayName } }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{ displayName = '!!!'; members = @('person1@example.com') }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -Confirm:$false -ErrorVariable Ev -ErrorAction SilentlyContinue)
+                $Msg = Get-OERDerivedMailNicknameProblem -DisplayName '!!!'
+                $r.Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "group not created: $Msg"
+                @($Ev | Where-Object { $_.FullyQualifiedErrorId -like 'DerivedMailNicknameInvalid*' }).Count | Should -Be 1
+                Should -Invoke New-OERGroup -Times 0
+            }
+        }
+
+        It 'refuses a name whose alias derives 65 characters' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = $DisplayName } }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $r = @(Invoke-SyncGroupViaCaller -Item ([PSCustomObject]@{ displayName = ('g' * 65) }) -WhatIf -ErrorAction SilentlyContinue)
+                $r.Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeLike 'group not created: *is 65 characters long*'
+                Should -Invoke New-OERGroup -Times 0
+            }
+        }
+
+        It 'plans the create when a mailNickname is declared, whatever the display name derives' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = $DisplayName } }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $r = @(Invoke-SyncGroupViaCaller -Item ([PSCustomObject]@{ displayName = '!!!'; mailNickname = 'declared.alias' }) -WhatIf -ErrorAction SilentlyContinue)
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq 'would create group !!!' }).Count | Should -Be 1
+                @($r | Where-Object Action -eq 'Failed').Count | Should -Be 0
+                Should -Invoke New-OERGroup -Times 0
+            }
+        }
+
+        It 'converges: a valid new group is Created in run 1 and only Unchanged in run 2' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Get-OERGroupPimPolicy { $null }
+                $Item = [PSCustomObject]@{ displayName = 'role_sec_x' }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x' } }
+                Mock Get-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; Members = @(); PimEligibility = @() } }
+                $Run1 = @(Invoke-SyncGroupViaCaller -Item $Item -Confirm:$false)
+                @($Run1 | Where-Object Action -eq 'Created').Count | Should -BeGreaterThan 0
+                Should -Invoke New-OERGroup -Times 1 -Exactly
+                Mock Resolve-OERGroupId { 'g-1' }
+                $Run2 = @(Invoke-SyncGroupViaCaller -Item $Item -Confirm:$false)
+                $Run2.Count | Should -BeGreaterThan 0
+                @($Run2 | Where-Object { $_.Action -ne 'Unchanged' }).Count | Should -Be 0
+                Should -Invoke New-OERGroup -Times 1 -Exactly
+            }
+        }
+    }
+
     Context 'dynamic at group creation (site 175)' {
         It 'creates the group with -Dynamic when declared true' {
             InModuleScope $script:moduleName {
@@ -2872,7 +2993,7 @@ $Item = '{ "displayName": "grp-luo", "owners": [ "person2@example.com" ] }' | Co
             }
         }
 
-        It 'reports one Failed row naming the unit and its refused rename, with no error record, and creates nothing, when the rename was refused with <ErrorId> (<Mode>)' -ForEach @(
+        It 'reports one Failed row naming the unit and its refused rename, with its own error record, and creates nothing, when the rename was refused with <ErrorId> (<Mode>)' -ForEach @(
             @{ UnitId = 'au-new-id'; PrevId = 'au-old-id'; ErrorId = 'AdministrativeUnitRenameConflict'; Mode = 'run' }
             @{ UnitId = 'au-new-id'; PrevId = 'au-old-id'; ErrorId = 'AdministrativeUnitRenameConflict'; Mode = 'WhatIf' }
             @{ UnitId = ''; PrevId = ''; ErrorId = 'AdministrativeUnitRenameNotFound'; Mode = 'run' }
@@ -2903,9 +3024,14 @@ $Item = '{ "displayName": "grp-luo", "owners": [ "person2@example.com" ] }' | Co
                 $r[0].Action | Should -BeExactly 'Failed'
                 $r[0].Detail | Should -BeExactly ("group not created: administrative unit 'AU-New' was not reconciled in this run -- its rename from 'AU-Old' " +
                     "was refused ($ErrorId), so the unit the group is to be created into cannot be identified")
-                # R9: the unit's own row carries the refusal; the reference publishes none of its own.
-                $r[0].Error | Should -BeNullOrEmpty
-                @($Errs).Count | Should -Be 0
+                # BL-145a: the refusal writes its own error record, the rename's ErrorId, and the row carries it.
+                @($Errs).Count | Should -Be 1
+                ($Errs[0].FullyQualifiedErrorId -split ',')[0] | Should -BeExactly $ErrorId
+                $Errs[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
+                $Errs[0].TargetObject | Should -BeExactly 'grp-new'
+                $Errs[0].Exception.Message | Should -BeExactly $r[0].Detail
+                $r[0].Error | Should -Not -BeNullOrEmpty
+                $r[0].Error.FullyQualifiedErrorId | Should -BeExactly $Errs[0].FullyQualifiedErrorId
                 Should -Invoke New-OERGroup -Times 0
                 $Created.Count | Should -Be 0
             }
@@ -2936,8 +3062,11 @@ $Item = '{ "displayName": "grp-luo", "owners": [ "person2@example.com" ] }' | Co
                 $r[0].Action | Should -BeExactly 'Failed'
                 $r[0].Detail | Should -BeExactly ("group not created: administrative unit 'AU-New' was not reconciled in this run -- its rename from 'AU-Old' was refused " +
                     '(the administrativeUnits section is not selected by -Include, so its rename is not reconciled in this run), so the unit the group is to be created into cannot be identified')
-                $r[0].Error | Should -BeNullOrEmpty
-                @($Errs).Count | Should -Be 0
+                # BL-145a: no ErrorId in the entry, so the record carries StructureReferenceUnidentified.
+                @($Errs).Count | Should -Be 1
+                ($Errs[0].FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
+                $r[0].Error | Should -Not -BeNullOrEmpty
+                ($r[0].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
                 Should -Invoke New-OERGroup -Times 0
                 $Created.Count | Should -Be 0
             }
@@ -9790,7 +9919,7 @@ Invoke-OERStructure -Json $Json -Prune -Confirm:$false | ForEach-Object { "ROW:$
             Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 1 -Exactly -Scope It -ParameterFilter { $PrincipalId -eq 'id-o-new@example.com' -and $AccessType -eq 'owner' }
         }
 
-        It 'withholds a held owner before the last-owner guard, and counts it as an owner still standing' {
+        It 'withholds a held owner before the last-owner guard' {
             # (1) The held owner is the only owner: the PIM row, not the last-owner row.
             $script:PimLiveOwners = @(New-PimLive 'o-act')
             $script:PimHold = New-PimHold -Held @{ 'o-act|owner' = $script:PimActOwner }
@@ -9806,15 +9935,125 @@ Invoke-OERStructure -Json $Json -Prune -Confirm:$false | ForEach-Object { "ROW:$
                 Get-PimRowCount -Rows $Out.Rows -Action 'Extra' -Detail (Get-PimExtraHeld -Candidate "undeclared owner 'o-act'" -Reason $script:PimActOwner) | Should -Be 1
             }
 
-            # (2) The held owner first, then a plain one: the held owner stays and is counted, so the
-            # plain one is not the last remaining owner and is removed.
-            $script:PimLiveOwners = @(New-PimLive 'o-act', 'o-plain')
-            $Run = Invoke-PimHoldRun -Items @($Item) -Prune
+            # (2) The held owner first, then a plain one: since BL-140b the held owner does not count as
+            # standing, so the plain one IS the last standing owner and is kept (see the Context below
+            # for the texts); with a second standing owner declared it is removed.
+            $script:PimLiveOwners = @(New-PimLive 'o-act', 'o-plain', 'o-keep')
+            $Kept = [PSCustomObject]@{ displayName = 'grp-pim'; members = $null; owners = @('o-keep') }
+            $Run = Invoke-PimHoldRun -Items @($Kept) -Prune
             @($Run.Errors).Count | Should -Be 0
             Get-PimRowCount -Rows $Run.Rows -Action 'Skipped' -Detail (Get-PimPruneHeld -Candidate "undeclared owner 'o-act'" -Reason $script:PimActOwner) | Should -Be 1
             Get-PimRowCount -Rows $Run.Rows -Action 'Removed' -Detail "removed undeclared owner 'o-plain'" | Should -Be 1
             Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -Scope It
             Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -Scope It -ParameterFilter { $PrincipalId -eq 'o-plain' -and $AccessType -eq 'owner' }
+        }
+
+        Context 'only standing owners count for the last-owner floors (Sprint 12 step 4, BL-140b)' {
+            BeforeAll {
+                function Get-StandingUserText ([string]$Id, [int]$N) {
+                    "prune withheld: undeclared owner '$Id' is the last standing user owner of group 'grp-pim': the other $N user owner(s) hold their ownership through PIM for Groups or are eligible for it there (an activation, a time-bound assignment or an eligibility), so they do not count as standing, and removing it could leave the group without a user owner; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember -AccessType owner if it is meant to go."
+                }
+                function Get-StandingAnyText ([string]$Id, [int]$N) {
+                    "prune withheld: undeclared owner '$Id' is the last standing owner of group 'grp-pim': the other $N owner(s) hold their ownership through PIM for Groups or are eligible for it there (an activation, a time-bound assignment or an eligibility), so they do not count as standing, and removing it could leave the group without an owner; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember -AccessType owner if it is meant to go."
+                }
+            }
+            BeforeEach {
+                Mock -ModuleName $script:moduleName Add-OERGroupMember { }
+                Mock -ModuleName $script:moduleName Remove-OERGroupMember { }
+                $script:Undeclared = [PSCustomObject]@{ displayName = 'grp-pim'; members = $null; owners = @() }
+            }
+
+            It 'refuses the last standing user owner while the other user owner holds ownership through an activation, in a run and a plan' {
+                $script:PimLiveOwners = @(New-PimLive 'o-a', 'o-b')
+                $script:PimHold = New-PimHold -Held @{ 'o-b|owner' = $script:PimActOwner }
+                Mock -ModuleName $script:moduleName Read-OERGroupPimHold { $script:PimHold }
+                foreach ($AsPlan in $true, $false) {
+                    $Out = Invoke-PimHoldRun -Items @($script:Undeclared) -Prune -Plan:$AsPlan
+                    @($Out.Errors).Count | Should -Be 0
+                    Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-StandingUserText 'o-a' 1) | Should -Be 1
+                    Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-PimPruneHeld -Candidate "undeclared owner 'o-b'" -Reason $script:PimActOwner) | Should -Be 1
+                    @($Out.Rows).Count | Should -Be 3
+                    @($Out.Warnings).Count | Should -Be 0
+                }
+                Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Scope It
+            }
+
+            It 'does not count a DECLARED owner that PIM holds as standing: the undeclared standing user owner is refused, in a run and a plan' {
+                $script:PimLiveOwners = @(New-PimLive 'o-a', 'id-b@example.com')
+                $script:PimHold = New-PimHold -Held @{ 'id-b@example.com|owner' = $script:PimActOwner }
+                Mock -ModuleName $script:moduleName Read-OERGroupPimHold { $script:PimHold }
+                $Item = [PSCustomObject]@{ displayName = 'grp-pim'; members = $null; owners = @('b@example.com') }
+                foreach ($AsPlan in $true, $false) {
+                    $Out = Invoke-PimHoldRun -Items @($Item) -Prune -Plan:$AsPlan
+                    @($Out.Errors).Count | Should -Be 0
+                    Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-StandingUserText 'o-a' 1) | Should -Be 1
+                    Get-PimRowCount -Rows $Out.Rows -Action 'Unchanged' -Detail "owner 'b@example.com' already present" | Should -Be 1
+                }
+                Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Scope It
+            }
+            It 'converges: the same withheld prune applied twice gives the same rows and no write' {
+                $script:PimLiveOwners = @(New-PimLive 'o-a', 'o-b')
+                $script:PimHold = New-PimHold -Held @{ 'o-b|owner' = $script:PimActOwner }
+                Mock -ModuleName $script:moduleName Read-OERGroupPimHold { $script:PimHold }
+                $First = Invoke-PimHoldRun -Items @($script:Undeclared) -Prune
+                $Second = Invoke-PimHoldRun -Items @($script:Undeclared) -Prune
+                (Get-PimRowText $Second.Rows) | Should -Be (Get-PimRowText $First.Rows)
+                Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Scope It
+            }
+
+            It 'refuses the user floor with a service principal owner standing beside a held user owner' {
+                $script:PimLiveOwners = @(
+                    [PSCustomObject]@{ id = 'o-a'; ObjectType = 'user' }
+                    [PSCustomObject]@{ id = 'o-b'; ObjectType = 'user' }
+                    [PSCustomObject]@{ id = 'sp-1'; ObjectType = 'servicePrincipal' })
+                $script:PimHold = New-PimHold -Held @{ 'o-b|owner' = $script:PimActOwner }
+                Mock -ModuleName $script:moduleName Read-OERGroupPimHold { $script:PimHold }
+                $Out = Invoke-PimHoldRun -Items @($script:Undeclared) -Prune
+                Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-StandingUserText 'o-a' 1) | Should -Be 1
+                Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Scope It
+            }
+
+            It 'refuses a non-user last standing owner with the any-type text' {
+                $script:PimLiveOwners = @(
+                    [PSCustomObject]@{ id = 'o-x'; ObjectType = 'group' }
+                    [PSCustomObject]@{ id = 'o-b'; ObjectType = 'user' })
+                $script:PimHold = New-PimHold -Held @{ 'o-b|owner' = $script:PimActOwner }
+                Mock -ModuleName $script:moduleName Read-OERGroupPimHold { $script:PimHold }
+                foreach ($AsPlan in $true, $false) {
+                    $Out = Invoke-PimHoldRun -Items @($script:Undeclared) -Prune -Plan:$AsPlan
+                    Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-StandingAnyText 'o-x' 1) | Should -Be 1
+                }
+                Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Scope It
+            }
+
+            It 'removes an undeclared standing owner exactly once when another standing owner is declared' {
+                $script:PimLiveOwners = @(New-PimLive 'o-a', 'o-b', 'id-o-c')
+                $script:PimHold = New-PimHold -Held @{ 'o-b|owner' = $script:PimActOwner }
+                Mock -ModuleName $script:moduleName Read-OERGroupPimHold { $script:PimHold }
+                $Item = [PSCustomObject]@{ displayName = 'grp-pim'; members = $null; owners = @('o-c') }
+                $Out = Invoke-PimHoldRun -Items @($Item) -Prune
+                Get-PimRowCount -Rows $Out.Rows -Action 'Removed' -Detail "removed undeclared owner 'o-a'" | Should -Be 1
+                Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -Scope It -ParameterFilter { $PrincipalId -eq 'o-a' -and $AccessType -eq 'owner' }
+            }
+
+            It 'does not count an owner that is a direct owner and also eligible for owner access as standing' {
+                $script:PimLiveOwners = @(New-PimLive 'o-a', 'o-b')
+                $script:PimHold = New-PimHold -Held @{ 'o-b|owner' = $script:PimEligOwner }
+                Mock -ModuleName $script:moduleName Read-OERGroupPimHold { $script:PimHold }
+                $Out = Invoke-PimHoldRun -Items @($script:Undeclared) -Prune
+                Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-StandingUserText 'o-a' 1) | Should -Be 1
+                Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Scope It
+            }
+
+            It 'keeps the older last-owner Detail when no owner is held by PIM' {
+                $script:PimLiveOwners = @(New-PimLive 'o-a')
+                $script:PimHold = New-PimHold -Held @{}
+                Mock -ModuleName $script:moduleName Read-OERGroupPimHold { $script:PimHold }
+                $Out = Invoke-PimHoldRun -Items @($script:Undeclared) -Prune
+                @($Out.Rows | Where-Object { $_.Detail -like "did not remove owner 'o-a': it is the last remaining user owner*" }).Count | Should -Be 1
+                @($Out.Rows | Where-Object { $_.Detail -like 'prune withheld:*' }).Count | Should -Be 0
+            }
         }
 
         It 'matches the hold per access type: a hold for member access never protects an owner, and the other way round' {

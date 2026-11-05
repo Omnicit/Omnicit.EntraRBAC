@@ -35,7 +35,7 @@ Describe 'New-OERAccessPackage' {
 
     It 'is idempotent: returns the existing package without a POST' {
         Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId { 'ap-exists' }
-        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'ap-exists'; displayName = 'AP-Sales' } } -ParameterFilter { $Method -eq 'GET' -or -not $Method }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'ap-exists'; displayName = 'AP-Sales'; catalog = @{ id = 'cat-1' } } } -ParameterFilter { $Method -eq 'GET' -or -not $Method }
         $R = New-OERAccessPackage -DisplayName 'AP-Sales' -Catalog 'CAT-IT-Core'
         $R.Id | Should -Be 'ap-exists'
         $R.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.AccessPackage'
@@ -165,6 +165,7 @@ Describe 'New-OERAccessPackage' {
         # confirmation read of the same shape, so create output and read output agree.
 
         It 'reads the existing package with $expand=catalog on the idempotent path' {
+            Mock -ModuleName $script:moduleName Resolve-OERCatalogId { 'cat-77' }
             Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId { 'ap-exists' }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
                 @{ id = 'ap-exists'; displayName = 'AP-Sales'; catalog = @{ id = 'cat-77' } }
@@ -220,6 +221,147 @@ Describe 'New-OERAccessPackage' {
             @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,New-OERAccessPackage' }).Count | Should -Be 0
             # The failed confirmation read carried the bearer header too.
             Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
+        }
+    }
+
+    Context 'a name that exists in another catalog is never returned (BL-148a)' {
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $null }
+            Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId { 'ap-other' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $null } -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'refuses with AccessPackageInAnotherCatalog, returns nothing and creates nothing' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $null }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ id = 'ap-other'; displayName = 'AP-Sales'; catalog = @{ id = 'cat-B' } }
+            } -ParameterFilter { $Method -ne 'POST' }
+            $Err = $null
+            $R = New-OERAccessPackage -DisplayName 'AP-Sales' -Catalog 'CAT-IT-Core' -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err
+            $R | Should -BeNullOrEmpty
+            $Mine = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AccessPackageInAnotherCatalog,New-OERAccessPackage' })
+            $Mine.Count | Should -Be 1
+            $Mine[0].CategoryInfo.Category | Should -Be 'ResourceExists'
+            $Mine[0].TargetObject | Should -Be 'AP-Sales'
+            $Mine[0].Exception.Message | Should -BeLike "*exists in another catalog (cat-B), not in catalog 'CAT-IT-Core' (cat-1)*nothing was created*"
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'refuses under -WhatIf too' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $null }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ id = 'ap-other'; displayName = 'AP-Sales'; catalog = @{ id = 'cat-B' } }
+            } -ParameterFilter { $Method -ne 'POST' }
+            $Err = $null
+            $R = New-OERAccessPackage -DisplayName 'AP-Sales' -Catalog 'CAT-IT-Core' -WhatIf `
+                -ErrorAction SilentlyContinue -ErrorVariable Err
+            $R | Should -BeNullOrEmpty
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AccessPackageInAnotherCatalog,New-OERAccessPackage' }).Count | Should -Be 1
+        }
+
+        It 'returns the package when its catalog id differs only in letter case' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $null }
+            Mock -ModuleName $script:moduleName Resolve-OERCatalogId { 'CAT-1' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ id = 'ap-other'; displayName = 'AP-Sales'; catalog = @{ id = 'cat-1' } }
+            } -ParameterFilter { $Method -ne 'POST' }
+            $Err = $null
+            $R = New-OERAccessPackage -DisplayName 'AP-Sales' -Catalog 'CAT-IT-Core' -ErrorAction SilentlyContinue -ErrorVariable Err
+            $R.Id | Should -BeExactly 'ap-other'
+            @($Err).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'refuses with the unreadable-catalog message when the read carries no catalog' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $null }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ id = 'ap-other'; displayName = 'AP-Sales' }
+            } -ParameterFilter { $Method -ne 'POST' }
+            $Err = $null
+            $R = New-OERAccessPackage -DisplayName 'AP-Sales' -Catalog 'CAT-IT-Core' -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err
+            $R | Should -BeNullOrEmpty
+            $Mine = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AccessPackageInAnotherCatalog,New-OERAccessPackage' })
+            $Mine.Count | Should -Be 1
+            $Mine[0].Exception.Message | Should -BeLike "*exists (ap-other), but its catalog could not be read*catalog 'CAT-IT-Core' (cat-1)*not returned and nothing was created*"
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'reaches -ErrorVariable and stops under -ErrorAction Stop in a runspace without try' {
+            $Lines = @(
+                'Import-Module Omnicit.EntraRBAC -Force'
+                '& (Get-Module Omnicit.EntraRBAC) {'
+                '    Set-Item -Path function:script:Initialize-OERAuth -Value { $null = ''STUB-AUTH'' }'
+                '    Set-Item -Path function:script:Resolve-OERCatalogId -Value { ''cat-1'' }'
+                '    Set-Item -Path function:script:Resolve-OERAccessPackageId -Value { ''ap-other'' }'
+                '    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {'
+                '        param($Uri, $Method, $Body)'
+                '        if ($Method -eq ''POST'') { $global:OERPosted = $true; return $null }'
+                '        @{ id = ''ap-other''; displayName = ''AP-Sales''; catalog = @{ id = ''cat-B'' } }'
+                '    }'
+                '}'
+                '# The stubs must be the ones the module''s own calls resolve to, or the real transport is reachable.'
+                '$Resolved = & (Get-Module Omnicit.EntraRBAC) {'
+                '    (Get-Command Initialize-OERAuth).ScriptBlock.ToString().Contains(''STUB-AUTH'') -and'
+                '    (Get-Command Resolve-OERCatalogId).ScriptBlock.ToString().Contains(''cat-1'') -and'
+                '    (Get-Command Resolve-OERAccessPackageId).ScriptBlock.ToString().Contains(''ap-other'') -and'
+                '    (Get-Command Invoke-OERGraphRequest).ScriptBlock.ToString().Contains(''OERPosted'')'
+                '}'
+                'if (-not $Resolved) { throw ''stubs do not resolve in module scope'' }'
+                '$global:OERPosted = $false'
+                '$null = New-OERAccessPackage -DisplayName ''AP-Sales'' -Catalog ''C'' -ErrorAction SilentlyContinue -ErrorVariable EV'
+                '$global:OERVariableIds = @($EV | ForEach-Object { $_.FullyQualifiedErrorId })'
+                'New-OERAccessPackage -DisplayName ''AP-Sales'' -Catalog ''C'' -ErrorAction Stop'
+                '$global:OERReachedAfterStop = $true'
+            )
+            $Runspace = [runspacefactory]::CreateRunspace()
+            $Runspace.Open()
+            $Ps = [powershell]::Create()
+            try {
+                # First statement inside the try: the transport names throw in this runspace too, and the
+                # test fails if anything reached one of them.
+                Install-OERTransportTripwireInRunspace -Runspace $Runspace
+                $Ps.Runspace = $Runspace
+                $null = $Ps.AddScript(($Lines -join "`n"))
+                $Thrown = $null
+                try { $null = $Ps.Invoke() } catch { $Thrown = $PSItem }
+                Test-OERTransportTripwireInRunspace -Runspace $Runspace
+                $Ids = @($Runspace.SessionStateProxy.PSVariable.GetValue('OERVariableIds'))
+                $After = $Runspace.SessionStateProxy.PSVariable.GetValue('OERReachedAfterStop')
+                $Posted = $Runspace.SessionStateProxy.PSVariable.GetValue('OERPosted')
+            } finally {
+                $Ps.Dispose()
+                $Runspace.Dispose()
+            }
+            $Ids | Should -Contain 'AccessPackageInAnotherCatalog,New-OERAccessPackage'
+            $Thrown | Should -Not -BeNullOrEmpty
+            $Thrown.ToString() | Should -BeLike '*exists in another catalog*'
+            $After | Should -BeNullOrEmpty
+            $Posted | Should -BeFalse
+        }
+    }
+
+    Context 'create then call again converges (G8)' {
+        AfterEach { Remove-Variable -Name OERT6Created -Scope Global -ErrorAction SilentlyContinue }
+
+        It 'returns the existing package on the second call with exactly one POST over both' {
+            # Relies on the file-level Resolve-OERCatalogId mock ('cat-1').
+            $global:OERT6Created = $false
+            Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId { if ($global:OERT6Created) { 'ap-1' } else { $null } }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ id = 'ap-1'; displayName = 'AP-Sales'; catalog = @{ id = 'cat-1' } }
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ id = 'ap-1'; displayName = 'AP-Sales' }
+            } -ParameterFilter { $Method -eq 'POST' }
+            $First = New-OERAccessPackage -DisplayName 'AP-Sales' -Catalog 'CAT-IT-Core' -Confirm:$false
+            $global:OERT6Created = $true
+            $Second = New-OERAccessPackage -DisplayName 'AP-Sales' -Catalog 'CAT-IT-Core' -Confirm:$false
+            $First.Id | Should -BeExactly 'ap-1'
+            $Second.Id | Should -BeExactly 'ap-1'
+            $Second.CatalogId | Should -BeExactly 'cat-1'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
         }
     }
 }

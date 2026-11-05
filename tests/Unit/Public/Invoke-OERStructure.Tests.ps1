@@ -474,7 +474,32 @@ Describe 'Invoke-OERStructure omitted-collection prune warning' {
         $MarkerAt.Count | Should -Be 3
         $Messages[$MarkerAt[0]] | Should -BeExactly 'MARKER: Sync-OERStructureAdministrativeUnit ran (EnsureOnly=True)'
         $EngineAt[0] | Should -BeLessThan $MarkerAt[0]
+        # BL-143a: g1 omits members, but the validator's omitted-key finding (Rule 13) is not written (the
+        # engine's own -Prune warning names it), so the engine's warning is the very first one.
         $EngineAt[0] | Should -Be 0
+        @($Messages | Where-Object { $_ -like 'Invoke-OERStructure: structure document warning*' }).Count | Should -Be 0
+    }
+
+    It 'writes no validator omitted-key warning with or without -Prune, and the one -Prune warning only with it' {
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1" } ] }'
+        $Plain = @(Get-WarningMessage (Invoke-OERStructure -Json $Json -WhatIf 3>&1))
+        @($Plain | Where-Object { $_ -like '*structure document warning*' }).Count | Should -Be 0
+        @($Plain | Where-Object { $_ -like 'Invoke-OERStructure: -Prune is set*' }).Count | Should -Be 0
+        $Pruned = @(Get-WarningMessage (Invoke-OERStructure -Json $Json -Prune -WhatIf 3>&1))
+        @($Pruned | Where-Object { $_ -like '*structure document warning*' }).Count | Should -Be 0
+        @($Pruned | Where-Object { $_ -like 'Invoke-OERStructure: -Prune is set*' }).Count | Should -Be 1
+    }
+
+    It 'still writes another validator warning once for a document that also omits a reconciled key' {
+        # g1 omits members (Rule 13, not written); P1 names a catalog the document does not declare (a Warning that is written).
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1" } ], ' +
+            '"accessPackages": [ { "displayName": "P1", "catalog": "C1", "resourceRoles": [] } ] }'
+        $Messages = @(Get-WarningMessage (Invoke-OERStructure -Json $Json -Prune -WhatIf 3>&1))
+        $Validator = @($Messages | Where-Object { $_ -like 'Invoke-OERStructure: structure document warning*' })
+        $Validator.Count | Should -BeGreaterThan 0
+        @($Validator | Where-Object { $_ -like '*is omitted at*' }).Count | Should -Be 0
+        @($Validator | Where-Object { $_ -like '*C1*' }).Count | Should -Be 1
+        @($Messages | Where-Object { $_ -like 'Invoke-OERStructure: -Prune is set*' }).Count | Should -Be 1
     }
 
     It 'names each omitted key as section, quoted item and collection, and counts them' {
@@ -2336,6 +2361,7 @@ function Set-Session {
         [System.IO.File]::AppendAllText('#LOG#', "AUTH $TenantId`n")
     }
     Set-Item -Path function:script:Sync-OERStructureGroup -Value {
+        [CmdletBinding()]
         param($Item, $Caller, [switch]$Prune, $TenantAlias, $CreatedUnitMembership, $RenameMap)
         [System.IO.File]::AppendAllText('#LOG#', "ASK group $($Item.displayName)`n")
         ConvertTo-OERStructureResult -Section 'groups' -Item ([string]$Item.displayName) -Action 'Unchanged' -Detail 'stub row'
@@ -2477,6 +2503,7 @@ function Set-Mode {
         }
     }
     Set-Item -Path function:script:Sync-OERStructureGroup -Value {
+        [CmdletBinding()]
         param($Item, $Caller, [switch]$Prune, $TenantAlias, $CreatedUnitMembership, $RenameMap)
         [System.IO.File]::AppendAllText('#LOG#', "ASK group $($Item.displayName)`n")
         ConvertTo-OERStructureResult -Section 'groups' -Item ([string]$Item.displayName) -Action 'Unchanged' -Detail 'stub row'
@@ -2782,7 +2809,11 @@ Describe 'Invoke-OERStructure refuses a document from another tenant (BL-88, A14
             @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'DocumentTenantMismatch*' }).Count | Should -Be 1
             @($Errs).Count | Should -Be 1
             @($W | Where-Object { "$_" -like 'Invoke-OERStructure: -Prune is set*' }).Count | Should -Be 0
-            @($W).Count | Should -Be 0
+            # BL-143a: the validator's warnings are written before the tenant comparison, but not the
+            # omitted-key ones (the engine's -Prune warning names them); g1's unit placement is the one left.
+            @($W).Count | Should -Be 1
+            "$($W[0])" | Should -BeLike 'Invoke-OERStructure: structure document warning at groups[[]0[]].administrativeUnit:*'
+            @($W | Where-Object { "$_" -like '*is omitted at*' }).Count | Should -Be 0
             Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureAdministrativeUnit -Times 0
             Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
         }
@@ -3342,14 +3373,14 @@ Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an a
             $Rows[0].Action | Should -BeExactly 'Failed'
             $Rows[0].Detail | Should -BeExactly ("group not created: administrative unit 'AU-New' was not reconciled in this run -- its rename from 'AU-Old' " +
                 'was refused (AdministrativeUnitRenameNotFound), so the unit the group is to be created into cannot be identified')
-            $Rows[0].Error | Should -BeNullOrEmpty
+            [string]$Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'AdministrativeUnitRenameNotFound*'
             $Rows[1].Section | Should -BeExactly 'administrativeUnits'
             $Rows[1].Item | Should -BeExactly 'AU-New'
             $Rows[1].Action | Should -BeExactly 'Failed'
             [string]$Rows[1].Error.FullyQualifiedErrorId | Should -BeLike 'AdministrativeUnitRenameNotFound*'
-            # One error record, the unit's: the group's row publishes none of its own (R9), and the
-            # pre-pass reports nothing (R4).
-            @($Errs | ForEach-Object { [string]$_.FullyQualifiedErrorId }) | Should -Be @('AdministrativeUnitRenameNotFound,Invoke-OERStructure')
+            # Two error records (BL-145a): the group's own refusal carries the rename's id, then the
+            # unit's; the pre-pass reports nothing (R4).
+            @($Errs | ForEach-Object { [string]$_.FullyQualifiedErrorId }) | Should -Be @('AdministrativeUnitRenameNotFound,Invoke-OERStructure', 'AdministrativeUnitRenameNotFound,Invoke-OERStructure')
             Should -Invoke -ModuleName $script:moduleName New-OERGroup -Times 0
             Should -Invoke -ModuleName $script:moduleName New-OERAdministrativeUnit -Times 0
             Should -Invoke -ModuleName $script:moduleName Get-OERAdministrativeUnit -Times 0
@@ -3393,7 +3424,10 @@ Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an a
                 ("groups|G1|Failed|group not created: administrative unit 'AU-New' was not reconciled in this run -- its rename from 'AU-Old' was refused " +
                     '(the administrativeUnits section is not selected by -Include, so its rename is not reconciled in this run), so the unit the group is to be created into cannot be identified')
             )
-            @($Errs).Count | Should -Be 0
+            # BL-145a: the refusal writes its own error record, carried by the row.
+            @($Errs).Count | Should -Be 1
+            $Errs[0].FullyQualifiedErrorId | Should -BeExactly 'StructureReferenceUnidentified,Invoke-OERStructure'
+            ($Rows[0].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
             Should -Invoke -ModuleName $script:moduleName New-OERGroup -Times 0
             Should -Invoke -ModuleName $script:moduleName Resolve-OERAdministrativeUnitId -Times 0
             Should -Invoke -ModuleName $script:moduleName New-OERAdministrativeUnit -Times 0
@@ -3432,15 +3466,16 @@ Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an a
             $Rows[1].Action | Should -BeExactly 'Failed'
             $Rows[1].Detail | Should -BeExactly ("group not created: administrative unit 'AU-New' was not reconciled in this run -- its rename from 'AU-Old' was refused " +
                 '(one of its names could not be looked up), so the unit the group is to be created into cannot be identified')
-            $Rows[1].Error | Should -BeNullOrEmpty
+            ($Rows[1].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
             $Rows[2].Section | Should -BeExactly 'administrativeUnits'
             $Rows[2].Action | Should -BeExactly 'Failed'
             $Rows[2].Detail | Should -BeLike 'handler error: *'
             # -ErrorVariable also holds each layer's copy of the thrown record, some as the exception that
-            # carries it, so the count is not pinned: the lookup's error is published, and no other (the
-            # group's row publishes none).
+            # carries it, so the count is not pinned: the lookup's error is published, and (BL-145a) the
+            # group's own refusal, StructureReferenceUnidentified, and no other.
             @($Errs | Where-Object { [string]$_.FullyQualifiedErrorId -like 'AmbiguousName*' }).Count | Should -BeGreaterThan 0
-            @($Errs | ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { [string]$_.FullyQualifiedErrorId } else { [string]$_.ErrorRecord.FullyQualifiedErrorId } } | Where-Object { $_ -notlike 'AmbiguousName*' }).Count | Should -Be 0
+            @($Errs | Where-Object { [string]$_.FullyQualifiedErrorId -like 'StructureReferenceUnidentified*' }).Count | Should -Be 1
+            @($Errs | ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { [string]$_.FullyQualifiedErrorId } else { [string]$_.ErrorRecord.FullyQualifiedErrorId } } | Where-Object { $_ -notlike 'AmbiguousName*' -and $_ -notlike 'StructureReferenceUnidentified*' }).Count | Should -Be 0
             Should -Invoke -ModuleName $script:moduleName New-OERGroup -Times 0
             Should -Invoke -ModuleName $script:moduleName New-OERAdministrativeUnit -Times 0
             Should -Invoke -ModuleName $script:moduleName Set-OERAdministrativeUnit -Times 0
@@ -3471,7 +3506,7 @@ Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an a
             $Rows[1].Action | Should -BeExactly 'Failed'
             $Rows[1].Detail | Should -BeExactly ("group not created: administrative unit 'AU-New' was not reconciled in this run -- its rename from 'AU-Old' was refused " +
                 '(one of its names could not be looked up), so the unit the group is to be created into cannot be identified')
-            $Rows[1].Error | Should -BeNullOrEmpty
+            ($Rows[1].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
             # The administrativeUnits pass then finds both names on different units: the conflict.
             $Rows[2].Section | Should -BeExactly 'administrativeUnits'
             $Rows[2].Action | Should -BeExactly 'Failed'
@@ -3601,8 +3636,9 @@ Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an a
             $Rows[1].Action | Should -BeExactly 'Failed'
             $Rows[1].Detail | Should -BeExactly ("catalog 'CAT-New' was not reconciled in this run: its rename from 'CAT-Old' was refused (CatalogRenameConflict), " +
                 'so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it')
-            $Rows[1].Error | Should -BeNullOrEmpty
-            @($Errs | ForEach-Object { [string]$_.FullyQualifiedErrorId }) | Should -Be @('CatalogRenameConflict,Invoke-OERStructure')
+            # BL-145a: the package's refusal writes its own record, the rename's id, after the catalog's.
+            ($Rows[1].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'CatalogRenameConflict'
+            @($Errs | ForEach-Object { [string]$_.FullyQualifiedErrorId }) | Should -Be @('CatalogRenameConflict,Invoke-OERStructure', 'CatalogRenameConflict,Invoke-OERStructure')
             Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 0
             Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
             Should -Invoke -ModuleName $script:moduleName Get-OERCatalog -Times 0
@@ -3627,7 +3663,9 @@ Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an a
                 ("accessPackages|AP-1|Failed|catalog 'CAT-New' was not reconciled in this run: its rename from 'CAT-Old' was refused " +
                     '(the catalogs section is not selected by -Include, so its rename is not reconciled in this run), so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it')
             )
-            @($Errs).Count | Should -Be 0
+            # BL-145a: the refusal writes its own error record.
+            @($Errs).Count | Should -Be 1
+            $Errs[0].FullyQualifiedErrorId | Should -BeExactly 'StructureReferenceUnidentified,Invoke-OERStructure'
             Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 0
             Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
             Should -Invoke -ModuleName $script:moduleName Resolve-OERCatalogId -Times 0
@@ -3668,12 +3706,13 @@ Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an a
             $Rows[1].Action | Should -BeExactly 'Failed'
             $Rows[1].Detail | Should -BeExactly ("catalog 'CAT-New' was not reconciled in this run: its rename from 'CAT-Old' was refused (one of its names could not be looked up), " +
                 'so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it')
-            $Rows[1].Error | Should -BeNullOrEmpty
+            ($Rows[1].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
             # -ErrorVariable also holds each layer's copy of the thrown record, some as the exception that
-            # carries it, so the count is not pinned: the lookup's error is published, and no other (the
-            # package's row publishes none).
+            # carries it, so the count is not pinned: the lookup's error is published, and (BL-145a) the
+            # package's own refusal, StructureReferenceUnidentified, and no other.
             @($Errs | Where-Object { [string]$_.FullyQualifiedErrorId -like 'AmbiguousName*' }).Count | Should -BeGreaterThan 0
-            @($Errs | ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { [string]$_.FullyQualifiedErrorId } else { [string]$_.ErrorRecord.FullyQualifiedErrorId } } | Where-Object { $_ -notlike 'AmbiguousName*' }).Count | Should -Be 0
+            @($Errs | Where-Object { [string]$_.FullyQualifiedErrorId -like 'StructureReferenceUnidentified*' }).Count | Should -Be 1
+            @($Errs | ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { [string]$_.FullyQualifiedErrorId } else { [string]$_.ErrorRecord.FullyQualifiedErrorId } } | Where-Object { $_ -notlike 'AmbiguousName*' -and $_ -notlike 'StructureReferenceUnidentified*' }).Count | Should -Be 0
             Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 0
             Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
             Should -Invoke -ModuleName $script:moduleName Set-OERCatalog -Times 0
@@ -3703,7 +3742,7 @@ Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an a
                 ("accessPackages|AP-1|Failed|catalog 'CAT-New' was not reconciled in this run: its rename from 'CAT-Old' was refused (one of its names could not be looked up), " +
                     'so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it')
             )
-            $Rows[1].Error | Should -BeNullOrEmpty
+            ($Rows[1].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
             Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 0
             Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
             Should -Invoke -ModuleName $script:moduleName Set-OERCatalog -Times 0
@@ -3764,8 +3803,9 @@ Invoke-OERStructure -Json $Json -Confirm:$false | ForEach-Object { "ROW:$($_.Sec
                 'ROW:catalogs:CAT-New:Failed'
                 'ROW:accessPackages:AP-New:Failed'
             )
-            # Two refusals are published, the unit's and the catalog's; the two references publish none.
-            @($Run.Errors).Count | Should -Be 2
+            # Four refusals are published (BL-145a): the unit's and the catalog's, and the two references'
+            # own, the group's and the package's.
+            @($Run.Errors).Count | Should -Be 4
             @($Run.Prompts).Count | Should -Be 0
         }
 
@@ -3877,9 +3917,9 @@ Invoke-OERStructure -Json $Json -Confirm:$false | ForEach-Object { "ROW:$($_.Sec
                 'ROW:accessReviews:R-New:Failed'
                 'ROW:accessReviews:R-Pkg:Failed'
             )
-            # Four refusals are published -- the catalog read, the policy conflict, the package rename and
-            # the review of another package; the review refused through the map publishes none.
-            @($Run.Errors).Count | Should -Be 4
+            # Five refusals are published -- the catalog read, the policy conflict, the package rename and
+            # the review of another package, and (BL-145a) the review refused through the map.
+            @($Run.Errors).Count | Should -Be 5
             @($Run.Prompts).Count | Should -Be 0
         }
     }
@@ -4102,8 +4142,9 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
         $Rows = @(Invoke-OERStructure @Params)
 
         @(ConvertTo-RvRowLine -Row $Rows) | Should -Be @("accessReviews|Q3 AP review|Failed|$Detail")
-        $Rows[0].Error | Should -BeNullOrEmpty
-        @($Errs).Count | Should -Be 0
+        # BL-145a: the refusal writes its own error record, carried by the row.
+        ($Rows[0].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
+        @($Errs | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -eq 'StructureReferenceUnidentified,Invoke-OERStructure' }).Count | Should -Be 1
         Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
         Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 0
         Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
@@ -4159,12 +4200,14 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
         $Rows = @(Invoke-OERStructure @Params)
 
         @(ConvertTo-RvRowLine -Row $Rows) | Should -Be $Expected
-        # The review's row publishes no record of its own; the one record the engine published is the
-        # package entry's failed read (-ErrorVariable also holds the inner layers of the mock's throw).
-        $Rows[-1].Error | Should -BeNullOrEmpty
+        # BL-145a: the review's refusal writes its own record after the package entry's failed read
+        # (-ErrorVariable also holds the inner layers of the mock's throw).
+        ($Rows[-1].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
         $Own = @($Errs | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId.EndsWith(',Invoke-OERStructure') })
-        $Own.Count | Should -Be 1
+        $Own.Count | Should -Be 2
         $Own[0].Exception.Message | Should -BeExactly $Rows[-2].Error.Exception.Message
+        $Own[1].FullyQualifiedErrorId | Should -BeExactly 'StructureReferenceUnidentified,Invoke-OERStructure'
+        $Own[1].Exception.Message | Should -BeExactly $Rows[-1].Detail
         # Nothing was read or written for the review: no definition read, no name lookup of its package or
         # policy (the policy's new name would find another policy here), no write.
         Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
@@ -4205,11 +4248,13 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
                 "from 'POL-Old' was refused (the accessPackages entry did not reach a decision in this run; see that entry's rows), so the assignment " +
                 'policy this access review reviews cannot be identified; nothing was created, read or written for it')
         )
-        # The conflict's record is the one the engine published; the review's row carries none.
-        $Rows[1].Error | Should -BeNullOrEmpty
+        # The conflict's record, then (BL-145a) the review's own: the entry stopped before it decided the
+        # policy's rename, so StructureReferenceUnidentified; the review's row carries it.
+        ($Rows[1].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
         $Own = @($Errs | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId.EndsWith(',Invoke-OERStructure') })
-        $Own.Count | Should -Be 1
+        $Own.Count | Should -Be 2
         $Own[0].FullyQualifiedErrorId | Should -BeExactly 'AccessPackageRenameConflict,Invoke-OERStructure'
+        $Own[1].FullyQualifiedErrorId | Should -BeExactly 'StructureReferenceUnidentified,Invoke-OERStructure'
         Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
         Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
         Should -Invoke -ModuleName $script:moduleName Resolve-OERAssignmentPolicyId -Times 0
@@ -4228,7 +4273,8 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
         $Doc = ('{ "version": "1.0", ' +
             '"accessPackages": [ { "displayName": "AP-1", "catalog": "CAT-1", "resourceRoles": [], "assignmentPolicies": [ { "displayName": "Standard" } ] } ], ' +
             '"accessReviews": [ ' + $script:RvReview.Replace('#PKG#', 'AP-1').Replace('#POL#', 'Standard') + ' ] }')
-        $Params = @{ Json = $Doc; Include = 'AccessReviews'; ErrorAction = 'Stop'; WarningAction = 'SilentlyContinue' }
+        $Errs = $null
+        $Params = @{ Json = $Doc; Include = 'AccessReviews'; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Errs'; WarningAction = 'SilentlyContinue' }
         if ($Mode -eq 'a plan under -WhatIf') { $Params.WhatIf = $true } else { $Params.Confirm = $false }
         $Rows = @(Invoke-OERStructure @Params)
 
@@ -4236,7 +4282,9 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
             ("accessReviews|Q3 AP review|Failed|access package 'AP-1' has no id in this run (the accessPackages section is not selected by -Include), " +
                 'so the access package this access review reviews cannot be identified; nothing was created, read or written for it')
         )
-        $Rows[0].Error | Should -BeNullOrEmpty
+        # BL-145a: the refusal writes its own error record (it stopped the call under -ErrorAction Stop).
+        ($Rows[0].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
+        @($Errs | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -eq 'StructureReferenceUnidentified,Invoke-OERStructure' }).Count | Should -Be 1
         Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
         Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
         Should -Invoke -ModuleName $script:moduleName Resolve-OERAssignmentPolicyId -Times 0
@@ -4271,7 +4319,8 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
             '{ "displayName": "", "previousDisplayName": "POL-Old" }, { "displayName": "POL-A", "previousDisplayName": "" }, null, ' +
             '{ "displayName": "POL-New", "previousDisplayName": "POL-Old" } ] } ], ' +
             '"accessReviews": [ ' + $script:RvReview.Replace('#PKG#', 'AP-1').Replace('#POL#', 'POL-New') + ' ] }')
-        $Rows = @(Invoke-OERStructure -Json $Doc -Include AccessReviews -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        $Errs = $null
+        $Rows = @(Invoke-OERStructure -Json $Doc -Include AccessReviews -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Errs -WarningAction SilentlyContinue)
 
         # Positive proof that the marking ran past the skipped entries: the last entry is registered, so the
         # review that names it is refused -- for its package, which since BL-147 is marked whether or not it
@@ -4280,6 +4329,9 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
         $Rows[0].Section | Should -BeExactly 'accessReviews'
         $Rows[0].Action | Should -BeExactly 'Failed'
         $Rows[0].Detail | Should -BeLike "access package 'AP-1' has no id in this run (the accessPackages section is not selected by -Include), *"
+        # BL-145a: the refusal writes its own error record (it would stop the call under -ErrorAction Stop).
+        @($Errs | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -eq 'StructureReferenceUnidentified,Invoke-OERStructure' }).Count | Should -Be 1
+        ($Rows[0].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
         Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
     }
 }
@@ -4379,13 +4431,16 @@ Describe 'Invoke-OERStructure: an access review reaches the access package its a
     It 'fails the package that New-OERAccessPackage returns from another catalog, and refuses its review, creating, reading and writing nothing for it' {
         $script:TwState.Created = [PSCustomObject]@{ Id = $script:TwPkgB; DisplayName = 'AP-Twin'; CatalogId = $script:TwCatB }
 
-        $Rows = @(Invoke-OERStructure -Json $script:TwJson -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        $Rows = @(Invoke-OERStructure -Json $script:TwJson -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable TwErrs -WarningAction SilentlyContinue)
 
         @(ConvertTo-TwRowLine -Row $Rows) | Should -Be @(
             $script:TwTwinRow
             ("accessReviews|Q3 twin review|Failed|" + ($script:TwRefusal -f "the accessPackages entry did not find or create it; see that entry's rows"))
         )
-        $Rows[1].Error | Should -BeNullOrEmpty
+        # BL-145a: the review's refusal writes its own error record, carried by its row.
+        $Rows[1].Error | Should -Not -BeNullOrEmpty
+        ($Rows[1].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
+        @($TwErrs | Where-Object { ([string]$_.FullyQualifiedErrorId).StartsWith('StructureReferenceUnidentified,') }).Count | Should -Be 1
         # The package's own create was attempted, so the guard was reached.
         Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 1 -Exactly
         # Nothing for the review: no definition read, no tenant-wide name lookup of the package -- which here
@@ -4441,16 +4496,75 @@ Describe 'Invoke-OERStructure: an access review reaches the access package its a
         $script:TwState.Posts[0].scope.query | Should -BeLike "*accessPackage/id eq '$($script:TwPkgA)'*"
     }
 
-    It 'refuses the review of a package the plan would create, reading nothing for it (-WhatIf)' {
+    It 'refuses the review of a package the plan would create, reading nothing for it, and writes no error record (-WhatIf, A12)' {
+        $TwErrs = $null
+        $Rows = @(Invoke-OERStructure -Json $script:TwJson -WhatIf -ErrorAction SilentlyContinue -ErrorVariable TwErrs -WarningAction SilentlyContinue)
+        $PlanOk = $?
+
+        @(ConvertTo-TwRowLine -Row $Rows) | Should -Be @(
+            'accessPackages|AP-Twin|Skipped|would create access package AP-Twin'
+            ('accessReviews|Q3 twin review|Failed|' + ($script:TwRefusal -f 'the accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined confirmation'))
+        )
+        # A12: the only reason is that the package does not exist yet, so the plan writes no record: it has
+        # $? true, and the row carries none.
+        $Rows[1].Error | Should -BeNullOrEmpty
+        @($TwErrs | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+        $PlanOk | Should -BeTrue
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessReviewScopeTarget -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
+    }
+
+    It 'returns both rows of the plan under -WhatIf -ErrorAction Stop without throwing (A12)' {
         $Rows = @(Invoke-OERStructure -Json $script:TwJson -WhatIf -ErrorAction Stop -WarningAction SilentlyContinue)
 
         @(ConvertTo-TwRowLine -Row $Rows) | Should -Be @(
             'accessPackages|AP-Twin|Skipped|would create access package AP-Twin'
             ('accessReviews|Q3 twin review|Failed|' + ($script:TwRefusal -f 'the accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined confirmation'))
         )
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
+    }
+
+    It 'creates the package and then the review in the real run of the document the plan has just reported (A12)' {
+        $PlanRows = @(Invoke-OERStructure -Json $script:TwJson -WhatIf -ErrorAction Stop -WarningAction SilentlyContinue)
+        @($PlanRows).Count | Should -Be 2
+        @($script:TwState.Posts).Count | Should -Be 0
+
+        $script:TwState.Created = [PSCustomObject]@{ Id = $script:TwPkgA; DisplayName = 'AP-Twin'; CatalogId = $script:TwCatA }
+        $Rows = @(Invoke-OERStructure -Json $script:TwJson -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+
+        @(ConvertTo-TwRowLine -Row $Rows) | Should -Be @(
+            'accessPackages|AP-Twin|Created|created access package AP-Twin (aaaa1111-0000-0000-0000-000000000061)'
+            "accessReviews|Q3 twin review|Created|created access review 'Q3 twin review' (recurrence: OneTime)"
+        )
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 1 -Exactly
+        @($script:TwState.Posts).Count | Should -Be 1
+        $script:TwState.Posts[0].scope.query | Should -BeLike "*accessPackage/id eq '$($script:TwPkgA)'*"
+    }
+
+    It 'keeps the error record of a refusal that is not a package the run would create, under -WhatIf (<Case>, A12)' -ForEach @(
+        @{ Case = '-Include leaves AccessPackages out'; Include = 'AccessReviews'; Twins = $false; Reason = 'the accessPackages section is not selected by -Include'; RowCount = 1 }
+        @{ Case = 'the entry stopped first'; Include = $null; Twins = $true; Reason = "the accessPackages entry did not find or create it; see that entry's rows"; RowCount = 2 }
+    ) {
+        if ($Twins) {
+            $script:TwState.CatalogA = @([PSCustomObject]@{ Id = $script:TwPkgA; DisplayName = 'AP-Twin' }, [PSCustomObject]@{ Id = $script:TwPkgB; DisplayName = 'AP-Twin' })
+        }
+        $Params = @{ Json = $script:TwJson; WhatIf = $true; WarningAction = 'SilentlyContinue' }
+        if ($Include) { $Params.Include = $Include }
+        $TwErrs = $null
+        $Rows = @(Invoke-OERStructure @Params -ErrorAction SilentlyContinue -ErrorVariable TwErrs)
+        $PlanOk = $?
+
+        $Rows.Count | Should -Be $RowCount
+        $Rows[-1].Action | Should -BeExactly 'Failed'
+        $Rows[-1].Detail | Should -BeExactly ($script:TwRefusal -f $Reason)
+        $Rows[-1].Error | Should -Not -BeNullOrEmpty
+        ($Rows[-1].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
+        @($TwErrs | Where-Object { ([string]$_.FullyQualifiedErrorId).StartsWith('StructureReferenceUnidentified,') }).Count | Should -Be 1
+        $PlanOk | Should -BeFalse
+        { $null = Invoke-OERStructure @Params -ErrorAction Stop } | Should -Throw -ExpectedMessage "*access package 'AP-Twin' has no id in this run*"
         Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
-        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessReviewScopeTarget -Times 0
-        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
         Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
     }
 
@@ -4498,6 +4612,13 @@ Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
     Set-Item -Path function:script:New-OERAccessReviewDefinition -Value { [System.IO.File]::AppendAllText('#LOG#', "NEW review`n") }
     Set-Item -Path function:script:Invoke-OERGraphRequest -Value { [System.IO.File]::AppendAllText('#LOG#', "GRAPH`n") }
 }
+# The stubs are checked before the call and the script aborts when one is not the short stub, never
+# the real function (a real Initialize-OERAuth would try to sign in).
+foreach ($StubName in 'Initialize-OERAuth', 'Invoke-OERGraphRequest', 'New-OERAccessPackage') {
+    $StubLength = & (Get-Module Omnicit.EntraRBAC) { param($N) (Get-Command $N -CommandType Function).ScriptBlock.ToString().Length } $StubName
+    if ($StubLength -ge 300) { throw 'STUBS NOT IN PLACE' }
+    "STUB:${StubName}:$StubLength"
+}
 $Json = '#JSON#'
 Invoke-OERStructure -Json $Json #FLAGS# | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
 'END'
@@ -4509,12 +4630,9 @@ Invoke-OERStructure -Json $Json #FLAGS# | ForEach-Object { "ROW:$($_.Action):$($
             }
         }
 
-        It 'reaches the end of the script with the package and its review Failed, and creates, reads or looks up nothing for the review (<Flags>)' -ForEach @(
-            @{ Flags = '-Confirm:$false' }
-            @{ Flags = '-Confirm:$false -ErrorAction Stop' }
-        ) {
+        It 'reaches the end of the script with the package and its review Failed, and creates, reads or looks up nothing for the review' {
             $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
-            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-TwNoTryScenario -Log $Log -Flags $Flags)
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-TwNoTryScenario -Log $Log -Flags '-Confirm:$false')
 
             $Run.Output[-1] | Should -BeExactly 'END'
             @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
@@ -4523,7 +4641,54 @@ Invoke-OERStructure -Json $Json #FLAGS# | ForEach-Object { "ROW:$($_.Action):$($
             )
             # Nothing read, looked up, created or sent for the review; a failure here prints the calls made.
             @(Get-TwLoggedLine -Log $Log) | Should -BeNullOrEmpty
+            # BL-145a: the review's refusal is the one error record, written to the error stream.
+            @($Run.Errors).Count | Should -Be 1
+        }
+
+        It 'stops at the review''s refusal under -ErrorAction Stop (BL-145a), creating, reading and looking up nothing for the review' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Thrown = $null
+            try { $null = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-TwNoTryScenario -Log $Log -Flags '-Confirm:$false -ErrorAction Stop') } catch { $Thrown = $PSItem }
+
+            # Measured: the handler's WriteError is terminating under Stop, so the call stops with the
+            # refusal's text and nothing after it in the script runs.
+            $Thrown | Should -Not -BeNullOrEmpty
+            $Thrown.Exception.Message | Should -BeLike "*access package 'AP-Twin' has no id in this run*"
+            @(Get-TwLoggedLine -Log $Log) | Should -BeNullOrEmpty
+        }
+
+        It 'reaches the end of the script under -WhatIf -ErrorAction Stop with both rows and no error record, after its stubs were checked (A12)' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-TwNoTryScenario -Log $Log -Flags '-WhatIf -ErrorAction Stop')
+
+            # The stubs that resolved in the module are the short ones (a real function is far longer).
+            $StubLines = @($Run.Output | Where-Object { $_ -like 'STUB:*' })
+            $StubLines.Count | Should -Be 3
+            foreach ($Line in $StubLines) { [int]($Line -split ':')[-1] | Should -BeLessThan 300 }
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
+                'ROW:Skipped:would create access package AP-Twin'
+                ('ROW:Failed:' + ($script:TwRefusal -f 'the accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined confirmation'))
+            )
             @($Run.Errors).Count | Should -Be 0
+            @(Get-TwLoggedLine -Log $Log) | Should -BeNullOrEmpty
+        }
+
+        It 'reports the review of a package whose create a declined confirmation skipped Failed with no error record (A12)' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&No' -Script (New-TwNoTryScenario -Log $Log -Flags '-Confirm')
+
+            $StubLines = @($Run.Output | Where-Object { $_ -like 'STUB:*' })
+            $StubLines.Count | Should -Be 3
+            foreach ($Line in $StubLines) { [int]($Line -split ':')[-1] | Should -BeLessThan 300 }
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
+                'ROW:Skipped:would create access package AP-Twin'
+                ('ROW:Failed:' + ($script:TwRefusal -f 'the accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined confirmation'))
+            )
+            @($Run.Prompts).Count | Should -BeGreaterOrEqual 1
+            @($Run.Errors).Count | Should -Be 0
+            @(Get-TwLoggedLine -Log $Log) | Should -BeNullOrEmpty
         }
     }
 }
@@ -4656,11 +4821,12 @@ Describe 'Invoke-OERStructure applies what an export writes by id: a package''s 
         @($script:IdTenant.Packages).Count | Should -Be 2
     }
 
-    It 'fails, writing nothing, a package to be created in the catalog its id names while a package of that name is in another catalog (twin catalogs)' {
+    It 'fails with the cmdlet''s refusal, writing nothing, a package to be created in the catalog its id names while a package of that name is in another catalog (twin catalogs)' {
         # The catalog the id names does not hold AP-ById; a package of that name exists in another catalog --
         # the case the export's catalog id makes reachable for two catalogs that share a name.
-        # New-OERAccessPackage's tenant-wide name check finds that package and returns it, read with its
-        # catalog: the entry must fail with nothing written to that package or for the entry.
+        # New-OERAccessPackage's tenant-wide name check finds that package, reads it with its catalog and
+        # refuses it (AccessPackageInAnotherCatalog): the entry is one Failed row carrying that record, with
+        # nothing written to that package or for the entry.
         $TwinId = 'aaaa1111-0000-0000-0000-000000000053'
         $OtherCatalogId = 'eeee5555-0000-0000-0000-000000000052'
         $script:IdTenant.Packages.Add(@{
@@ -4668,11 +4834,14 @@ Describe 'Invoke-OERStructure applies what an export writes by id: a package''s 
                 catalog = @{ id = $OtherCatalogId }
             })
 
-        $Rows = @(Invoke-OERStructure -Json $script:IdPackageDoc -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
-        @(ConvertTo-IdRowLine -Row $Rows) | Should -Be @(
-            ("accessPackages|AP-ById|Failed|access package 'AP-ById' was not created in catalog '$($script:IdCatId)': a package of that name " +
-            "already exists in another catalog ($OtherCatalogId), and New-OERAccessPackage returned it ($TwinId); nothing was written to it")
-        )
+        $Err = $null
+        $Rows = @(Invoke-OERStructure -Json $script:IdPackageDoc -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue)
+        $Message = "Access package 'AP-ById' exists in another catalog ($OtherCatalogId), not in catalog '$($script:IdCatId)' ($($script:IdCatId)), so it was not returned and nothing was created. " +
+            'Access package names are unique only within a catalog, and this command looks the name up in the whole tenant; use a name no other access package carries.'
+        @(ConvertTo-IdRowLine -Row $Rows) | Should -Be @("accessPackages|AP-ById|Failed|access package creation failed: $Message")
+        @($Rows).Count | Should -Be 1
+        @($Rows[0].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'AccessPackageInAnotherCatalog'
+        @($Err | Where-Object { @($_.FullyQualifiedErrorId -split ',')[0] -eq 'AccessPackageInAnotherCatalog' }).Count | Should -BeGreaterOrEqual 1
         # Reached: the declared catalog was read by its id, and New-OERAccessPackage made its tenant-wide name
         # check and read the package it found with its catalog.
         $script:IdTenant.Requests | Should -Contain ("GET v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=catalog/id eq '$($script:IdCatId)'&`$expand=catalog")
@@ -6391,6 +6560,86 @@ Describe 'Invoke-OERStructure refuses a run the host cannot confirm (BL-53)' {
         Should -Invoke -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit -Times 1 -Exactly -ParameterFilter { $EnsureOnly }
     }
 
+    It 'keeps the rows a handler wrote before it threw, in order, ahead of its handler error row (BL-159a)' {
+        Mock -ModuleName $script:moduleName Test-OERHostCanConfirm { $true }
+        Mock -ModuleName $script:moduleName Sync-OERStructureGroup {
+            [PSCustomObject]@{ Section = 'groups'; Item = 'first'; Action = 'Created'; Detail = 'row one' }
+            [PSCustomObject]@{ Section = 'groups'; Item = 'second'; Action = 'Updated'; Detail = 'row two' }
+            throw [System.Exception]::new('late failure')
+        }
+        $Rows = @(Invoke-OERStructure -Json $script:CuJson -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable CuErr)
+
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)|$($_.Detail)" }) | Should -BeExactly @(
+            'groups|first|Created|row one'
+            'groups|second|Updated|row two'
+            'groups|g1|Failed|handler error: late failure'
+        )
+        @($CuErr | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' }).Count | Should -Be 1
+    }
+
+    It 'keeps the rows the administrative unit pre-pass wrote before it threw, ahead of its pre-pass handler error row (BL-159a)' {
+        Mock -ModuleName $script:moduleName Test-OERHostCanConfirm { $true }
+        Mock -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit {
+            param($Item, $Caller, $Prune, $TenantAlias, $EnsureOnly, $CreatedUnitMembership, $RenameMap)
+            if (-not $EnsureOnly) { return }
+            [PSCustomObject]@{ Section = 'administrativeUnits'; Item = 'pre-one'; Action = 'Created'; Detail = 'pre row one' }
+            [PSCustomObject]@{ Section = 'administrativeUnits'; Item = 'pre-two'; Action = 'Updated'; Detail = 'pre row two' }
+            throw [System.Exception]::new('lookup failed')
+        }
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "administrativeUnit": "AU-1" } ], "administrativeUnits": [ { "displayName": "AU-1" } ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable CuErr)
+
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)|$($_.Detail)" }) | Should -BeExactly @(
+            'administrativeUnits|pre-one|Created|pre row one'
+            'administrativeUnits|pre-two|Updated|pre row two'
+            'administrativeUnits|AU-1|Failed|pre-pass handler error: lookup failed'
+            'groups|g1|Unchanged|stub row'
+        )
+        @($CuErr | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' }).Count | Should -Be 1
+    }
+
+    It 'emits no null element, only the handler error rows, when the handler fails before it writes anything (<Kind>)' -TestCases @(
+        @{ Kind = 'throws at once'; Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "administrativeUnit": "AU-1" } ], "administrativeUnits": [ { "displayName": "AU-1" } ] }'; Expected = @('administrativeUnits|AU-1|Failed', 'groups|g1|Failed', 'administrativeUnits|AU-1|Failed') }
+        @{ Kind = 'fails parameter binding'; Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "administrativeUnit": "" }, null ], "administrativeUnits": [ null ] }'; Expected = @('administrativeUnits|(item)|Failed', 'groups|(item)|Failed', 'administrativeUnits|(item)|Failed') }
+    ) {
+        # A binding failure stops the handler before -OutVariable is populated, so $HandlerRows is still $null in the catch.
+        # The validator would refuse the null entries, so it is mocked Valid to reach the handlers.
+        Mock -ModuleName $script:moduleName Test-OERHostCanConfirm { $true }
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @(); Findings = @() } }
+        if ($Kind -eq 'throws at once') {
+            Mock -ModuleName $script:moduleName Sync-OERStructureGroup { throw [System.Exception]::new('refused at once') }
+            Mock -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit { throw [System.Exception]::new('refused at once') }
+        } else {
+            Mock -ModuleName $script:moduleName Sync-OERStructureGroup { }
+            Mock -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit { }
+        }
+        $Rows = @(Invoke-OERStructure -Json $Json -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+        @($Rows | Where-Object { $null -eq $_ }) | Should -BeNullOrEmpty
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)" }) | Should -BeExactly $Expected
+        @($Rows | Where-Object { $_.Detail -notmatch '^(pre-pass )?handler error: ' }) | Should -BeNullOrEmpty
+    }
+
+    It 'labels a pre-pass handler error row (item) for a unit with no displayName and keeps the original error (BL-161d)' {
+        # Defence test: the validator would refuse the unit, so it is mocked Valid to reach the pre-pass.
+        Mock -ModuleName $script:moduleName Test-OERHostCanConfirm { $true }
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @(); Findings = @() } }
+        Mock -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit {
+            param($Item, $Caller, $Prune, $TenantAlias, $EnsureOnly, $CreatedUnitMembership, $RenameMap)
+            if (-not $EnsureOnly) { return }
+            throw [System.Exception]::new('lookup failed')
+        }
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "administrativeUnit": "" } ], "administrativeUnits": [ { "description": "no name" } ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable CuErr)
+
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit -Times 1 -Exactly -ParameterFilter { $EnsureOnly }
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)|$($_.Detail)" }) | Should -Contain 'administrativeUnits|(item)|Failed|pre-pass handler error: lookup failed'
+        $Own = @($CuErr | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' })
+        $Own.Count | Should -Be 1
+        $Own[0].Exception.Message | Should -BeExactly 'lookup failed'
+        @($CuErr | Where-Object { $_.Exception -is [System.Management.Automation.ParameterBindingException] }) | Should -BeNullOrEmpty
+    }
+
     Context 'in a script with no try above it' {
         # The public engine in a runspace made without a PSHost -- the Default Host, as in a [powershell]::Create()
         # runspace or a thread job -- so no try stands anywhere above it and the REAL Test-OERHostCanConfirm
@@ -6426,12 +6675,14 @@ Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
         [System.IO.File]::AppendAllText('#LOG#', "TENANTCHECK`n")
     }
     Set-Item -Path function:script:Sync-OERStructureGroup -Value {
+        [CmdletBinding()]
         param($Item, $Caller, [switch]$Prune, $TenantAlias, $CreatedUnitMembership, $RenameMap)
         [System.IO.File]::AppendAllText('#LOG#', "ASK group $($Item.displayName)`n")
         if ($Caller.ShouldProcess([string]$Item.displayName, 'Update group')) { [System.IO.File]::AppendAllText('#LOG#', "WRITE group`n") }
         ConvertTo-OERStructureResult -Section 'groups' -Item ([string]$Item.displayName) -Action 'Unchanged' -Detail 'stub row'
     }
     Set-Item -Path function:script:Sync-OERStructureAdministrativeUnit -Value {
+        [CmdletBinding()]
         param($Item, $Caller, [switch]$Prune, $TenantAlias, [switch]$EnsureOnly, $CreatedUnitMembership, $RenameMap)
         [System.IO.File]::AppendAllText('#LOG#', "ASK unit $($Item.displayName) ensure=$EnsureOnly`n")
         if ($Caller.ShouldProcess([string]$Item.displayName, 'Update administrative unit')) { [System.IO.File]::AppendAllText('#LOG#', "WRITE unit`n") }
@@ -6517,6 +6768,100 @@ $RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OER
             # Each handler asked once and wrote nothing.
             @(Get-Content -LiteralPath $Log) | Should -Be @('AUTH', 'TENANTCHECK', 'ASK unit AU-1 ensure=True', 'ASK group g1', 'ASK unit AU-1 ensure=False')
         }
+
+        # BL-145a: the REAL group and access package handlers refuse a reference to a unit or catalog whose
+        # rename this run could not decide (-Include leaves its section out) and write their own error
+        # record, StructureReferenceUnidentified. Only the sign-in, the tenant check, the host question and
+        # the lookups and cmdlets the handlers call are stubbed, in the module's own scope; each stub logs.
+        # Nothing is written: the refusal comes before any ShouldProcess, so there is no write to converge
+        # (G8 not applicable). The tripwire of the runspace stays installed by Invoke-CuDefaultHostScript.
+        BeforeAll {
+            function script:New-CuRefScript {
+                param([string]$Log, [string]$Json, [string]$Call, [string]$Stubs, [string]$Marker)
+                [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { [System.IO.File]::AppendAllText('#LOG#', "AUTH`n") }
+    Set-Item -Path function:script:Get-OERDocumentTenantMismatch -Value { param($Document, $Target, $RequestedTenantId, [switch]$IncludeARM) }
+    Set-Item -Path function:script:Test-OERHostCanConfirm -Value { $true }
+#STUBS#
+}
+# The stubs must be the ones the module's own calls resolve to, and the handler the real one, before the engine runs.
+$Resolved = & (Get-Module Omnicit.EntraRBAC) {
+    (Get-Command Initialize-OERAuth).ScriptBlock.ToString().Contains('AUTH') -and
+    (Get-Command #MARKERCMD#).ScriptBlock.ToString().Contains('LOOKUP') -and
+    (Get-Command #HANDLER#).ScriptBlock.ToString().Contains('StructureReferenceUnidentified')
+}
+if (-not $Resolved) { throw 'stubs do not resolve in module scope' }
+$Json = '#JSON#'
+#CALL#
+'@).Replace('#STUBS#', $Stubs).Replace('#MARKERCMD#', $Marker.Split('|')[0]).Replace('#HANDLER#', $Marker.Split('|')[1]).Replace('#CALL#', $Call).Replace('#JSON#', $Json.Replace("'", "''")).Replace('#LOG#', $Log.Replace("'", "''")))
+            }
+            $script:CuRefGroupStubs = '    Set-Item -Path function:script:Resolve-OERGroupId -Value { [CmdletBinding()] param($DisplayName) [System.IO.File]::AppendAllText(''#LOG#'', "LOOKUP $DisplayName`n") }' + "`n" +
+                '    Set-Item -Path function:script:New-OERGroup -Value { [System.IO.File]::AppendAllText(''#LOG#'', "WRITE New-OERGroup`n") }'
+            $script:CuRefGroupJson = '{ "version": "1.0", "groups": [ { "displayName": "g1", "administrativeUnit": "AU-New" } ], "administrativeUnits": [ { "displayName": "AU-New", "previousDisplayName": "AU-Old" } ] }'
+            $script:CuRefCatStubs = '    Set-Item -Path function:script:Resolve-OERCatalogId -Value { [CmdletBinding()] param($DisplayName) [System.IO.File]::AppendAllText(''#LOG#'', "LOOKUP $DisplayName`n") }' + "`n" +
+                '    foreach ($Name in @(''Get-OERAccessPackage'', ''New-OERAccessPackage'', ''Set-OERAccessPackage'', ''Get-OERCatalogResource'', ''Invoke-OERGraphRequest'')) {' + "`n" +
+                '        Set-Item -Path "function:script:$Name" -Value ([scriptblock]::Create("[System.IO.File]::AppendAllText(''#LOG#'', ''CALL $Name'' + [char]10)"))' + "`n" +
+                '    }'
+            $script:CuRefCatJson = '{ "version": "1.0", "catalogs": [ { "displayName": "CAT-New", "previousDisplayName": "CAT-Old", "resources": [] } ], "accessPackages": [ { "displayName": "AP-1", "catalog": "CAT-New", "resourceRoles": [] } ] }'
+        }
+
+        It 'publishes the group''s refusal through a rename-map reference to -ErrorVariable and carries on, in a script with no try above it (BL-145a)' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Script = New-CuRefScript -Log $Log -Json $script:CuRefGroupJson -Stubs $script:CuRefGroupStubs.Replace('#LOG#', $Log.Replace("'", "''")) -Marker 'Resolve-OERGroupId|Sync-OERStructureGroup' -Call @'
+$Rows = @(Invoke-OERStructure -Json $Json -Include Groups -ErrorVariable RunErrors)
+$Ok = $?
+$Rows | ForEach-Object { "ROW:$($_.Section):$($_.Item):$($_.Action)" }
+"OK:$Ok"
+$RunErrors | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
+'AFTER'
+'@
+            $Run = Invoke-CuDefaultHostScript -Script $Script
+            $Why = "output:`n$($Run.Output -join "`n")`nerrors:`n$($Run.Errors -join "`n")"
+
+            $Run.Output[-1] | Should -BeExactly 'AFTER' -Because $Why
+            @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -BeExactly @('ROW:groups:g1:Failed') -Because $Why
+            $Run.Output | Should -Contain 'OK:False' -Because $Why
+            @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -BeExactly @('ERRID:StructureReferenceUnidentified,Invoke-OERStructure') -Because $Why
+            # The handler looked the group up, found none, and wrote nothing.
+            @(Get-Content -LiteralPath $Log) | Should -Be @('AUTH', 'LOOKUP g1')
+        }
+
+        It 'stops the call at the group''s refusal under -ErrorAction Stop, so nothing after it in the script runs and nothing is written (BL-145a)' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Script = New-CuRefScript -Log $Log -Json $script:CuRefGroupJson -Stubs $script:CuRefGroupStubs.Replace('#LOG#', $Log.Replace("'", "''")) -Marker 'Resolve-OERGroupId|Sync-OERStructureGroup' -Call @'
+Invoke-OERStructure -Json $Json -Include Groups -ErrorAction Stop | ForEach-Object { "ROW:$($_.Section):$($_.Item):$($_.Action)" }
+'AFTER'
+'@
+            $Thrown = $null
+            $Run = $null
+            try { $Run = Invoke-CuDefaultHostScript -Script $Script } catch { $Thrown = $PSItem }
+
+            # Measured: the handler's WriteError is terminating under Stop; the script ends there, so its
+            # AFTER line and every row are never produced, and the stop carries the refusal's text.
+            $Thrown | Should -Not -BeNullOrEmpty
+            $Thrown.Exception.Message | Should -BeLike "*group not created: administrative unit 'AU-New' was not reconciled in this run*" -Because "thrown: $($Thrown.Exception.Message)"
+            $Run | Should -BeNullOrEmpty
+            @(Get-Content -LiteralPath $Log) | Should -Be @('AUTH', 'LOOKUP g1')
+        }
+
+        It 'stops the call at the access package''s refusal under -ErrorAction Stop, so nothing after it in the script runs and nothing is read or written (BL-145a)' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Script = New-CuRefScript -Log $Log -Json $script:CuRefCatJson -Stubs $script:CuRefCatStubs.Replace('#LOG#', $Log.Replace("'", "''")) -Marker 'Resolve-OERCatalogId|Sync-OERStructureAccessPackage' -Call @'
+Invoke-OERStructure -Json $Json -Include AccessPackages -ErrorAction Stop | ForEach-Object { "ROW:$($_.Section):$($_.Item):$($_.Action)" }
+'AFTER'
+'@
+            $Thrown = $null
+            $Run = $null
+            try { $Run = Invoke-CuDefaultHostScript -Script $Script } catch { $Thrown = $PSItem }
+
+            $Thrown | Should -Not -BeNullOrEmpty
+            $Thrown.Exception.Message | Should -BeLike "*catalog 'CAT-New' was not reconciled in this run*" -Because "thrown: $($Thrown.Exception.Message)"
+            $Run | Should -BeNullOrEmpty
+            # The refusal comes before any lookup or call for the package: only the sign-in was logged.
+            @(Get-Content -LiteralPath $Log) | Should -Be @('AUTH')
+        }
     }
 }
 
@@ -6536,6 +6881,7 @@ Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
     Set-Item -Path function:script:Initialize-OERAuth -Value { [System.IO.File]::AppendAllText('#LOG#', "AUTH`n") }
     Set-Item -Path function:script:Get-OERDocumentTenantMismatch -Value { param($Document, $Target, $RequestedTenantId, [switch]$IncludeARM) }
     Set-Item -Path function:script:Sync-OERStructureGroup -Value {
+        [CmdletBinding()]
         param($Item, $Caller, [switch]$Prune, $TenantAlias, $CreatedUnitMembership, $RenameMap)
         # A template group carries no displayName (the real handler computes it); the stub names it by its template.
         $Label = if ($Item.displayName) { [string]$Item.displayName } else { [string]$Item.template }
@@ -6946,5 +7292,59 @@ $RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OER
         @($Logged | Where-Object { $_ -like 'POLICY SET*-AccessType owner*' }).Count | Should -Be 1
         @($Run.Output | Where-Object { $_ -like 'ROW:*pimPolicy*' }) | Should -Be @('ROW:Updated:pimPolicy (member) set: eligible(perm=True,days=90)', 'ROW:Updated:pimPolicy (owner) set: activationMaxHours=4')
         @($Run.Errors).Count | Should -Be 0
+    }
+}
+
+Describe 'Invoke-OERStructure writes the validator''s warnings before anything else (BL-143a)' {
+    BeforeAll {
+        # Two access packages naming a catalog the document does not declare: two validator Warnings each.
+        $script:WarnJson = '{ "version":"1.0", "accessPackages":[ { "displayName":"P1", "catalog":"C1", "resourceRoles":[] }, { "displayName":"P2", "catalog":"C2", "resourceRoles":[] } ] }'
+        $script:WarnBadJson = '{ "version":"1.0", "accessPackages":[ { "displayName":"P1", "catalog":"C1", "resourceRoles":[] } ], "groups":[ { "displayName":5 } ] }'
+        $script:CleanJson = '{ "version":"1.0", "groups":[ { "displayName":"g", "members":[] } ] }'
+        $script:Expected = InModuleScope Omnicit.EntraRBAC {
+            $Doc = '{ "version":"1.0", "accessPackages":[ { "displayName":"P1", "catalog":"C1", "resourceRoles":[] }, { "displayName":"P2", "catalog":"C2", "resourceRoles":[] } ] }' | ConvertFrom-Json
+            @((Test-OERStructureSchema -Document $Doc).Errors | Where-Object { $_.Severity -eq 'Warning' } |
+                ForEach-Object { "Invoke-OERStructure: structure document warning at $($_.Path): $($_.Message)" })
+        }
+    }
+
+    BeforeEach {
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth {}
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERSubscriptionHomeTenant { [PSCustomObject]@{ Scope = $null; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null } }
+        Mock -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup { }
+        Mock -ModuleName Omnicit.EntraRBAC Sync-OERStructureCatalog { }
+        Mock -ModuleName Omnicit.EntraRBAC Sync-OERStructureAccessPackage { }
+    }
+
+    It 'writes one warning per finding, in the validator''s order, and still signs in' {
+        $null = Invoke-OERStructure -Json $script:WarnJson -WhatIf -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -WarningVariable Got
+        @($Got).Count | Should -Be 2
+        $script:Expected.Count | Should -Be 2
+        $Got[0].Message | Should -BeExactly $script:Expected[0]
+        $Got[1].Message | Should -BeExactly $script:Expected[1]
+        $Got[0].Message | Should -BeLike 'Invoke-OERStructure: structure document warning at accessPackages*C1*'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly
+    }
+
+    It 'stops at the first warning under -WarningAction Stop, before the sign-in and any handler' {
+        $Threw = $false
+        try { $null = Invoke-OERStructure -Json $script:WarnJson -WhatIf -WarningAction Stop -ErrorAction Stop } catch { $Threw = $true }
+        $Threw | Should -BeTrue
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureCatalog -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureAccessPackage -Times 0
+    }
+
+    It 'refuses a document with an error as before and writes none of its warnings' {
+        $null = Invoke-OERStructure -Json $script:WarnBadJson -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs -WarningAction SilentlyContinue -WarningVariable Got
+        @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'StructureValidationFailed*' }).Count | Should -Be 1
+        @($Got | Where-Object { $_.Message -like 'Invoke-OERStructure: structure document warning*' }).Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 0
+    }
+
+    It 'writes no warning for a valid document the validator has no warning for' {
+        $null = Invoke-OERStructure -Json $script:CleanJson -Include Groups -WhatIf -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -WarningVariable Got
+        @($Got | Where-Object { $_.Message -like 'Invoke-OERStructure: structure document warning*' }).Count | Should -Be 0
     }
 }

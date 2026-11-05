@@ -21,6 +21,14 @@ still returned: `RoleAssignments` (`Get-OERResource`, `Get-OERResourceGroup`), `
 an ambiguous role as `AmbiguousName`. A role `-CommonRoles` cannot read is an error, not a warning,
 and `Get-OERInventory` reports that section unread.
 
+`Invoke-OERStructure -Prune` keeps a group's last standing owner when the other owners hold, or
+are eligible for, ownership through PIM for Groups. It writes the validator's warnings before
+signing in, reports rows a handler wrote before failing, and plans an invalid derived mail alias
+as Failed. A reference refused through a rename, an `-Include` or a failed access package entry
+writes an error record, so `$?` is false and `-ErrorAction Stop` ends the run.
+`New-OERAccessPackage -Catalog` refuses a package of another catalog, and
+`Set-OERAccessPackageAssignmentPolicy` a policy read lacking a setting.
+
 ## [1.3.1] - 2026-10-23
 
 More failed inventory reads are now reported. `Get-OERInventory` names a failed role assignment or

@@ -55,8 +55,11 @@ function Sync-OERStructureAccessPackage {
     found), or that this run could not decide (one of its names could not be looked up, or -Include
     leaves the catalogs section out), is not the catalog the document means, whatever now carries its
     new name: the package gets one Failed row naming the refused rename and why (its error id, or what
-    kept the run from deciding it), and nothing is created, read or written for it. That row
-    publishes no error record of its own; a refused rename's error is on the catalog's own row.
+    kept the run from deciding it), and nothing is created, read or written for it. The refusal also
+    writes an error record of its own (BL-145a), non-terminating and carried by the row: its id is
+    the refused rename's error id, or StructureReferenceUnidentified when the run could not decide
+    the rename, with the row's Detail as its message, category ObjectNotFound and the package as its
+    target.
 
     Once the package has been resolved (or created), every downstream call that has to identify it --
     the property re-read, the resourceRoleScopes read, the resource role add and prune, the assignment
@@ -74,9 +77,10 @@ function Sync-OERStructureAccessPackage {
        hidden flag when it already exists (and its displayName, when previousDisplayName renames
        it). The catalog property is creation-only and is never changed on an existing package.
        New-OERAccessPackage looks for an existing package by name in the whole tenant, so when the
-       package has to be created while a package of that name exists in another catalog, it returns
-       that package: the entry is then one Failed row, and nothing is written to that package or for
-       the entry.
+       package has to be created while a package of that name exists in another catalog, it refuses
+       (AccessPackageInAnotherCatalog) and returns nothing: the entry is then one Failed row carrying
+       that error record, and nothing is written to that package or for the entry. The engine's own
+       catalog comparison after the call stays as a defence for a package returned some other way.
 
     2. Reconcile declared resourceRoles (add missing bindings; emit Extra or prune undeclared
        bindings with -Prune, or report them Skipped while a declared resource cannot be resolved --
@@ -315,7 +319,9 @@ function Sync-OERStructureAccessPackage {
     whose creation a declined confirmation skipped, is registered refused with the reason "the
     accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined
     confirmation": it has no id yet, so a review of it is Failed in the plan where the real run creates
-    the package (an accepted limit).
+    the package, with no error record (the entry is marked -CreatePending: the only reason is that the
+    package does not exist yet in this run; A12). Every other mark (the entry's first one, -Include's)
+    is not CreatePending.
 
     .EXAMPLE
     Sync-OERStructureAccessPackage -Item $DocItem -Caller $PSCmdlet -Prune -TenantAlias 'omnicit'
@@ -416,8 +422,16 @@ function Sync-OERStructureAccessPackage {
         # what kept the run from deciding.
         $CatalogTarget = Get-OERStructureRenameTarget -Section 'catalogs' -Name ([string]$Item.catalog) -RenameMap $RenameMap
         if ($CatalogTarget -and $CatalogTarget.Refused) {
-            ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Failed' `
-                -Detail "catalog '$($Item.catalog)' was not reconciled in this run: its rename from '$($CatalogTarget.PreviousName)' was refused ($($CatalogTarget.Reason)), so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it"
+            # BL-145a: the refusal writes its own error record.
+            $CatalogDetail = "catalog '$($Item.catalog)' was not reconciled in this run: its rename from '$($CatalogTarget.PreviousName)' was refused ($($CatalogTarget.Reason)), so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it"
+            $CatalogErrorId = if ([string]::IsNullOrEmpty([string]$CatalogTarget.ErrorId)) { 'StructureReferenceUnidentified' } else { [string]$CatalogTarget.ErrorId }
+            $CatalogErrRec = [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new($CatalogDetail),
+                $CatalogErrorId,
+                [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                $Name)
+            $Caller.WriteError($CatalogErrRec)
+            ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Failed' -Detail $CatalogDetail -ErrorRecord $CatalogErrRec
             return
         }
         if ($CatalogTarget) { $CatalogRef = $CatalogTarget.Id }
@@ -571,10 +585,11 @@ function Sync-OERStructureAccessPackage {
                 ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Skipped' -Detail "would create access package $Name"
 
                 # BL-147 (R-8): the package the plan would create has no id yet, so a review that names it
-                # in this run is refused with that reason (in a plan where the real run creates it, an
-                # accepted limit), never looked up by name in the whole tenant.
+                # in this run is refused with that reason, never looked up by name in the whole tenant. It is
+                # -CreatePending (A12): the review's Failed row writes no error record for it, since the only
+                # reason is that the package does not exist yet and the real run creates it.
                 if ($null -ne $RenameMap -and -not [string]::IsNullOrEmpty([string]$Name)) {
-                    $null = Resolve-OERStructureRename -Section 'accessPackages' -Name ([string]$Name) -Unidentified `
+                    $null = Resolve-OERStructureRename -Section 'accessPackages' -Name ([string]$Name) -Unidentified -CreatePending `
                         -Reason 'the accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined confirmation' `
                         -RenameMap $RenameMap
                 }
@@ -627,9 +642,11 @@ function Sync-OERStructureAccessPackage {
                 return
             }
 
-            # New-OERAccessPackage looks for an existing package by name in the WHOLE tenant, and returns
-            # the one package of that name it finds, whichever catalog holds it. The declared catalog's
-            # list above did not hold the name, so a package it returns from another catalog -- a twin
+            # New-OERAccessPackage looks for an existing package by name in the WHOLE tenant. It now
+            # refuses a package of another catalog itself (AccessPackageInAnotherCatalog, caught above as
+            # one Failed row), so this comparison is no longer reached through that refusal; it stays as
+            # a defence for a package returned some other way. The declared catalog's
+            # list above did not hold the name, so a package returned from another catalog -- a twin
             # catalog's, for example -- was not created here: writing the declared resource roles and
             # assignment policies to it would change another catalog's package. So the entry fails, with
             # nothing written to that package or for the entry. The catalogs are compared as ids, without

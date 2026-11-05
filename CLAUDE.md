@@ -965,10 +965,14 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   put-back; it warns before any PATCH and writes no default) and the authentication context
   validation read (a failure skips the validation). In the apply engine `Sync-OERStructureGroup`
   refuses an access type whose expiration pair `Resolve-OERGroupPimPolicyChange` names in
-  `UnknownLiveValues` with `PimRuleValueUnknown`, before `ShouldProcess` -- never a default. Known
-  and NOT fixed, outside this cmdlet (unmeasured): a successful read lacking a key makes
-  `Set-OERAccessPackageAssignmentPolicy` write the body builder's default, and an empty Azure
-  Resource Manager body makes `Set-OERResourceGroup` send an empty location.
+  `UnknownLiveValues` with `PimRuleValueUnknown`, before `ShouldProcess` -- never a default.
+  `Set-OERAccessPackageAssignmentPolicy` refuses a successful read lacking `expiration`,
+  `requestApprovalSettings`, `requestorSettings` or `notificationSettings` with
+  `AssignmentPolicyValueUnknown` before `ShouldProcess` and the PUT unless the call names every value
+  the missing block holds (a bound `-RequestorSettings` or `-DisableAssignmentNotifications` does),
+  `ConvertTo-OERPolicyBody` throwing the same four conditions as a backstop. Known and NOT fixed,
+  outside this rule (unmeasured): an empty Azure Resource Manager body makes `Set-OERResourceGroup`
+  send an empty location.
   `Why: docs/development/rationale.md#a-set-cmdlets-own-read-decides-a-written-value`
 - **`Send-OERPimRulePatch` is the single owner of sending a Microsoft Graph PIM rule set, one PATCH
   per rule**, including the pair put-back (the MFA / authentication-context pair) and the rule that
@@ -1005,8 +1009,11 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   **ARM Requests**). `tests/QA/sourcehygiene.tests.ps1` machine-checks it like the other single-owner
   rules above. `Why: docs/development/rationale.md#sovereign-clouds`
 - **`Get-OERDerivedMailNickname` is the single owner of the mail alias `New-OERGroup` derives from a
-  display name.** `New-OERGroup` refuses an empty derived alias, or one over 64 characters, with
-  `DerivedMailNicknameInvalid`. Never re-implement the derivation inline.
+  display name;** `Get-OERDerivedMailNicknameProblem` **is the single owner of the refusal's
+  condition and text** (alias empty or over 64 characters). `New-OERGroup` publishes it as
+  `DerivedMailNicknameInvalid`, and `Sync-OERStructureGroup` asks it for a group it would create
+  with no declared `mailNickname`, so the plan and the run both refuse it. Never re-implement
+  either inline.
   `Why: docs/development/rationale.md#mail-nickname`
 - **`Test-OERNamingStandardName` is the single owner of the naming rules, their order and Detail
   texts; `Read-OERNamingStandard` of reading and refusing the naming standard file;

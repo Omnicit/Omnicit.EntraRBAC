@@ -53,6 +53,17 @@ function Set-OERAccessPackageAssignmentPolicy {
     through Invoke-OERStructure and its row is Failed for the same reason whatever its entry declares,
     a requestorScope included, since the engine has no such escape, with nothing written.
 
+    A policy read that succeeds but lacks expiration (absent or null), requestApprovalSettings,
+    requestorSettings or notificationSettings is refused with a non-terminating
+    AssignmentPolicyValueUnknown error (category InvalidData) unless the call names every value the
+    missing block holds: for expiration, one of -DurationInDays, -DurationInHours or -ExpirationDateTime;
+    for requestApprovalSettings, the stages and approval for add (-ApprovalStage, an empty list for no
+    stages), -RequireRequestorJustification and -RequireApprovalForUpdate; for requestorSettings,
+    -RequestorSettings; for notificationSettings, -DisableAssignmentNotifications (either value). The
+    full update would otherwise write a default (no expiration, approval off, no stages, self-service
+    add on, notifications on) over a value the read did not return. One record names every missing key;
+    it is written after the read and before anything is sent, also under -WhatIf.
+
     .PARAMETER Id
     The assignment policy id (GUID) to update.
 
@@ -88,7 +99,8 @@ function Set-OERAccessPackageAssignmentPolicy {
 
     .PARAMETER RequestorSettings
     A tagged object from New-OERAccessPackageRequestorSettings controlling requestor self-service options.
-    When omitted the existing requestorSettings block is preserved.
+    When omitted the existing requestorSettings block is preserved; a read that returned none is refused
+    with AssignmentPolicyValueUnknown unless this is given.
 
     .PARAMETER ApprovalStage
     Zero or more tagged objects from New-OERAccessPackageApprovalStage, in approval order.
@@ -119,7 +131,9 @@ function Set-OERAccessPackageAssignmentPolicy {
 
     .PARAMETER DisableAssignmentNotifications
     When specified, controls whether assignment notification emails are suppressed.
-    When omitted the existing notification setting is preserved.
+    When omitted the existing notification setting is preserved; a read that returned none is refused
+    with AssignmentPolicyValueUnknown unless this is given (-DisableAssignmentNotifications:$false keeps
+    notifications on).
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
@@ -330,6 +344,70 @@ function Set-OERAccessPackageAssignmentPolicy {
                     "'Prefer: include-unknown-enum-members' header; writing it back would replace the policy's " +
                     'requestor scope, so nothing was sent. Pass -RequestorScope to set the scope.')) `
                 -ErrorId 'UnknownAllowedTargetScope' -Category InvalidData -TargetObject $Id -Cmdlet $PSCmdlet
+            return
+        }
+
+        # BL-161a (Sprint 12 step 4): a read that succeeds but lacks expiration or requestApprovalSettings
+        # leaves the full update nothing to carry, and ConvertTo-OERPolicyBody would write its builder
+        # default in its place (noExpiration, approval off, no stages). Refused here, after the read and
+        # BEFORE ConvertTo-OERPolicyBody and ShouldProcess, so it reads the same under -WhatIf and no PUT
+        # is sent, unless the call names every value the missing block holds. ONE record names every
+        # missing block. The builder throws the same conditions as a backstop.
+        $ExpirationUnknown = $null -eq $Existing.expiration -and
+            -not ($PSBoundParameters.ContainsKey('DurationInDays') -or
+                $PSBoundParameters.ContainsKey('DurationInHours') -or
+                $PSBoundParameters.ContainsKey('ExpirationDateTime'))
+        $ApprovalUnknown = $null -eq $Existing.requestApprovalSettings -and
+            -not ($PSBoundParameters.ContainsKey('ApprovalStage') -and
+                $PSBoundParameters.ContainsKey('RequireRequestorJustification') -and
+                $PSBoundParameters.ContainsKey('RequireApprovalForUpdate'))
+        # Sprint 12 step 4 round 1 (A12): requestorSettings and notificationSettings have the same shape.
+        # Their builder defaults turn self-service add on and notifications on over a value the read did
+        # not return, so an update could widen access. A bound -RequestorSettings states every key the
+        # builder models, and a bound -DisableAssignmentNotifications (either value) states the one key.
+        $RequestorSettingsUnknown = $null -eq $Existing.requestorSettings -and
+            -not $PSBoundParameters.ContainsKey('RequestorSettings')
+        $NotificationUnknown = $null -eq $Existing.notificationSettings -and
+            -not $PSBoundParameters.ContainsKey('DisableAssignmentNotifications')
+        if ($ExpirationUnknown -or $ApprovalUnknown -or $RequestorSettingsUnknown -or $NotificationUnknown) {
+            $MissingKey = @()
+            $Remedy = @()
+            if ($ExpirationUnknown) {
+                $MissingKey += 'expiration'
+                $Remedy += '-DurationInDays, -DurationInHours or -ExpirationDateTime'
+            }
+            if ($ApprovalUnknown) {
+                $MissingKey += 'requestApprovalSettings'
+                $Remedy += '-ApprovalStage (an empty list for no stages), -RequireRequestorJustification and -RequireApprovalForUpdate'
+            }
+            if ($RequestorSettingsUnknown) {
+                $MissingKey += 'requestorSettings'
+                $Remedy += '-RequestorSettings (an object from New-OERAccessPackageRequestorSettings)'
+            }
+            if ($NotificationUnknown) {
+                $MissingKey += 'notificationSettings'
+                $Remedy += '-DisableAssignmentNotifications (-DisableAssignmentNotifications:$false keeps notifications on)'
+            }
+            $NewKeyMissing = $RequestorSettingsUnknown -or $NotificationUnknown
+            $Names = if ($MissingKey.Count -gt 2) {
+                ($MissingKey[0..($MissingKey.Count - 2)] -join ', ') + ' and ' + $MissingKey[-1]
+            } else {
+                $MissingKey -join ' and '
+            }
+            $RemedyText = if ($NewKeyMissing) { $Remedy -join '; ' } else { $Remedy -join ' and ' }
+            if ($MissingKey.Count -gt 1) {
+                $WhatIsHeld = 'every value they hold'
+            } elseif ($ApprovalUnknown) {
+                $WhatIsHeld = 'every value it holds'
+            } else {
+                $WhatIsHeld = 'the value'
+            }
+            Write-CmdletError `
+                -Message ([System.Exception]::new(
+                    "Microsoft Graph returned assignment policy '$Id' without $Names, and this update does not " +
+                    "name $WhatIsHeld; the full update would write a default in its place, so nothing was " +
+                    "sent. Pass $RemedyText to set it.")) `
+                -ErrorId 'AssignmentPolicyValueUnknown' -Category InvalidData -TargetObject $Id -Cmdlet $PSCmdlet
             return
         }
 

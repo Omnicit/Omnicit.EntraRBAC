@@ -996,8 +996,9 @@ reference by the new name is refused -- for a catalog every package declared in 
 or a policy every review that names it by that name (one that names the package by object id looks
 a policy up by name, as above) -- existing ones included, even when the rename was done in an
 earlier run: include the section, or remove `previousDisplayName` once the new name resolves. A
-refusal because `-Include` leaves the section out publishes no error record, only the `Failed` row,
-so `-ErrorAction Stop` and `$?` do not see it: check the rows.
+refusal because `-Include` leaves the section out writes a non-terminating error record of its own
+with the id `StructureReferenceUnidentified`, beside the `Failed` row, so `-ErrorAction Stop`,
+`-ErrorVariable` and `$?` see it; a refused rename's record carries that rename's own error id.
 
 An access review that names, by its display name, an access package the same document declares
 reaches the package that `accessPackages` entry found in its catalog or created there, by its object
@@ -1006,9 +1007,11 @@ of that name in another catalog would be found. Until the entry has that id, the
 and nothing is read or written for it, under `-WhatIf` too: when the entry stopped first, when a
 `-WhatIf` plan would create the package (a real run creates the package, then the review) or a
 declined confirmation skipped its create, and when `-Include` leaves out the `AccessPackages`
-section. Such a refusal publishes no error record of its own, only the `Failed` row. Include
-`AccessPackages`, or name the package by its object id. A review that names a package the document
-does not declare is resolved as before.
+section. Such a refusal writes an error record of its own, `StructureReferenceUnidentified`, beside
+the `Failed` row, except the package the run would create: the `-WhatIf` plan, or a declined
+confirmation of its create, reports the review `Failed` with no error record, since the only reason
+is that the package does not exist yet and the real run creates it first. Include `AccessPackages`, or name the package by its object id. A review that
+names a package the document does not declare is resolved as before.
 
 `Test-OERStructure` warns on a reference that still names a renamed object by its previous name, an
 access review's `assignmentPolicy` included. It refuses, as an `Error`, an access review whose
@@ -1039,7 +1042,8 @@ live approval stage that names nobody. `-Prune` never removes a group's last rem
 last remaining user owner, which Microsoft Graph refuses to remove even while a service principal is
 an owner (measured); the row is `Skipped`. An owner the same run adds counts as one standing, and as
 a user owner when the document names it by user principal name, so replacing a user owner with one
-named that way completes in one run. A section set to `null` is not declared and gives no row. In a
+named that way completes in one run. An owner that PIM for Groups holds, or makes eligible, does not
+count as standing. A section set to `null` is not declared and gives no row. In a
 runspace with no host of its own, such as a thread job, a run without `-WhatIf` or `-Confirm:$false`
 (or a `$ConfirmPreference` of `None`) is refused with `ConfirmationUnavailable` before it signs in,
 also one that would change nothing; run it with `-Confirm:$false` or `-WhatIf`. In another host that
@@ -1112,7 +1116,8 @@ validator warns when a renamed group keeps the alias derived from its old name o
 space or a tab is an `Error`, since Microsoft Graph was measured to refuse each of them; the
 validator refuses any other white space or control character too, which was not measured.
 `New-OERGroup` refuses to derive an alias that would be empty or longer than 64 characters
-(`DerivedMailNicknameInvalid`).
+(`DerivedMailNicknameInvalid`), and `Invoke-OERStructure` refuses the same group in the plan and
+the run alike when the entry declares no `mailNickname`.
 
 A scope written as a path is an `Error` too when it holds a `.` or `..` segment, a `%`, a `\`, a `?`
 or a `#`, white space at the start or end of the scope or of a segment, white space other than a
@@ -1133,7 +1138,12 @@ without `-RequestorScope` of a policy whose `allowedTargetScope` reads as `unkno
 Microsoft Graph names a scope this module cannot read that way, and an update that sent the
 placeholder back was measured to store it as the policy's scope. Pass `-RequestorScope` to set the
 scope; `Invoke-OERStructure` reports such a policy `Failed` whatever its entry declares, a
-`requestorScope` included, since the engine has no such escape. Given `-DisplayName` and no other
+`requestorScope` included, since the engine has no such escape. It refuses, with `AssignmentPolicyValueUnknown` and also under
+its own `-WhatIf`, an update of a policy whose read succeeds but has no `expiration`, `requestApprovalSettings`,
+`requestorSettings` or `notificationSettings` unless the call names every value that block holds (an
+expiration parameter; `-ApprovalStage`, `-RequireRequestorJustification` and
+`-RequireApprovalForUpdate`; `-RequestorSettings`; `-DisableAssignmentNotifications`), since the
+full update would otherwise write a default in its place; nothing is sent. Given `-DisplayName` and no other
 property to update, it renames the policy when the name differs from the live one, carrying
 everything else forward, and reports `NothingToUpdate` after one read when it is the live name,
 compared ignoring case. A `-WhatIf` plan reports an access package declared in a catalog the same

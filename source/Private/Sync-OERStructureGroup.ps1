@@ -75,7 +75,9 @@ function Sync-OERStructureGroup {
         principal is an owner; a -Prune run that would remove the last remaining user owner, or the
         last remaining owner of any type, reports a Skipped record instead of firing a call Microsoft
         Graph rejects. A service principal owner, and an owner PIM for Groups holds or makes eligible,
-        is withheld before that guard and counts as an owner still standing. An owner this step added
+        is withheld before that guard; a service principal counts as an owner still standing, an owner
+        PIM holds or makes eligible does not (its access can end), so the last STANDING owner is
+        refused as "prune withheld: ... last standing owner" (BL-140b). An owner this step added
         in the same run counts as standing too (a -WhatIf plan counts one it reports it would add),
         and as a user owner when the document names it by user principal name; an add that failed or
         was declined at the confirmation prompt counts nowhere.
@@ -269,6 +271,13 @@ function Sync-OERStructureGroup {
     empty array) -- an omitted eligibility key leaves live eligibility alone entirely, unlike an
     omitted members key, which still reconciles against an empty declared set.
 
+    A group whose name derives an unusable mail alias (BL-143b): when the entry to create declares no
+    non-empty mailNickname, the handler asks Get-OERDerivedMailNicknameProblem (the owner of the
+    condition and text New-OERGroup publishes) before ShouldProcess. An alias that is empty or over
+    64 characters refuses the entry in the plan and in the run alike: the non-terminating error
+    DerivedMailNicknameInvalid and one Failed row ("group not created: ..."), New-OERGroup not
+    called and no member, owner, eligibility or pimPolicy row.
+
     A group created into an administrative unit (BL-07): administrativeUnit is passed to New-OERGroup
     -AdministrativeUnit when the group is created and never round-trips, so the unit's own
     administrativeUnits[] entry need not list the group. Right after New-OERGroup returns the group,
@@ -290,11 +299,13 @@ function Sync-OERStructureGroup {
     administrativeUnits section out), the unit the group is to be created into cannot be identified:
     the item emits one Failed row naming the unit, the refused rename and why (its error id, or what
     kept the run from deciding it), and nothing is created, read further or written for it. The check
-    comes before the create's ShouldProcess gate, so -WhatIf reports the same Failed row. That row
-    publishes no error record of its own: a refused rename's error is on the unit's own row, and a
-    rename the run did not reconcile because -Include leaves the administrativeUnits section out
-    publishes no error record at all, only this Failed row. administrativeUnit applies only when the
-    group is created, so a group that already exists is not affected either way.
+    comes before the create's ShouldProcess gate, so -WhatIf reports the same Failed row. The
+    refusal also writes an error record of its own (BL-145a), non-terminating and carried by the
+    row: its id is the refused rename's error id, or StructureReferenceUnidentified when the run
+    could not decide the rename (so -ErrorAction Stop and a caller's -ErrorVariable see it), with the
+    row's Detail as its message, category ObjectNotFound and the group as its target.
+    administrativeUnit applies only when the group is created, so a group that already exists is not
+    affected either way.
 
     Service principals (decision A9): a live member or owner whose ObjectType is servicePrincipal is
     never removed from the group. Microsoft Graph's v1.0 member and owner lists leave service
@@ -635,11 +646,40 @@ function Sync-OERStructureGroup {
                 $UnitRef = $Item.administrativeUnit
                 $UnitTarget = Get-OERStructureRenameTarget -Section 'administrativeUnits' -Name ([string]$Item.administrativeUnit) -RenameMap $RenameMap
                 if ($UnitTarget -and $UnitTarget.Refused) {
-                    ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
-                        -Detail "group not created: administrative unit '$($Item.administrativeUnit)' was not reconciled in this run -- its rename from '$($UnitTarget.PreviousName)' was refused ($($UnitTarget.Reason)), so the unit the group is to be created into cannot be identified"
+                    # BL-145a: the refusal writes its own error record (the map entry's ErrorId, or
+                    # StructureReferenceUnidentified when the run could not decide the rename).
+                    $UnitDetail = "group not created: administrative unit '$($Item.administrativeUnit)' was not reconciled in this run -- its rename from '$($UnitTarget.PreviousName)' was refused ($($UnitTarget.Reason)), so the unit the group is to be created into cannot be identified"
+                    $UnitErrorId = if ([string]::IsNullOrEmpty([string]$UnitTarget.ErrorId)) { 'StructureReferenceUnidentified' } else { [string]$UnitTarget.ErrorId }
+                    $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new($UnitDetail),
+                        $UnitErrorId,
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                        $Name)
+                    $Caller.WriteError($ErrRec)
+                    ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail $UnitDetail -ErrorRecord $ErrRec
                     return
                 }
                 if ($UnitTarget) { $UnitRef = $UnitTarget.Id }
+            }
+
+            # BL-143b: the alias New-OERGroup would derive from the name must be one Microsoft Graph
+            # accepts, in the plan as in the run, so the plan never promises a create the run refuses.
+            # Get-OERDerivedMailNicknameProblem owns the condition and the text; a declared, non-empty
+            # mailNickname is sent as given and is not checked here.
+            $DeclaredNick = $null
+            if (Test-OERDeclaredProperty -Node $Item -Name 'mailNickname') { $DeclaredNick = $Item.mailNickname }
+            if (-not $DeclaredNick) {
+                $NickProblem = Get-OERDerivedMailNicknameProblem -DisplayName $Name
+                if ($NickProblem) {
+                    $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new($NickProblem),
+                        'DerivedMailNicknameInvalid',
+                        [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                        $Name)
+                    $Caller.WriteError($ErrRec)
+                    ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "group not created: $NickProblem" -ErrorRecord $ErrRec
+                    return
+                }
             }
 
             if (-not $Caller.ShouldProcess($Name, 'Create group')) {
@@ -1156,9 +1196,12 @@ function Sync-OERStructureGroup {
             # the same run (final review of Sprint 11 step 11, Important 2).
             # Since A9 an owner the read types servicePrincipal is withheld before this guard and never
             # removed, and since BL-125 so is an owner PIM for Groups holds or makes eligible (and every
-            # owner while that cannot be read), so the guard decides only for the other owners, and a
-            # withheld owner counts as one still standing -- a withheld user owner counts as a user
-            # owner still standing too.
+            # owner while that cannot be read), so the guard decides only for the other owners. A
+            # withheld owner counts as one still standing -- a withheld user owner as a user owner too
+            # -- EXCEPT an owner PIM holds or makes eligible (BL-140b): its access can end with an
+            # activation, so it is taken out of both counts once per item, at the first owner that
+            # reaches the floors ($OwnerPimState), and a floor that refuses then says so.
+            $OwnerPimState = @{ Decided = $false; Excluded = 0; ExcludedUsers = 0 }
             $RemainingOwnerCount = $CurrentOwners.Count + $AddedOwnerIds.Count
             $RemainingUserOwnerCount = @($CurrentOwners | Where-Object { $_.ObjectType -eq 'user' }).Count + $AddedUserOwnerIds.Count
             foreach ($CurOwner in $CurrentOwners) {
@@ -1179,7 +1222,8 @@ function Sync-OERStructureGroup {
                     }
                     # BL-125 (A3), as for members, and before the last-owner guard: an owner whose
                     # ownership PIM for Groups holds or makes eligible is never removed, nor any owner
-                    # while that is unknown, so a withheld owner stays in $RemainingOwnerCount.
+                    # while that is unknown; a PIM-held owner is then taken out of $RemainingOwnerCount
+                    # at the floors below (BL-140b), since it does not count as standing.
                     $Reason = Get-PimHoldReason -PrincipalId $CurId -AccessType owner
                     if ($null -eq $Reason) {
                         Write-PimUnreadWarning
@@ -1191,18 +1235,43 @@ function Sync-OERStructureGroup {
                         continue
                     }
                     if ($Prune) {
+                        # BL-140b: an owner PIM for Groups holds or makes eligible can lose that access
+                        # when an activation ends, so it does not count as standing. Decided once per
+                        # item, here, at the first owner that reaches the floors (the PIM state was read
+                        # by then, or the owner was withheld above), before any removal lowers a count.
+                        if (-not $OwnerPimState.Decided) {
+                            $OwnerPimState.Decided = $true
+                            foreach ($Other in $CurrentOwners) {
+                                if (Get-PimHoldReason -PrincipalId $Other.id -AccessType owner) {
+                                    $OwnerPimState.Excluded++
+                                    if ($Other.ObjectType -eq 'user') { $OwnerPimState.ExcludedUsers++ }
+                                }
+                            }
+                            $RemainingOwnerCount -= $OwnerPimState.Excluded
+                            $RemainingUserOwnerCount -= $OwnerPimState.ExcludedUsers
+                        }
                         $CurIsUserOwner = ($CurOwner.ObjectType -eq 'user')
                         # BL-84 (R-15): the last user owner is never removed, also while another owner of
                         # another type (a service principal) stands. Asked first, since it is the more
                         # specific floor: a user owner that is the only owner left is also refused here.
                         if ($CurIsUserOwner -and $RemainingUserOwnerCount -le 1) {
-                            ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
-                                -Detail "did not remove owner '$CurId': it is the last remaining user owner of group '$Name', and Microsoft Graph refuses to remove a group's last user owner, also while a service principal is an owner (measured: 400 `"The group must have at least one owner, hence this owner cannot be removed.`"), so no request was sent (our own guard)."
+                            if ($OwnerPimState.ExcludedUsers -gt 0) {
+                                ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
+                                    -Detail "prune withheld: undeclared owner '$CurId' is the last standing user owner of group '$Name': the other $($OwnerPimState.ExcludedUsers) user owner(s) hold their ownership through PIM for Groups or are eligible for it there (an activation, a time-bound assignment or an eligibility), so they do not count as standing, and removing it could leave the group without a user owner; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember -AccessType owner if it is meant to go."
+                            } else {
+                                ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
+                                    -Detail "did not remove owner '$CurId': it is the last remaining user owner of group '$Name', and Microsoft Graph refuses to remove a group's last user owner, also while a service principal is an owner (measured: 400 `"The group must have at least one owner, hence this owner cannot be removed.`"), so no request was sent (our own guard)."
+                            }
                             continue
                         }
                         if ($RemainingOwnerCount -le 1) {
-                            ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
-                                -Detail "did not remove owner '$CurId': it is the last remaining owner of group '$Name', and this pass refuses to remove it (this is our own guard, not a Graph rejection). Microsoft Graph refuses to remove a group's last user owner (measured 2026-10-20), and this pass holds the last owner of any other type the same way, since what Graph does with one has not been measured."
+                            if ($OwnerPimState.Excluded -gt 0) {
+                                ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
+                                    -Detail "prune withheld: undeclared owner '$CurId' is the last standing owner of group '$Name': the other $($OwnerPimState.Excluded) owner(s) hold their ownership through PIM for Groups or are eligible for it there (an activation, a time-bound assignment or an eligibility), so they do not count as standing, and removing it could leave the group without an owner; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember -AccessType owner if it is meant to go."
+                            } else {
+                                ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
+                                    -Detail "did not remove owner '$CurId': it is the last remaining owner of group '$Name', and this pass refuses to remove it (this is our own guard, not a Graph rejection). Microsoft Graph refuses to remove a group's last user owner (measured 2026-10-20), and this pass holds the last owner of any other type the same way, since what Graph does with one has not been measured."
+                            }
                             continue
                         }
                         $PruneVerb = if ($WhatIfPreference) { 'would remove' } else { 'removing' }
