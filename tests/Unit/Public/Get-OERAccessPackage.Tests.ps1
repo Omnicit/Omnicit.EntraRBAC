@@ -261,14 +261,22 @@ Describe 'Get-OERAccessPackage' {
             $Package = Get-OERAccessPackage -Id 'ap-1' -IncludePolicies
             $Package.AssignmentPolicies.Count | Should -Be 1
 
+            # A full live read, as Microsoft Graph v1.0 answers it: since BL-161a a read without
+            # expiration or requestApprovalSettings is refused (AssignmentPolicyValueUnknown) before the PUT.
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
-                @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default' }
+                @{
+                    id                      = 'pol-1'
+                    accessPackage           = @{ id = 'ap-1' }
+                    displayName             = 'Default'
+                    expiration              = @{ type = 'noExpiration' }
+                    requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }
+                }
             } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
                 @{ id = 'pol-1'; displayName = 'Default'; allowedTargetScope = 'allMemberUsers'; expiration = @{ type = 'noExpiration' } }
             } -ParameterFilter { $Method -eq 'PUT' }
 
-            $Package | Set-OERAccessPackageAssignmentPolicy -DisplayName 'Default' -DurationInDays 30 -Confirm:$false | Out-Null
+            $Package | Set-OERAccessPackageAssignmentPolicy -DisplayName 'Default' -DurationInDays 30 -Confirm:$false -ErrorAction Stop | Out-Null
 
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
                 (-not $Method -or $Method -eq 'GET') -and $Uri -like '*assignmentPolicies/ap-1?*'
