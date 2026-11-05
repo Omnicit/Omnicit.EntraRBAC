@@ -292,15 +292,23 @@ Describe 'New-OERAccessPackage' {
             $Lines = @(
                 'Import-Module Omnicit.EntraRBAC -Force'
                 '& (Get-Module Omnicit.EntraRBAC) {'
-                '    function script:Initialize-OERAuth { }'
-                '    function script:Resolve-OERCatalogId { ''cat-1'' }'
-                '    function script:Resolve-OERAccessPackageId { ''ap-other'' }'
-                '    function script:Invoke-OERGraphRequest {'
+                '    Set-Item -Path function:script:Initialize-OERAuth -Value { $null = ''STUB-AUTH'' }'
+                '    Set-Item -Path function:script:Resolve-OERCatalogId -Value { ''cat-1'' }'
+                '    Set-Item -Path function:script:Resolve-OERAccessPackageId -Value { ''ap-other'' }'
+                '    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {'
                 '        param($Uri, $Method, $Body)'
                 '        if ($Method -eq ''POST'') { $global:OERPosted = $true; return $null }'
                 '        @{ id = ''ap-other''; displayName = ''AP-Sales''; catalog = @{ id = ''cat-B'' } }'
                 '    }'
                 '}'
+                '# The stubs must be the ones the module''s own calls resolve to, or the real transport is reachable.'
+                '$Resolved = & (Get-Module Omnicit.EntraRBAC) {'
+                '    (Get-Command Initialize-OERAuth).ScriptBlock.ToString().Contains(''STUB-AUTH'') -and'
+                '    (Get-Command Resolve-OERCatalogId).ScriptBlock.ToString().Contains(''cat-1'') -and'
+                '    (Get-Command Resolve-OERAccessPackageId).ScriptBlock.ToString().Contains(''ap-other'') -and'
+                '    (Get-Command Invoke-OERGraphRequest).ScriptBlock.ToString().Contains(''OERPosted'')'
+                '}'
+                'if (-not $Resolved) { throw ''stubs do not resolve in module scope'' }'
                 '$global:OERPosted = $false'
                 '$null = New-OERAccessPackage -DisplayName ''AP-Sales'' -Catalog ''C'' -ErrorAction SilentlyContinue -ErrorVariable EV'
                 '$global:OERVariableIds = @($EV | ForEach-Object { $_.FullyQualifiedErrorId })'
@@ -311,10 +319,14 @@ Describe 'New-OERAccessPackage' {
             $Runspace.Open()
             $Ps = [powershell]::Create()
             try {
+                # First statement inside the try: the transport names throw in this runspace too, and the
+                # test fails if anything reached one of them.
+                Install-OERTransportTripwireInRunspace -Runspace $Runspace
                 $Ps.Runspace = $Runspace
                 $null = $Ps.AddScript(($Lines -join "`n"))
                 $Thrown = $null
                 try { $null = $Ps.Invoke() } catch { $Thrown = $PSItem }
+                Test-OERTransportTripwireInRunspace -Runspace $Runspace
                 $Ids = @($Runspace.SessionStateProxy.PSVariable.GetValue('OERVariableIds'))
                 $After = $Runspace.SessionStateProxy.PSVariable.GetValue('OERReachedAfterStop')
                 $Posted = $Runspace.SessionStateProxy.PSVariable.GetValue('OERPosted')

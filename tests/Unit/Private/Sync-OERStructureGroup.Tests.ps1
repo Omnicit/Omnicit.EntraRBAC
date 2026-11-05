@@ -9919,7 +9919,7 @@ Invoke-OERStructure -Json $Json -Prune -Confirm:$false | ForEach-Object { "ROW:$
             Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 1 -Exactly -Scope It -ParameterFilter { $PrincipalId -eq 'id-o-new@example.com' -and $AccessType -eq 'owner' }
         }
 
-        It 'withholds a held owner before the last-owner guard, and counts it as an owner still standing' {
+        It 'withholds a held owner before the last-owner guard' {
             # (1) The held owner is the only owner: the PIM row, not the last-owner row.
             $script:PimLiveOwners = @(New-PimLive 'o-act')
             $script:PimHold = New-PimHold -Held @{ 'o-act|owner' = $script:PimActOwner }
@@ -9978,6 +9978,19 @@ Invoke-OERStructure -Json $Json -Prune -Confirm:$false | ForEach-Object { "ROW:$
                 Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Scope It
             }
 
+            It 'does not count a DECLARED owner that PIM holds as standing: the undeclared standing user owner is refused, in a run and a plan' {
+                $script:PimLiveOwners = @(New-PimLive 'o-a', 'id-b@example.com')
+                $script:PimHold = New-PimHold -Held @{ 'id-b@example.com|owner' = $script:PimActOwner }
+                Mock -ModuleName $script:moduleName Read-OERGroupPimHold { $script:PimHold }
+                $Item = [PSCustomObject]@{ displayName = 'grp-pim'; members = $null; owners = @('b@example.com') }
+                foreach ($AsPlan in $true, $false) {
+                    $Out = Invoke-PimHoldRun -Items @($Item) -Prune -Plan:$AsPlan
+                    @($Out.Errors).Count | Should -Be 0
+                    Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-StandingUserText 'o-a' 1) | Should -Be 1
+                    Get-PimRowCount -Rows $Out.Rows -Action 'Unchanged' -Detail "owner 'b@example.com' already present" | Should -Be 1
+                }
+                Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Scope It
+            }
             It 'converges: the same withheld prune applied twice gives the same rows and no write' {
                 $script:PimLiveOwners = @(New-PimLive 'o-a', 'o-b')
                 $script:PimHold = New-PimHold -Held @{ 'o-b|owner' = $script:PimActOwner }

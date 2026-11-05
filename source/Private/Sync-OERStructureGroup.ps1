@@ -1222,7 +1222,8 @@ function Sync-OERStructureGroup {
                     }
                     # BL-125 (A3), as for members, and before the last-owner guard: an owner whose
                     # ownership PIM for Groups holds or makes eligible is never removed, nor any owner
-                    # while that is unknown, so a withheld owner stays in $RemainingOwnerCount.
+                    # while that is unknown; a PIM-held owner is then taken out of $RemainingOwnerCount
+                    # at the floors below (BL-140b), since it does not count as standing.
                     $Reason = Get-PimHoldReason -PrincipalId $CurId -AccessType owner
                     if ($null -eq $Reason) {
                         Write-PimUnreadWarning
