@@ -19,7 +19,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy' {
 
     It 'PUTs the reassembled body to the policy id' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
-            @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() } }
+            @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false } }
         } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
             @{ id = 'pol-1'; displayName = 'Renamed'; allowedTargetScope = 'allMemberUsers'; expiration = @{ type = 'noExpiration' } }
@@ -50,6 +50,8 @@ Describe 'Set-OERAccessPackageAssignmentPolicy' {
                     isRequestorJustificationRequired = $true
                     stages                           = @(@{ durationBeforeAutomaticDenial = 'P3D' })
                 }
+                requestorSettings       = @{ enableTargetsToSelfAddAccess = $false }
+                notificationSettings    = @{ isAssignmentNotificationDisabled = $false }
             }
         } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
@@ -76,7 +78,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy' {
 
     It 'does not PUT under -WhatIf' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
-            @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() } }
+            @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false } }
         } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
         $Scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
         Set-OERAccessPackageAssignmentPolicy -Id 'pol-1' -DisplayName 'x' -RequestorScope $Scope -WhatIf | Out-Null
@@ -106,7 +108,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy' {
         # The exact URI: $expand=accessPackage alone returns a stage as { id, stage } WITHOUT the custom
         # extension's own id (measured 2026-10-13, Sprint 11 step 3), so the stages could not be carried.
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
-            @{ id = 'pol-1'; accessPackage = @{ id = 'ap-99' }; displayName = 'Old'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() } }
+            @{ id = 'pol-1'; accessPackage = @{ id = 'ap-99' }; displayName = 'Old'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false } }
         } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
             @{ id = 'pol-1'; displayName = 'New'; allowedTargetScope = 'allMemberUsers'; expiration = @{ type = 'noExpiration' } }
@@ -125,7 +127,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy' {
 
     It 'returns a tagged AssignmentPolicy object on success' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
-            @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() } }
+            @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false } }
         } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
             @{ id = 'pol-1'; displayName = 'Default'; allowedTargetScope = 'allMemberUsers'; expiration = @{ type = 'noExpiration' } }
@@ -149,6 +151,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy' {
             allowedTargetScope      = 'allMemberUsers'
             requestorSettings       = @{ enableTargetsToSelfAddAccess = $true; onBehalfRequestors = @() }
             requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; stages = @() }
+            notificationSettings    = @{ isAssignmentNotificationDisabled = $false }
             expiration              = @{ type = 'noExpiration' }
         }
         $PipedPolicy = InModuleScope $script:moduleName -Parameters @{ Raw = $ExistingRaw } {
@@ -170,7 +173,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy' {
 
     It 'accepts the id from the pipeline by property name' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
-            @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() } }
+            @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false } }
         } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
             @{ id = 'pol-1'; displayName = 'Renamed'; allowedTargetScope = 'allMemberUsers'; expiration = @{ type = 'noExpiration' } }
@@ -201,6 +204,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy' {
                 stages                           = @()
             }
             reviewSettings          = @{ isEnabled = $true }
+            notificationSettings    = @{ isAssignmentNotificationDisabled = $false }
             expiration              = @{ type = 'noExpiration' }
         }
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest -ParameterFilter { $Method -ne 'PUT' } { $ExistingPolicy }
@@ -251,7 +255,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy' {
     Context 'duration vocabulary aliases (audit PR6)' {
         It 'binds -DurationDays to the day-count expiration' {
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
-                @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() } }
+                @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false } }
             } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
                 @{ id = 'pol-1'; displayName = 'Default'; allowedTargetScope = 'allMemberUsers'; expiration = @{ type = 'afterDuration'; duration = 'P30D' } }
@@ -265,7 +269,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy' {
 
         It 'binds -DurationHours to the hour-count expiration' {
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
-                @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() } }
+                @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false } }
             } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
                 @{ id = 'pol-1'; displayName = 'Default'; allowedTargetScope = 'allMemberUsers'; expiration = @{ type = 'afterDuration'; duration = 'PT8H' } }
@@ -309,7 +313,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy' {
         # :221). Scoped with -ParameterFilter so the RMW GET still succeeds and only the PUT fails,
         # proving this catch is independently exercised from the sibling GET catch above.
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
-            @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() } }
+            @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false } }
         } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
             throw [System.Management.Automation.ErrorRecord]::new(
@@ -345,7 +349,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy deleted Lifecycle access review t
 
     It 'translates the BusinessFlow 404 into AccessPackageLifecycleReviewMissing naming the missing definition id' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
-            @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() } }
+            @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false } }
         } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
             # Exactly the record Convert-GraphHttpException builds for this response: the body's
@@ -380,7 +384,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy deleted Lifecycle access review t
 
     It 'leaves every other Graph PUT failure on the generic path, unchanged' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
-            @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() } }
+            @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false } }
         } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
             throw [System.Management.Automation.ErrorRecord]::new(
@@ -403,7 +407,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy deleted Lifecycle access review t
         # single GUID predicate, rather than by an inline GUID regex. A message that matches the prose
         # but names something that is not a definition id must stay on the generic path.
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
-            @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() } }
+            @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false } }
         } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
             $Detail = 'NotFound: BusinessFlow not found for id not-a-guid'
@@ -425,7 +429,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy deleted Lifecycle access review t
 
     It 'does not translate a NotFound whose message is not the BusinessFlow shape' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
-            @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() } }
+            @{ id = 'pol-1'; accessPackage = @{ id = 'ap-1' }; displayName = 'Default'; expiration = @{ type = 'noExpiration' }; requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false } }
         } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
             $Detail = 'NotFound: Resource not found for the segment ''assignmentPolicies''.'
@@ -462,7 +466,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy requestor scope preservation' {
                 allowedTargetScope     = 'specificDirectoryUsers'
                 specificAllowedTargets = @(@{ '@odata.type' = '#microsoft.graph.singleUser'; userId = 'u-1' })
                 expiration             = @{ type = 'noExpiration' }
-                requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }
+                requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false }
             }
         }
     }
@@ -537,7 +541,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy refuses a connected-organization 
                         description             = 'Partner organization'
                     })
                 expiration             = @{ type = 'noExpiration' }
-                requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }
+                requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false }
             }
         } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
@@ -546,7 +550,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy refuses a connected-organization 
                 displayName        = 'Partners'
                 allowedTargetScope = $Body.allowedTargetScope
                 expiration         = @{ type = 'noExpiration' }
-                requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }
+                requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false }
             }
         } -ParameterFilter { $Method -eq 'PUT' }
     }
@@ -707,7 +711,7 @@ $Module = Get-Module Omnicit.EntraRBAC
             allowedTargetScope     = 'specificConnectedOrganizationUsers'
             specificAllowedTargets = @(@{ '@odata.type' = '#microsoft.graph.connectedOrganizationMembers'; connectedOrganizationId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' })
             expiration             = @{ type = 'noExpiration' }
-            requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }
+            requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false }
         }
     }
 }
@@ -803,7 +807,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy keeps custom extension stages and
                 accessPackage      = @{ id = 'ap-1' }
                 allowedTargetScope = 'allMemberUsers'
                 expiration         = @{ type = 'noExpiration' }
-                requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }
+                requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false }
             }
             if ($PSBoundParameters.ContainsKey('Stage')) { $Policy.customExtensionStageSettings = $Stage }
             if ($WithAutomatic) {
@@ -1005,7 +1009,7 @@ $Module = Get-Module Omnicit.EntraRBAC
             accessPackage                = @{ id = 'ap-1' }
             allowedTargetScope           = 'allMemberUsers'
             expiration                   = @{ type = 'noExpiration' }
-            requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }
+            requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false }
             customExtensionStageSettings = @(#STAGE#)
         }
     }
@@ -1084,7 +1088,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy renames with -DisplayName alone (
                     gracePeriodBeforeAccessRemoval             = 'P7D'
                 }
                 expiration                   = @{ type = 'noExpiration' }
-                requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }
+                requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false }
                 customExtensionStageSettings = @(@{
                         id              = 'aaaaaaaa-0000-0000-0000-000000000042'
                         stage           = 'assignmentRequestCreated'
@@ -1325,7 +1329,7 @@ $Module = Get-Module Omnicit.EntraRBAC
             accessPackage      = @{ id = 'ap-1' }
             allowedTargetScope = 'allMemberUsers'
             expiration         = @{ type = 'noExpiration' }
-            requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }
+            requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false }
         }
     }
 }
@@ -1413,7 +1417,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy refuses a read allowedTargetScope
                 displayName   = 'Policy'
                 accessPackage = @{ id = 'ap-1' }
                 expiration    = @{ type = 'noExpiration' }
-                requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }
+                requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false }
             }
             if ($null -ne $script:Bl49ReadScope) { $Live.allowedTargetScope = $script:Bl49ReadScope }
             $Live
@@ -1424,7 +1428,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy refuses a read allowedTargetScope
                 displayName        = $Body.displayName
                 allowedTargetScope = $Body.allowedTargetScope
                 expiration         = @{ type = 'noExpiration' }
-                requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }
+                requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false }
             }
         } -ParameterFilter { $Method -eq 'PUT' }
     }
@@ -1555,7 +1559,7 @@ $Module = Get-Module Omnicit.EntraRBAC
             accessPackage      = @{ id = 'ap-1' }
             allowedTargetScope = 'unknownFutureValue'
             expiration         = @{ type = 'noExpiration' }
-            requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }
+            requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false }
         }
     }
 }
@@ -1639,7 +1643,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy refuses a successful read without
     BeforeEach {
         InModuleScope $script:moduleName { $script:_OERAuthState = $null }
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
-        $script:Bl161Read = @{ Expiration = $false; Approval = $false }
+        $script:Bl161Read = @{ Expiration = $false; Approval = $false; Requestor = $true; Notification = $true }
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { }
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
             $Live = @{
@@ -1648,6 +1652,8 @@ Describe 'Set-OERAccessPackageAssignmentPolicy refuses a successful read without
                 accessPackage      = @{ id = 'ap-1' }
                 allowedTargetScope = 'allMemberUsers'
             }
+            if ($script:Bl161Read.Requestor) { $Live.requestorSettings = @{ enableTargetsToSelfAddAccess = $false; enableTargetsToSelfUpdateAccess = $true } }
+            if ($script:Bl161Read.Notification) { $Live.notificationSettings = @{ isAssignmentNotificationDisabled = $true } }
             if ($script:Bl161Read.Expiration) { $Live.expiration = @{ type = 'noExpiration' } }
             if ($script:Bl161Read.Approval) { $Live.requestApprovalSettings = @{ isApprovalRequiredForAdd = $true; isApprovalRequiredForUpdate = $true; isRequestorJustificationRequired = $true; stages = @(@{ durationBeforeAutomaticDenial = 'P3D' }) } }
             $Live
@@ -1675,7 +1681,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy refuses a successful read without
         It 'refuses a read whose expiration is null' {
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
-                @{ id = 'cccccccc-0000-0000-0000-000000000011'; displayName = 'Policy'; accessPackage = @{ id = 'ap-1' }; allowedTargetScope = 'allMemberUsers'; expiration = $null; requestApprovalSettings = @{ stages = @() } }
+                @{ id = 'cccccccc-0000-0000-0000-000000000011'; displayName = 'Policy'; accessPackage = @{ id = 'ap-1' }; allowedTargetScope = 'allMemberUsers'; expiration = $null; requestApprovalSettings = @{ stages = @() }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $true } }
             } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
             $Err = $null
             Set-OERAccessPackageAssignmentPolicy -Id $script:Bl161Id -DisplayName 'Policy' -Description 'new' -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
@@ -1809,13 +1815,18 @@ $Module = Get-Module Omnicit.EntraRBAC
             return @{ id = 'cccccccc-0000-0000-0000-000000000021'; displayName = 'Policy'; allowedTargetScope = 'allMemberUsers' }
         }
         Add-Content -LiteralPath '#LOG#' -WhatIf:$false -Value "Invoke-OERGraphRequest $Method"
-        @{
+        $Live = @{
             id                      = 'cccccccc-0000-0000-0000-000000000021'
             displayName             = 'Policy'
             accessPackage           = @{ id = 'ap-1' }
             allowedTargetScope      = 'allMemberUsers'
             requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }
+            notificationSettings    = @{ isAssignmentNotificationDisabled = $false }
         }
+        # Policy ...22 has an expiration but no requestorSettings; every other id has requestorSettings
+        # and (as before) no expiration.
+        if ($Uri -like '*000000000022*') { $Live.expiration = @{ type = 'noExpiration' } } else { $Live.requestorSettings = @{ enableTargetsToSelfAddAccess = $false } }
+        $Live
     }
 }
 $Resolved = & $Module { @((Get-Command Initialize-OERAuth).ScriptBlock.ToString().Trim(), (Get-Command Invoke-OERGraphRequest).ScriptBlock.ToString()) }
@@ -1857,5 +1868,205 @@ $Results = @(
         ($Run.Output -join '|') | Should -Be 'REACHED:1|OWN:0|END'
         @($Run.Errors).Count | Should -Be 0
         @(Get-Bl161RequestLog -Log $Log) | Should -Be @('Invoke-OERGraphRequest GET', 'Invoke-OERGraphRequest PUT duration=P7D')
+    }
+
+    # Sprint 12 step 4 round 1 (A12): a read lacking requestorSettings (policy ...22) is refused the same way.
+    It 'a read without requestorSettings reaches the end of the script, sends no PUT, and writes the refusal once per call (with and without -WhatIf)' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Calls = @'
+$Results = @(
+    Set-OERAccessPackageAssignmentPolicy -Id 'cccccccc-0000-0000-0000-000000000022' -DisplayName 'Policy' -Description 'x' -Confirm:$false
+    Set-OERAccessPackageAssignmentPolicy -Id 'cccccccc-0000-0000-0000-000000000022' -DisplayName 'Renamed' -WhatIf
+)
+"REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
+'@
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (& $script:Bl161NoTryScenario -Log $Log -Calls $Calls)
+        ($Run.Output -join '|') | Should -Be 'REACHED:0|OWN:2|END'
+        @(Get-Bl161RequestLog -Log $Log) | Should -Be @('Invoke-OERGraphRequest GET', 'Invoke-OERGraphRequest GET')
+        @($Run.Errors).Count | Should -Be 2
+    }
+
+    It 'the control: the same read with -RequestorSettings bound sends the PUT' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Calls = @'
+$Results = @(
+    Set-OERAccessPackageAssignmentPolicy -Id 'cccccccc-0000-0000-0000-000000000022' -DisplayName 'Policy' -RequestorSettings (New-OERAccessPackageRequestorSettings -AllowSelfRequest) -Confirm:$false
+)
+"REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
+'@
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (& $script:Bl161NoTryScenario -Log $Log -Calls $Calls)
+        ($Run.Output -join '|') | Should -Be 'REACHED:1|OWN:0|END'
+        @($Run.Errors).Count | Should -Be 0
+        @(Get-Bl161RequestLog -Log $Log) | Should -Be @('Invoke-OERGraphRequest GET', 'Invoke-OERGraphRequest PUT duration=')
+    }
+}
+
+Describe 'Set-OERAccessPackageAssignmentPolicy refuses a successful read without requestorSettings or notificationSettings (Sprint 12 step 4 round 1, A12)' {
+    BeforeAll {
+        $script:A12Id = 'cccccccc-0000-0000-0000-000000000031'
+        $script:A12Prefix = "Microsoft Graph returned assignment policy '$($script:A12Id)' without "
+        $script:A12RsRemedy = '-RequestorSettings (an object from New-OERAccessPackageRequestorSettings)'
+        $script:A12NotifyRemedy = '-DisableAssignmentNotifications (-DisableAssignmentNotifications:$false keeps notifications on)'
+        $script:A12ExpRemedy = '-DurationInDays, -DurationInHours or -ExpirationDateTime'
+        $script:A12ApprRemedy = '-ApprovalStage (an empty list for no stages), -RequireRequestorJustification and -RequireApprovalForUpdate'
+        $script:A12Rs = New-OERAccessPackageRequestorSettings -AllowSelfRequest
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        # Which keys the read lacks: 'absent' (no key), 'null' (key with $null) or 'full'.
+        $script:A12Read = @{ Requestor = 'full'; Notification = 'full'; Expiration = 'full'; Approval = 'full' }
+        $script:A12Puts = [System.Collections.Generic.List[object]]::new()
+        $script:A12Stored = $null
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            $Live = @{
+                id                 = 'cccccccc-0000-0000-0000-000000000031'
+                displayName        = 'Policy'
+                accessPackage      = @{ id = 'ap-1' }
+                allowedTargetScope = 'allMemberUsers'
+            }
+            $Full = @{
+                Requestor    = @('requestorSettings', @{ enableTargetsToSelfAddAccess = $false; enableTargetsToSelfUpdateAccess = $true })
+                Notification = @('notificationSettings', @{ isAssignmentNotificationDisabled = $true })
+                Expiration   = @('expiration', @{ type = 'noExpiration' })
+                Approval     = @('requestApprovalSettings', @{ isApprovalRequiredForAdd = $true; isApprovalRequiredForUpdate = $true; isRequestorJustificationRequired = $true; stages = @() })
+            }
+            if ($script:A12Stored) {
+                # Read 2 of the convergence test: what the first PUT stored.
+                foreach ($Key in 'expiration', 'requestApprovalSettings', 'requestorSettings', 'notificationSettings') { $Live[$Key] = $script:A12Stored[$Key] }
+                return $Live
+            }
+            foreach ($Name in $Full.Keys) {
+                switch ($script:A12Read[$Name]) {
+                    'full' { $Live[$Full[$Name][0]] = $Full[$Name][1] }
+                    'null' { $Live[$Full[$Name][0]] = $null }
+                }
+            }
+            $Live
+        } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            $script:A12Puts.Add($Body)
+            @{ id = 'cccccccc-0000-0000-0000-000000000031'; displayName = 'Policy'; allowedTargetScope = 'allMemberUsers' }
+        } -ParameterFilter { $Method -eq 'PUT' }
+    }
+
+    Context 'the refusal' {
+        It 'refuses a read whose requestorSettings is <Shape>: one record, GET once, no PUT, no output (WhatIf: <UseWhatIf>)' -ForEach @(
+            @{ Shape = 'absent'; UseWhatIf = $false }, @{ Shape = 'absent'; UseWhatIf = $true },
+            @{ Shape = 'null'; UseWhatIf = $false }, @{ Shape = 'null'; UseWhatIf = $true }
+        ) {
+            $script:A12Read.Requestor = $Shape
+            $Err = $null
+            $Result = Set-OERAccessPackageAssignmentPolicy -Id $script:A12Id -DisplayName 'Policy' -Description 'new' -WhatIf:$UseWhatIf -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
+            $Result | Should -BeNullOrEmpty
+            @($Err).Count | Should -Be 1
+            $Err[0].FullyQualifiedErrorId | Should -Be 'AssignmentPolicyValueUnknown,Set-OERAccessPackageAssignmentPolicy'
+            $Err[0].CategoryInfo.Category | Should -Be 'InvalidData'
+            $Err[0].TargetObject | Should -Be $script:A12Id
+            $Err[0].Exception.Message | Should -BeExactly ($script:A12Prefix + "requestorSettings, and this update does not name the value; the full update would write a default in its place, so nothing was sent. Pass $($script:A12RsRemedy) to set it.")
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { -not $Method -or $Method -eq 'GET' }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PUT' }
+        }
+
+        It 'refuses a read whose notificationSettings is <Shape>: one record, GET once, no PUT, no output (WhatIf: <UseWhatIf>)' -ForEach @(
+            @{ Shape = 'absent'; UseWhatIf = $false }, @{ Shape = 'absent'; UseWhatIf = $true },
+            @{ Shape = 'null'; UseWhatIf = $false }, @{ Shape = 'null'; UseWhatIf = $true }
+        ) {
+            $script:A12Read.Notification = $Shape
+            $Err = $null
+            $Result = Set-OERAccessPackageAssignmentPolicy -Id $script:A12Id -DisplayName 'Policy' -Description 'new' -WhatIf:$UseWhatIf -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
+            $Result | Should -BeNullOrEmpty
+            @($Err).Count | Should -Be 1
+            $Err[0].FullyQualifiedErrorId | Should -Be 'AssignmentPolicyValueUnknown,Set-OERAccessPackageAssignmentPolicy'
+            $Err[0].CategoryInfo.Category | Should -Be 'InvalidData'
+            $Err[0].TargetObject | Should -Be $script:A12Id
+            $Err[0].Exception.Message | Should -BeExactly ($script:A12Prefix + "notificationSettings, and this update does not name the value; the full update would write a default in its place, so nothing was sent. Pass $($script:A12NotifyRemedy) to set it.")
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { -not $Method -or $Method -eq 'GET' }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PUT' }
+        }
+
+        It 'writes one record naming both new keys, their remedies joined by a semicolon' {
+            $script:A12Read.Requestor = 'absent'
+            $script:A12Read.Notification = 'null'
+            $Err = $null
+            Set-OERAccessPackageAssignmentPolicy -Id $script:A12Id -DisplayName 'Policy' -Description 'new' -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            @($Err).Count | Should -Be 1
+            $Err[0].Exception.Message | Should -BeExactly ($script:A12Prefix + "requestorSettings and notificationSettings, and this update does not name every value they hold; the full update would write a default in its place, so nothing was sent. Pass $($script:A12RsRemedy); $($script:A12NotifyRemedy) to set it.")
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PUT' }
+        }
+
+        It 'writes one record naming all four keys when the read has none of them' {
+            $script:A12Read = @{ Requestor = 'absent'; Notification = 'absent'; Expiration = 'absent'; Approval = 'absent' }
+            $Err = $null
+            Set-OERAccessPackageAssignmentPolicy -Id $script:A12Id -DisplayName 'Policy' -Description 'new' -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            @($Err).Count | Should -Be 1
+            $Err[0].Exception.Message | Should -BeExactly ($script:A12Prefix + "expiration, requestApprovalSettings, requestorSettings and notificationSettings, and this update does not name every value they hold; the full update would write a default in its place, so nothing was sent. Pass $($script:A12ExpRemedy); $($script:A12ApprRemedy); $($script:A12RsRemedy); $($script:A12NotifyRemedy) to set it.")
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PUT' }
+        }
+
+        It 'names a new key beside an old one: expiration and requestorSettings' {
+            $script:A12Read.Expiration = 'absent'
+            $script:A12Read.Requestor = 'absent'
+            $Err = $null
+            Set-OERAccessPackageAssignmentPolicy -Id $script:A12Id -DisplayName 'Policy' -Description 'new' -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            @($Err).Count | Should -Be 1
+            $Err[0].Exception.Message | Should -BeExactly ($script:A12Prefix + "expiration and requestorSettings, and this update does not name every value they hold; the full update would write a default in its place, so nothing was sent. Pass $($script:A12ExpRemedy); $($script:A12RsRemedy) to set it.")
+        }
+
+        It 'keeps naming the missing new key when the old keys are named by the call' {
+            $script:A12Read = @{ Requestor = 'absent'; Notification = 'full'; Expiration = 'absent'; Approval = 'full' }
+            $Err = $null
+            Set-OERAccessPackageAssignmentPolicy -Id $script:A12Id -DisplayName 'Policy' -DurationInDays 5 -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            @($Err).Count | Should -Be 1
+            $Err[0].Exception.Message | Should -BeExactly ($script:A12Prefix + "requestorSettings, and this update does not name the value; the full update would write a default in its place, so nothing was sent. Pass $($script:A12RsRemedy) to set it.")
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PUT' }
+        }
+    }
+
+    Context 'what the refusal leaves alone' {
+        It 'sends the PUT with the builder keys when -RequestorSettings is bound and the read lacks requestorSettings' {
+            $script:A12Read.Requestor = 'absent'
+            Set-OERAccessPackageAssignmentPolicy -Id $script:A12Id -DisplayName 'Policy' -RequestorSettings $script:A12Rs -Confirm:$false -ErrorAction Stop | Out-Null
+            $script:A12Puts.Count | Should -Be 1
+            $script:A12Puts[0].requestorSettings.enableTargetsToSelfAddAccess | Should -BeTrue
+            $script:A12Puts[0].requestorSettings.onBehalfRequestors | Should -BeNullOrEmpty
+        }
+
+        It 'sends the PUT with isAssignmentNotificationDisabled as named when the read lacks notificationSettings (-DisableAssignmentNotifications:<Value>)' -ForEach @(@{ Value = $true }, @{ Value = $false }) {
+            $script:A12Read.Notification = 'absent'
+            Set-OERAccessPackageAssignmentPolicy -Id $script:A12Id -DisplayName 'Policy' -DisableAssignmentNotifications:$Value -Confirm:$false -ErrorAction Stop | Out-Null
+            $script:A12Puts.Count | Should -Be 1
+            $script:A12Puts[0].notificationSettings.isAssignmentNotificationDisabled | Should -Be $Value
+        }
+
+        It 'sends the PUT as before for a full read with nothing named' {
+            Set-OERAccessPackageAssignmentPolicy -Id $script:A12Id -DisplayName 'Policy' -Description 'new' -Confirm:$false -ErrorAction Stop | Out-Null
+            $script:A12Puts.Count | Should -Be 1
+            $script:A12Puts[0].requestorSettings.enableTargetsToSelfUpdateAccess | Should -BeTrue
+            $script:A12Puts[0].notificationSettings.isAssignmentNotificationDisabled | Should -BeTrue
+        }
+    }
+
+    Context 'convergence (G8)' {
+        It 'a second run on what the first PUT stored sends the same body, requestorSettings (<Name>)' -ForEach @(
+            @{ Name = 'requestorSettings'; Lacking = 'Requestor' }
+            @{ Name = 'notificationSettings'; Lacking = 'Notification' }
+        ) {
+            $script:A12Read.$Lacking = 'absent'
+            $Named = if ($Lacking -eq 'Requestor') { @{ RequestorSettings = $script:A12Rs } } else { @{ DisableAssignmentNotifications = $true } }
+            Set-OERAccessPackageAssignmentPolicy -Id $script:A12Id -DisplayName 'Policy' @Named -Confirm:$false -ErrorAction Stop | Out-Null
+            $script:A12Puts.Count | Should -Be 1
+
+            # Read 2 returns what PUT 1 stored.
+            $script:A12Stored = $script:A12Puts[0]
+            Set-OERAccessPackageAssignmentPolicy -Id $script:A12Id -DisplayName 'Policy' @Named -Confirm:$false -ErrorAction Stop | Out-Null
+            $script:A12Puts.Count | Should -Be 2
+            $Canonical = { param($Value) ($Value | ConvertTo-Json -Depth 10 -Compress) }
+            $First = & $Canonical ([ordered]@{ r = $script:A12Puts[0].requestorSettings.GetEnumerator() | Sort-Object Name | ForEach-Object { "$($_.Name)=$($_.Value)" }; n = $script:A12Puts[0].notificationSettings.GetEnumerator() | ForEach-Object { "$($_.Name)=$($_.Value)" } })
+            $Second = & $Canonical ([ordered]@{ r = $script:A12Puts[1].requestorSettings.GetEnumerator() | Sort-Object Name | ForEach-Object { "$($_.Name)=$($_.Value)" }; n = $script:A12Puts[1].notificationSettings.GetEnumerator() | ForEach-Object { "$($_.Name)=$($_.Value)" } })
+            $Second | Should -BeExactly $First
+        }
     }
 }

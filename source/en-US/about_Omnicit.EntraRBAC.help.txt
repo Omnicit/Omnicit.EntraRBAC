@@ -1297,12 +1297,13 @@ ACCESS PACKAGE ASSIGNMENT POLICY -- GRANULAR SETTINGS
     -RequestorScope to set the scope; Invoke-OERStructure reports such a
     policy Failed whatever its entry declares, a requestorScope included,
     since the engine has no such escape. An update of a policy whose read
-    succeeds but has no expiration or no requestApprovalSettings is refused
-    with AssignmentPolicyValueUnknown, also under -WhatIf, unless the call
-    names every value that block holds (an expiration parameter; -ApprovalStage,
-    -RequireRequestorJustification and -RequireApprovalForUpdate), since the
-    full update would otherwise write a default in its place; nothing is
-    sent. Given -DisplayName and no other
+    succeeds but has no expiration, requestApprovalSettings, requestorSettings
+    or notificationSettings is refused with AssignmentPolicyValueUnknown, also
+    under -WhatIf, unless the call names every value that block holds (an
+    expiration parameter; -ApprovalStage, -RequireRequestorJustification and
+    -RequireApprovalForUpdate; -RequestorSettings;
+    -DisableAssignmentNotifications), since the full update would otherwise
+    write a default in its place; nothing is sent. Given -DisplayName and no other
     property to update, the cmdlet renames the policy when the name differs
     from the live one, carrying everything else forward, and reports
     NothingToUpdate after one read when it is the live name, compared

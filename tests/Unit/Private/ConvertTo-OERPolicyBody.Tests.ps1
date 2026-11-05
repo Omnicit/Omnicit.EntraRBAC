@@ -17,6 +17,9 @@ BeforeAll {
                 isRequestorJustificationRequired = $false; stages = @()
             }
         }
+        # Sprint 12 step 4 round 1 (A12): the same for requestorSettings and notificationSettings.
+        if (-not $Policy.ContainsKey('requestorSettings')) { $Policy['requestorSettings'] = @{ enableTargetsToSelfAddAccess = $false } }
+        if (-not $Policy.ContainsKey('notificationSettings')) { $Policy['notificationSettings'] = @{ isAssignmentNotificationDisabled = $false } }
         $Policy
     }
 }
@@ -671,7 +674,7 @@ Describe 'ConvertTo-OERPolicyBody refuses an -Existing without expiration or req
     It 'throws for an -Existing without expiration when no duration or date is given' {
         InModuleScope $script:moduleName -Parameters @{ Approval = $script:Bl161Approval } {
             param($Approval)
-            $Existing = @{ allowedTargetScope = 'allMemberUsers'; requestApprovalSettings = $Approval }
+            $Existing = @{ allowedTargetScope = 'allMemberUsers'; requestApprovalSettings = $Approval; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false } }
             { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing } | Should -Throw '*no expiration*'
         }
     }
@@ -679,7 +682,7 @@ Describe 'ConvertTo-OERPolicyBody refuses an -Existing without expiration or req
     It 'throws for an -Existing whose expiration is null' {
         InModuleScope $script:moduleName -Parameters @{ Approval = $script:Bl161Approval } {
             param($Approval)
-            $Existing = @{ allowedTargetScope = 'allMemberUsers'; expiration = $null; requestApprovalSettings = $Approval }
+            $Existing = @{ allowedTargetScope = 'allMemberUsers'; expiration = $null; requestApprovalSettings = $Approval; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false } }
             { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing } | Should -Throw '*no expiration*'
         }
     }
@@ -691,7 +694,7 @@ Describe 'ConvertTo-OERPolicyBody refuses an -Existing without expiration or req
     ) {
         InModuleScope $script:moduleName -Parameters @{ Approval = $script:Bl161Approval; Params = $Params; Type = $Type } {
             param($Approval, $Params, $Type)
-            $Existing = @{ allowedTargetScope = 'allMemberUsers'; requestApprovalSettings = $Approval }
+            $Existing = @{ allowedTargetScope = 'allMemberUsers'; requestApprovalSettings = $Approval; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false } }
             $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing @Params
             $Body.expiration.type | Should -Be $Type
         }
@@ -700,7 +703,7 @@ Describe 'ConvertTo-OERPolicyBody refuses an -Existing without expiration or req
     It 'throws for an -Existing without requestApprovalSettings unless all of stages, justification and update flag are given' {
         InModuleScope $script:moduleName {
             $Stage = New-OERAccessPackageApprovalStage -DurationDays 3 -Manager
-            $Existing = @{ allowedTargetScope = 'allMemberUsers'; expiration = @{ type = 'noExpiration' } }
+            $Existing = @{ allowedTargetScope = 'allMemberUsers'; expiration = @{ type = 'noExpiration' }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }; notificationSettings = @{ isAssignmentNotificationDisabled = $false } }
             { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing } | Should -Throw '*no requestApprovalSettings*'
             { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing -RequireApproval $true } | Should -Throw '*no requestApprovalSettings*'
             { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing -ApprovalStage $Stage -RequireRequestorJustification $true } | Should -Throw '*no requestApprovalSettings*'
@@ -714,10 +717,39 @@ Describe 'ConvertTo-OERPolicyBody refuses an -Existing without expiration or req
         }
     }
 
+    It 'throws for an -Existing whose requestorSettings is <Shape> unless -RequestorSettings is given' -ForEach @(@{ Shape = 'absent' }, @{ Shape = 'null' }) {
+        InModuleScope $script:moduleName -Parameters @{ Shape = $Shape } {
+            param($Shape)
+            $Existing = @{ allowedTargetScope = 'allMemberUsers'; expiration = @{ type = 'noExpiration' }; notificationSettings = @{ isAssignmentNotificationDisabled = $false }
+                requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() } }
+            if ($Shape -eq 'null') { $Existing.requestorSettings = $null }
+            { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing } | Should -Throw '*no requestorSettings*'
+            $Rs = New-OERAccessPackageRequestorSettings -AllowSelfRequest
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing -RequestorSettings $Rs
+            $Body.requestorSettings.enableTargetsToSelfAddAccess | Should -BeTrue
+        }
+    }
+
+    It 'throws for an -Existing whose notificationSettings is <Shape> unless -DisableAssignmentNotifications is given (<Value>)' -ForEach @(
+        @{ Shape = 'absent'; Value = $true }, @{ Shape = 'null'; Value = $false }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Shape = $Shape; Value = $Value } {
+            param($Shape, $Value)
+            $Existing = @{ allowedTargetScope = 'allMemberUsers'; expiration = @{ type = 'noExpiration' }; requestorSettings = @{ enableTargetsToSelfAddAccess = $false }
+                requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() } }
+            if ($Shape -eq 'null') { $Existing.notificationSettings = $null }
+            { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing } | Should -Throw '*no notificationSettings*'
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing -DisableAssignmentNotifications $Value
+            $Body.notificationSettings.isAssignmentNotificationDisabled | Should -Be $Value
+        }
+    }
+
     It 'keeps the New defaults when no -Existing is supplied' {
         InModuleScope $script:moduleName {
             $Scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
             $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -RequestorScope $Scope
+            $Body.requestorSettings.enableTargetsToSelfAddAccess | Should -BeTrue
+            $Body.notificationSettings.isAssignmentNotificationDisabled | Should -BeFalse
             $Body.expiration.type | Should -Be 'noExpiration'
             $Body.requestApprovalSettings.isApprovalRequiredForAdd | Should -BeFalse
             $Body.requestApprovalSettings.isRequestorJustificationRequired | Should -BeFalse

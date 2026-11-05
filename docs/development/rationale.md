@@ -3648,9 +3648,10 @@ lacks, and `Set-OERResourceGroup` sends an empty location when Azure Resource Ma
 empty body. Cost if R-14 is wrong: a direct caller whose live read fails is refused instead of warned,
 which is the safe direction.
 
-**The assignment policy residual, closed for two keys (Sprint 12 step 4, BL-161a).** The first of those
-two shapes is now refused for `expiration` and `requestApprovalSettings`, and stays open for
-`requestorSettings` and `notificationSettings` (see the end of this subsection). `Set-OERAccessPackageAssignmentPolicy` reads the policy it updates and sends the whole
+**The assignment policy residual, closed for four keys (Sprint 12 step 4, BL-161a; round 1, A12).** The
+first of those two shapes was refused in step 4 for `expiration` and `requestApprovalSettings`, and
+is refused since round 1 for `requestorSettings` and `notificationSettings` too (see the end of this
+subsection). `Set-OERAccessPackageAssignmentPolicy` reads the policy it updates and sends the whole
 policy back; when that read succeeds but has no `expiration` (absent or null), or no
 `requestApprovalSettings`, there is nothing to carry forward and `ConvertTo-OERPolicyBody` used to
 write its builder default in its place (`noExpiration`, approval off, no stages, both flags false).
@@ -3664,9 +3665,19 @@ both keys when both are missing. `ConvertTo-OERPolicyBody` throws the same two c
 with `-Existing`, as a backstop for a caller that skips the cmdlet's check; without `-Existing`
 (`New-OERAccessPackageAssignmentPolicy`) the defaults stay. The text of the CLAUDE.md bullet below is
 the frozen quote of Sprint 11 step 11; the bullet itself now carries this sentence in place of the
-"Known and NOT fixed" half for these two keys. Still open, unmeasured and not changed: when a
-successful read lacks `requestorSettings` or `notificationSettings`, `ConvertTo-OERPolicyBody` writes
-its default for it, and the `requestorSettings` default is a self-service one that enables self-add.
+"Known and NOT fixed" half for these four keys.
+
+*Sprint 12 step 4 round 1 (A12).* Step 4 left `requestorSettings` and `notificationSettings` open: when
+a successful read lacked one, `ConvertTo-OERPolicyBody` wrote its default, and the `requestorSettings`
+default is a self-service one that turns self-add on, so an update could widen access. Both are now
+refused with the same `AssignmentPolicyValueUnknown`, unless the call names the value: a bound
+`-RequestorSettings` (the builder states every key it models, so the block is known even when the read
+lacked it) or a bound `-DisableAssignmentNotifications`, either value. One record names every missing
+key ("a, b and c"), with each remedy readable on its own and joined by a semicolon when a new key is
+among them; the messages for expiration and requestApprovalSettings alone are unchanged. The builder
+throws the same conditions with `-Existing` as a backstop; without `-Existing` the defaults stay. The
+refusal is the safe direction: the case is latent, since Graph v1.0 answers with both keys. Cost if
+wrong: a caller whose read lacks a key must name the value, where it used to get the default.
 
 #### CLAUDE.md text for a-set-cmdlets-own-read-decides-a-written-value
 

@@ -270,6 +270,8 @@ Describe 'Get-OERAccessPackage' {
                     displayName             = 'Default'
                     expiration              = @{ type = 'noExpiration' }
                     requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }
+                    requestorSettings       = @{ enableTargetsToSelfAddAccess = $false }
+                    notificationSettings    = @{ isAssignmentNotificationDisabled = $false }
                 }
             } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {

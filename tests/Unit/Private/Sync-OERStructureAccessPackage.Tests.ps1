@@ -5135,6 +5135,7 @@ Describe 'Sync-OERStructureAccessPackage -- every Microsoft Graph v1.0 requestor
                     isRequestorJustificationRequired = $false
                     stages                           = @()
                 }
+                requestorSettings       = @{ enableTargetsToSelfAddAccess = $false }
                 notificationSettings    = @{ isAssignmentNotificationDisabled = $false }
             }
         }
@@ -6542,6 +6543,7 @@ Describe 'Sync-OERStructureAccessPackage -- assignment policies renamed through 
                     isRequestorJustificationRequired = $false
                     stages                           = @()
                 }
+                requestorSettings       = @{ enableTargetsToSelfAddAccess = $false }
                 notificationSettings    = @{ isAssignmentNotificationDisabled = $false }
             }
         }
@@ -6699,6 +6701,8 @@ Describe 'Sync-OERStructureAccessPackage -- assignment policies renamed through 
                 }
                 expiration                   = @{ type = 'noExpiration' }
                 requestApprovalSettings      = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }
+                requestorSettings            = @{ enableTargetsToSelfAddAccess = $false }
+                notificationSettings         = @{ isAssignmentNotificationDisabled = $false }
                 customExtensionStageSettings = @(@{
                         id              = 'aaaaaaaa-0000-0000-0000-000000000072'
                         stage           = 'assignmentRequestCreated'
@@ -6756,6 +6760,8 @@ Describe 'Sync-OERStructureAccessPackage -- assignment policies renamed through 
                 accessPackage           = @{ id = 'ap-1' }
                 allowedTargetScope      = 'allMemberUsers'
                 requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }
+                requestorSettings       = @{ enableTargetsToSelfAddAccess = $false }
+                notificationSettings    = @{ isAssignmentNotificationDisabled = $false }
             }
             # A rename names no expiration, so the full update would write a default in its place.
             $Item = [PSCustomObject]@{

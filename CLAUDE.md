@@ -966,13 +966,13 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   validation read (a failure skips the validation). In the apply engine `Sync-OERStructureGroup`
   refuses an access type whose expiration pair `Resolve-OERGroupPimPolicyChange` names in
   `UnknownLiveValues` with `PimRuleValueUnknown`, before `ShouldProcess` -- never a default.
-  `Set-OERAccessPackageAssignmentPolicy` refuses a successful read lacking `expiration` or
-  `requestApprovalSettings` with `AssignmentPolicyValueUnknown` before `ShouldProcess` and the PUT
-  unless the call names every value the missing block holds, `ConvertTo-OERPolicyBody` throwing the
-  same two conditions as a backstop. Known and NOT fixed, outside this rule (unmeasured):
-  `ConvertTo-OERPolicyBody` still writes its defaults for `requestorSettings` (a self-service default
-  that enables self-add) and `notificationSettings` when a successful read lacks them, and an empty
-  Azure Resource Manager body makes `Set-OERResourceGroup` send an empty location.
+  `Set-OERAccessPackageAssignmentPolicy` refuses a successful read lacking `expiration`,
+  `requestApprovalSettings`, `requestorSettings` or `notificationSettings` with
+  `AssignmentPolicyValueUnknown` before `ShouldProcess` and the PUT unless the call names every value
+  the missing block holds (a bound `-RequestorSettings` or `-DisableAssignmentNotifications` does),
+  `ConvertTo-OERPolicyBody` throwing the same four conditions as a backstop. Known and NOT fixed,
+  outside this rule (unmeasured): an empty Azure Resource Manager body makes `Set-OERResourceGroup`
+  send an empty location.
   `Why: docs/development/rationale.md#a-set-cmdlets-own-read-decides-a-written-value`
 - **`Send-OERPimRulePatch` is the single owner of sending a Microsoft Graph PIM rule set, one PATCH
   per rule**, including the pair put-back (the MFA / authentication-context pair) and the rule that
