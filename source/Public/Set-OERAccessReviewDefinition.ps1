@@ -28,7 +28,11 @@ function Set-OERAccessReviewDefinition {
     well as instanceDurationInDays, and -Recurrence OneTime -StartDate writes a range of -DurationInDays
     days, or of the length the live definition already carries when -DurationInDays is not given. When
     the live definition carries no length of one day or more to keep, -Recurrence OneTime without
-    -DurationInDays is refused with IncompleteRecurrence and nothing is sent.
+    -DurationInDays is refused with IncompleteRecurrence and nothing is sent. A one-time range whose
+    end (the start date plus the length) is not after today's UTC date is refused too, with
+    AccessReviewEndNotInFuture and nothing sent: a running review given a length shorter than its age
+    would end in the past, Microsoft Graph's answer to that is not measured, and ending a review that
+    is running can apply its decisions.
 
     RESIDUAL LIMITATION: the carry-forward list is explicit, never a blanket copy of the GET (the
     read-only properties id, status, createdDateTime, lastModifiedDateTime, createdBy, instances and
@@ -117,7 +121,9 @@ function Set-OERAccessReviewDefinition {
     Number of days reviewers have to complete each review instance. Also bindable as -DurationDays,
     the module-standard duration name used by the PIM cmdlets. Must be 1 or greater; a non-positive
     value fails parameter binding on this cmdlet. On a one-time review it also moves the end of the
-    recurrence range, which is what sets the length of its instance.
+    recurrence range, which is what sets the length of its instance; the call is refused with
+    AccessReviewEndNotInFuture when that end (the live start date plus this length) is not after
+    today's UTC date.
 
     .PARAMETER MailNotification
     When present, Graph sends email notifications to reviewers.
@@ -362,6 +368,21 @@ function Set-OERAccessReviewDefinition {
         }
         if ($PSBoundParameters.ContainsKey('DurationInDays')) { $Settings.instanceDurationInDays = $DurationInDays }
 
+        # A one-time review's range end must lie after today (UTC date). The end is the live (or given)
+        # start plus the length, so a review that started 20 days ago given 14 days would end in the
+        # past. Microsoft Graph's answer to a range that has already ended is not measured, and ending a
+        # review that is running can apply its decisions, so the call is refused before the PUT.
+        # Returns $true when the end is acceptable; otherwise writes the refusal and returns $false.
+        function Test-OneTimeEndInFuture {
+            param([datetime]$End, [string]$Id)
+            if ($End.Date -gt [datetime]::UtcNow.Date) { return $true }
+            Write-CmdletError `
+                -Message ([System.Exception]::new(("The one-time access review would end on {0}, which is not after today (UTC). Microsoft Graph's answer to a one-time range that has already ended is not measured, and ending a review that is running can apply its decisions, so nothing was written. Choose a length that ends after today." -f $End.ToString('yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture)))) `
+                -ErrorId 'AccessReviewEndNotInFuture' -Category InvalidOperation `
+                -TargetObject $Id -Cmdlet $PSCmdlet
+            return $false
+        }
+
         # 3c. Recurrence -- both params required together or neither
         $RecBound  = $PSBoundParameters.ContainsKey('Recurrence')
         $DateBound = $PSBoundParameters.ContainsKey('StartDate')
@@ -388,6 +409,8 @@ function Set-OERAccessReviewDefinition {
                         -TargetObject $Id -Cmdlet $PSCmdlet
                     return
                 }
+                $OneTimeEnd = ([datetime]$StartDate).Date.AddDays($OneTimeDays)
+                if (-not (Test-OneTimeEndInFuture -End $OneTimeEnd -Id $Id)) { return }
                 $RecArgs.DurationInDays = $OneTimeDays
                 $Settings.instanceDurationInDays = $OneTimeDays
             }
@@ -415,6 +438,8 @@ function Set-OERAccessReviewDefinition {
                     }
                 }
                 if ($null -ne $LiveStart) {
+                    $OneTimeEnd = ([datetime]$LiveStart).Date.AddDays($DurationInDays)
+                    if (-not (Test-OneTimeEndInFuture -End $OneTimeEnd -Id $Id)) { return }
                     $Settings.recurrence = New-OERAccessReviewRecurrence -Recurrence OneTime `
                         -StartDate $LiveStart -DurationInDays $DurationInDays
                 }
