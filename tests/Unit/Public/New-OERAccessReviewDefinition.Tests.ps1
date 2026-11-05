@@ -722,7 +722,7 @@ Describe 'New-OERAccessReviewDefinition -Group (a review of a group''s members)'
                     -Recurrence OneTime -StartDate ([datetime]'2026-07-05') -ErrorAction Stop
             } catch { $Threw = $true; $Id = $PSItem.FullyQualifiedErrorId }
             $Threw | Should -BeTrue
-            $Id | Should -Match '^(AmbiguousParameterSet|CannotResolveParameterSet|ParameterBindingException)|AmbiguousParameterSet'
+            $Id | Should -Be 'AmbiguousParameterSet,New-OERAccessReviewDefinition'
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -Exactly
         }
 
@@ -758,6 +758,37 @@ Describe 'New-OERAccessReviewDefinition -Group (a review of a group''s members)'
             }
         }
 
+        It 'binds a package call with -Manager and -FallbackReviewer to SingleStage' {
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERReviewerScope {
+                @{ Reviewers = @(@{ query = './manager'; queryType = 'MicrosoftGraph' }); FallbackReviewers = @(@{ query = '/users/u2'; queryType = 'MicrosoftGraph' }); FailedKind = $null; FailedValue = $null }
+            }
+            New-OERAccessReviewDefinition -DisplayName 'Q3' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
+                -AccessPackage 'AP' -AssignmentPolicy 'Standard' -Manager -FallbackReviewer 'u2' `
+                -Recurrence OneTime -StartDate ([datetime]'2026-07-05')
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'POST' -and $Body.reviewers[0].query -eq './manager' -and -not $Body.ContainsKey('stageSettings')
+            }
+        }
+
+        It 'binds a package call with -ReviewerGroup to SingleStage' {
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERReviewerScope {
+                @{ Reviewers = @(@{ query = '/groups/g1/transitiveMembers'; queryType = 'MicrosoftGraph' }); FallbackReviewers = @(); FailedKind = $null; FailedValue = $null }
+            }
+            New-OERAccessReviewDefinition -DisplayName 'Q3' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
+                -AccessPackage 'AP' -AssignmentPolicy 'Standard' -ReviewerGroup 'g1' `
+                -Recurrence OneTime -StartDate ([datetime]'2026-07-05')
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'POST' -and $Body.reviewers.Count -eq 1 -and -not $Body.ContainsKey('stageSettings')
+            }
+        }
+
+        It 'binds a package call with -Catalog to SingleStage and passes the catalog to the scope resolver' {
+            New-OERAccessReviewDefinition -DisplayName 'Q3' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
+                -AccessPackage 'AP' -AssignmentPolicy 'Standard' -Catalog 'Cat' -SelfReview `
+                -Recurrence OneTime -StartDate ([datetime]'2026-07-05')
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewScopeTarget -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'Cat' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
         It 'binds a package call with no reviewer to SingleStage, which then reports NoReviewer' {
             $Err = $null
             New-OERAccessReviewDefinition -DisplayName 'Q3' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
