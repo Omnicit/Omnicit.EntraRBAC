@@ -69,7 +69,10 @@ function Connect-OER {
     command that names no tenant is refused until Connect-OER or a command that names its tenant
     signs in; run Connect-OER -Force to sign in as another account; Connect-OER itself, which signs
     in deliberately, may sign in as another account), and a device code
-    session prints a new code to enter.
+    session prints a new code to enter. With -IncludeARM, an Azure Resource Manager token issued to
+    another account than the Microsoft Graph token is refused with ArmAccountMismatch and not
+    cached, and signing in as another account drops the earlier account's Azure Resource Manager
+    token.
     Connect-OER itself never renews silently: its own interactive sign-in opens the browser. A
     managed identity renews with no prompt and is the only sign-in that renews unattended. In a
     console started with pwsh -NonInteractive an interactive sign-in, a silent renewal included, is

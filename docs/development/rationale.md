@@ -6056,6 +6056,39 @@ one, so it is held to the same rule. A Graph token of the session's own account 
 an ARM token of another account is refused remains the session's: the Graph half of that renewal has
 already been accepted, which is the same state any other refused ARM step leaves.
 
+**Graph and Azure as one account (BL-163, Sprint 12 step 5).** Measured on the base (539ca94) with
+mocked `Get-AzToken` and `Get-OERTokenObjectId`, two forms of one defect. Form 1: a device code
+session of account A with `-IncludeARM`, then `Connect-OER -Force` without `-IncludeARM` answered by
+account B: `SignedInObjectId` was B and `ArmToken` was still A's, so the next Azure command acted as
+A while every Graph command acted as B. Form 2: a first sign-in with `-IncludeARM` whose Graph token
+was A's and ARM token B's raised no error and cached B's ARM token beside A's Graph state; the same
+held for `Connect-OER -IncludeARM` over a session. Two terms close it, each on its own line in
+`Initialize-OERAuth`. First, `$ArmTokenKept` also requires the new Graph token's oid to be a GUID
+equal to the state's `SignedInObjectId`, so a rebuild carries the cached ARM token only for the same
+known account; otherwise all four ARM fields are dropped and the next Azure call acquires one.
+Second, the ARM step compares the ARM token's oid with the session's `SignedInObjectId` at every
+acquisition (`$ArmAccountDiffers`). A renewal or D4 continuation is refused with `SignInSuperseded
+-AccountChanged` as before. Any other sign-in -- the first, `Connect-OER`, a switch of tenant,
+method, client or cloud -- is refused with the new terminating `ArmAccountMismatch`
+(AuthenticationError, target the tenant). It is a new id (A9) since the `-AccountChanged` text says
+the session stays the account it was, which is false after a first sign-in or a `Connect-OER` whose
+Graph half was accepted. The half state is the same as after an ARM `TenantMismatch`: the Graph
+sign-in stands, the caller stays latched and the session-uncertain marker stays set; that is safe
+since the ARM token is not cached, so no Azure request is sent with it; the message says to sign
+in again and choose the same account for both, for example with `Connect-OER -IncludeARM -Force`. What remains: a
+token without an oid, on either side, is not compared and is cached; the ARM token of a session
+whose account is unknown (no `SignInAccountId` or `SignedInObjectId` GUID) is not carried over a new
+Graph token, which costs one more acquisition. The proof is the Context
+`the cached Azure Resource Manager token follows the account (BL-163)` in
+`tests/Unit/Private/Initialize-OERAuth.Tests.ps1` (drops the ARM token when `Connect-OER` signs in
+as another account without `-IncludeARM`; keeps it when the same account signs in again; carries
+none over a renewal of a session whose account is unknown, or when the account goes from unknown to
+known), the tests that refuse a first sign-in, `Connect-OER` (`-ReclaimGraphSession`), `Connect-OER`
+as account B over a session of A and a switch of method with an ARM token of another account, the
+three that cache an ARM token when a token has no oid or both are one account, and the no-try
+runspace test `delivers ArmAccountMismatch to the caller, caches no ARM token, and sends the next
+Azure command only with the session's own account's token`.
+
 **A token without an oid (D2).** A token without an oid, on either side, proves nothing and never
 refuses. On a renewal (or a D4 continuation) it also never replaces the session's `SignedInObjectId`:
 the old value is carried over, so the next renewal is still compared with the known account. The
@@ -6078,8 +6111,10 @@ sign-in of the session's tenant named by another label (D4), which is not one.
 
 **What it does not do.** Each of these is a stated limit.
 
-- It guards the RENEWAL and the D4 continuation. A first sign-in, or a `Connect-OER`, whose Azure Resource Manager prompt is
-  answered by another account than its Graph prompt is not compared (BL-163, open).
+- It guards the RENEWAL and the D4 continuation with `SignInSuperseded`. A first sign-in, or a
+  `Connect-OER`, whose Azure Resource Manager prompt is answered by another account than its Graph
+  prompt was not compared; that is closed (BL-163, Sprint 12 step 5): see "Graph and Azure as one
+  account" above.
 - What D4 still does not cover. A token whose tenant is not a tenant ID (AzAuth reports none, or a
   name) is not compared on another label, since nothing proves it is the session's tenant: another
   account answering it is accepted and the session becomes that account's, as for any new sign-in,
@@ -7419,7 +7454,8 @@ session's Graph token (`TokenTenantId`) instead, when both are GUIDs, and refuse
 `TenantMismatch` when they differ. A state rebuild -- a renewal of the Graph token, or a transport's
 refresh -- carries the cached ARM token into the new state only when, besides the unchanged tenant
 label, identity and cloud (`$ArmIdentityUnchanged`), its `ArmTokenTenantId` equals the new Graph
-token's tenant, both GUIDs (`$ArmTokenKept`, A13, BL-95); otherwise it is dropped, the ARM step of
+token's tenant, both GUIDs, and the new token's oid is a GUID equal to the state's
+`SignedInObjectId` (`$ArmTokenKept`, A13, BL-95, BL-163); otherwise it is dropped, the ARM step of
 that same call runs under `-IncludeARM`, and the new ARM token is compared as above. Never carry it
 on the label alone: `organizations` stays `organizations` when a renewal is answered from another
 tenant (`Why: docs/development/rationale.md#requested-tenant-vs-granted-tenant`). Before the
