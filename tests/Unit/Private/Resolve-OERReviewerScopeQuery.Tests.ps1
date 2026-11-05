@@ -94,6 +94,35 @@ Describe 'Resolve-OERReviewerScopeQuery' {
         }
     }
 
+    Context 'the group reviewer forms are end-anchored' {
+        It 'parses <Query> as Group grp-1' -ForEach @(
+            @{ Query = '/groups/grp-1' }
+            @{ Query = '/groups/grp-1/transitiveMembers' }
+            @{ Query = '/v1.0/groups/grp-1/transitiveMembers/microsoft.graph.user' }
+        ) {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Query = $Query } {
+                param($Query)
+                $Parsed = Resolve-OERReviewerScopeQuery -Query $Query
+                $Parsed.Kind | Should -Be 'Group'
+                $Parsed.Id | Should -Be 'grp-1'
+            }
+        }
+
+        It 'reports <Query> as Unparsed, never the group members' -ForEach @(
+            @{ Query = '/groups/grp-1/owners' }
+            @{ Query = '/v1.0/groups/grp-1/owners' }
+            @{ Query = '/groups/grp-1/members' }
+            @{ Query = '/groups/grp-1/transitiveMembers/microsoft.graph.servicePrincipal' }
+        ) {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Query = $Query } {
+                param($Query)
+                $Parsed = Resolve-OERReviewerScopeQuery -Query $Query
+                $Parsed.Kind | Should -Be 'Unparsed'
+                $Parsed.Id | Should -BeNullOrEmpty
+            }
+        }
+    }
+
     Context 'forms that must stay unparsed' {
         # The prefix tolerance must not degenerate into "skip anything before /users/". Each of these
         # would be accepted by an unanchored match and must not be.

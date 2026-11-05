@@ -23,19 +23,39 @@ function New-OERAccessReviewScopeQuery {
     .PARAMETER AssignmentPolicyId
     The assignment policy id whose assignments are reviewed.
 
+    With -GroupId (parameter set Group) it builds the scope of a review of a group's members instead:
+    '/groups/{id}/transitiveMembers' (Microsoft Learn, "Configure access review scope by using
+    Microsoft Graph APIs"). Graph reads it back as '/v1.0/groups/{id}/transitiveMembers/microsoft.graph.user'
+    (measured 2026-11-05, Sprint 12 step 6); Resolve-OERAccessReviewGroupScope reads that form.
+
+    .PARAMETER GroupId
+    The group whose transitive members are reviewed (parameter set Group).
+
     .EXAMPLE
     New-OERAccessReviewScopeQuery -AccessPackageId $ap -AssignmentPolicyId $pol
     Returns the scope object for the access package's assignments under the policy.
+
+    .EXAMPLE
+    New-OERAccessReviewScopeQuery -GroupId $group
+    Returns the scope object for the transitive members of the group.
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
         Justification = 'Pure in-memory builder; returns a hashtable and performs no state change, so ShouldProcess does not apply.')]
     [OutputType([hashtable])]
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'AccessPackage')]
     param(
-        [Parameter(Mandatory)][string]$AccessPackageId,
-        [Parameter(Mandatory)][string]$AssignmentPolicyId
+        [Parameter(Mandatory, ParameterSetName = 'AccessPackage')][string]$AccessPackageId,
+        [Parameter(Mandatory, ParameterSetName = 'AccessPackage')][string]$AssignmentPolicyId,
+        [Parameter(Mandatory, ParameterSetName = 'Group')][string]$GroupId
     )
-    $Ap  = $AccessPackageId.Replace("'", "''")
+    if ($PSCmdlet.ParameterSetName -eq 'Group') {
+        return @{
+            '@odata.type' = '#microsoft.graph.accessReviewQueryScope'
+            query         = "/groups/$GroupId/transitiveMembers"
+            queryType     = 'MicrosoftGraph'
+        }
+    }
+    $Ap = $AccessPackageId.Replace("'", "''")
     $Pol = $AssignmentPolicyId.Replace("'", "''")
     $Filter = "accessPackage/id eq '$Ap' and assignmentPolicy/id eq '$Pol'"
     return @{

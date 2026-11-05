@@ -15,8 +15,13 @@ function Resolve-OERReviewerScopeQuery {
     - './manager' (case-insensitive) is the manager reviewer. It is matched FIRST so it can never be
       mistaken for a user or group scope.
     - '/users/{id}' is a single user reviewer.
-    - '/groups/{id}' and '/groups/{id}/transitiveMembers' are a group reviewer. The trailing segment
-      is deliberately left open, because Resolve-OERReviewerScope writes the transitiveMembers form.
+    - '/groups/{id}', '/groups/{id}/transitiveMembers' and '/groups/{id}/transitiveMembers/microsoft.graph.user'
+      are a group reviewer. The pattern is end-anchored. Resolve-OERReviewerScope writes the
+      transitiveMembers form, and Graph reads it back with the '/microsoft.graph.user' cast (measured
+      live 2026-11-05, Sprint 12 step 6, for a primary and a fallback reviewer; scope forms per Microsoft
+      Learn, "Configure access review scope by using Microsoft Graph APIs"). Any other trailing segment
+      -- '/owners', '/members', a servicePrincipal cast -- is Unparsed, the safer direction: such a
+      reviewer is never read as the group's members.
 
     The user and group forms additionally tolerate a leading Microsoft Graph API version segment.
     Graph NORMALIZES a reviewer scope query on read: a scope this module writes as '/users/{id}' with
@@ -86,8 +91,8 @@ function Resolve-OERReviewerScopeQuery {
             $Kind = 'User'
             $Id   = $Matches[1]
         }
-        elseif ($Text -match ('^' + $VersionPrefix + '/groups/([^/]+)')) {
-            # Intentionally not end-anchored: the module writes '/groups/{id}/transitiveMembers'.
+        elseif ($Text -match ('^' + $VersionPrefix + '/groups/([^/]+)(?:/transitiveMembers(?:/microsoft\.graph\.user)?)?$')) {
+            # End-anchored: only the forms the module writes and Graph reads back are a group reviewer.
             $Kind = 'Group'
             $Id   = $Matches[1]
         }
