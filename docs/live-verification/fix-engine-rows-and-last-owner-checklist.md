@@ -81,7 +81,7 @@ before it merges.
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is never switched. #type/subtask
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is never switched. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -117,13 +117,29 @@ recorded `True`.
 clone; a marker `False` -- build the worktree first (`./build.ps1 -Tasks build`), never while the
 gate runs; ids `False` -- run the prerequisite script.
 
-Result:
+Result: 2026-11-05 01:49 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Run 2026-11-05 UTC, no sign-in. The session's Repo is the step's own worktree, not the main clone; the main clone is on main, never switched; the worktree is on this branch at b2c3322 with 0 tracked changes; its build (made at 785a278, gated green: 13597 passed, 0 failed, coverage 96.42 %) carries A to G; the prerequisite ids are recorded.
+
+[oer-s124] The module loads from a worktree that is not the main clone: True
+[oer-s124] Main clone: branch main
+[oer-s124] Worktree: branch fix/engine-rows-and-last-owner; HEAD b2c3322 Add the live verification checklist for the engine rows and the last owner; tracked changes: 0
+[oer-s124] The worktree's build carries A: True
+[oer-s124] The worktree's build carries B: True
+[oer-s124] The worktree's build carries C: True
+[oer-s124] The worktree's build carries D: True
+[oer-s124] The worktree's build carries E: True
+[oer-s124] The worktree's build carries F: True
+[oer-s124] The worktree's build carries G: True
+[oer-s124] Prerequisite ids recorded: True
+```
 
 ## 1. The last standing owner stays (A)
 
 ### 1.1. A plan with -Prune keeps the last standing user owner
 
-- [ ] **1.1** `Invoke-OERStructure -Prune -WhatIf` on a document that declares only `oer-s124-owner-b` as owner of `oer-s124-owners`: `oer-s124-owner-a`, the only owner that is standing and not PIM-eligible, is Skipped with `prune withheld: ... last standing user owner ...`, no removal is planned, and nothing is written. #type/subtask
+- [x] **1.1** `Invoke-OERStructure -Prune -WhatIf` on a document that declares only `oer-s124-owner-b` as owner of `oer-s124-owners`: `oer-s124-owner-a`, the only owner that is standing and not PIM-eligible, is Skipped with `prune withheld: ... last standing user owner ...`, no removal is planned, and nothing is written. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -173,11 +189,34 @@ the other 1 user owner(s) hold their ownership through PIM for Groups or are eli
 **Failure looks like:** `would remove undeclared owner` for owner-a -- the old count, which took
 owner-b's eligible ownership as a standing owner; any write -- the fence would refuse it.
 
-Result:
+Result: 2026-11-05 01:49 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. As oer-live-cc (every identity line True), the build in the worktree, token fence in place. The plan with -Prune keeps owner-a, the only standing owner that is not PIM-eligible, as the last standing user owner (prune withheld, the new text, the other user owner counted 1); owner-b Unchanged; no removal planned; 0 own records, 0 warnings, 9 reads, 0 writes.
+
+[oer-s124] Omnicit.EntraRBAC 1.3.2 loaded from REPO\.claude\worktrees\s12-steg4\output\module\Omnicit.EntraRBAC\1.3.2.
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s124] The module is the worktree's build: True
+[oer-s124] Token fence in place: True
+[oer-s124] row: oer-s124-owners | Unchanged | group properties match
+[oer-s124] row: oer-s124-owners | Unchanged | owner 'oer-s124-owner-b@example.com' already present
+[oer-s124] row: oer-s124-owners | Skipped | prune withheld: undeclared owner '00000000-0000-0000-0000-000000000001' is the last standing user owner of group 'oer-s124-owners': the other 1 user owner(s) hold their ownership through PIM for Groups or are eligible for it there (an activation, a time-bound assignment or an eligibility), so they do not count as standing, and removing it could leave the group without a user owner; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember -AccessType owner if it is meant to go.
+[oer-s124] Rows: 3; owner-a refused as the last standing user owner: True
+[oer-s124] A removal is planned: False
+[oer-s124] Own error records: 0; warnings: 0; requests: 9 read(s), 0 write(s)
+```
 
 ### 1.2. The real run with -Prune keeps the owner, twice (G8)
 
-- [ ] **1.2** The same document applied for real with `-Prune -Confirm:$false`, twice: both runs give the rows of 1.1, no write request is made, and both users are still owners when read back. #type/subtask
+- [x] **1.2** The same document applied for real with `-Prune -Confirm:$false`, twice: both runs give the rows of 1.1, no write request is made, and both users are still owners when read back. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -227,13 +266,40 @@ Disconnect-OerLive
 **Failure looks like:** a `Removed` row or a fence refusal -- the run would have removed the last
 standing owner; the runs differ -- not convergent.
 
-Result:
+Result: 2026-11-05 01:49 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The real run with -Prune -Confirm:$false, twice: both runs give the rows of 1.1, no Removed row, 0 own records, 0 warnings; the two runs are identical (G8); 18 reads and 0 writes over both runs; both users are still owners when read back.
+
+[oer-s124] Omnicit.EntraRBAC 1.3.2 loaded from REPO\.claude\worktrees\s12-steg4\output\module\Omnicit.EntraRBAC\1.3.2.
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s124] The module is the worktree's build: True
+[oer-s124] Token fence in place: True
+[oer-s124] run 1 row: oer-s124-owners | Unchanged | group properties match
+[oer-s124] run 1 row: oer-s124-owners | Unchanged | owner 'oer-s124-owner-b@example.com' already present
+[oer-s124] run 1 row: oer-s124-owners | Skipped | prune withheld: undeclared owner '00000000-0000-0000-0000-000000000001' is the last standing user owner of group 'oer-s124-owners': the other 1 user owner(s) hold their ownership through PIM for Groups or are eligible for it there (an activation, a time-bound assignment or an eligibility), so they do not count as standing, and removing it could leave the group without a user owner; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember -AccessType owner if it is meant to go.
+[oer-s124] Run 1: rows 3; owner-a withheld: True; removed rows: 0; own error records: 0; warnings: 0
+[oer-s124] run 2 row: oer-s124-owners | Unchanged | group properties match
+[oer-s124] run 2 row: oer-s124-owners | Unchanged | owner 'oer-s124-owner-b@example.com' already present
+[oer-s124] run 2 row: oer-s124-owners | Skipped | prune withheld: undeclared owner '00000000-0000-0000-0000-000000000001' is the last standing user owner of group 'oer-s124-owners': the other 1 user owner(s) hold their ownership through PIM for Groups or are eligible for it there (an activation, a time-bound assignment or an eligibility), so they do not count as standing, and removing it could leave the group without a user owner; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember -AccessType owner if it is meant to go.
+[oer-s124] Run 2: rows 3; owner-a withheld: True; removed rows: 0; own error records: 0; warnings: 0
+[oer-s124] The two runs gave the same rows: True; requests over both runs: 18 read(s), 0 write(s)
+[oer-s124] Read back: owner-a is an owner: True; owner-b is an owner: True
+```
 
 ## 2. The validator's warnings are written before anything else (C)
 
 ### 2.1. A document that renames a group and declares no mailNickname
 
-- [ ] **2.1** A document that declares `oer-s124-owners` with `previousDisplayName` `oer-s124-owners-old` and no `mailNickname` (the validator warns that the alias does not follow a rename): a plan writes that warning once; with `-WarningAction Stop` the call stops at it with no request sent at all, so the warning stands before the sign-in and the first write. #type/subtask
+- [x] **2.1** A document that declares `oer-s124-owners` with `previousDisplayName` `oer-s124-owners-old` and no `mailNickname` (the validator warns that the alias does not follow a rename): a plan writes that warning once; with `-WarningAction Stop` the call stops at it with no request sent at all, so the warning stands before the sign-in and the first write. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -283,13 +349,32 @@ warning at groups[0].mailNickname: Group at groups[0] is renamed from 'oer-s124-
 **Failure looks like:** `validator warnings written: 0` -- the old behaviour (only `Test-OERStructure`
 showed it); a request counted in 2.1b -- the warning stood after the first read.
 
-Result:
+Result: 2026-11-05 01:49 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. A document that renames oer-s124-owners from oer-s124-owners-old without mailNickname: the plan writes exactly one validator warning with the expected text, 0 writes; under -WarningAction Stop the call stops at that warning with 0 requests of any kind, so the warning stands before the first read and the first write.
+
+[oer-s124] Omnicit.EntraRBAC 1.3.2 loaded from REPO\.claude\worktrees\s12-steg4\output\module\Omnicit.EntraRBAC\1.3.2.
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s124] The module is the worktree's build: True
+[oer-s124] Token fence in place: True
+[oer-s124] 2.1a plan: rows 1; validator warnings written: 1; first: Invoke-OERStructure: structure document warning at groups[0].mailNickname: Group at groups[0] is renamed from 'oer-s124-owners-old' and declares no mailNickname, so it keeps its current mail alias: the alias does not follow a rename. If that alias was derived from the old name, declare mailNickname with the alias the new name should carry.; requests: 5 read(s), 0 write(s)
+[oer-s124] 2.1b -WarningAction Stop: stopped at the warning: True; rows: 0; requests after the stop: 0 read(s), 0 write(s)
+```
 
 ## 3. The plan runs the creation's alias check (D)
 
 ### 3.1. A new group whose derived alias would be 69 characters
 
-- [ ] **3.1** A new group named `oer-s124-` followed by 60 `x` characters and no `mailNickname`: the plan (`-WhatIf`) and the real run are each one `Failed` row with an own `DerivedMailNicknameInvalid` record, no `would create group` row, and no write. #type/subtask
+- [x] **3.1** A new group named `oer-s124-` followed by 60 `x` characters and no `mailNickname`: the plan (`-WhatIf`) and the real run are each one `Failed` row with an own `DerivedMailNicknameInvalid` record, no `would create group` row, and no write. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -337,11 +422,33 @@ derived from the group name 'oer-s124-(60 x)' is 69 characters long; Microsoft G
 characters. ...`; 0 writes; no such group.
 **Failure looks like:** a plan row `would create group ...` -- the old plan; any write.
 
-Result:
+Result: 2026-11-05 01:49 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. A new group oer-s124- followed by 60 x and no mailNickname: the plan and the real run are each one Failed row (group not created: ... 69 characters long ...) with an own DerivedMailNicknameInvalid record, no would-create row, 0 writes; no group of that name exists.
+
+[oer-s124] Omnicit.EntraRBAC 1.3.2 loaded from REPO\.claude\worktrees\s12-steg4\output\module\Omnicit.EntraRBAC\1.3.2.
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s124] The module is the worktree's build: True
+[oer-s124] Token fence in place: True
+[oer-s124] plan row: oer-s124-(60 x) | Failed | group not created: The mail alias derived from the group name 'oer-s124-(60 x)' is 69 characters long; Microsoft Graph accepts 1 to 64 characters. Nothing was sent. Pass -MailNickname with the alias the group should carry.
+[oer-s124] plan: rows 1; Failed rows: 1; would create: False; DerivedMailNicknameInvalid record ids: DerivedMailNicknameInvalid,Invoke-OERStructure; requests so far: 1 read(s), 0 write(s)
+[oer-s124] run row: oer-s124-(60 x) | Failed | group not created: The mail alias derived from the group name 'oer-s124-(60 x)' is 69 characters long; Microsoft Graph accepts 1 to 64 characters. Nothing was sent. Pass -MailNickname with the alias the group should carry.
+[oer-s124] run: rows 1; Failed rows: 1; would create: False; DerivedMailNicknameInvalid record ids: DerivedMailNicknameInvalid,Invoke-OERStructure; requests so far: 2 read(s), 0 write(s)
+[oer-s124] Read back: a group of that name exists: False
+```
 
 ### 3.2. A valid new group is created once and then reached Unchanged (G8 for the create path)
 
-- [ ] **3.2** A new group `oer-s124-created-1` with an alias it can carry: the first real run creates it, and a second run, after the group reads back by name, reports only `Unchanged` for it. #type/subtask
+- [x] **3.2** A new group `oer-s124-created-1` with an alias it can carry: the first real run creates it, and a second run, after the group reads back by name, reports only `Unchanged` for it. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -371,13 +478,37 @@ Disconnect-OerLive
 **Expect:** run 1 one `Created` row; run 2 only `Unchanged` rows; 0 errors in both.
 **Failure looks like:** run 2 `Created` again or `Updated` -- the create path does not converge.
 
-Result:
+Result: 2026-11-05 01:49 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS (G8 for the create path). Run 1 created oer-s124-created-1; after it read back by name (converged after 4 reads, 14.6 s) and a 30 s settle, run 2 reported only Unchanged; 0 errors in both runs.
+
+[oer-s124] Omnicit.EntraRBAC 1.3.2 loaded from REPO\.claude\worktrees\s12-steg4\output\module\Omnicit.EntraRBAC\1.3.2.
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s124] The module is the worktree's build: True
+[oer-s124] Token fence in place: True
+[oer-s124] run 1 row: oer-s124-created-1 | Created | created group oer-s124-created-1 (00000000-0000-0000-0000-000000000002)
+[oer-s124] the new group reads back by name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s124] the new group reads back by name: not yet (read 2, 2.3 s, likely replication delay) -- reading again in 4 s.
+[oer-s124] the new group reads back by name: not yet (read 3, 6.6 s, likely replication delay) -- reading again in 8 s.
+[oer-s124] the new group reads back by name: converged after 4 read(s), 14.6 s.
+[oer-s124] run 2 row: oer-s124-created-1 | Unchanged | group properties match
+[oer-s124] Run 1 created the group: True; run 2 only Unchanged: True; errors: 0 and 0
+```
 
 ## 4. New-OERAccessPackage -Catalog refuses a package of another catalog (F)
 
 ### 4.1. The name exists only in the other catalog
 
-- [ ] **4.1** `New-OERAccessPackage -DisplayName oer-s124-pkg -Catalog oer-s124-cat-1`, where only `oer-s124-cat-2` holds that name: a plan and a real call are each refused with `AccessPackageInAnotherCatalog`, return nothing, write nothing, and `oer-s124-cat-1` still holds no package. #type/subtask
+- [x] **4.1** `New-OERAccessPackage -DisplayName oer-s124-pkg -Catalog oer-s124-cat-1`, where only `oer-s124-cat-2` holds that name: a plan and a real call are each refused with `AccessPackageInAnotherCatalog`, return nothing, write nothing, and `oer-s124-cat-1` still holds no package. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -424,11 +555,32 @@ packages in `oer-s124-cat-1`: 0.
 **Failure looks like:** an object returned -- the package of the other catalog handed back as if it
 were in `oer-s124-cat-1`; a write.
 
-Result:
+Result: 2026-11-05 01:49 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. New-OERAccessPackage -DisplayName oer-s124-pkg -Catalog oer-s124-cat-1 (only oer-s124-cat-2 holds the name): plan and real call each return nothing and write one AccessPackageInAnotherCatalog record naming both catalogs; 6 reads, 0 writes; oer-s124-cat-1 holds 0 packages.
+
+[oer-s124] Omnicit.EntraRBAC 1.3.2 loaded from REPO\.claude\worktrees\s12-steg4\output\module\Omnicit.EntraRBAC\1.3.2.
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s124] The module is the worktree's build: True
+[oer-s124] Token fence in place: True
+[oer-s124] plan: objects returned: 0; own records: 1; ids: AccessPackageInAnotherCatalog,New-OERAccessPackage; message: Access package 'oer-s124-pkg' exists in another catalog (00000000-0000-0000-0000-000000000003), not in catalog 'oer-s124-cat-1' (00000000-0000-0000-0000-000000000004), so it was not returned and nothing was created. Access package names are unique only within a catalog, and this command looks the name up in the whole tenant; use a name no other access package carries.
+[oer-s124] run: objects returned: 0; own records: 1; ids: AccessPackageInAnotherCatalog,New-OERAccessPackage; message: Access package 'oer-s124-pkg' exists in another catalog (00000000-0000-0000-0000-000000000003), not in catalog 'oer-s124-cat-1' (00000000-0000-0000-0000-000000000004), so it was not returned and nothing was created. Access package names are unique only within a catalog, and this command looks the name up in the whole tenant; use a name no other access package carries.
+[oer-s124] Requests: 6 read(s), 0 write(s)
+[oer-s124] Read back: packages in oer-s124-cat-1: 0
+```
 
 ### 4.2. The name in the given catalog is returned, twice, with nothing created (G8)
 
-- [ ] **4.2** `New-OERAccessPackage -DisplayName oer-s124-pkg -Catalog oer-s124-cat-2`, twice: each call returns the existing package (the prerequisite's id), and no write request is made. #type/subtask
+- [x] **4.2** `New-OERAccessPackage -DisplayName oer-s124-pkg -Catalog oer-s124-cat-2`, twice: each call returns the existing package (the prerequisite's id), and no write request is made. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -468,13 +620,33 @@ Disconnect-OerLive
 0 writes.
 **Failure looks like:** a refusal -- the catalog comparison would refuse its own catalog; a write.
 
-Result:
+Result: 2026-11-05 01:49 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS (G8). New-OERAccessPackage -Catalog oer-s124-cat-2, twice: each call returns the prerequisite's package in oer-s124-cat-2, 0 errors; 6 reads, 0 writes over both calls.
+
+[oer-s124] Omnicit.EntraRBAC 1.3.2 loaded from REPO\.claude\worktrees\s12-steg4\output\module\Omnicit.EntraRBAC\1.3.2.
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s124] The module is the worktree's build: True
+[oer-s124] Token fence in place: True
+[oer-s124] Call 1: objects returned: 1; it is the prerequisite's package: True; in oer-s124-cat-2: True; errors: 0
+[oer-s124] Call 2: objects returned: 1; it is the prerequisite's package: True; in oer-s124-cat-2: True; errors: 0
+[oer-s124] Requests over both calls: 6 read(s), 0 write(s)
+```
 
 ## 5. A refusal through the rename map writes a record (E)
 
 ### 5.1. A group to be created into a unit whose rename this run does not decide
 
-- [ ] **5.1** A group `oer-s124-in-unit` to be created into `oer-s124-unit-new`, which the document renames from `oer-s124-unit-old`, applied with `-Include Groups` as a plan: one `Failed` row, an own `StructureReferenceUnidentified` record, `$?` false, and nothing written. #type/subtask
+- [x] **5.1** A group `oer-s124-in-unit` to be created into `oer-s124-unit-new`, which the document renames from `oer-s124-unit-old`, applied with `-Include Groups` as a plan: one `Failed` row, an own `StructureReferenceUnidentified` record, `$?` false, and nothing written. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -510,7 +682,7 @@ $Rows = @(Invoke-OERStructure -Json $Doc -Include Groups -WhatIf -ErrorAction Si
 $Ok = $?
 foreach ($R in $Rows) { Write-OerLiveStep ("row: {0} | {1} | {2}" -f $R.Item, $R.Action, $R.Detail) }
 $Own = @($Err | Where-Object { ([string]$_.FullyQualifiedErrorId) -like 'StructureReferenceUnidentified,*' })
-Write-OerLiveStep "Rows: $($Rows.Count); Failed: $(@($Rows | Where-Object { $_.Action -eq 'Failed' }).Count); the row carries the record: $([bool]@($Rows | Where-Object { $_.ErrorRecord -and ([string]$_.ErrorRecord.FullyQualifiedErrorId) -like 'StructureReferenceUnidentified*' })); StructureReferenceUnidentified records: $($Own.Count); `$?: $Ok; requests: $(Get-S124Count)"
+Write-OerLiveStep "Rows: $($Rows.Count); Failed: $(@($Rows | Where-Object { $_.Action -eq 'Failed' }).Count); the row carries the record: $([bool]@($Rows | Where-Object { $_.Error -and ([string]$_.Error.FullyQualifiedErrorId) -like 'StructureReferenceUnidentified*' })); StructureReferenceUnidentified records: $($Own.Count); `$?: $Ok; requests: $(Get-S124Count)"
 Disconnect-OerLive
 ```
 
@@ -521,13 +693,32 @@ one `StructureReferenceUnidentified` record (the engine may publish it once more
 **Failure looks like:** `StructureReferenceUnidentified records: 0` and `$?: True` -- the old shape,
 a row with no record.
 
-Result:
+Result: 2026-11-05 01:49 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. A group to be created into a unit the document renames, applied with -Include Groups as a plan: one Failed row carrying its record, one own StructureReferenceUnidentified record, $? False, 1 read, 0 writes. First run of the block printed "the row carries the record: False": the block read the row's ErrorRecord property, but the result row names it Error; the block was corrected and run again (output below).
+
+[oer-s124] Omnicit.EntraRBAC 1.3.2 loaded from REPO\.claude\worktrees\s12-steg4\output\module\Omnicit.EntraRBAC\1.3.2.
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s124] The module is the worktree's build: True
+[oer-s124] Token fence in place: True
+[oer-s124] row: oer-s124-in-unit | Failed | group not created: administrative unit 'oer-s124-unit-new' was not reconciled in this run -- its rename from 'oer-s124-unit-old' was refused (the administrativeUnits section is not selected by -Include, so its rename is not reconciled in this run), so the unit the group is to be created into cannot be identified
+[oer-s124] Rows: 1; Failed: 1; the row carries the record: True; StructureReferenceUnidentified records: 1; $?: False; requests: 1 read(s), 0 write(s)
+```
 
 ## 6. Rows written before a handler stops are reported (B)
 
 ### 6.1. A run that cannot confirm its first change
 
-- [ ] **6.1** In a process started with `-NonInteractive`, a real run without `-Confirm:$false` of a document that adds `oer-s124-owner-a` as a member of `oer-s124-owners`: the handler writes the `group properties match` row, then stops at the confirmation prompt the host cannot show; the output holds that row followed by the `handler error:` row, and nothing is written. #type/subtask
+- [x] **6.1** In a process started with `-NonInteractive`, a real run without `-Confirm:$false` of a document that adds `oer-s124-owner-a` as a member of `oer-s124-owners`: the handler writes the `group properties match` row, then stops at the confirmation prompt the host cannot show; the output holds that row followed by the `handler error:` row, and nothing is written. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -572,13 +763,36 @@ True`; 0 writes; members 0.
 **Failure looks like:** only the `handler error:` row -- the rows written before the stop were lost
 (the old shape); a member added -- the prompt did not stop the write.
 
-Result:
+Result: 2026-11-05 01:49 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. In a -NonInteractive process, a real run without -Confirm:$false that would add owner-a as a member: the output holds the Unchanged "group properties match" row the handler wrote first, then the handler error (the host cannot show the confirmation prompt); 7 reads, 0 writes; the group still has 0 members.
+
+[oer-s124] Omnicit.EntraRBAC 1.3.2 loaded from REPO\.claude\worktrees\s12-steg4\output\module\Omnicit.EntraRBAC\1.3.2.
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s124] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s124] The module is the worktree's build: True
+[oer-s124] This process is non-interactive: True
+[oer-s124] Token fence in place: True
+[oer-s124] row: oer-s124-owners | Unchanged | group properties match
+[oer-s124] row: oer-s124-owners | Failed | handler error: the host cannot show the confirmation prompt Invoke-OERStructure asks before each change (PowerShell is in NonInteractive mode. Read and Prompt functionality is not available.); nothing was written for this entry. Run Invoke-OERStructure with -Confirm:$false to apply without prompts, or with -WhatIf to plan.
+[oer-s124] Rows: 2; first: Unchanged group properties match; last is the handler error: True
+[oer-s124] Requests: 7 read(s), 0 write(s)
+[oer-s124] Read back: members of oer-s124-owners: 0
+```
 
 ## Teardown
 
 ### T.1. Remove every object with the prefix
 
-- [ ] **T.1** The prerequisite script's teardown removes every `oer-s124-` object (the two users, the two groups including `oer-s124-created-1`, the eligibility, the package and both catalogs) and its sweep ends at 0. #type/subtask
+- [x] **T.1** The prerequisite script's teardown removes every `oer-s124-` object (the two users, the two groups including `oer-s124-created-1`, the eligibility, the package and both catalogs) and its sweep ends at 0. #type/subtask
 
 ```powershell
 pwsh -NoProfile -File (Join-Path $env:OER_LIVE_DIR 'Initialize-OerS124Prereq.ps1') -Teardown -Unattended
@@ -589,11 +803,41 @@ pwsh -NoProfile -File (Join-Path $env:OER_LIVE_DIR 'Initialize-OerS124Prereq.ps1
 **Failure looks like:** residue or a sweep above 0 after five minutes -- run `-Teardown` again later
 and record the residue here.
 
-Result:
+Result: 2026-11-05 01:50 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The prerequisite script's teardown removed every oer-s124- object: 8 removed (the owner eligibility, the package, both catalogs, both groups including oer-s124-created-1, both users), residue 0, unreadable 0, already gone 0, skipped 2 (the two owner rows of the PIM assignment schedules, which the group's deletion removes); its sweep ended at 0 after one 30 s wait. The script's own summary line printed wrong counts (a counting bug in the script, fixed after the run); OerLive's line below is the authority.
+
+[oer-s124] Transcript (redacted): raw\s124\prereq-teardown-20261105-014812Z.log; OerLive 1.1.0.
+[oer-s124] Teardown: Remove-OerLiveTestObjects for the prefix with the recorded ids.
+[oer-s124] Teardown of 'oer-s124-': users 2, groups 2, access packages 1, access review definitions 0, catalogs 2; administrative units 0 and app registrations 0 are reported only.
+[oer-s124] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s124] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s124] Removed: oer-s124-owners: PIM for Groups owner eligibility of a principal (201).
+[oer-s124] oer-s124-owners: PIM for Groups owner assignment skipped: deleting the group removes it (1.1.0, BL-122; adminRemove answered 400 CannotDeleteLastAdminAssignment).
+[oer-s124] oer-s124-owners: PIM for Groups owner assignment skipped: deleting the group removes it (1.1.0, BL-122; adminRemove answered 400 CannotDeleteLastAdminAssignment).
+[oer-s124] Teardown 3/6: access review definitions, access package resource roles, access packages, catalog resources, catalogs.
+[oer-s124] Deleted: access package oer-s124-pkg (204, 1 attempt(s)).
+[oer-s124] Deleted: catalog oer-s124-cat-2 (204, 1 attempt(s)).
+[oer-s124] Deleted: catalog oer-s124-cat-1 (204, 1 attempt(s)).
+[oer-s124] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s124] Teardown 5/6: the prefixed groups.
+[oer-s124] Deleted: group oer-s124-created-1 (204).
+[oer-s124] Deleted: group oer-s124-owners (204).
+[oer-s124] Teardown 6/6: the prefixed users.
+[oer-s124] DELETE user oer-s124-owner-a@example.com: 204  after 1 attempt(s), 0.2 s; first attempt no membership removed in this run.
+[oer-s124] DELETE user oer-s124-owner-b@example.com: 204  after 1 attempt(s), 0.1 s; first attempt no membership removed in this run.
+[oer-s124] Teardown of 'oer-s124-': removed 8, residue 0, unreadable 0, already gone 0, skipped 2.
+[oer-s124] Sweep: 2 object(s) with the prefix, 0 unread kind(s).
+[oer-s124] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s124-' is left.
+[oer-s124] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s124-' is left.
+[oer-s124] Sweep: 0 object(s) with the prefix, 0 unread kind(s).
+[oer-s124] Teardown complete: the sweep is 0.
+```
 
 ### T.2. The sweep is still 0 a minute later, and raw output is removed
 
-- [ ] **T.2** A minute after T.1 the prefix sweep is still 0, no session is left, and `raw\s124` is deleted after the results are copied here. #type/subtask
+- [x] **T.2** A minute after T.1 the prefix sweep is still 0, no session is left, and `raw\s124` is deleted after the results are copied here. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -611,4 +855,20 @@ Write-OerLiveStep "No module session is left: $($null -eq (& (Get-Module -Name O
 delete `raw\s124` (after every Result above is written) and clear the redaction map.
 **Failure looks like:** an object listed -- run T.1 again.
 
-Result:
+Result: 2026-11-05 01:50 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. A minute after T.1 the sweep is 0 with 0 unread kinds, and no module session is left. raw\s124 is deleted after the results were copied, and the redaction map is cleared after the report (this block signs in through Connect-OerLive -Graph, which loads the main clone's older build; only Graph reads are made).
+
+[oer-s124] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s124] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s124] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s124] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s124] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s124] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s124] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s124] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s124] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s124-' is left.
+[oer-s124] Sweep: 0 object(s) with the prefix; unread kinds: 0
+[oer-s124] No module session is left: True
+```
