@@ -87,7 +87,10 @@ function Sync-OERStructureAccessReview {
     category ObjectNotFound, the review as its target, the row's Detail as its message; its id is the
     refused rename's error id, or StructureReferenceUnidentified when the run could not decide the
     rename or the accessPackages entry has no id yet), and nothing is created, read or written for
-    the entry, under -WhatIf too. The access package is
+    the entry, under -WhatIf too. ONE refusal writes no error record: a package the run would create,
+    whose create was not carried out (-WhatIf, or a declined confirmation; the map entry's
+    CreatePending), is refused only because it does not exist YET, so the Failed row stands alone, as
+    before step 4 (A12): the plan has $? true and the real run creates the package, then the review. The access package is
     read first, so a refused package refuses the entry before its policy is read. A name the map
     holds nothing for is resolved exactly as before.
 
@@ -307,6 +310,14 @@ function Sync-OERStructureAccessReview {
                 "access package '$PackageRef' was not reconciled in this run: its rename from '$($PackageTarget.PreviousName)' was refused ($($PackageTarget.Reason)), so the access package this access review reviews cannot be identified; nothing was created, read or written for it"
             } else {
                 "access package '$PackageRef' has no id in this run ($($PackageTarget.Reason)), so the access package this access review reviews cannot be identified; nothing was created, read or written for it"
+            }
+            # Sprint 12 step 4 round 1 (A12): the only reason is that the package the run would create does
+            # not exist YET (-WhatIf, or a declined confirmation of its create), so the row stands with no
+            # error record, as before step 4: a plan has $? true and the real run creates the package first.
+            # A rename, the -Include mark and an entry that stopped first keep the record below.
+            if (-not $PackageRenamed -and $PackageTarget.CreatePending) {
+                ConvertTo-OERStructureResult -Section 'accessReviews' -Item $Name -Action 'Failed' -Detail $RefusedDetail
+                return
             }
             # BL-145a: the refusal writes its own error record (the map entry's ErrorId, or
             # StructureReferenceUnidentified when the run could not decide it or the entry has no id).

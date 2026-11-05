@@ -4496,21 +4496,78 @@ Describe 'Invoke-OERStructure: an access review reaches the access package its a
         $script:TwState.Posts[0].scope.query | Should -BeLike "*accessPackage/id eq '$($script:TwPkgA)'*"
     }
 
-    It 'refuses the review of a package the plan would create, reading nothing for it (-WhatIf)' {
+    It 'refuses the review of a package the plan would create, reading nothing for it, and writes no error record (-WhatIf, A12)' {
+        $TwErrs = $null
         $Rows = @(Invoke-OERStructure -Json $script:TwJson -WhatIf -ErrorAction SilentlyContinue -ErrorVariable TwErrs -WarningAction SilentlyContinue)
+        $PlanOk = $?
 
         @(ConvertTo-TwRowLine -Row $Rows) | Should -Be @(
             'accessPackages|AP-Twin|Skipped|would create access package AP-Twin'
             ('accessReviews|Q3 twin review|Failed|' + ($script:TwRefusal -f 'the accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined confirmation'))
         )
-        # BL-145a: the plan's refusal writes its own error record, carried by its row.
-        ($Rows[1].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
-        @($TwErrs | Where-Object { ([string]$_.FullyQualifiedErrorId).StartsWith('StructureReferenceUnidentified,') }).Count | Should -Be 1
+        # A12: the only reason is that the package does not exist yet, so the plan writes no record: it has
+        # $? true, and the row carries none.
+        $Rows[1].Error | Should -BeNullOrEmpty
+        @($TwErrs | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+        $PlanOk | Should -BeTrue
         Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
         Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessReviewScopeTarget -Times 0
         Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
         Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
     }
+
+    It 'returns both rows of the plan under -WhatIf -ErrorAction Stop without throwing (A12)' {
+        $Rows = @(Invoke-OERStructure -Json $script:TwJson -WhatIf -ErrorAction Stop -WarningAction SilentlyContinue)
+
+        @(ConvertTo-TwRowLine -Row $Rows) | Should -Be @(
+            'accessPackages|AP-Twin|Skipped|would create access package AP-Twin'
+            ('accessReviews|Q3 twin review|Failed|' + ($script:TwRefusal -f 'the accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined confirmation'))
+        )
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
+    }
+
+    It 'creates the package and then the review in the real run of the document the plan has just reported (A12)' {
+        $PlanRows = @(Invoke-OERStructure -Json $script:TwJson -WhatIf -ErrorAction Stop -WarningAction SilentlyContinue)
+        @($PlanRows).Count | Should -Be 2
+        @($script:TwState.Posts).Count | Should -Be 0
+
+        $script:TwState.Created = [PSCustomObject]@{ Id = $script:TwPkgA; DisplayName = 'AP-Twin'; CatalogId = $script:TwCatA }
+        $Rows = @(Invoke-OERStructure -Json $script:TwJson -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+
+        @(ConvertTo-TwRowLine -Row $Rows) | Should -Be @(
+            'accessPackages|AP-Twin|Created|created access package AP-Twin (aaaa1111-0000-0000-0000-000000000061)'
+            "accessReviews|Q3 twin review|Created|created access review 'Q3 twin review' (recurrence: OneTime)"
+        )
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 1 -Exactly
+        @($script:TwState.Posts).Count | Should -Be 1
+        $script:TwState.Posts[0].scope.query | Should -BeLike "*accessPackage/id eq '$($script:TwPkgA)'*"
+    }
+
+    It 'keeps the error record of a refusal that is not a package the run would create, under -WhatIf (<Case>, A12)' -ForEach @(
+        @{ Case = '-Include leaves AccessPackages out'; Include = 'AccessReviews'; Twins = $false; Reason = 'the accessPackages section is not selected by -Include'; RowCount = 1 }
+        @{ Case = 'the entry stopped first'; Include = $null; Twins = $true; Reason = "the accessPackages entry did not find or create it; see that entry's rows"; RowCount = 2 }
+    ) {
+        if ($Twins) {
+            $script:TwState.CatalogA = @([PSCustomObject]@{ Id = $script:TwPkgA; DisplayName = 'AP-Twin' }, [PSCustomObject]@{ Id = $script:TwPkgB; DisplayName = 'AP-Twin' })
+        }
+        $Params = @{ Json = $script:TwJson; WhatIf = $true; WarningAction = 'SilentlyContinue' }
+        if ($Include) { $Params.Include = $Include }
+        $TwErrs = $null
+        $Rows = @(Invoke-OERStructure @Params -ErrorAction SilentlyContinue -ErrorVariable TwErrs)
+        $PlanOk = $?
+
+        $Rows.Count | Should -Be $RowCount
+        $Rows[-1].Action | Should -BeExactly 'Failed'
+        $Rows[-1].Detail | Should -BeExactly ($script:TwRefusal -f $Reason)
+        $Rows[-1].Error | Should -Not -BeNullOrEmpty
+        ($Rows[-1].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'StructureReferenceUnidentified'
+        @($TwErrs | Where-Object { ([string]$_.FullyQualifiedErrorId).StartsWith('StructureReferenceUnidentified,') }).Count | Should -Be 1
+        $PlanOk | Should -BeFalse
+        { $null = Invoke-OERStructure @Params -ErrorAction Stop } | Should -Throw -ExpectedMessage "*access package 'AP-Twin' has no id in this run*"
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
+    }
+
 
     Context 'in a script with no try above it' {
         # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere
@@ -4556,6 +4613,11 @@ Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
     Set-Item -Path function:script:New-OERAccessReviewDefinition -Value { [System.IO.File]::AppendAllText('#LOG#', "NEW review`n") }
     Set-Item -Path function:script:Invoke-OERGraphRequest -Value { [System.IO.File]::AppendAllText('#LOG#', "GRAPH`n") }
 }
+# The stubs are checked before the call: the command that resolves in the module is the short stub, never
+# the real function (a real Initialize-OERAuth would try to sign in).
+foreach ($StubName in 'Initialize-OERAuth', 'Invoke-OERGraphRequest', 'New-OERAccessPackage') {
+    "STUB:${StubName}:" + (& (Get-Module Omnicit.EntraRBAC) { param($N) (Get-Command $N -CommandType Function).ScriptBlock.ToString().Length } $StubName)
+}
 $Json = '#JSON#'
 Invoke-OERStructure -Json $Json #FLAGS# | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
 'END'
@@ -4591,6 +4653,37 @@ Invoke-OERStructure -Json $Json #FLAGS# | ForEach-Object { "ROW:$($_.Action):$($
             # refusal's text and nothing after it in the script runs.
             $Thrown | Should -Not -BeNullOrEmpty
             $Thrown.Exception.Message | Should -BeLike "*access package 'AP-Twin' has no id in this run*"
+            @(Get-TwLoggedLine -Log $Log) | Should -BeNullOrEmpty
+        }
+
+        It 'reaches the end of the script under -WhatIf -ErrorAction Stop with both rows and no error record, after its stubs were checked (A12)' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-TwNoTryScenario -Log $Log -Flags '-WhatIf -ErrorAction Stop')
+
+            # The stubs that resolved in the module are the short ones (a real function is far longer).
+            $StubLines = @($Run.Output | Where-Object { $_ -like 'STUB:*' })
+            $StubLines.Count | Should -Be 3
+            foreach ($Line in $StubLines) { [int]($Line -split ':')[-1] | Should -BeLessThan 300 }
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
+                'ROW:Skipped:would create access package AP-Twin'
+                ('ROW:Failed:' + ($script:TwRefusal -f 'the accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined confirmation'))
+            )
+            @($Run.Errors).Count | Should -Be 0
+            @(Get-TwLoggedLine -Log $Log) | Should -BeNullOrEmpty
+        }
+
+        It 'reports the review of a package whose create a declined confirmation skipped Failed with no error record (A12)' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&No' -Script (New-TwNoTryScenario -Log $Log -Flags '-Confirm')
+
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
+                'ROW:Skipped:would create access package AP-Twin'
+                ('ROW:Failed:' + ($script:TwRefusal -f 'the accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined confirmation'))
+            )
+            @($Run.Prompts).Count | Should -BeGreaterOrEqual 1
+            @($Run.Errors).Count | Should -Be 0
             @(Get-TwLoggedLine -Log $Log) | Should -BeNullOrEmpty
         }
     }

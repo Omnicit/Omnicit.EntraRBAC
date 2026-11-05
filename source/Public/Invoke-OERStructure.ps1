@@ -140,8 +140,11 @@ function Invoke-OERStructure {
     AccessPackages section, whether or not the entry renames. Such a refusal writes an error record
     of its own, StructureReferenceUnidentified, beside the review's Failed row (an entry that stopped
     on an error carries that error on its own row too), so -ErrorVariable and $? see it and under
-    -ErrorAction Stop the call stops at the refusal. A review that names a package the document does
-    not declare, or names it by object id, is resolved as before.
+    -ErrorAction Stop the call stops at the refusal -- except the package the run would create: the
+    -WhatIf plan, or a declined confirmation of its create, reports the review Failed with NO error
+    record, since the only reason is that the package does not exist yet and the real run creates it
+    first (the plan has $? true and does not stop under -ErrorAction Stop). A review that names a
+    package the document does not declare, or names it by object id, is resolved as before.
 
     Per-item continuation: a handler error (thrown exception) is caught, written as a non-
     terminating error, recorded as a Failed StructureResult, and the engine continues to the next

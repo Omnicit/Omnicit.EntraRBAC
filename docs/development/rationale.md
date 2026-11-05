@@ -13651,7 +13651,9 @@ the review's package by its object id.
 registered refused ("the accessPackages entry would create it, and the create was not carried out:
 -WhatIf, or a declined confirmation"), and the plan reports the review `Failed` while a real run creates
 the package first and then the review. A declined confirmation of the package's create gives the same
-refusal. Accepted: the plan errs towards refusing, never towards a review on another package.
+refusal. Accepted: the plan errs towards refusing, never towards a review on another package. Since
+Sprint 12 step 4 round 1 (A12) that refusal writes no error record (see the last paragraph of BL-145a
+below): the row alone stands.
 
 **The `-Include` refusal.** With `-Include` leaving out AccessPackages, nothing is read for the
 package entries, so the run cannot know which package a declared name means: every review that names a
@@ -13692,6 +13694,22 @@ no read, no write, the same `return`. Measured in a runspace with no try above t
 preference, `-ErrorVariable` holds the record and `$?` is false and the script goes on; under
 `-ErrorAction Stop` the handler's `WriteError` is terminating and the call stops with the refusal's text,
 so nothing after it in the script runs. Nothing is written, so no convergence test applies.
+
+**Sprint 12 step 4 round 1 (A12): the plan's review of a package the run would create writes no error
+record.** Step 4's Ruling 8 made the `-WhatIf` plan write the record for a review of a package its own
+`accessPackages` entry would create, so a plan of a new document had `$?` false and stopped under
+`-ErrorAction Stop`, although the real run creates the package first and succeeds. That broke the rule
+that the plan says what the run does (BL-113). The only reason for that refusal is that the package does
+not exist yet in this run, so it is no error. `Resolve-OERStructureRename -Unidentified -CreatePending`
+marks that one entry (the would-create branch of `Sync-OERStructureAccessPackage`: `-WhatIf`, and a
+declined confirmation of the create, which share one Reason and one registration call) and the map entry
+carries `CreatePending`; `Sync-OERStructureAccessReview` then emits the `Failed` row exactly as before
+step 4 (same Detail, no `-ErrorRecord`, no `WriteError`) and returns. Every other refusal keeps its record:
+a refused or undecided rename, the `-Include` mark, and the entry's first mark when it stopped first. The
+assignment policy, administrative unit and catalog refusals are unchanged: the map holds those only for a
+rename, never for an object the run would create. Cost if wrong: a caller that relied on the plan's
+`$?` or `-ErrorAction Stop` to learn that a review names a package not yet created now sees a clean plan
+with a `Failed` review row; the row, its Detail and the real run are unchanged.
 
 ### CLAUDE.md text for review-package-in-the-same-run
 

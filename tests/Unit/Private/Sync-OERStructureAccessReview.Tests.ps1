@@ -5563,7 +5563,7 @@ Describe 'Sync-OERStructureAccessReview reaches an access package or assignment 
         It 'refuses the review, reading and writing nothing, when the entry has no id in this run: <Case> (<Mode>)' -ForEach @(
             foreach ($Mode in @('a real run', 'a plan under -WhatIf')) {
                 @{ Case = 'the entry stopped first'; Mode = $Mode; Reason = "the accessPackages entry did not find or create it; see that entry's rows" }
-                @{ Case = 'the entry would create it'; Mode = $Mode; Reason = 'the accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined confirmation' }
+                @{ Case = 'the entry would create it, but the mark is not CreatePending'; Mode = $Mode; Reason = 'the accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined confirmation' }
                 @{ Case = '-Include leaves the section out'; Mode = $Mode; Reason = 'the accessPackages section is not selected by -Include' }
             }
         ) {
@@ -5591,6 +5591,35 @@ Describe 'Sync-OERStructureAccessReview reaches an access package or assignment 
             Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewScopeTarget -Times 0
             Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times 0
             Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERStructurePrincipal -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+        }
+
+        # Sprint 12 step 4 round 1 (A12): the one refusal that writes no error record -- the package the run
+        # would create, the create not carried out (-WhatIf, or a declined confirmation): the only reason is
+        # that it does not exist YET. The row is the one origin/main emitted, with no record.
+        It 'refuses the review of a package the run would create with the Failed row alone and no error record (<Mode>)' -ForEach @(
+            @{ Mode = 'a real run'; PlanOnly = $false }
+            @{ Mode = 'a plan under -WhatIf'; PlanOnly = $true }
+        ) {
+            $Reason = 'the accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined confirmation'
+            $Map = New-MpMap
+            Register-MpRename -RenameMap $Map -Splat @{ Section = 'accessPackages'; Name = 'AP-New'; Unidentified = $true; CreatePending = $true; Reason = $Reason }
+            $Run = Invoke-MpSync -Item (New-MpEntry) -RenameMap $Map -WhatIf:$PlanOnly
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Section | Should -BeExactly 'accessReviews'
+            $Run.Rows[0].Item | Should -BeExactly 'Q3 AP review'
+            $Run.Rows[0].Action | Should -BeExactly 'Failed'
+            $Run.Rows[0].Detail | Should -BeExactly ("access package 'AP-New' has no id in this run ($Reason), so the access package this access review " +
+                'reviews cannot be identified; nothing was created, read or written for it')
+            $Run.Rows[0].Error | Should -BeNullOrEmpty
+            @($Run.Errors).Count | Should -Be 0
+            @($Run.All).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times 0
             Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
             Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
         }

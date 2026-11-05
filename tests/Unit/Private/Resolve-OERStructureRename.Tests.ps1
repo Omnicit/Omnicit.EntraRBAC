@@ -793,6 +793,36 @@ Describe 'Resolve-OERStructureRename' {
             $Result.Hit.ErrorRecord | Should -BeNullOrEmpty
             $Result.Hit.Result | Should -BeNullOrEmpty
         }
+        It 'marks an -Unidentified -CreatePending entry CreatePending, and every other entry it builds not (A12)' {
+            $Result = InModuleScope $script:moduleName {
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $null = Resolve-OERStructureRename -Section 'accessPackages' -Name 'AP-Pending' -Unidentified -CreatePending -Reason 'r' -RenameMap $Map
+                $null = Resolve-OERStructureRename -Section 'accessPackages' -Name 'AP-Plain' -Unidentified -Reason 'r' -RenameMap $Map
+                $null = Resolve-OERStructureRename -Section 'accessPackages' -Name 'AP-Found' -Identified -Id 'aaaaaaaa-0000-0000-0000-00000000000a' -RenameMap $Map
+                $null = Resolve-OERStructureRename -Section 'accessPackages' -Name 'AP-Undecided' -PreviousName 'AP-Old' -Undecided -Reason 'r' -RenameMap $Map
+                $null = Resolve-OERStructureRename -Section 'accessPackages' -Name 'AP-Renamed' -PreviousName 'AP-Old2' -Id $null -PreviousId 'bbbbbbbb-0000-0000-0000-00000000000b' -RenameMap $Map
+                $null = Resolve-OERStructureRename -Section 'accessPackages' -Name 'AP-Gone' -PreviousName 'AP-Old3' -Id $null -PreviousId $null -RenameMap $Map
+                $Map
+            }
+            $Result['accesspackages|ap-pending'].CreatePending | Should -BeTrue
+            $Result['accesspackages|ap-pending'].Refused | Should -BeTrue
+            $Result['accesspackages|ap-pending'].Reason | Should -BeExactly 'r'
+            foreach ($Key in 'accesspackages|ap-plain', 'accesspackages|ap-found', 'accesspackages|ap-undecided', 'accesspackages|ap-renamed', 'accesspackages|ap-gone') {
+                $Result.ContainsKey($Key) | Should -BeTrue -Because "the map holds $Key"
+                $Result[$Key].PSObject.Properties.Name | Should -Contain 'CreatePending'
+                $Result[$Key].CreatePending | Should -BeFalse -Because "$Key is not a pending create"
+            }
+        }
+        It 'takes -CreatePending in the Unidentified set only, and it is optional' {
+            $Sets = InModuleScope $script:moduleName {
+                @((Get-Command Resolve-OERStructureRename).ParameterSets | ForEach-Object {
+                        $Hit = @($_.Parameters.Where({ $_.Name -eq 'CreatePending' }))
+                        [PSCustomObject]@{ Name = $_.Name; Has = ($Hit.Count -eq 1); Mandatory = ($Hit.Count -eq 1 -and $Hit[0].IsMandatory) }
+                    })
+            }
+            @($Sets | Where-Object { $_.Has } | ForEach-Object { $_.Name }) | Should -Be @('Unidentified')
+            @($Sets | Where-Object { $_.Mandatory }) | Should -HaveCount 0
+        }
         It 'replaces an -Unidentified mark by the id the entry then registers, under the same key' {
             $Result = InModuleScope $script:moduleName {
                 $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)

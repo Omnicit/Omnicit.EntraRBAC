@@ -1008,7 +1008,9 @@ and nothing is read or written for it, under `-WhatIf` too: when the entry stopp
 `-WhatIf` plan would create the package (a real run creates the package, then the review) or a
 declined confirmation skipped its create, and when `-Include` leaves out the `AccessPackages`
 section. Such a refusal writes an error record of its own, `StructureReferenceUnidentified`, beside
-the `Failed` row. Include `AccessPackages`, or name the package by its object id. A review that
+the `Failed` row, except the package the run would create: the `-WhatIf` plan, or a declined
+confirmation of its create, reports the review `Failed` with no error record, since the only reason
+is that the package does not exist yet and the real run creates it first. Include `AccessPackages`, or name the package by its object id. A review that
 names a package the document does not declare is resolved as before.
 
 `Test-OERStructure` warns on a reference that still names a renamed object by its previous name, an

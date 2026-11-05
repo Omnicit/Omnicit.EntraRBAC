@@ -319,7 +319,9 @@ function Sync-OERStructureAccessPackage {
     whose creation a declined confirmation skipped, is registered refused with the reason "the
     accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined
     confirmation": it has no id yet, so a review of it is Failed in the plan where the real run creates
-    the package (an accepted limit).
+    the package, with no error record (the entry is marked -CreatePending: the only reason is that the
+    package does not exist yet in this run; A12). Every other mark (the entry's first one, -Include's)
+    is not CreatePending.
 
     .EXAMPLE
     Sync-OERStructureAccessPackage -Item $DocItem -Caller $PSCmdlet -Prune -TenantAlias 'omnicit'
@@ -583,10 +585,11 @@ function Sync-OERStructureAccessPackage {
                 ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Skipped' -Detail "would create access package $Name"
 
                 # BL-147 (R-8): the package the plan would create has no id yet, so a review that names it
-                # in this run is refused with that reason (in a plan where the real run creates it, an
-                # accepted limit), never looked up by name in the whole tenant.
+                # in this run is refused with that reason, never looked up by name in the whole tenant. It is
+                # -CreatePending (A12): the review's Failed row writes no error record for it, since the only
+                # reason is that the package does not exist yet and the real run creates it.
                 if ($null -ne $RenameMap -and -not [string]::IsNullOrEmpty([string]$Name)) {
-                    $null = Resolve-OERStructureRename -Section 'accessPackages' -Name ([string]$Name) -Unidentified `
+                    $null = Resolve-OERStructureRename -Section 'accessPackages' -Name ([string]$Name) -Unidentified -CreatePending `
                         -Reason 'the accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined confirmation' `
                         -RenameMap $RenameMap
                 }

@@ -7866,6 +7866,73 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
             Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
         }
 
+        It 'marks a package the plan would create CreatePending, with the same Reason (A12)' {
+            Mock -ModuleName $script:moduleName New-OERAccessPackage { throw 'unexpected access package create' }
+            $Map = New-PolMap
+
+            $Run = Invoke-PolSync -Item ([PSCustomObject]@{ displayName = 'AP'; catalog = 'CAT' }) -Packages @() -UseWhatIf $true -RenameMap $Map
+
+            $Run.Rows[0].Detail | Should -BeExactly 'would create access package AP'
+            $Target = Get-PkgTarget -RenameMap $Map
+            $Target.Refused | Should -BeTrue
+            $Target.CreatePending | Should -BeTrue
+            $Target.Reason | Should -BeExactly $script:PkgPlanned
+            Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
+        }
+
+        It 'marks a package whose create a declined confirmation skipped CreatePending, with the same Reason, in a script with no try (A12)' {
+            # The create is confirmed through a real host that answers No (OERConfirmHost). The stubs live in
+            # the module's own scope (function:script:) and their length is printed before the call, so a
+            # real Initialize-OERAuth or New-OERAccessPackage can never be the command that runs.
+            $Scenario = [scriptblock]::Create(@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Get-OERAccessPackage -Value { param($Catalog, $Id) @() }
+    Set-Item -Path function:script:Resolve-OERCatalogId -Value { 'cat-1' }
+    Set-Item -Path function:script:New-OERAccessPackage -Value { throw 'unexpected access package create' }
+    function script:Invoke-SyncApAsk {
+        [CmdletBinding(SupportsShouldProcess)]
+        param([PSCustomObject]$Item, $RenameMap)
+        Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -RenameMap $RenameMap
+    }
+}
+foreach ($StubName in 'Initialize-OERAuth', 'Get-OERAccessPackage', 'Resolve-OERCatalogId', 'New-OERAccessPackage') {
+    "STUB:${StubName}:" + (& $Module { param($N) (Get-Command $N -CommandType Function).ScriptBlock.ToString().Length } $StubName)
+}
+$Item = '{ "displayName": "AP", "catalog": "CAT" }' | ConvertFrom-Json
+$Map = & $Module { [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase) }
+& $Module { param($Item, $Map) Invoke-SyncApAsk -Item $Item -RenameMap $Map -Confirm } $Item $Map | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+$Entry = $Map['accesspackages|ap']
+"ENTRY:$($Entry.Refused):$($Entry.CreatePending):$($Entry.Reason)"
+'END'
+'@)
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&No' -Script $Scenario
+
+            $StubLines = @($Run.Output | Where-Object { $_ -like 'STUB:*' })
+            $StubLines.Count | Should -Be 4
+            foreach ($Line in $StubLines) { [int]($Line -split ':')[-1] | Should -BeLessThan 300 }
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Prompts).Count | Should -BeGreaterOrEqual 1
+            @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @('ROW:Skipped:would create access package AP')
+            @($Run.Output | Where-Object { $_ -like 'ENTRY:*' }) | Should -Be @("ENTRY:True:True:$($script:PkgPlanned)")
+            @($Run.Errors).Count | Should -Be 0
+        }
+
+        It 'does not mark an entry that stopped first CreatePending (A12)' {
+            Mock -ModuleName $script:moduleName New-OERAccessPackage { throw 'create refused' }
+            Mock -ModuleName $script:moduleName Resolve-OERCatalogId { 'cat-1' }
+            $Map = New-PolMap
+
+            $null = Invoke-PolSync -Item ([PSCustomObject]@{ displayName = 'AP'; catalog = 'CAT' }) -Packages @() -RenameMap $Map
+
+            $Target = Get-PkgTarget -RenameMap $Map
+            $Target.Refused | Should -BeTrue
+            $Target.Reason | Should -BeExactly $script:PkgUnidentified
+            $Target.CreatePending | Should -BeFalse
+        }
+
         It 'leaves the package refused when the entry stops before it has found or created it (<Case>)' -ForEach @(
             @{ Case = 'the catalog rename was refused'; Detail = "catalog 'CAT' was not reconciled in this run*" }
             @{ Case = 'the package list read throws'; Detail = "failed to look up access packages in catalog 'CAT': transient Graph failure*" }

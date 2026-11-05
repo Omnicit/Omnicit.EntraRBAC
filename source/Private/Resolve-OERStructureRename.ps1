@@ -68,7 +68,11 @@ function Resolve-OERStructureRename {
     an entry from a rename's. They return Outcome Identified (with Id) or Unidentified, every other
     member $null. Only the accessPackages section is registered this way: any other section, or
     -Identified with an empty id, is a caller error, thrown as an ArgumentException before anything is
-    registered. Without -RenameMap they register nothing.
+    registered. Without -RenameMap they register nothing. -Unidentified -CreatePending marks the entry
+    CreatePending: the entry would create the package and the create was not carried out (-WhatIf, or a
+    declined confirmation), so a reference to it is refused only because the package does not exist YET
+    in this run. Every entry the helper registers carries the CreatePending member, false unless that
+    switch was given.
 
     .PARAMETER Section
     The document section of the entry: administrativeUnits, catalogs, accessPackages, assignmentPolicies
@@ -111,6 +115,11 @@ function Resolve-OERStructureRename {
     .PARAMETER Reason
     With -Undecided: why the rename cannot be decided, as a clause the readers print in their Failed row.
     With -Unidentified: why the entry has no id for its access package yet, the same way.
+
+    .PARAMETER CreatePending
+    With -Unidentified: the entry would create the package and the create was not carried out (-WhatIf,
+    or a declined confirmation), so a reference to it is refused only because the package does not exist
+    YET in this run. The entry carries CreatePending true; every other entry carries it false.
 
     .PARAMETER Identified
     Registers an accessPackages entry that renames nothing as the access package it found or created:
@@ -156,6 +165,7 @@ function Resolve-OERStructureRename {
         [string]$Reason,
         [Parameter(Mandatory, ParameterSetName = 'Identified')][switch]$Identified,
         [Parameter(Mandatory, ParameterSetName = 'Unidentified')][switch]$Unidentified,
+        [Parameter(ParameterSetName = 'Unidentified')][switch]$CreatePending,
         [AllowNull()][AllowEmptyString()][string]$AccessPackage,
         [AllowNull()][AllowEmptyString()][string]$AccessPackageId,
         [System.Collections.Generic.Dictionary[string, object]]$RenameMap
@@ -205,6 +215,7 @@ function Resolve-OERStructureRename {
                 Refused      = [bool]$Unidentified
                 ErrorId      = $null
                 Reason       = $(if ($Unidentified) { $Reason } else { $null })
+                CreatePending = [bool]$CreatePending
             }
             $Entry.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.StructureRenameTarget')
             $RenameMap[$Key] = $Entry
@@ -236,6 +247,7 @@ function Resolve-OERStructureRename {
                 Refused      = $true
                 ErrorId      = $null
                 Reason       = $Reason
+                CreatePending = $false
             }
             $Marker.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.StructureRenameTarget')
             foreach ($DecisionKey in $DecisionKeys) { $RenameMap[$DecisionKey] = $Marker }
@@ -316,6 +328,7 @@ function Resolve-OERStructureRename {
             Refused      = ($Outcome -ne 'Rename')
             ErrorId      = $RefusedId
             Reason       = $RefusedId
+            CreatePending = $false
         }
         $Entry.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.StructureRenameTarget')
         foreach ($DecisionKey in $DecisionKeys) { $RenameMap[$DecisionKey] = $Entry }
