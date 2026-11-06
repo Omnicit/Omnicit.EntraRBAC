@@ -12668,6 +12668,7 @@ Describe 'Get-OERInventory writes a group whose display name has the form of an 
         }
     }
 }
+
 Describe 'Get-OERInventory and Invoke-OERStructure, an access review whose groups are named like object ids (Sprint 13 step 2, BL-171c, R-2, G8)' {
     # ONE live state: an access review of the members of a group whose display name has the form of an object
     # id, with a reviewer group and a fallback reviewer group named so too. The real Get-OERInventory writes
@@ -12741,5 +12742,115 @@ Describe 'Get-OERInventory and Invoke-OERStructure, an access review whose group
         Should -Invoke -ModuleName $script:moduleName Set-OERAccessReviewDefinition -Times 0 -Exactly
         Should -Invoke -ModuleName $script:moduleName New-OERAccessReviewDefinition -Times 0 -Exactly
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -and $Method -ne 'GET' }
+    }
+}
+
+Describe 'Get-OERInventory counts a shared access review name over every review it read (Sprint 13 step 2, BL-171d, R-4)' {
+    # A review the export skips (a group review in a form it cannot write, a multi-stage review) is still
+    # a review the apply engine finds by name, so its namesake is ambiguous and is left out, counted.
+    BeforeAll {
+        $script:ShGroupId = 'eeee7777-0000-0000-0000-0000000000a1'
+        $script:ShGuestGroupId = 'eeee7777-0000-0000-0000-0000000000a2'
+        $script:ShReviewerGroupId = 'eeee7777-0000-0000-0000-0000000000a3'
+        $script:ShGroupUri = 'v1.0/groups/eeee7777-0000-0000-0000-0000000000a1?$select=id,displayName'
+        $script:NewShReview = {
+            param([string]$Id, [string]$Name, [string]$GroupId, [string]$ScopeTail = 'transitiveMembers/microsoft.graph.user', [int]$StageCount = 0)
+            [PSCustomObject]@{
+                Id = $Id; DisplayName = $Name
+                Scope = "/v1.0/groups/$GroupId/$ScopeTail"; ScopeType = $null
+                AccessPackageId = $null; AssignmentPolicyId = $null
+                Reviewers = @(@{ query = "/groups/$($script:ShReviewerGroupId)" })
+                FallbackReviewers = @()
+                StageCount = $StageCount; DurationInDays = 14
+                MailNotificationsEnabled = $false; ReminderNotificationsEnabled = $false
+                JustificationRequired = $false; RecommendationsEnabled = $false; AutoApplyDecisionsEnabled = $false
+                Settings = @{
+                    instanceDurationInDays = 14; mailNotificationsEnabled = $false; reminderNotificationsEnabled = $false
+                    justificationRequiredOnApproval = $false; recommendationsEnabled = $false; autoApplyDecisionsEnabled = $false
+                }
+                Recurrence = [PSCustomObject]@{
+                    pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 3 }
+                    range   = [PSCustomObject]@{ type = 'noEnd'; startDate = '2026-07-01' }
+                }
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        $script:ShNameById = @{
+            $script:ShGroupId = 'Reviewed group'; $script:ShGuestGroupId = 'Guest group'; $script:ShReviewerGroupId = 'Reviewer group'
+        }
+        $script:ShLive = @()
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition { $script:ShLive }
+        Mock -ModuleName $script:moduleName Get-OERGroupNameIndex { & $script:NewGroupNameIndexOf $script:ShNameById }
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+            param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed)
+            & $script:AnswerPrincipalLookup $Id $Detailed.IsPresent $script:ShNameById
+        }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected transport call: $Method $Uri" }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = $script:ShGroupId; displayName = 'Reviewed group' } } -ParameterFilter { $Uri -eq $script:ShGroupUri }
+    }
+
+    It 'leaves out an exported review whose namesake is a skipped guest-only group review, and counts both' {
+        $script:ShLive = @(
+            (& $script:NewShReview 'ar-1' 'Quarterly' $script:ShGroupId)
+            (& $script:NewShReview 'ar-2' 'Quarterly' $script:ShGuestGroupId 'transitiveMembers/microsoft.graph.user/?$count=true&$filter=(userType eq ''Guest'')')
+        )
+        $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info -WarningVariable Warn -WarningAction SilentlyContinue
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 1 -Exactly
+        @($Inv.AccessReviews).Count | Should -Be 0
+        $Partial = @($InvErr | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+        $Partial.Count | Should -Be 1
+        [string]$Partial[0].TargetObject | Should -BeExactly 'accessReviews/Quarterly'
+        $Partial[0].Exception.Message | Should -BeLike '*Causes: 2 live objects share the name accessReviews/Quarterly (compared without regard to letter case), so none of them is written: the apply engine refuses an ambiguous name.*'
+        $Names = @((@($Info | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' }))[0].MessageData.Names)
+        @($Names | ForEach-Object { "$($_.Section)|$($_.Name)|$($_.Count)" }) | Should -Be @('accessReviews|Quarterly|2')
+        @($Warn | Where-Object { "$_" -like '*1 review(s) of a group in a form the module cannot write back*' }).Count | Should -BeGreaterThan 0 -Because 'the skipped review is still counted in the skip warning'
+    }
+
+    It 'leaves out an exported review whose namesake is a skipped multi-stage review, and counts both' {
+        $script:ShLive = @(
+            (& $script:NewShReview 'ar-1' 'Quarterly' $script:ShGroupId)
+            (& $script:NewShReview 'ar-2' 'Quarterly' $script:ShGuestGroupId 'transitiveMembers/microsoft.graph.user' 2)
+        )
+        $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info -WarningVariable Warn -WarningAction SilentlyContinue
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 1 -Exactly
+        @($Inv.AccessReviews).Count | Should -Be 0
+        $Partial = @($InvErr | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+        $Partial.Count | Should -Be 1
+        [string]$Partial[0].TargetObject | Should -BeExactly 'accessReviews/Quarterly'
+        $Partial[0].Exception.Message | Should -BeLike '*Causes: 2 live objects share the name accessReviews/Quarterly *'
+        $Names = @((@($Info | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' }))[0].MessageData.Names)
+        @($Names | ForEach-Object { "$($_.Section)|$($_.Name)|$($_.Count)" }) | Should -Be @('accessReviews|Quarterly|2')
+        @($Warn | Where-Object { "$_" -like '*skipping multi-stage access review ''Quarterly'' (2 stages)*' }).Count | Should -Be 1 -Because 'the skipped review is still counted in the skip warning'
+    }
+
+    It 'counts names that differ only in letter case as one name' {
+        $script:ShLive = @(
+            (& $script:NewShReview 'ar-1' 'Quarterly' $script:ShGroupId)
+            (& $script:NewShReview 'ar-2' 'QUARTERLY' $script:ShGuestGroupId 'transitiveMembers/microsoft.graph.user' 1)
+        )
+        $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info -WarningAction SilentlyContinue
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 1 -Exactly
+        @($Inv.AccessReviews).Count | Should -Be 0
+        $Partial = @($InvErr | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+        $Partial.Count | Should -Be 1
+        [string]$Partial[0].TargetObject | Should -BeExactly 'accessReviews/Quarterly'
+        $Names = @((@($Info | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' }))[0].MessageData.Names)
+        @($Names | ForEach-Object { "$($_.Section)|$($_.Name)|$($_.Count)" }) | Should -Be @('accessReviews|Quarterly|2')
+    }
+
+    It 'still writes a lone exported review and reports nothing' {
+        $script:ShLive = @(
+            (& $script:NewShReview 'ar-1' 'Quarterly' $script:ShGroupId)
+            (& $script:NewShReview 'ar-2' 'Other review' $script:ShGuestGroupId 'transitiveMembers/microsoft.graph.user' 1)
+        )
+        $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info -WarningAction SilentlyContinue
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 1 -Exactly
+        @($Inv.AccessReviews | ForEach-Object { $_.displayName }) | Should -Be @('Quarterly')
+        @($InvErr | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+        @($Info | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' }).Count | Should -Be 0
     }
 }

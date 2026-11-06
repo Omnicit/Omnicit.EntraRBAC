@@ -2147,6 +2147,9 @@ function Get-OERInventory {
             }
         }
 
+        # BL-171d (R-4): display name -> ids of EVERY review definition the read returned, the forms the
+        # loop below skips included. $null when the section is not read.
+        $AccessReviewExternalIds = $null
         if ($Include -contains 'AccessReviews') {
             $ArItems = @()
             $SkippedReviewCount = 0
@@ -2229,6 +2232,16 @@ function Get-OERInventory {
             # lower-cased as well so that stays true if the cache ever becomes an ordinal dictionary.
             $ArPackageNameLookup = @{}
             $ArPolicyListLookup = @{}
+            # BL-171d (R-4): the apply engine looks a review up by name over the whole tenant, so a
+            # namesake the loop below skips still makes the name ambiguous. Filled before the skips.
+            $AccessReviewExternalIds = [System.Collections.Generic.Dictionary[string, System.Collections.Generic.List[string]]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            foreach ($Ar in $ArItems) {
+                $ArNameKey = [string]$Ar.DisplayName
+                if (-not $AccessReviewExternalIds.ContainsKey($ArNameKey)) {
+                    $AccessReviewExternalIds[$ArNameKey] = [System.Collections.Generic.List[string]]::new()
+                }
+                $AccessReviewExternalIds[$ArNameKey].Add([string]$Ar.Id)
+            }
             foreach ($Ar in $ArItems) {
                 # Two review forms round-trip: an access package review (the apply schema requires both
                 # accessPackage and assignmentPolicy) and a review of ALL members of one group (group;
@@ -2827,7 +2840,7 @@ function Get-OERInventory {
         $UniqueAdministrativeUnits = @(Select-UniqueNamedEntry -Entry $AdministrativeUnits.ToArray() -Section 'administrativeUnits' -KeyOf { param($E) $E.displayName })
         $UniqueCatalogs = @(Select-UniqueNamedEntry -Entry $Catalogs.ToArray() -Section 'catalogs' -KeyOf { param($E) $E.displayName })
         $UniqueAccessPackages = @(Select-UniqueNamedEntry -Entry $AccessPackages.ToArray() -Section 'accessPackages' -KeyOf { param($E) "$($E.catalog)|$($E.displayName)" } -NameOf { param($E) "$($E.catalog)/$($E.displayName)" })
-        $UniqueAccessReviews = @(Select-UniqueNamedEntry -Entry $AccessReviews.ToArray() -Section 'accessReviews' -KeyOf { param($E) $E.displayName })
+        $UniqueAccessReviews = @(Select-UniqueNamedEntry -Entry $AccessReviews.ToArray() -Section 'accessReviews' -KeyOf { param($E) $E.displayName } -ExternalIds $AccessReviewExternalIds)
 
         # BL-131 (R-3): every name left out above, with its section and count, in ONE information record
         # (the BL-126 root-scope pattern), so a caller -- Export-OERInventory among them -- reads the
