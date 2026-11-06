@@ -2,6 +2,7 @@ BeforeAll {
     Import-Module Omnicit.EntraRBAC -Force
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
+    . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
 }
 
 AfterAll {
@@ -380,5 +381,149 @@ Describe 'Disable-OEREligibleRoleAssignment operator-facing principal label' {
             -Group 'RoleSec-Finance' -Confirm:$false -WarningAction SilentlyContinue -Verbose 4>&1 |
             Where-Object { $_ -is [System.Management.Automation.VerboseRecord] }
         ($Verbose.Message -join "`n") | Should -Match "Resolved principal to '99999999-9999-9999-9999-999999999999'"
+    }
+}
+
+Describe 'Disable-OEREligibleRoleAssignment publishes a failed role lookup as itself (Sprint 13 step 1, BL-167b)' {
+    # The REAL Resolve-OERRoleDefinitionId and Test-OERRoleLookupUnresolved run; only the ARM transport,
+    # sign-in and scope are mocked. A role NAME (not a GUID or a full id) is what makes the resolver list.
+    BeforeAll {
+        $script:Cmd = 'Disable-OEREligibleRoleAssignment'
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERScope { '/subscriptions/s1' }
+        $script:NoMatchMessageStart = "Role definition 'NoSuchRole' was not found at scope '/subscriptions/s1'"
+        $script:Own = {
+            param($Records)
+            @($Records | Where-Object { $_.InvocationInfo.MyCommand.Name -eq $script:Cmd })
+        }
+    }
+
+    It 'publishes a lookup that matched nothing as RoleDefinitionNotFound, once, and writes nothing' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { [PSCustomObject]@{ value = @() } }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -ParameterFilter { $Path -like '*providers/Microsoft.Authorization/roleDefinitions?api-version*' } { [PSCustomObject]@{ value = @() } }
+        $Result = & $script:Cmd -Role 'NoSuchRole' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' -Scope '/subscriptions/s1' -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err
+        $Result | Should -BeNullOrEmpty
+        $Mine = @(& $script:Own $Err)
+        $Mine.Count | Should -Be 1
+        $Mine[0].FullyQualifiedErrorId | Should -Be "RoleDefinitionNotFound,$script:Cmd"
+        $Mine[0].CategoryInfo.Category | Should -Be 'ObjectNotFound'
+        $Mine[0].TargetObject | Should -Be 'NoSuchRole'
+        $Mine[0].Exception.Message | Should -BeLike "$script:NoMatchMessageStart*"
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Path -like '*roleDefinitions?*' }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0 -Exactly -ParameterFilter { $Method -and $Method -ne 'GET' }
+    }
+
+    It 'publishes a 403 on the role list as itself, never as RoleDefinitionNotFound, and writes nothing' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { [PSCustomObject]@{ value = @() } }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -ParameterFilter { $Path -like '*providers/Microsoft.Authorization/roleDefinitions?api-version*' } {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('The client does not have authorization to perform action Microsoft.Authorization/roleDefinitions/read over scope.'),
+                'AuthorizationFailed', [System.Management.Automation.ErrorCategory]::PermissionDenied, $Path)
+        }
+        $Result = & $script:Cmd -Role 'Reader' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' -Scope '/subscriptions/s1' -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err
+        $Result | Should -BeNullOrEmpty
+        $Mine = @(& $script:Own $Err)
+        $Mine.Count | Should -Be 1
+        $Mine[0].FullyQualifiedErrorId | Should -Match '^AuthorizationFailed'
+        $Mine[0].FullyQualifiedErrorId | Should -Not -Match 'NotFound'
+        $Mine[0].CategoryInfo.Category | Should -Be 'PermissionDenied'
+        $Mine[0].Exception.Message | Should -BeLike '*does not have authorization*'
+        @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'RoleDefinitionNotFound*' }).Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Path -like '*roleDefinitions?*' }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0 -Exactly -ParameterFilter { $Method -and $Method -ne 'GET' }
+    }
+
+    It 'publishes an ArmPagingIncomplete on the role list as itself and writes nothing' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { [PSCustomObject]@{ value = @() } }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -ParameterFilter { $Path -like '*providers/Microsoft.Authorization/roleDefinitions?api-version*' } {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('The Azure Resource Manager list read stopped at page 1 because it answered with an empty body.'),
+                'ArmPagingIncomplete', [System.Management.Automation.ErrorCategory]::InvalidResult, $Path)
+        }
+        $Result = & $script:Cmd -Role 'Reader' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' -Scope '/subscriptions/s1' -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err
+        $Result | Should -BeNullOrEmpty
+        $Mine = @(& $script:Own $Err)
+        $Mine.Count | Should -Be 1
+        $Mine[0].FullyQualifiedErrorId | Should -Match '^ArmPagingIncomplete'
+        $Mine[0].FullyQualifiedErrorId | Should -Not -Match 'NotFound'
+        @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'RoleDefinitionNotFound*' }).Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0 -Exactly -ParameterFilter { $Method -and $Method -ne 'GET' }
+    }
+
+    It 'publishes an ambiguous role name as the resolver AmbiguousName and writes nothing' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { [PSCustomObject]@{ value = @() } }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -ParameterFilter { $Path -like '*providers/Microsoft.Authorization/roleDefinitions?api-version*' } {
+            [PSCustomObject]@{ value = @(
+                    [PSCustomObject]@{ id = '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' }
+                    [PSCustomObject]@{ id = '/providers/Microsoft.Authorization/roleDefinitions/rd2' }
+                ) }
+        }
+        $Result = & $script:Cmd -Role 'Dup' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' -Scope '/subscriptions/s1' -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err
+        $Result | Should -BeNullOrEmpty
+        $Mine = @(& $script:Own $Err)
+        $Mine.Count | Should -Be 1
+        $Mine[0].FullyQualifiedErrorId | Should -Match '^AmbiguousName'
+        $Mine[0].Exception.Message | Should -BeLike '*rd1*rd2*'
+        @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'RoleDefinitionNotFound*' }).Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0 -Exactly -ParameterFilter { $Method -and $Method -ne 'GET' }
+    }
+}
+
+Describe 'Disable-OEREligibleRoleAssignment role lookup failure in a script with no try (Sprint 13 step 1, BL-167b)' {
+    # A refused lookup writes a NON-terminating error and the script goes on, so only the return after
+    # the WriteError keeps the cmdlet from carrying on with no role id and sending a request. Pester
+    # wraps every It in its own try, which can hide a missing return; this runspace has none. The stubs
+    # are defined in the MODULE's scope of that runspace, the script prints whether they are in place,
+    # and they append every ARM request to a log file whose path is substituted into the text.
+    BeforeAll {
+        $script:NoTryScript = {
+            param([string]$Log)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { <# S131-NOTRY-STUB #> }
+    Set-Item -Path function:script:Resolve-OERScope -Value { <# S131-NOTRY-STUB #> '/subscriptions/s1' }
+    Set-Item -Path function:script:Invoke-OERArmRequest -Value {
+        <# S131-NOTRY-STUB #>
+        param([string]$Method = 'GET', [string]$Path, $Body, [switch]$All, [switch]$RequireValue)
+        Add-Content -LiteralPath '#LOG#' -Value "$Method $Path"
+        if ($Path -like '*providers/Microsoft.Authorization/roleDefinitions?api-version*') {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('The client does not have authorization to perform action Microsoft.Authorization/roleDefinitions/read over scope.'),
+                'AuthorizationFailed', [System.Management.Automation.ErrorCategory]::PermissionDenied, $Path)
+        }
+        [pscustomobject]@{ value = @(); id = 'x'; name = 'x'; properties = [pscustomobject]@{ status = 'Provisioned' } }
+    }
+}
+$InPlace = & $Module {
+    $true -and
+    (Get-Command Initialize-OERAuth).ScriptBlock.ToString().Contains('S131-NOTRY-STUB') -and
+    (Get-Command Resolve-OERScope).ScriptBlock.ToString().Contains('S131-NOTRY-STUB') -and
+    (Get-Command Invoke-OERArmRequest).ScriptBlock.ToString().Contains('S131-NOTRY-STUB')
+}
+"STUBS:$InPlace"
+$Out = Disable-OEREligibleRoleAssignment -Role 'Reader' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' -Scope '/subscriptions/s1' -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err
+"OUT:$(@($Out | Where-Object { $null -ne $_ }).Count)"
+foreach ($Record in @($Err)) { "ERR:$($Record.FullyQualifiedErrorId)|$($Record.InvocationInfo.MyCommand.Name)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")))
+        }
+    }
+
+    It 'stops after the one role list request: one record of the cmdlet, AuthorizationFailed, no write' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (& $script:NoTryScript -Log $Log)
+        $Lines = @($Run.Output | ForEach-Object { [string]$_ })
+        $Lines | Should -Contain 'STUBS:True'
+        $Lines[-1] | Should -Be 'END'
+        $Lines | Should -Contain 'OUT:0'
+        $Mine = @($Lines | Where-Object { $_ -like 'ERR:*|Disable-OEREligibleRoleAssignment' })
+        $Mine.Count | Should -Be 1
+        $Mine[0] | Should -Match '^ERR:AuthorizationFailed'
+        @($Lines | Where-Object { $_ -like 'ERR:*NotFound*' }).Count | Should -Be 0
+        $Requests = @(Get-Content -LiteralPath $Log)
+        $Requests.Count | Should -Be 1
+        $Requests[0] | Should -BeLike 'GET /subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions?api-version*'
     }
 }
