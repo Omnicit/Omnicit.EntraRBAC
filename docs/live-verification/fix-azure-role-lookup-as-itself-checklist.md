@@ -89,7 +89,7 @@ the counted requests. `New-OEREligibleRoleAssignment` is given `-DurationDays 30
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is never switched. #type/subtask
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is never switched. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -119,13 +119,24 @@ the two role management policy cmdlets); `B ...: True, True, True`.
 clone; `A` below 9 or any `False` in `B` -- build the worktree first (`./build.ps1 -Tasks build`),
 never while the gate runs.
 
-Result:
+Result: 2026-11-06 17:16 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Run 2026-11-06 UTC, no sign-in. The session's Repo is the step's own worktree, not the main clone; the main clone is on main, never switched; the worktree is on this branch at 8b5e4dc (built there and gated green: 13931 passed, 0 failed, coverage 96.58 %) with 0 tracked changes; the build carries A (9 role lookups with -ThrowUnresolved) and B.
+
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s131] The module loads from a worktree that is not the main clone: True
+[oer-s131] Main clone: branch main
+[oer-s131] Worktree: branch fix/azure-role-lookup-as-itself; HEAD 8b5e4dc docs: add the live checklist for a failed Azure role lookup; tracked changes: 0
+[oer-s131] The worktree's build carries A (role lookups with -ThrowUnresolved): 9; B (the value requirement, the role lookup, the policy list): True, True, True
+```
 
 ## 1. As oer-live-cc-noperm: a refused role lookup is published as itself
 
 ### 1.1. Before: the base commit publishes the refusal as RoleDefinitionNotFound
 
-- [ ] **1.1** As `oer-live-cc-noperm`, with the module imported from the SOURCE of the base commit `111a73f` (the commit this branch starts from): `New-OERRoleAssignment`, `New-OEREligibleRoleAssignment` and `Remove-OEREligibleRoleAssignment` with `-WhatIf` and the role `Reader` each write one own record, `RoleDefinitionNotFound`, for the refused role definition read, and send nothing but that read. #type/subtask
+- [x] **1.1** As `oer-live-cc-noperm`, with the module imported from the SOURCE of the base commit `111a73f` (the commit this branch starts from): `New-OERRoleAssignment`, `New-OEREligibleRoleAssignment` and `Remove-OEREligibleRoleAssignment` with `-WhatIf` and the role `Reader` each write one own record, `RoleDefinitionNotFound`, for the refused role definition read, and send nothing but that read. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -198,11 +209,29 @@ list reads: 1; requests other than GET: 0`.
 **Failure looks like:** an own id other than `RoleDefinitionNotFound` -- the base is not the old
 code; read the S.1 commit; `requests other than GET` above 0 -- STOP, something was written.
 
-Result:
+Result: 2026-11-06 17:16 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS (the before state). Run 2026-11-06 UTC as oer-live-cc-noperm (every identity line True) with the module imported from the source of the base commit 111a73f. Each of the three cmdlets wrote one own record RoleDefinitionNotFound (ObjectNotFound, target the role) whose message is the refused read's AuthorizationFailed text, sent one GET of the role definition list and nothing else, and wrote no output and no warning.
+
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s131] The module is the base commit's source: True; it lacks the branch (no -RequireValue): True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc-noperm: identity check passed: True
+[oer-s131] Fences in place (ARM send counter, token refusal, Graph refusal): True
+[oer-s131] New-OERRoleAssignment -Role 'Reader' -WhatIf: own records: 1; own ids: RoleDefinitionNotFound,New-OERRoleAssignment; categories: ObjectNotFound; targets are the role: True; RoleDefinitionNotFound among them: True; the message names the refused read action: True; the message says the role was not found at the scope: False; output objects: 0; warnings: 0; requests: 1 (GET roleDefinitions); role definition list reads: 1; requests other than GET: 0
+[oer-s131] New-OEREligibleRoleAssignment -Role 'Reader' -WhatIf: own records: 1; own ids: RoleDefinitionNotFound,New-OEREligibleRoleAssignment; categories: ObjectNotFound; targets are the role: True; RoleDefinitionNotFound among them: True; the message names the refused read action: True; the message says the role was not found at the scope: False; output objects: 0; warnings: 0; requests: 1 (GET roleDefinitions); role definition list reads: 1; requests other than GET: 0
+[oer-s131] Remove-OEREligibleRoleAssignment -Role 'Reader' -WhatIf: own records: 1; own ids: RoleDefinitionNotFound,Remove-OEREligibleRoleAssignment; categories: ObjectNotFound; targets are the role: True; RoleDefinitionNotFound among them: True; the message names the refused read action: True; the message says the role was not found at the scope: False; output objects: 0; warnings: 0; requests: 1 (GET roleDefinitions); role definition list reads: 1; requests other than GET: 0
+```
 
 ### 1.2. After: this branch publishes the refusal as itself
 
-- [ ] **1.2** As `oer-live-cc-noperm`, with this branch's build: the same three calls each write one own record whose id is the refusal's own (`AuthorizationFailed`), category `PermissionDenied`, never `RoleDefinitionNotFound`, and send nothing but the refused role definition read. #type/subtask
+- [x] **1.2** As `oer-live-cc-noperm`, with this branch's build: the same three calls each write one own record whose id is the refusal's own (`AuthorizationFailed`, category `OperationStopped`, as the transport tags every Azure Resource Manager HTTP failure), never `RoleDefinitionNotFound`, and send nothing but the refused role definition read. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -258,7 +287,7 @@ Disconnect-OerLive
 ```
 
 **Expect:** the module is the build `True`; fences `True`; for each of the three cmdlets `own
-records: 1; own ids: AuthorizationFailed,<Cmdlet>; categories: PermissionDenied; targets are the
+records: 1; own ids: AuthorizationFailed,<Cmdlet>; categories: OperationStopped; targets are the
 role: False` (the record is the refusal's own, whose target is the request, not the role);
 `RoleDefinitionNotFound among them: False; the message names the refused read action: True; the
 message says the role was not found at the scope: False; output objects: 0; warnings: 0; requests:
@@ -266,13 +295,32 @@ message says the role was not found at the scope: False; output objects: 0; warn
 **Failure looks like:** `RoleDefinitionNotFound` for the refused read -- the old shape; more than one
 own record -- the cmdlet did not return after publishing; `requests other than GET` above 0 -- STOP.
 
-Result:
+Result: 2026-11-06 17:16 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Run 2026-11-06 UTC as oer-live-cc-noperm (every identity line True) with this branch's build. Each of the three cmdlets wrote one own record AuthorizationFailed, the refusal as itself (its message names Microsoft.Authorization/roleDefinitions/read), no RoleDefinitionNotFound, one GET of the role definition list and nothing else, no output, no warning. The category is OperationStopped, not the PermissionDenied the first Expect named: Convert-ArmHttpException tags every Azure Resource Manager HTTP failure OperationStopped (the Expect above is corrected); the record is the transport's own, unchanged.
+
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s131] Omnicit.EntraRBAC 1.4.1 loaded from REPO\.claude\worktrees\s13-steg1\output\module\Omnicit.EntraRBAC\1.4.1.
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc-noperm: identity check passed: True
+[oer-s131] The module is the worktree's build: True
+[oer-s131] Fences in place (ARM send counter, token refusal, Graph refusal): True
+[oer-s131] New-OERRoleAssignment -Role 'Reader' -WhatIf: own records: 1; own ids: AuthorizationFailed,New-OERRoleAssignment; categories: OperationStopped; targets are the role: False; RoleDefinitionNotFound among them: False; the message names the refused read action: True; the message says the role was not found at the scope: False; output objects: 0; warnings: 0; requests: 1 (GET roleDefinitions); role definition list reads: 1; requests other than GET: 0
+[oer-s131] New-OEREligibleRoleAssignment -Role 'Reader' -WhatIf: own records: 1; own ids: AuthorizationFailed,New-OEREligibleRoleAssignment; categories: OperationStopped; targets are the role: False; RoleDefinitionNotFound among them: False; the message names the refused read action: True; the message says the role was not found at the scope: False; output objects: 0; warnings: 0; requests: 1 (GET roleDefinitions); role definition list reads: 1; requests other than GET: 0
+[oer-s131] Remove-OEREligibleRoleAssignment -Role 'Reader' -WhatIf: own records: 1; own ids: AuthorizationFailed,Remove-OEREligibleRoleAssignment; categories: OperationStopped; targets are the role: False; RoleDefinitionNotFound among them: False; the message names the refused read action: True; the message says the role was not found at the scope: False; output objects: 0; warnings: 0; requests: 1 (GET roleDefinitions); role definition list reads: 1; requests other than GET: 0
+```
 
 ## 2. As oer-live-cc: a missing role is still RoleDefinitionNotFound, an existing one resolves
 
 ### 2.1. A role name that does not exist
 
-- [ ] **2.1** As `oer-live-cc`: the three calls with the role name `oer-s131-no-such-role` each write one own record `RoleDefinitionNotFound`, category `ObjectNotFound`, target the role name, with the message the module has always written ("Role definition '...' was not found at scope ..."), and send nothing but the role definition read. #type/subtask
+- [x] **2.1** As `oer-live-cc`: the three calls with the role name `oer-s131-no-such-role` each write one own record `RoleDefinitionNotFound`, category `ObjectNotFound`, target the role name, with the message the module has always written ("Role definition '...' was not found at scope ..."), and send nothing but the role definition read. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -335,11 +383,33 @@ message says the role was not found at the scope: True; output objects: 0; warni
 **Failure looks like:** any other own id -- the no-match case is no longer read as no match; a 401 or
 403 as `oer-live-cc` -- STOP (G6).
 
-Result:
+Result: 2026-11-06 17:16 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Run 2026-11-06 UTC as oer-live-cc (every identity and identification line True). A role name that does not exist is still RoleDefinitionNotFound for each of the three cmdlets: one own record, ObjectNotFound, target the role, the message the module has always written ('Role definition ... was not found at scope'), one GET, no write.
+
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s131] Omnicit.EntraRBAC 1.4.1 loaded from REPO\.claude\worktrees\s13-steg1\output\module\Omnicit.EntraRBAC\1.4.1.
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s131] The module is the worktree's build: True
+[oer-s131] Fences in place (ARM send counter, token refusal, Graph refusal): True
+[oer-s131] New-OERRoleAssignment -Role 'oer-s131-no-such-role' -WhatIf: own records: 1; own ids: RoleDefinitionNotFound,New-OERRoleAssignment; categories: ObjectNotFound; targets are the role: True; RoleDefinitionNotFound among them: True; the message names the refused read action: False; the message says the role was not found at the scope: True; output objects: 0; warnings: 0; requests: 1 (GET roleDefinitions); role definition list reads: 1; requests other than GET: 0
+[oer-s131] New-OEREligibleRoleAssignment -Role 'oer-s131-no-such-role' -WhatIf: own records: 1; own ids: RoleDefinitionNotFound,New-OEREligibleRoleAssignment; categories: ObjectNotFound; targets are the role: True; RoleDefinitionNotFound among them: True; the message names the refused read action: False; the message says the role was not found at the scope: True; output objects: 0; warnings: 0; requests: 1 (GET roleDefinitions); role definition list reads: 1; requests other than GET: 0
+[oer-s131] Remove-OEREligibleRoleAssignment -Role 'oer-s131-no-such-role' -WhatIf: own records: 1; own ids: RoleDefinitionNotFound,Remove-OEREligibleRoleAssignment; categories: ObjectNotFound; targets are the role: True; RoleDefinitionNotFound among them: True; the message names the refused read action: False; the message says the role was not found at the scope: True; output objects: 0; warnings: 0; requests: 1 (GET roleDefinitions); role definition list reads: 1; requests other than GET: 0
+```
 
 ### 2.2. An existing role, twice
 
-- [ ] **2.2** As `oer-live-cc`: `New-OERRoleAssignment` and `New-OEREligibleRoleAssignment` with `-WhatIf` and the role `Reader` write no record and no warning, print their `What if:` line, send only `GET` requests, and a second run prints the same. #type/subtask
+- [x] **2.2** As `oer-live-cc`: `New-OERRoleAssignment` and `New-OEREligibleRoleAssignment` with `-WhatIf` and the role `Reader` write no record and no warning, print their `What if:` line, send only `GET` requests, and a second run prints the same. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -404,13 +474,42 @@ equal the first's.
 **Failure looks like:** a record as `oer-live-cc` -- STOP if it is a 401 or 403 (G6), otherwise read
 it; `requests other than GET` above 0 -- STOP, something was written.
 
-Result:
+Result: 2026-11-06 17:16 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Run 2026-11-06 UTC as oer-live-cc. Reader resolves for New-OERRoleAssignment and New-OEREligibleRoleAssignment: no record, no warning, the What if line naming the role and the made-up principal, one GET of the role definition list and no other request; the second run printed the same lines as the first.
+
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s131] Omnicit.EntraRBAC 1.4.1 loaded from REPO\.claude\worktrees\s13-steg1\output\module\Omnicit.EntraRBAC\1.4.1.
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s131] The module is the worktree's build: True
+[oer-s131] Fences in place (ARM send counter, token refusal, Graph refusal): True
+[oer-s131] 2.2 first run
+What if: Performing the operation "Create Azure role assignment" on target "role 'Reader' to principal '00000000-0000-0000-0000-000000000099' at scope '/subscriptions/00000000-0000-0000-0000-000000000001'".
+[oer-s131] New-OERRoleAssignment -Role 'Reader' -WhatIf: own records: 0; own ids: ; categories: ; targets are the role: False; RoleDefinitionNotFound among them: False; the message names the refused read action: False; the message says the role was not found at the scope: False; output objects: 0; warnings: 0; requests: 1 (GET roleDefinitions); role definition list reads: 1; requests other than GET: 0
+What if: Performing the operation "Create eligible Azure role assignment" on target "eligible role 'Reader' for principal '00000000-0000-0000-0000-000000000099' at scope '/subscriptions/00000000-0000-0000-0000-000000000001'".
+[oer-s131] New-OEREligibleRoleAssignment -Role 'Reader' -WhatIf: own records: 0; own ids: ; categories: ; targets are the role: False; RoleDefinitionNotFound among them: False; the message names the refused read action: False; the message says the role was not found at the scope: False; output objects: 0; warnings: 0; requests: 1 (GET roleDefinitions); role definition list reads: 1; requests other than GET: 0
+[oer-s131] 2.2 second run
+What if: Performing the operation "Create Azure role assignment" on target "role 'Reader' to principal '00000000-0000-0000-0000-000000000099' at scope '/subscriptions/00000000-0000-0000-0000-000000000001'".
+[oer-s131] New-OERRoleAssignment -Role 'Reader' -WhatIf: own records: 0; own ids: ; categories: ; targets are the role: False; RoleDefinitionNotFound among them: False; the message names the refused read action: False; the message says the role was not found at the scope: False; output objects: 0; warnings: 0; requests: 1 (GET roleDefinitions); role definition list reads: 1; requests other than GET: 0
+What if: Performing the operation "Create eligible Azure role assignment" on target "eligible role 'Reader' for principal '00000000-0000-0000-0000-000000000099' at scope '/subscriptions/00000000-0000-0000-0000-000000000001'".
+[oer-s131] New-OEREligibleRoleAssignment -Role 'Reader' -WhatIf: own records: 0; own ids: ; categories: ; targets are the role: False; RoleDefinitionNotFound among them: False; the message names the refused read action: False; the message says the role was not found at the scope: False; output objects: 0; warnings: 0; requests: 1 (GET roleDefinitions); role definition list reads: 1; requests other than GET: 0
+```
 
 ## Teardown
 
 ### T.1. Nothing carries the prefix, no session is left, the main clone was never switched
 
-- [ ] **T.1** No object carries `oer-s131-`, the module holds no session, and the raw folder for the step is deleted after the results are copied. #type/subtask
+- [x] **T.1** No object carries `oer-s131-`, the module holds no session, and the raw folder for the step is deleted after the results are copied. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -436,4 +535,26 @@ a session after Disconnect-OerLive: False`; `the step's raw folder is gone: True
 **Failure looks like:** a count above 0 -- this file creates nothing, so an object with the prefix is
 not this run's: STOP.
 
-Result:
+Result: 2026-11-06 17:16 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Run 2026-11-06 UTC as oer-live-cc. Nothing carries oer-s131- (0), every collection was read (0 unread), the module holds no session after Disconnect-OerLive, the step's raw folder (which held only the base commit's archived source for 1.1) is deleted, the main clone is on main. This file created nothing.
+
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s131] Omnicit.EntraRBAC 1.4.1 loaded from REPO\.claude\worktrees\s13-steg1\output\module\Omnicit.EntraRBAC\1.4.1.
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s131] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s131] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s131-' is left.
+[oer-s131] T.1 objects carrying the prefix: 0; collections that could not be read: 0
+[oer-s131] T.1 the module holds a session after Disconnect-OerLive: False
+[oer-s131] T.1 the step's raw folder is gone: True
+[oer-s131] T.1 main clone: branch main
+```
