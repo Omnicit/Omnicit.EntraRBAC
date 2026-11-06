@@ -180,6 +180,7 @@ Result:
 - [ ] **S.2** The source of `a0ef3e5` is unpacked under the step's raw folder, and its module carries none of the three markers. #type/subtask
 
 ```powershell
+$null = New-Item -ItemType Directory -Force -Path $Raw
 $Zip = Join-Path $Raw 'base-a0ef3e5.zip'
 if (-not (Test-Path -LiteralPath (Join-Path $BaseDir 'source\Omnicit.EntraRBAC.psd1'))) {
     git -C $Cfg.Repo archive --format=zip -o $Zip a0ef3e5 source
