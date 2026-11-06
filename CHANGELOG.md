@@ -15,6 +15,11 @@ cmdlets, an empty or JSON null Azure answer is no longer read as "no such role" 
 `Get-OERRoleManagementPolicy -AllRolesAtScope` reports `RoleEnumerationFailed` instead of a parameter
 binding error, and `Get-OERInventory -CommonRoles` names the section unread instead of skipping each role.
 
+`Get-OERInventory` and `Export-OERInventory` write a group whose display name looks like an object id
+by its id wherever the document references it, and leave its own `groups` entry out, named as unread,
+since applying such a name reads it as an object id. An access review whose namesake the export skips
+is now left out and counted as a shared name, not written under a name the apply engine refuses.
+
 ## [1.4.0] - 2026-11-06
 
 Omnicit.EntraRBAC now requires PowerShell 7.6 or later. PowerShell 7.4 and 7.5 reach end of support

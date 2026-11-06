@@ -1183,8 +1183,11 @@ leave out every object whose name another object of its kind shares, letter case
 name is counted over every group in the tenant, Microsoft 365 and distribution groups included; an
 access package's among the packages of its catalog; an assignment policy's among the policies of its
 own access package; and the name of an administrative unit, a catalog or an access review among the
-ones read (with `Get-OERInventory -Catalog`, only the catalogs it reads; an access review among the
-access-package and group-members reviews captured). The export warns once, and its
+ones read (with `Get-OERInventory -Catalog`, only the catalogs it reads; an access review among every
+review definition the read returned, the ones the export skips included). A group whose display name
+has the form of an object id is written by its object id wherever the document references it, and
+its own `groups` entry is left out and named as unread, since `Invoke-OERStructure` reads such a name
+as an object id. The export warns once, and its
 `README.md` lists each name, with how many objects carry it, under "Names two or more objects
 share". An access package's `catalog`, an access review's `accessPackage` or `assignmentPolicy`, and
 a group named as the principal of a role assignment or a directory role assignment (with

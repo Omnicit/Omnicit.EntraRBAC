@@ -200,7 +200,7 @@ function Get-OERInventoryReadme {
     .PARAMETER IncompleteReads
     The IncompleteReads list of the Export-OERInventory output. First the Entra ID entries:
     collections or objects that could not be read, could not be written without an empty name, or
-    were left out because two or more live objects share a name. Then one entry per role assignment
+    were left out because two or more live objects share a name or because the display name of a group has the form of an object id. Then one entry per role assignment
     principal that could not be read, reading 'roleAssignments/<role> -> <principal id> @ <scope>'
     followed by '/principal' (its lookup failed) or '/principalStatus' (only its deleted items read
     failed). Then one entry per Azure scope where at least one role management policy could not be
@@ -473,7 +473,7 @@ asked to, so do not treat it as a full tenant snapshot. Apart from the entries l
 management policies kept without being judged", "Role assignment principal that could not be read",
 "Azure Lighthouse read that failed" and "Azure subscription whose tenant could not be read", each
 entry below names collections or objects that could not be read, could not be written without an
-empty name, or were left out because two or more live objects share a name; none of them is stated
+empty name, or were left out because two or more live objects share a name or because the display name of a group has the form of an object id; none of them is stated
 as a fact in this bundle. An entry labelled "Entra ID" can name several of them at once, separated
 by a comma and a space, since the collections that one read could not read are reported together as
 one entry.
@@ -618,15 +618,18 @@ shares its name with one of those is left out as well; when the group roster cou
 groups the export read. An access package's name is counted among the packages of its catalog, and
 an assignment policy's among the policies of its own access package only; a policy is listed with
 section `assignmentPolicies` as `<package>/<policy>`. The name of an administrative unit, a catalog or
-an access review is counted among the ones this export read, an access review's among the
-access-package and group-members reviews it captured. A reference to such an object elsewhere in the document is
+an access review is counted among the ones this export read, an access review's among every review definition the read returned, the ones the export skips
+included. A reference to such an object elsewhere in the document is
 written as the object's id: the catalog of an access package, the access package and assignment
 policy of an access review, and a group named as the principal of a role assignment or a directory
 role assignment, written with `principalType` `Group`. A group named in any other place -- an
 eligibility principal, a reviewer, a catalog resource, a resource role, a member of a group or an
 administrative unit -- still carries its name (or its id where the export always writes ids), and an
-ambiguous name there is refused when applied, with nothing written for it. Leaving them out of the
-export changes nothing in the tenant.
+ambiguous name there is refused when applied, with nothing written for it. A group whose display name
+has the form of an object id is the exception to that: `Invoke-OERStructure` reads such a name as an
+object id, so every place that references the group, those included, writes its object id, and the
+group's own entry is left out of `groups` and named as unread. Leaving them out of the export changes
+nothing in the tenant.
 '@
     $SharedNameSection = if ($SharedBullets.Count -gt 0) {
         $SharedIntro + "`n`n" + ($SharedBullets -join "`n")

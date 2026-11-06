@@ -13109,7 +13109,8 @@ an access review's reviewer, or as a catalog resource or an access package resou
 display name: none of these positions has a `principalType` key, and A17 names a group as a
 principal, with `principalType` `Group`. They are reported as findings outside this step's scope.
 Cost if wrong: those positions still write a shared group name, which the apply engine refuses
-(`AmbiguousName`, nothing written).
+(`AmbiguousName`, nothing written). Sprint 13 step 2 (below) makes them write a GUID-shaped group name
+as the id.
 
 **The validator and the policies of one package (Task 3a).** `Test-OERStructureSchema` drops the
 exception of Ruling P4: two assignment policies of one access package that claim one name are an
@@ -13141,7 +13142,7 @@ reference rule for every row the section reads. Cost if wrong: a root-scope find
 its id instead of its shared name.
 
 **Known limits.** (a) `-Catalog` given as an id (R-5) and the positions R-6 leaves out still write a
-shared name, refused when applied. (b) A display name of an access package or an assignment policy
+shared name, refused when applied (Sprint 13 step 2, below, closes the GUID-shaped group name there). (b) A display name of an access package or an assignment policy
 that is shaped like a GUID is read by the apply engine as an object id, and the export can keep such
 a name in a review, where the engine then reads it as an id and not as the name; very improbable. (c) Closed in this
 step (the controller's ruling on the final review): `New-OERAccessPackage` looks a package up by name
@@ -13252,6 +13253,60 @@ answer always carries the id (`ConvertTo-OERSubscription` takes `ResourceId` fro
 or missing id already behaved this way, so the edge is defensive; walking such a subscription by its
 `SubscriptionId`, or naming it unread, is a behaviour choice left to a later step. Cost if wrong: such
 a subscription is not walked and not named unread.
+
+### Sprint 13 step 2: a name shaped like an object id, and review names counted over every review read (BL-171c, BL-171d, A4)
+
+The apply engine reads a name that `Test-OERGuid` accepts as an object id wherever it resolves a group
+(`Resolve-OERGroupId`, the role assignment and principal resolvers, the catalog resource lookup and the
+reviewer path). The export wrote a group by its display name with no such test, so a group named like a
+GUID was exported by that name and applied as an id: a lookup of an id that does not exist or, when the
+name equals another group's object id, a write to that other group. Separately, `Get-OERInventory`
+counted shared access review names among the reviews it exported, after skipping the reviews it cannot
+write, so a review whose namesake was skipped was written by its name and refused as ambiguous when
+applied. This is proved with mocked tests; the live checklist
+`docs/live-verification/fix-export-name-identity-checklist.md` records the live runs.
+
+**R-1 (the rule).** A group display name `Test-OERGuid` accepts is never written as a name in
+`inventory.json`: a reference is written as the group's object id. `Get-OERGroupReference` owns it, as
+its first test after the blank-name test, for every caller. Cost if wrong: such a group is written by
+id where its GUID-shaped name would also have been unique; the id applies exactly.
+
+**R-2 (the positions R-6 of the previous step keeps).** The eligibility principal, the reviewer and
+fallback reviewer, the catalog resource and the access package resource role keep a SHARED name (that
+ruling stands; A4 decides the GUID rule only) but take R-1. They call the owner with the new switch
+`-KeepSharedName` (parameter set `KeepSharedName`; the existing call is parameter set `Index`, with
+`-Index` mandatory), which returns the id for a blank or GUID-shaped name and the name otherwise,
+reading no index. A group's PIM eligibility principal has no type in the read, so every principal
+whose written name is not its id goes through the owner: a UPN is never GUID-shaped, and a service
+principal with a GUID-shaped display name is written by its id too, which the engine resolves
+verbatim. Cost if wrong: a private switch to remove; no output shape changes.
+
+**R-3 (the group's own entry).** A listed group whose display name `Test-OERGuid` accepts is left out
+of `groups` by `Get-OERInventoryGroup`, in both callers and whatever `-ExcludeSharedName` says, and
+named once per name, letter case aside, as the unread entry `groups/` followed by the name, with its
+cause written inline and a BLANK `Target`, as the shared-name causes are (BL-156). Its `PimLeftOut` and
+`DynamicMembers` entries go with it. It cannot be written by id, since the display name is the entry's
+identity, and writing it would make the engine reconcile whatever object carries that id. Leaving a
+top-level entry out removes nothing, since `-Prune` acts on child collections only. A name the
+shared-name pass already reported is not reported twice. Cost if wrong: one group fewer in
+`inventory.json`, named in `InventoryPartial`.
+
+**R-4 (BL-171d, review names).** The access review names are counted over EVERY definition the read
+returned, the skipped ones included, through `Select-UniqueNamedEntry -ExternalIds`; a review whose
+namesake was skipped is left out with the counted `Get-OERSharedNameCause` text, like any shared name.
+Writing it by id instead is refused: `displayName` is the entry's identity, and the engine would take
+the id as the name to create or rename to. Cost if wrong: one review fewer in the document, named
+with its count. Other sections were checked and need no change: groups count over the tenant index,
+administrative units are all listed and none is skipped, catalogs are counted over the catalogs read
+(`-Catalog` given as an id stays the known limit above), and access packages and assignment policies
+are all listed and read.
+
+**R-5 (proof).** No new guard stops a public cmdlet, since each changes what is written, so the
+no-try runspace proof of Sprint 9 does not apply. Cost if wrong: one more proof per guard.
+
+**R-6 (texts).** The `InventoryPartial` lead of both inventory cmdlets names the GUID case beside the
+shared name, and the bundle README's "Names two or more objects share" introduction states the rule and
+the review count. No ErrorId, public parameter or output type changes.
 
 ### CLAUDE.md text for roster-identity-and-shared-names
 
