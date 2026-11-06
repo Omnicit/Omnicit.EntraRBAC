@@ -2,7 +2,7 @@ function Get-OERGroupReference {
     <#
     .SYNOPSIS
     Returns how an inventory names a group it references as a principal: its display name or its
-    object id.
+    object id. A name that Test-OERGuid accepts is never written as a name.
 
     .DESCRIPTION
     The single owner of how the export names a GROUP it references as a principal (BL-131, R-2).
@@ -18,6 +18,22 @@ function Get-OERGroupReference {
     ids. A name the index does not hold is never an error: the function makes no request, never
     writes an error record and never throws on a missing key.
 
+    Two rules apply first, in this order. A blank or null name writes the id. A name that
+    Test-OERGuid accepts, in any letter case, writes the id too (Sprint 13 step 2, BL-171c): the
+    apply engine reads a name of that shape as an object id, so a group whose display name merely
+    looks like a GUID, or equals another group's object id, would otherwise be applied to the wrong
+    object. Then either the index rule above decides (parameter set Index, the default), or, with
+    -KeepSharedName, the name is written as it is and no index is read.
+
+    -KeepSharedName is for the positions where R-6 of
+    docs/development/rationale.md#roster-identity-and-shared-names keeps a shared name: a PIM for
+    Groups eligibility principal, an access review reviewer or fallback reviewer, a catalog resource
+    and an access package resource role. They write the name even when other groups carry it, but a
+    name that Test-OERGuid accepts is written as the id there as well. The set also serves two
+    positions that are not a group (R-7): the principal of a role assignment that is a service
+    principal or a user, and an application resource of an access package catalog, so an object
+    whose display name has the form of an object id is written by its id there too.
+
     .PARAMETER Id
     The group's object id, returned whenever the name cannot be written.
 
@@ -27,20 +43,35 @@ function Get-OERGroupReference {
 
     .PARAMETER Index
     The index of every group's name in the tenant, as Get-OERGroupNameIndex returns it (Read and
-    IdsByName). May be null, which writes the id.
+    IdsByName). May be null, which writes the id. Mandatory in the Index parameter set.
+
+    .PARAMETER KeepSharedName
+    Selects the KeepSharedName parameter set: the name is written as it is, shared or not, unless it
+    is blank or Test-OERGuid accepts it, when the id is written. No index is taken or read.
 
     .EXAMPLE
     Get-OERGroupReference -Id $Row.PrincipalId -Name 'Admins' -Index $GroupNameIndex
     Returns 'Admins' when this group is the only group in the tenant named Admins in any letter
     case, and the group's object id otherwise.
+
+    .EXAMPLE
+    Get-OERGroupReference -Id $Group.Id -Name $Group.DisplayName -KeepSharedName
+    Returns the display name even when other groups carry it, and the group's object id when the
+    name is blank or shaped like a GUID.
     #>
     [OutputType([string])]
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'Index')]
     param(
         [Parameter(Mandatory)][string]$Id,
         [AllowEmptyString()][AllowNull()][string]$Name,
-        [Parameter(Mandatory)][AllowNull()][object]$Index
+        [Parameter(Mandatory, ParameterSetName = 'Index')][AllowNull()][object]$Index,
+        [Parameter(Mandatory, ParameterSetName = 'KeepSharedName')][switch]$KeepSharedName
     )
+
+    # A blank name, then a name the apply engine would read as an object id, write the id.
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $Id }
+    if (Test-OERGuid -Value $Name) { return $Id }
+    if ($KeepSharedName) { return $Name }
 
     # A null index is refused by name, before any member of it is read, so the declared [AllowNull()]
     # contract holds whatever strict mode the module runs under. A name the index does not hold reads

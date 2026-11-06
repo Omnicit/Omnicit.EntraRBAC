@@ -110,6 +110,13 @@ function Get-OERInventoryGroup {
     widened filter listed and -SecurityEnabledOnly dropped. Without the index, or with one that
     could not be read, the names are counted over the listed groups alone.
 
+    Whatever -ExcludeSharedName says, a group whose own display name has the form of an object id
+    (Test-OERGuid) is left out too (Sprint 13 step 2, BL-171c), since Invoke-OERStructure reads such
+    a name as an object id and not as a name, and the entry would make it reconcile whatever object
+    carries that id. The name is reported once, letter case aside, with the spelling of the first such
+    group, in the Unread list ('groups/<name>') and in the Causes list (Target an empty string). A
+    name the shared-name rule above already reported is not reported a second time.
+
     It returns ONE tagged Omnicit.EntraRBAC.InventoryGroupRead object and never writes an error
     record. It writes a warning for a group list that could not be read and, under
     -SecurityEnabledOnly, one for the groups it left out, and its verbose lines carry
@@ -117,7 +124,8 @@ function Get-OERInventoryGroup {
     line came from.
     - Groups: the projections, in list order.
     - Unread: the collection names that could not be read, in the order they were found ('groups'
-      for the list itself, 'groups/<name>/members' and so on for a collection), exactly as the
+      for the list itself, 'groups/<name>/members' and so on for a collection, and 'groups/<name>'
+      for a group left out for a shared or GUID-shaped name), exactly as the
       InventoryPartial message names them.
     - Causes: the raw causes behind them, in the order they were found, each an object with a Cause
       (the message) and a Target (the failing object's id, or an empty string). A blank cause is
@@ -126,11 +134,13 @@ function Get-OERInventoryGroup {
       for Groups access, in list order: GroupId, Group (the display name), Members and Owners (how
       many were left out) and Basis -- 'Assignments' when the assignments decided it, 'Eligibility'
       when the assignment read failed and the eligibility decided it. A group left out under
-      -ExcludeSharedName has no entry. An empty array when nothing was left out.
+      -ExcludeSharedName, or for its GUID-shaped display name, has no entry. An empty array when
+      nothing was left out.
     - DynamicMembers: one object per projected dynamic group whose members were read, in list order:
       GroupId, Group (the display name) and Members (how many members the read found; none is
       written, see above). A dynamic group whose members read failed has no entry, so its count is
-      not known (which is not zero), and neither has a group left out under -ExcludeSharedName. An
+      not known (which is not zero), and neither has a group left out under -ExcludeSharedName or for
+      its GUID-shaped display name. An
       empty array when no dynamic group's members were read.
     - SharedNames: one object per name -ExcludeSharedName reported, in the order reported: Section
       ('groups'), Name (the spelling of the first listed group that carries it, as in the Unread
@@ -810,6 +820,12 @@ function Get-OERInventoryGroup {
                     if (-not $E) { continue }
                     $PrincipalId = [string]$E.principalId
                     $Name = if ($PrincipalNameCache.ContainsKey($PrincipalId)) { $PrincipalNameCache[$PrincipalId] } else { $PrincipalId }
+                    # R-2 (Sprint 13 step 2, BL-171c): the principal's type is not read, so a written name
+                    # that differs from the id goes through the owner, which keeps a shared name (R-6) but
+                    # writes the id for a blank or GUID-shaped name (a UPN is never GUID-shaped).
+                    if ($PrincipalId -and [string]$Name -ne $PrincipalId) {
+                        $Name = Get-OERGroupReference -Id $PrincipalId -Name ([string]$Name) -KeepSharedName
+                    }
                     $EligProj = [ordered]@{ principal = $Name }
                     $EligProj.accessType = $(if ($E.accessId) { [string]$E.accessId } else { 'member' })
                     $EligDays = Resolve-OEREligibilityDuration -StartDateTime $E.startDateTime -EndDateTime $E.endDateTime
@@ -1002,6 +1018,50 @@ function Get-OERInventoryGroup {
                 Add-UnreadCause -Cause $SharedCause -Target ''
                 # BL-131: the name with its count, for the export's one warning and its README.
                 $SharedNames.Add([PSCustomObject]@{ Section = 'groups'; Name = $SharedName; Count = $SharedNameCount[$SharedName] })
+            }
+        }
+
+        # Sprint 13 step 2 (BL-171c): a group whose own display name has the form of an object id is
+        # never written, whatever -ExcludeSharedName says. Invoke-OERStructure reads such a name as an
+        # object id (Test-OERGuid), so the entry would make it reconcile whatever object carries that
+        # id. The name is reported once (letter case aside, the first listed spelling) as the unread
+        # entry 'groups/<name>' with an inline cause, unless the shared-name pass above already
+        # reported it (its groups are out already). PimLeftOut and DynamicMembers go with the group,
+        # by the same name rule. Like the shared-name pass, this walks every listed group in scope, so
+        # under -RelevantOnly it also names a GUID-named group that would not have been projected.
+        $GuidNamed = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($G in $GroupItems) {
+            if (Test-OERGuid -Value ([string]$G.DisplayName)) { $null = $GuidNamed.Add([string]$G.DisplayName) }
+        }
+        if ($GuidNamed.Count -gt 0) {
+            $KeptGroups = [System.Collections.Generic.List[object]]::new()
+            foreach ($P in $Groups) {
+                if ($GuidNamed.Contains([string]$P.displayName)) { continue }
+                $KeptGroups.Add($P)
+            }
+            $Groups = $KeptGroups
+            $KeptPimLeftOut = [System.Collections.Generic.List[object]]::new()
+            foreach ($E in $PimLeftOut) {
+                if ($GuidNamed.Contains([string]$E.Group)) { continue }
+                $KeptPimLeftOut.Add($E)
+            }
+            $PimLeftOut = $KeptPimLeftOut
+            $KeptDynamicMembers = [System.Collections.Generic.List[object]]::new()
+            foreach ($E in $DynamicMembers) {
+                if ($GuidNamed.Contains([string]$E.Group)) { continue }
+                $KeptDynamicMembers.Add($E)
+            }
+            $DynamicMembers = $KeptDynamicMembers
+            $GuidReported = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            foreach ($G in $GroupItems) {
+                $GuidName = [string]$G.DisplayName
+                if (-not $GuidNamed.Contains($GuidName) -or -not $GuidReported.Add($GuidName)) { continue }
+                if ($ExcludeSharedName -and $SharedNameCount.ContainsKey($GuidName) -and $SharedNameCount[$GuidName] -gt 1) { continue }
+                $GuidPath = "groups/$GuidName"
+                $UnreadCollections.Add($GuidPath)
+                $GuidCause = "the group '$GuidPath' was left out: its display name has the form of an object id, which Invoke-OERStructure reads as an object id and not as a name, so the group cannot be declared by its name"
+                Write-Verbose "Get-OERInventory: $GuidCause"
+                Add-UnreadCause -Cause $GuidCause -Target ''
             }
         }
 

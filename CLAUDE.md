@@ -1079,7 +1079,9 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   stops and report the section unread, never empty. Never read the Groups section, or decide
   relevance before a full read, elsewhere. **A dynamic group's `members` is an EXPLICIT null, never
   an omitted key and never a list.** Never write a dynamic group's members or name their failed read
-  unread. `Why: docs/development/rationale.md#export-group-selection`
+  unread. A group whose display name has the form of an object id (`Test-OERGuid`) is left out and
+  named unread, since `Invoke-OERStructure` reads such a name as an object id.
+  `Why: docs/development/rationale.md#export-group-selection`
 - **`Get-OEROrderedInventoryEntry` is the single owner of the order the inventory writes its lists
   in:** a group's `members`, `owners`, `eligibility` and an administrative unit's `members`.
   `Get-OERInventoryGroup` orders the three group lists, `Get-OERInventory` the unit members; never
@@ -1105,7 +1107,11 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   name.** It never throws and never writes an error record; its `IdsByName` is `$null` when the
   listing failed, never an empty index. **`Get-OERGroupReference` is the single owner of how the
   export names a group it references as the principal of a role assignment or a directory role
-  assignment.** Never re-implement either inline.
+  assignment.** Never re-implement either inline. `Get-OERGroupReference` also owns the rule that a
+  name `Test-OERGuid` accepts is written as the group's id, at every position; the positions that keep
+  a shared name (eligibility principal, reviewer and fallback reviewer, catalog resource and resource
+  role) call it with `-KeepSharedName`; so do a non-group principal of a role assignment and an
+  application catalog resource, where the same GUID rule applies (R-7).
   `Why: docs/development/rationale.md#roster-identity-and-shared-names`
 - **`Export-OERInventory` is the only command that sets and clears the export run context
   (`$script:_OERInventoryRunContext`).** Created in ONE place, directly before the export's Entra ID

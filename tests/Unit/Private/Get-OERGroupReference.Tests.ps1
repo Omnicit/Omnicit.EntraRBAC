@@ -131,4 +131,71 @@ Describe 'Get-OERGroupReference' {
         $Command.Parameters['Index'].Attributes.Where({ $_ -is [System.Management.Automation.ParameterAttribute] }).Mandatory | Should -BeTrue
         @($Command.Parameters['Index'].Attributes | Where-Object { $_ -is [System.Management.Automation.AllowNullAttribute] }).Count | Should -Be 1
     }
+
+    Context 'the GUID rule and the KeepSharedName set (Sprint 13 step 2, BL-171c)' {
+        BeforeAll {
+            $script:GuidName = 'aaaa3333-0000-0000-0000-0000000000c1'
+        }
+
+        It 'returns the id for a GUID-shaped name that the index holds exactly under this group' {
+            $Index = & $script:NewIndex @{ $script:GuidName = @($script:GroupA) }
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Index = $Index; Id = $script:GroupA; GuidName = $script:GuidName } {
+                param($Index, $Id, $GuidName)
+                Get-OERGroupReference -Id $Id -Name $GuidName -Index $Index | Should -BeExactly $Id
+            }
+        }
+
+        It 'returns the id for a GUID-shaped name under -KeepSharedName' {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Id = $script:GroupA; GuidName = $script:GuidName } {
+                param($Id, $GuidName)
+                Get-OERGroupReference -Id $Id -Name $GuidName -KeepSharedName | Should -BeExactly $Id
+            }
+        }
+
+        It 'returns the id for an upper-case GUID-shaped name' {
+            $Upper = 'AAAA3333-0000-0000-0000-00000000000B'
+            $Index = & $script:NewIndex @{ $Upper = @($script:GroupA) }
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Index = $Index; Id = $script:GroupA; Upper = $Upper } {
+                param($Index, $Id, $Upper)
+                Get-OERGroupReference -Id $Id -Name $Upper -Index $Index | Should -BeExactly $Id
+                Get-OERGroupReference -Id $Id -Name $Upper -KeepSharedName | Should -BeExactly $Id
+            }
+        }
+
+        It 'returns a shared name under -KeepSharedName' {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Id = $script:GroupA } {
+                param($Id)
+                Get-OERGroupReference -Id $Id -Name 'Admins' -KeepSharedName | Should -BeExactly 'Admins'
+            }
+        }
+
+        It 'never reads an index under -KeepSharedName, and has no -Index in that set' {
+            $Command = InModuleScope Omnicit.EntraRBAC { Get-Command Get-OERGroupReference }
+            $Command.DefaultParameterSet | Should -BeExactly 'Index'
+            $Command.ParameterSets.Where({ $_.Name -eq 'KeepSharedName' }).Parameters.Name | Should -Not -Contain 'Index'
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Id = $script:GroupA } {
+                param($Id)
+                { Get-OERGroupReference -Id $Id -Name 'Admins' -KeepSharedName -Index $null -ErrorAction Stop } | Should -Throw
+            }
+        }
+
+        It 'returns the id for a blank or null name under -KeepSharedName' {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Id = $script:GroupA } {
+                param($Id)
+                Get-OERGroupReference -Id $Id -Name ' ' -KeepSharedName | Should -BeExactly $Id
+                Get-OERGroupReference -Id $Id -Name '' -KeepSharedName | Should -BeExactly $Id
+                Get-OERGroupReference -Id $Id -Name $null -KeepSharedName | Should -BeExactly $Id
+            }
+        }
+
+        It 'keeps a name that merely contains a GUID' {
+            $Name = "x-$script:GuidName"
+            $Index = & $script:NewIndex @{ $Name = @($script:GroupA) }
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Index = $Index; Id = $script:GroupA; Name = $Name } {
+                param($Index, $Id, $Name)
+                Get-OERGroupReference -Id $Id -Name $Name -Index $Index | Should -BeExactly $Name
+                Get-OERGroupReference -Id $Id -Name $Name -KeepSharedName | Should -BeExactly $Name
+            }
+        }
+    }
 }

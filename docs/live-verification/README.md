@@ -97,7 +97,8 @@ Naming the object in clear text would rebuild the mapping this file just forbade
 | `...063` | a directory role definition id in the directory-role PIM policy cmdlets' help examples and tests | taken |
 | `...064` | a tenant id inside a directory-role policy id (the second segment of DirectoryRole_tenantId_policyGuid), in the directory-role PIM policy cmdlets' help examples | taken |
 | `...065` | a policy guid inside a directory-role policy id (the third segment of DirectoryRole_tenantId_policyGuid), in the directory-role PIM policy cmdlets' help examples | taken |
-| `...066` and up | -- | **FREE. Allocate from here.** |
+| `...066` | a group display name shaped like an object id, inventory group reader tests | taken |
+| `...067` and up | -- | **FREE. Allocate from here.** |
 | `...099` | a deliberately non-existent object id, used in a checklist to prove a not-found path | taken |
 | `...0aa` | an assignment target principal id, access-package assignment tests | taken |
 | `...abc` | an administrative unit id, group-creation tests | taken |
@@ -111,7 +112,7 @@ Addresses follow the same global rule outside the checklists:
 | `person46` and up | -- | **FREE. Allocate from here.** |
 
 `...0aa`, `...abc` and `...099` sit outside the counting sequence for historical reasons and are
-listed so they are not handed out twice. Allocate new object ids from `...066` and new addresses
+listed so they are not handed out twice. Allocate new object ids from `...067` and new addresses
 from `person46`, and add a row here in the same commit that uses them -- a placeholder that is used
 but not registered is exactly the state the next person allocates over.
 
