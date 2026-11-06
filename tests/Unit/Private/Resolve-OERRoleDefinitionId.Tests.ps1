@@ -203,3 +203,59 @@ Describe 'Resolve-OERRoleDefinitionId: the example in the not-found message (BL-
         }
     }
 }
+
+Describe 'Resolve-OERRoleDefinitionId asks the transport for a list (BL-167a)' {
+    BeforeEach { InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null } }
+
+    It 'passes -RequireValue on the name lookup, and not on the GUID or full id forms (no request there)' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-OERArmRequest { [PSCustomObject]@{ value = @([PSCustomObject]@{ id = '/s/r1' }) } }
+            Resolve-OERRoleDefinitionId -Role 'Reader' -Scope '/subscriptions/s1' | Should -Be '/s/r1'
+            Should -Invoke Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $RequireValue }
+        }
+    }
+
+    Context 'through the real transport' {
+        BeforeEach {
+            InModuleScope Omnicit.EntraRBAC {
+                $script:_OERAuthState = @{
+                    AuthMethod     = 'Interactive'
+                    TenantId       = 'organizations'
+                    ArmToken       = (ConvertTo-SecureString 'fake-arm-token' -AsPlainText -Force)
+                    ArmResourceUrl = 'https://management.azure.com/'
+                }
+            }
+        }
+
+        It 'treats <Name> as an unread lookup (ArmPagingIncomplete), with and without -ThrowUnresolved, never as no match' -ForEach @(
+            @{ Name = 'an empty 200 body'; Body = '' }
+            @{ Name = 'a JSON null body'; Body = 'null' }
+            @{ Name = 'a body with no value member'; Body = '{"other":1}' }
+        ) {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Body = $Body } {
+                $script:RvBody = $Body
+                Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = $script:RvBody } }
+                foreach ($Switch in @($false, $true)) {
+                    $Caught = $null
+                    try {
+                        if ($Switch) { $null = Resolve-OERRoleDefinitionId -Role 'Reader' -Scope '/subscriptions/s1' -ThrowUnresolved -ErrorAction Stop }
+                        else { $null = Resolve-OERRoleDefinitionId -Role 'Reader' -Scope '/subscriptions/s1' -ErrorAction Stop }
+                    } catch { $Caught = $PSItem }
+                    $Caught | Should -Not -BeNullOrEmpty
+                    $Caught.FullyQualifiedErrorId | Should -Be 'ArmPagingIncomplete'
+                    Test-OERRoleLookupUnresolved -Record $Caught | Should -BeFalse
+                }
+            }
+        }
+
+        It 'still reads an empty value list as no match (RoleDefinitionUnresolved with -ThrowUnresolved)' {
+            InModuleScope Omnicit.EntraRBAC {
+                Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[]}' } }
+                $Caught = $null
+                try { $null = Resolve-OERRoleDefinitionId -Role 'Reader' -Scope '/subscriptions/s1' -ThrowUnresolved -ErrorAction Stop } catch { $Caught = $PSItem }
+                $Caught.FullyQualifiedErrorId | Should -Be 'RoleDefinitionUnresolved'
+                Test-OERRoleLookupUnresolved -Record $Caught | Should -BeTrue
+            }
+        }
+    }
+}

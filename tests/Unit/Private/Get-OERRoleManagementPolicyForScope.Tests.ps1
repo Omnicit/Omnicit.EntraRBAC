@@ -69,3 +69,52 @@ Describe 'Get-OERRoleManagementPolicyForScope' {
         }
     }
 }
+
+Describe 'Get-OERRoleManagementPolicyForScope asks the transport for a list (BL-167a)' {
+    BeforeEach { InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null } }
+
+    It 'passes -RequireValue beside -All' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-OERArmRequest { [PSCustomObject]@{ value = @() } }
+            $null = @(Get-OERRoleManagementPolicyForScope -Scope '/s')
+            Should -Invoke Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $RequireValue -and $All }
+        }
+    }
+
+    Context 'through the real transport' {
+        BeforeEach {
+            InModuleScope Omnicit.EntraRBAC {
+                $script:_OERAuthState = @{
+                    AuthMethod     = 'Interactive'
+                    TenantId       = 'organizations'
+                    ArmToken       = (ConvertTo-SecureString 'fake-arm-token' -AsPlainText -Force)
+                    ArmResourceUrl = 'https://management.azure.com/'
+                }
+            }
+        }
+
+        It 'refuses <Name> with ArmPagingIncomplete and emits no row' -ForEach @(
+            @{ Name = 'an empty 200 body'; Body = '' }
+            @{ Name = 'a JSON null body'; Body = 'null' }
+            @{ Name = 'a body with no value member'; Body = '{"other":1}' }
+        ) {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Body = $Body } {
+                $script:RvBody = $Body
+                Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = $script:RvBody } }
+                $Rows = @()
+                $Caught = $null
+                try { $Rows = @(Get-OERRoleManagementPolicyForScope -Scope '/s' -ErrorAction Stop) } catch { $Caught = $PSItem }
+                $Caught | Should -Not -BeNullOrEmpty
+                $Caught.FullyQualifiedErrorId | Should -Be 'ArmPagingIncomplete'
+                $Rows.Count | Should -Be 0
+            }
+        }
+
+        It 'still returns no rows for an empty value list' {
+            InModuleScope Omnicit.EntraRBAC {
+                Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[]}' } }
+                @(Get-OERRoleManagementPolicyForScope -Scope '/s' -ErrorAction Stop).Count | Should -Be 0
+            }
+        }
+    }
+}
