@@ -65,7 +65,7 @@ helpers block H.1** (the runner prepends H.1 to every block).
 
 ### H.1. The helpers every check uses
 
-- [ ] **H.1** The helpers load; nothing is printed and nothing is sent. #type/subtask
+- [x] **H.1** The helpers load; nothing is printed and nothing is sent. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -144,11 +144,18 @@ $GrpA = [string]$Ids0['grp-a'].Id; $GuidId = [string]$Ids0['guid'].Id; $GuidName
 **Expect:** nothing printed.
 **Failure looks like:** a parse error -- fix the block before any check runs.
 
-Result:
+Result: 2026-11-06 20:57 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The helpers block parses and loads in every check (the runner prepends it); it prints only OerLive's own load lines.
+
+[oer-s132] oer-testmiljo.psd1 present: True; oer-cc-identitet.psd1 present: True
+[oer-s132] The run's worktree exists: True
+```
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the prerequisite objects exist. #type/subtask
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the prerequisite objects exist. #type/subtask
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -173,11 +180,27 @@ markers `True`; both prerequisites `True`; both last values `True`.
 **Failure looks like:** a marker `False` -- build the worktree (`./build.ps1 -Tasks build`), never
 while the gate runs; a prerequisite `False` -- run the prerequisite script.
 
-Result:
+Result: 2026-11-06 20:57 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The worktree (not the main clone) is on this branch at 9e13748 with 0 tracked changes; its build (gated green at c13b149: 13968 tests, 0 failed, coverage 96.59 %; 9e13748 adds one checklist line) carries all three markers; both prerequisites are recorded, and the group guid's recorded display name has the form of an object id and is not its id. The prerequisite script read every object back True.
+
+[oer-s132] oer-testmiljo.psd1 present: True; oer-cc-identitet.psd1 present: True
+[oer-s132] The run's worktree exists: True
+[oer-s132] The module loads from a worktree that is not the main clone: True
+[oer-s132] Worktree: branch fix/export-name-identity; HEAD 9e13748 docs: create the live checklist's raw folder before the base archive; tracked changes: 0
+[oer-s132] The worktree's build carries A (the owner): True
+[oer-s132] The worktree's build carries A (the groups entry): True
+[oer-s132] The worktree's build carries B: True
+[oer-s132] Prerequisite grp-a recorded: True
+[oer-s132] Prerequisite guid recorded: True
+[oer-s132] The group guid's recorded display name has the form of an object id: True
+[oer-s132] The group guid's display name is not its id: True
+```
 
 ### S.2. The source of main before this branch is archived for the before checks
 
-- [ ] **S.2** The source of `a0ef3e5` is unpacked under the step's raw folder, and its module carries none of the three markers. #type/subtask
+- [x] **S.2** The source of `a0ef3e5` is unpacked under the step's raw folder, and its module carries none of the three markers. #type/subtask
 
 ```powershell
 $null = New-Item -ItemType Directory -Force -Path $Raw
@@ -196,13 +219,24 @@ foreach ($M in 'KeepSharedName', 'has the form of an object id, which Invoke-OER
 **Expect:** unpacked `True`; each of the three `False`.
 **Failure looks like:** `git archive` fails -- the worktree's git must know `a0ef3e5` (`git fetch`).
 
-Result:
+Result: 2026-11-06 20:57 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The source of a0ef3e5 is unpacked under the step's raw folder, and it carries none of the three markers.
+
+[oer-s132] oer-testmiljo.psd1 present: True; oer-cc-identitet.psd1 present: True
+[oer-s132] The run's worktree exists: True
+[oer-s132] The base source is unpacked: True
+[oer-s132] The base source carries 'KeepSharedName': False
+[oer-s132] The base source carries 'has the form of an object id, which Invoke-OERStructure reads as an object id': False
+[oer-s132] The base source carries 'AccessReviewExternalIds': False
+```
 
 ## 1. A group whose display name has the form of an object id (A)
 
 ### 1.1. Two reviews that reference the group guid are created from a document
 
-- [ ] **1.1** `Invoke-OERStructure` creates `oer-s132-rev-reviewer` (members of grp-a, reviewer the group guid by its id) and `oer-s132-rev-of-guid` (members of the group guid by its id, a self review); read back raw, the first's reviewer and the second's scope name the group guid's id. #type/subtask
+- [x] **1.1** `Invoke-OERStructure` creates `oer-s132-rev-reviewer` (members of grp-a, reviewer the group guid by its id) and `oer-s132-rev-of-guid` (members of the group guid by its id, a self review); read back raw, the first's reviewer and the second's scope name the group guid's id. #type/subtask
 
 ```powershell
 Connect-S132
@@ -228,11 +262,37 @@ Disconnect-OerLive
 **Failure looks like:** `Failed` with `GroupNotFound` (Graph does not list a group yet -- run again a
 minute later and record both runs).
 
-Result:
+Result: 2026-11-06 20:57 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Invoke-OERStructure created both reviews (two Created rows, $? True, 0 error records, 2 writes). Read back raw, oer-s132-rev-reviewer's reviewer is the group guid by its id and oer-s132-rev-of-guid reviews the group guid's members.
+
+[oer-s132] oer-testmiljo.psd1 present: True; oer-cc-identitet.psd1 present: True
+[oer-s132] The run's worktree exists: True
+[oer-s132] Omnicit.EntraRBAC 1.4.1 loaded from REPO\.claude\worktrees\s13-steg2\output\module\Omnicit.EntraRBAC\1.4.1.
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s132] The module is the worktree's build: True
+[oer-s132] Token fence in place: True
+[oer-s132] Request fence in place: True
+[oer-s132] row: accessReviews | oer-s132-rev-reviewer | Created | created access review 'oer-s132-rev-reviewer' (recurrence: Monthly) | record: none
+[oer-s132] row: accessReviews | oer-s132-rev-of-guid | Created | created access review 'oer-s132-rev-of-guid' (recurrence: Monthly) | record: none
+[oer-s132] Run: rows 2; $? True; error records: 0; warnings: 0; requests: 3 read(s), 2 write(s)
+[oer-s132] One live review of each name: True
+[oer-s132] oer-s132-rev-reviewer's reviewer is the group guid by its id: True
+[oer-s132] oer-s132-rev-of-guid reviews the members of the group guid: True
+```
 
 ### 1.2. A second run of the same document reports only Unchanged (G8)
 
-- [ ] **1.2** The document of 1.1 applied again reports `Unchanged` for both reviews, with no write. #type/subtask
+- [x] **1.2** The document of 1.1 applied again reports `Unchanged` for both reviews, with no write. #type/subtask
 
 ```powershell
 Connect-S132
@@ -253,11 +313,34 @@ Disconnect-OerLive
 **Failure looks like:** an `Updated` row -- the reviewer or the group is compared on another key than
 the id.
 
-Result:
+Result: 2026-11-06 20:59 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The same document applied again: two Unchanged rows, $? True, 0 error records, 3 reads and 0 writes.
+
+[oer-s132] oer-testmiljo.psd1 present: True; oer-cc-identitet.psd1 present: True
+[oer-s132] The run's worktree exists: True
+[oer-s132] Omnicit.EntraRBAC 1.4.1 loaded from REPO\.claude\worktrees\s13-steg2\output\module\Omnicit.EntraRBAC\1.4.1.
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s132] The module is the worktree's build: True
+[oer-s132] Token fence in place: True
+[oer-s132] Request fence in place: True
+[oer-s132] row: accessReviews | oer-s132-rev-reviewer | Unchanged | access review 'oer-s132-rev-reviewer' already matches | record: none
+[oer-s132] row: accessReviews | oer-s132-rev-of-guid | Unchanged | access review 'oer-s132-rev-of-guid' already matches | record: none
+[oer-s132] Second run: rows 2; not Unchanged: 0; $? True; error records: 0; requests: 3 read(s), 0 write(s)
+```
 
 ### 1.3. Before this branch: the export writes the group guid by its display name, and applying it would change both reviews
 
-- [ ] **1.3** With the module of `a0ef3e5`, `Get-OERInventory -Include AccessReviews` writes the group guid's GUID display name (not its id) as the reviewer of `oer-s132-rev-reviewer` and as the group of `oer-s132-rev-of-guid`; the plan of those two entries is not `Unchanged`. #type/subtask
+- [x] **1.3** With the module of `a0ef3e5`, `Get-OERInventory -Include AccessReviews` writes the group guid's GUID display name (not its id) as the reviewer of `oer-s132-rev-reviewer` and as the group of `oer-s132-rev-of-guid`; the plan of those two entries is not `Unchanged`. #type/subtask
 
 ```powershell
 Connect-S132 -Base
@@ -280,11 +363,47 @@ rows that are not `Unchanged` (each a would-update or a refusal) and 0 writes.
 **Failure looks like:** the base export already writes the id -- the defect is not what the step
 assumed; stop and record it.
 
-Result:
+Result: 2026-11-06 20:59 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS (the defect measured before this branch). With the module of a0ef3e5 the export wrote the group guid's GUID display name (...01) where the group guid stands -- as the reviewer of oer-s132-rev-reviewer and the group of oer-s132-rev-of-guid -- and its id (...02) nowhere. Applied as a plan, that export would UPDATE oer-s132-rev-reviewer's reviewer to a group with the id ...01 (a write of the wrong reviewer) and is refused for oer-s132-rev-of-guid (AccessReviewScopeMismatch, nothing written): two rows not Unchanged, 0 writes (plan, fenced). The trailing error rendering is the refusal's own record.
+
+[oer-s132] oer-testmiljo.psd1 present: True; oer-cc-identitet.psd1 present: True
+[oer-s132] The run's worktree exists: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s132] The module is the base (a0ef3e5): True
+[oer-s132] Token fence in place: True
+[oer-s132] Request fence in place: True
+[oer-s132] base export: oer-s132-rev-of-guid | group 00000000-0000-0000-0000-000000000001 | reviewers self
+[oer-s132] base export: oer-s132-rev-reviewer | group oer-s132-grp-a | reviewers 00000000-0000-0000-0000-000000000001
+[oer-s132] The base export names the group guid by its display name: True
+[oer-s132] The base export names the group guid by its id: 0
+What if: Performing the operation "Update access review definition" on target "oer-s132-rev-reviewer".
+[oer-s132] row: accessReviews | oer-s132-rev-of-guid | Failed | Access review 'oer-s132-rev-of-guid' in the tenant reviews the members of group '00000000-0000-0000-0000-000000000002', not the group '00000000-0000-0000-0000-000000000001' this entry declares, so it is not the review this entry declares. Nothing was written. Access review display names are not unique: give the entry or the review in the tenant another display name. | record: AccessReviewScopeMismatch
+[oer-s132] row: accessReviews | oer-s132-rev-reviewer | Skipped | would update access review 'oer-s132-rev-reviewer' (reviewers=[00000000-0000-0000-0000-000000000001] fallbackReviewers=[]) | record: none
+[oer-s132] Base plan of the base export: rows 2; not Unchanged: 2; requests: 8 read(s), 0 write(s)
+
+Invoke-OERStructure: HOME\.claude\jobs\51d163a6\tmp\child-1.3.ps1:89
+Line |
+  89 |  $null = Invoke-OERStructure -Json $Doc -WhatIf -OutVariable Rows -Err …
+     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | Access review 'oer-s132-rev-of-guid' in the tenant reviews the members of group
+     | '00000000-0000-0000-0000-000000000002', not the group '00000000-0000-0000-0000-000000000001' this entry
+     | declares, so it is not the review this entry declares. Nothing was written. Access review display names are not
+     | unique: give the entry or the review in the tenant another display name.
+```
 
 ### 1.4. This branch: the export writes the group guid by its id, and the export applies Unchanged (G8)
 
-- [ ] **1.4** `Export-OERInventory -Include AccessReviews` writes the group guid's id as the reviewer of `oer-s132-rev-reviewer` and the group of `oer-s132-rev-of-guid`, the GUID display name appears nowhere in `inventory.json`, and the two exported entries apply with only `Unchanged` rows and no write. #type/subtask
+- [x] **1.4** `Export-OERInventory -Include AccessReviews` writes the group guid's id as the reviewer of `oer-s132-rev-reviewer` and the group of `oer-s132-rev-of-guid`, the GUID display name appears nowhere in `inventory.json`, and the two exported entries apply with only `Unchanged` rows and no write. #type/subtask
 
 ```powershell
 Connect-S132
@@ -314,11 +433,40 @@ validator 0 Errors; two `Unchanged` rows, `$? True`, 0 error records, 0 writes.
 **Failure looks like:** a line with the GUID display name -- the position does not go through the
 owner; any row other than `Unchanged`.
 
-Result:
+Result: 2026-11-06 20:59 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Export-OERInventory -Include AccessReviews (21 reads, 0 writes, one warning: the tenant's own skip warning) wrote the group guid's id (...02) as the reviewer of oer-s132-rev-reviewer and the group of oer-s132-rev-of-guid, and the GUID display name appears nowhere in inventory.json. The two exported entries validate with 0 Errors and apply with two Unchanged rows, $? True, 0 error records and 0 writes (G8).
+
+[oer-s132] oer-testmiljo.psd1 present: True; oer-cc-identitet.psd1 present: True
+[oer-s132] The run's worktree exists: True
+[oer-s132] Omnicit.EntraRBAC 1.4.1 loaded from REPO\.claude\worktrees\s13-steg2\output\module\Omnicit.EntraRBAC\1.4.1.
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s132] The module is the worktree's build: True
+[oer-s132] Token fence in place: True
+[oer-s132] Request fence in place: True
+[oer-s132] Export: requests 21 read(s), 0 write(s); warnings 1
+[oer-s132] export: oer-s132-rev-of-guid | group 00000000-0000-0000-0000-000000000002 | reviewers self
+[oer-s132] export: oer-s132-rev-reviewer | group oer-s132-grp-a | reviewers 00000000-0000-0000-0000-000000000002
+[oer-s132] Both entries name the group guid by its id: True
+[oer-s132] The GUID display name appears in inventory.json: False
+[oer-s132] Validator: Errors 0
+[oer-s132] row: accessReviews | oer-s132-rev-of-guid | Unchanged | access review 'oer-s132-rev-of-guid' already matches | record: none
+[oer-s132] row: accessReviews | oer-s132-rev-reviewer | Unchanged | access review 'oer-s132-rev-reviewer' already matches | record: none
+[oer-s132] Apply of the export: rows 2; not Unchanged: 0; $? True; error records: 0; requests in total: 24 read(s), 0 write(s)
+```
 
 ### 1.5. This branch: the group guid's own groups entry is left out and named unread
 
-- [ ] **1.5** `Get-OERInventory -Include Groups` over the prefixed groups (by mail nickname) writes `oer-s132-grp-a` and no entry for the group guid; its partial error names `groups/` followed by the GUID display name, with the cause that the name has the form of an object id. #type/subtask
+- [x] **1.5** `Get-OERInventory -Include Groups` over the prefixed groups (by mail nickname) writes `oer-s132-grp-a` and no entry for the group guid; its partial error names `groups/` followed by the GUID display name, with the cause that the name has the form of an object id. #type/subtask
 
 ```powershell
 Connect-S132
@@ -338,13 +486,39 @@ Disconnect-OerLive
 both partial lines `True`; 0 writes.
 **Failure looks like:** an entry whose displayName is the GUID -- the reader does not leave it out.
 
-Result:
+Result: 2026-11-06 20:59 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Get-OERInventory -Include Groups over the prefixed groups (by mail nickname) wrote oer-s132-grp-a and no entry for the group guid; its one InventoryPartial record names groups/ followed by the GUID display name and the cause that the name has the form of an object id; 14 reads, 0 writes.
+
+[oer-s132] oer-testmiljo.psd1 present: True; oer-cc-identitet.psd1 present: True
+[oer-s132] The run's worktree exists: True
+[oer-s132] Omnicit.EntraRBAC 1.4.1 loaded from REPO\.claude\worktrees\s13-steg2\output\module\Omnicit.EntraRBAC\1.4.1.
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s132] The module is the worktree's build: True
+[oer-s132] Token fence in place: True
+[oer-s132] Request fence in place: True
+[oer-s132] groups written: 1; oer-s132-grp-a written: True
+[oer-s132] An entry for the group guid written: 0
+[oer-s132] InventoryPartial records: 1
+[oer-s132] The partial error names groups/ and the GUID display name: True
+[oer-s132] The partial error gives the cause: True
+[oer-s132] Requests: 14 read(s), 0 write(s)
+```
 
 ## 2. Two reviews of one name, one in a form the export skips (B)
 
 ### 2.1. Two reviews named oer-s132-twin are made raw: all members of grp-a, and its guest users only
 
-- [ ] **2.1** Two group reviews named `oer-s132-twin` are created raw (Graph v1.0 POST): one of all members of grp-a, one of grp-a's guest users only; read back, both exist under the one name, with the two scope queries. #type/subtask
+- [x] **2.1** Two group reviews named `oer-s132-twin` are created raw (Graph v1.0 POST): one of all members of grp-a, one of grp-a's guest users only; read back, both exist under the one name, with the two scope queries. #type/subtask
 
 ```powershell
 Connect-S132
@@ -380,11 +554,37 @@ guest filter, the other is the transitive members of grp-a; both last values `Tr
 **Failure looks like:** a 400 for the guest form -- record Graph's answer and run section 2 with
 another form the export skips (direct members only), saying so.
 
-Result:
+Result: 2026-11-06 21:00 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Both raw reviews named oer-s132-twin were created (201): read back, one reviews all members of grp-a (/v1.0/groups/(grp-a)/transitiveMembers/microsoft.graph.user) and one its guest users only (the same query with the Guest filter); both self reviews.
+
+[oer-s132] oer-testmiljo.psd1 present: True; oer-cc-identitet.psd1 present: True
+[oer-s132] The run's worktree exists: True
+[oer-s132] Omnicit.EntraRBAC 1.4.1 loaded from REPO\.claude\worktrees\s13-steg2\output\module\Omnicit.EntraRBAC\1.4.1.
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s132] The module is the worktree's build: True
+[oer-s132] Token fence in place: True
+[oer-s132] Request fence in place: True
+[oer-s132] create twin-members: 201  
+[oer-s132] create twin-guests: 201  
+[oer-s132] oer-s132-twin: scope /v1.0/groups/00000000-0000-0000-0000-000000000003/transitiveMembers/microsoft.graph.user/?$count=true&$filter=(userType eq 'Guest'); reviewers 0
+[oer-s132] oer-s132-twin: scope /v1.0/groups/00000000-0000-0000-0000-000000000003/transitiveMembers/microsoft.graph.user; reviewers 0
+[oer-s132] Two live reviews named oer-s132-twin: True
+[oer-s132] One of them is the guest-only form: True
+```
 
 ### 2.2. Before this branch: the export writes oer-s132-twin, and applying it is refused as ambiguous
 
-- [ ] **2.2** With the module of `a0ef3e5`, `Get-OERInventory -Include AccessReviews` writes one `oer-s132-twin` entry (the members review; the guest review is skipped), and the plan of that entry is refused (`Failed`), with nothing written. #type/subtask
+- [x] **2.2** With the module of `a0ef3e5`, `Get-OERInventory -Include AccessReviews` writes one `oer-s132-twin` entry (the members review; the guest review is skipped), and the plan of that entry is refused (`Failed`), with nothing written. #type/subtask
 
 ```powershell
 Connect-S132 -Base
@@ -404,11 +604,42 @@ Disconnect-OerLive
 record names an ambiguous name; 0 writes.
 **Failure looks like:** 0 entries -- the base build already counts the skipped twin; stop and record it.
 
-Result:
+Result: 2026-11-06 21:01 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS (the defect measured before this branch). With the module of a0ef3e5 the export wrote one oer-s132-twin entry (the members review; the guest review was skipped and counted in the skip warning), and its plan was refused: one Failed row, AmbiguousName (two definitions carry the name), 0 writes. The trailing error rendering is that refusal's own record.
+
+[oer-s132] oer-testmiljo.psd1 present: True; oer-cc-identitet.psd1 present: True
+[oer-s132] The run's worktree exists: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s132] The module is the base (a0ef3e5): True
+[oer-s132] Token fence in place: True
+[oer-s132] Request fence in place: True
+[oer-s132] Base export: oer-s132-twin entries written: 1; skip warning written: True
+[oer-s132] row: accessReviews | oer-s132-twin | Failed | 2 access review definitions are named 'oer-s132-twin' (00000000-0000-0000-0000-000000000004, 00000000-0000-0000-0000-000000000005); nothing was written | record: AmbiguousName
+[oer-s132] Base plan: rows 1; Failed: 1; own error ids: AmbiguousName; requests: 4 read(s), 0 write(s)
+
+Invoke-OERStructure: HOME\.claude\jobs\51d163a6\tmp\child-2.2.ps1:87
+Line |
+  87 |  $null = Invoke-OERStructure -Json $Doc -WhatIf -OutVariable Rows -Err …
+     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | Access review definition display name 'oer-s132-twin' matches 2 definitions
+     | (00000000-0000-0000-0000-000000000004, 00000000-0000-0000-0000-000000000005). Access reviews do not enforce
+     | unique definition display names, so this name cannot identify a single definition. Rename one of them so the
+     | display name is unique.
+```
 
 ### 2.3. This branch: the export writes neither oer-s132-twin, counts the name, and the export applies Unchanged
 
-- [ ] **2.3** `Export-OERInventory -Include AccessReviews` writes no `oer-s132-twin` entry; the skip warning counts the guest review; the shared-name warning, the bundle's incomplete reads and README name `oer-s132-twin` with 2 objects; the exported `oer-s132-` entries apply with only `Unchanged` rows, no write and no refusal. #type/subtask
+- [x] **2.3** `Export-OERInventory -Include AccessReviews` writes no `oer-s132-twin` entry; the skip warning counts the guest review; the shared-name warning, the bundle's incomplete reads and README name `oer-s132-twin` with 2 objects; the exported `oer-s132-` entries apply with only `Unchanged` rows, no write and no refusal. #type/subtask
 
 ```powershell
 Connect-S132
@@ -439,13 +670,55 @@ exported `oer-s132-` entries are `oer-s132-rev-of-guid` and `oer-s132-rev-review
 rows, 0 rows for `oer-s132-twin`, `$? True`, 0 error records, 0 writes.
 **Failure looks like:** an `oer-s132-twin` entry; a `Failed` row.
 
-Result:
+Result: 2026-11-06 21:01 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Export-OERInventory -Include AccessReviews (22 reads, 0 writes, two warnings: the skip warning and the shared-name warning) wrote no oer-s132-twin entry; the skip warning counts the guest review, the bundle's incomplete reads name accessReviews/oer-s132-twin and its README lists the name with 2 objects. The exported oer-s132- entries (oer-s132-rev-of-guid, oer-s132-rev-reviewer) apply with two Unchanged rows, no row for oer-s132-twin, $? True, 0 error records, 0 writes. The trailing rendering is the inner Get-OERInventory InventoryPartial record the export pins to Continue (by design); it names the twin with its count.
+
+[oer-s132] oer-testmiljo.psd1 present: True; oer-cc-identitet.psd1 present: True
+[oer-s132] The run's worktree exists: True
+[oer-s132] Omnicit.EntraRBAC 1.4.1 loaded from REPO\.claude\worktrees\s13-steg2\output\module\Omnicit.EntraRBAC\1.4.1.
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s132] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s132] The module is the worktree's build: True
+[oer-s132] Token fence in place: True
+[oer-s132] Request fence in place: True
+[oer-s132] Export: requests 22 read(s), 0 write(s); warnings 2
+[oer-s132] oer-s132-twin entries written: 0
+[oer-s132] The skip warning counts a group review in a form the module cannot write back: True
+[oer-s132] The shared-name warning is written: True
+[oer-s132] Incomplete reads name accessReviews/oer-s132-twin: True
+[oer-s132] README lists oer-s132-twin with 2 objects: True
+[oer-s132] Exported oer-s132- entries: oer-s132-rev-of-guid, oer-s132-rev-reviewer
+[oer-s132] row: accessReviews | oer-s132-rev-of-guid | Unchanged | access review 'oer-s132-rev-of-guid' already matches | record: none
+[oer-s132] row: accessReviews | oer-s132-rev-reviewer | Unchanged | access review 'oer-s132-rev-reviewer' already matches | record: none
+[oer-s132] Apply of the export: rows 2; not Unchanged: 0; rows for oer-s132-twin: 0; $? True; error records: 0; requests in total: 25 read(s), 0 write(s)
+
+Get-OERInventory: This inventory is PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name,
+or were left out because two or more live objects share a name or because the display name of a group has the form of
+an object id, and are not stated as facts in the document (an accessReviews entry named as unread may still carry an id
+where a name could not be read). Unread: accessReviews/oer-s132-twin. A section reported here by its name alone could
+not be read at all and is written as an empty array, which does not mean the tenant has none. A members, scopedRoles,
+resources or resourceRoles key reported here is an explicit null, which the apply engine reads as leave untouched; do
+not hand-edit it to an empty array, and do not treat this document as a full tenant snapshot. An entry ending in
+scopedRoles/principalType is not such a key: it names a unit some or all of whose scoped role rows are written without
+principalType, since their principals' type could not be read. Causes: 2 live objects share the name
+accessReviews/oer-s132-twin (compared without regard to letter case), so none of them is written: the apply engine
+refuses an ambiguous name..
+```
 
 ## Teardown
 
 ### T.1. Remove every object with the prefix
 
-- [ ] **T.1** The prerequisite script's teardown renames the group guid back to `oer-s132-guid`, removes the access review definitions first, then both groups; the sweep is 0 and the group guid answers 404 by its id. #type/subtask
+- [x] **T.1** The prerequisite script's teardown renames the group guid back to `oer-s132-guid`, removes the access review definitions first, then both groups; the sweep is 0 and the group guid answers 404 by its id. #type/subtask
 
 ```powershell
 pwsh -NoProfile -NonInteractive -File (Join-Path $env:OER_LIVE_DIR 'Initialize-OerS132Prereq.ps1') -Teardown -Unattended
@@ -457,11 +730,52 @@ complete: the sweep is 0.`
 **Failure looks like:** `Residue` above 0 or `Left:` lines -- run `-Teardown` again later and record
 both runs.
 
-Result:
+Result: 2026-11-06 21:03 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The prerequisite script's teardown renamed the group guid back to oer-s132-guid (204; three reads by id then showed it), then Remove-OerLiveTestObjects (OerLive 1.1.0, with the recorded ids) deleted the four access review definitions first and then both groups: removed 6, residue 0, unreadable 0, already gone 0, skipped 0. The sweep listed 2 objects once (listing lag) and then 0; the group guid read by its id answers 404; teardown complete: the sweep is 0.
+
+[oer-s132] oer-testmiljo.psd1 present: True; oer-cc-identitet.psd1 present: True
+[oer-s132] The run's worktree exists: True
+[oer-s132] Transcript (redacted): raw\s132\prereq-teardown-20261106-210209Z.log; OerLive 1.1.0.
+[oer-s132] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s132] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s132] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s132] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s132] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s132] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s132] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s132] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s132] Residue: raw\residue.json holds 5 row(s); 0 carry the prefix 'oer-s132-', the other 5 are left untouched.
+[oer-s132] Teardown: the group guid renamed back to oer-s132-guid (204).
+[oer-s132] Teardown: three reads by id answer oer-s132-guid: True
+[oer-s132] Teardown: Remove-OerLiveTestObjects for the prefix with the recorded ids.
+[oer-s132] Teardown of 'oer-s132-': users 0, groups 2, access packages 0, access review definitions 4, catalogs 0; administrative units 0 and app registrations 0 are reported only.
+[oer-s132] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s132] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s132] Teardown 3/6: access review definitions, access package resource roles, access packages, catalog resources, catalogs.
+[oer-s132] Deleted: access review definition oer-s132-twin (204).
+[oer-s132] Deleted: access review definition oer-s132-twin (204).
+[oer-s132] Deleted: access review definition oer-s132-rev-of-guid (204).
+[oer-s132] Deleted: access review definition oer-s132-rev-reviewer (204).
+[oer-s132] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s132] Teardown 5/6: the prefixed groups.
+[oer-s132] Deleted: group oer-s132-grp-a (204).
+[oer-s132] Deleted: group oer-s132-guid (204).
+[oer-s132] Teardown 6/6: the prefixed users.
+[oer-s132] Teardown of 'oer-s132-': removed 6, residue 0, unreadable 0, already gone 0, skipped 0.
+[oer-s132] Teardown summary: Removed 6, Residue 0, Unreadable 0, Unread 0, AlreadyGone 0, Skipped 0
+[oer-s132] Sweep: 2 object(s) with the prefix, 0 unread kind(s).
+[oer-s132] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s132-' is left.
+[oer-s132] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s132-' is left.
+[oer-s132] Sweep: 0 object(s) with the prefix, 0 unread kind(s).
+[oer-s132] Teardown: the group guid read by its id answers 404: True
+[oer-s132] Teardown complete: the sweep is 0.
+```
 
 ### T.2. The sweep is still 0 a minute later, and raw output is removed
 
-- [ ] **T.2** A minute after T.1 the prefix sweep is still 0, a group with the mail nickname `oer-s132-guid` is not listed, and the step's raw folder is deleted. #type/subtask
+- [x] **T.2** A minute after T.1 the prefix sweep is still 0, a group with the mail nickname `oer-s132-guid` is not listed, and the step's raw folder is deleted. #type/subtask
 
 ```powershell
 Connect-OerLive -Graph
@@ -477,4 +791,24 @@ Write-OerLiveStep "Raw folder removed: $(-not (Test-Path -LiteralPath $Raw))"
 **Expect:** 0; 0; `Raw folder removed: True`.
 **Failure looks like:** an object listed -- run T.1 again.
 
-Result:
+Result: 2026-11-06 21:05 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. A minute after T.1 the prefix sweep is 0 objects and 0 unread kinds, no group carries the mail nickname oer-s132-guid, and the step's raw folder in the clone is deleted.
+
+[oer-s132] oer-testmiljo.psd1 present: True; oer-cc-identitet.psd1 present: True
+[oer-s132] The run's worktree exists: True
+[oer-s132] Omnicit.EntraRBAC 1.4.1 loaded from REPO\.claude\worktrees\s13-steg2\output\module\Omnicit.EntraRBAC\1.4.1.
+[oer-s132] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s132] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s132] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s132] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s132] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s132] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s132] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s132] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s132-' is left.
+[oer-s132] Sweep a minute later: 0 object(s) or unread kind(s) with the prefix.
+[oer-s132] Groups with the mail nickname oer-s132-guid: 0
+[oer-s132] Raw folder removed: True
+```
+
