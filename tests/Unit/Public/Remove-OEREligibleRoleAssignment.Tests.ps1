@@ -545,6 +545,7 @@ $InPlace = & $Module {
     (Get-Command Invoke-OERArmRequest).ScriptBlock.ToString().Contains('S131-NOTRY-STUB')
 }
 "STUBS:$InPlace"
+if (-not $InPlace) { return }
 $Out = Remove-OEREligibleRoleAssignment -Role 'Reader' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' -Scope '/subscriptions/s1' -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err
 "OUT:$(@($Out | Where-Object { $null -ne $_ }).Count)"
 foreach ($Record in @($Err)) { "ERR:$($Record.FullyQualifiedErrorId)|$($Record.InvocationInfo.MyCommand.Name)" }
