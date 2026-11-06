@@ -126,6 +126,8 @@ function Invoke-OERGraphRequest {
     caller reads the answer as a read that did not complete, never as an empty collection. A first
     page that carries value, even an empty array, is still a successful empty read, and an
     expected-code marker on the first page is still returned before the check. Ignored without -All.
+    Invoke-OERArmRequest has a switch of the same name that refuses the same first-page shapes with
+    ArmPagingIncomplete and, unlike this one, also covers a single request.
 
     .OUTPUTS
     The Graph API response hashtable on success. With -All, a hashtable shaped @{ value = <array> }
