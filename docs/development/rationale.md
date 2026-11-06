@@ -13142,10 +13142,10 @@ reference rule for every row the section reads. Cost if wrong: a root-scope find
 its id instead of its shared name.
 
 **Known limits.** (a) `-Catalog` given as an id (R-5) and the positions R-6 leaves out still write a
-shared name, refused when applied (Sprint 13 step 2, below, closes the GUID-shaped group name there). (b) A display name of an access package or an assignment policy
-that is shaped like a GUID is read by the apply engine as an object id, and the export can keep such
-a name in a review, where the engine then reads it as an id and not as the name; very improbable. (c) Closed in this
-step (the controller's ruling on the final review): `New-OERAccessPackage` looks a package up by name
+shared name, refused when applied (Sprint 13 step 2, below, closes the GUID-shaped group name there).
+(b) A display name of an access package or an assignment policy that is shaped like a GUID is read by
+the apply engine as an object id, and the export can keep such a name in a review, where the engine
+then reads it as an id and not as the name; very improbable. (c) Closed in this step (the controller's ruling on the final review): `New-OERAccessPackage` looks a package up by name
 in the whole tenant, so re-creating a package declared in catalog A while exactly one package of that
 name exists in catalog B returned B's package, and `Sync-OERStructureAccessPackage` reported it
 `Created` and went on to write the declared resource roles and assignment policies to it. The gap is
@@ -13288,7 +13288,8 @@ cause written inline and a BLANK `Target`, as the shared-name causes are (BL-156
 `DynamicMembers` entries go with it. It cannot be written by id, since the display name is the entry's
 identity, and writing it would make the engine reconcile whatever object carries that id. Leaving a
 top-level entry out removes nothing, since `-Prune` acts on child collections only. A name the
-shared-name pass already reported is not reported twice. Cost if wrong: one group fewer in
+shared-name pass already reported is not reported twice (when `-ExcludeSharedName` already left the name
+out). Cost if wrong: one group fewer in
 `inventory.json`, named in `InventoryPartial`.
 
 **R-4 (BL-171d, review names).** The access review names are counted over EVERY definition the read
@@ -13307,6 +13308,15 @@ no-try runspace proof of Sprint 9 does not apply. Cost if wrong: one more proof 
 **R-6 (texts).** The `InventoryPartial` lead of both inventory cmdlets names the GUID case beside the
 shared name, and the bundle README's "Names two or more objects share" introduction states the rule and
 the review count. No ErrorId, public parameter or output type changes.
+
+**R-7 (two positions the final review found, ruled by the controller).** The GUID rule also applies,
+through `Get-OERGroupReference -KeepSharedName`, to the principal of a role assignment that is not a
+group (a service principal or a user whose chosen name is not its id) and to an application resource of
+a catalog, with its access package resource role. A service principal or an application whose display
+name has the form of an object id would otherwise be applied as that id. A UPN is never of that form,
+so a user is unchanged in practice; groups keep their index call. Cost if wrong: a private owner help
+sentence and two call sites to remove; a service principal named like an object id is written by id
+again.
 
 ### CLAUDE.md text for roster-identity-and-shared-names
 

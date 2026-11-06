@@ -12503,6 +12503,7 @@ Describe 'Get-OERInventory writes a group whose display name has the form of an 
         $script:GnReviews = @()
         $script:GnGroupLookupName = 'Sales'
         $script:GnCatalogResources = @()
+        $script:GnRoleOriginId = $script:GnGroupId
         Mock -ModuleName $script:moduleName Initialize-OERAuth { }
         Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { & $script:NewHomeVerdict $Scope }
         Mock -ModuleName $script:moduleName Get-OERDeletedPrincipalStatus { throw "unexpected deleted items read: $Id" }
@@ -12521,7 +12522,7 @@ Describe 'Get-OERInventory writes a group whose display name has the form of an 
         Mock -ModuleName $script:moduleName Get-OERCatalogResource { $script:GnCatalogResources }
         Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-1'; Description = 'd' } }
         Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
-            [PSCustomObject]@{ ResourceDisplayName = 'Root'; RoleName = 'Member'; OriginId = $script:GnGroupId }
+            [PSCustomObject]@{ ResourceDisplayName = 'Root'; RoleName = 'Member'; OriginId = $script:GnRoleOriginId }
         }
         Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { @() }
         Mock -ModuleName $script:moduleName Get-OERGroup { @() }
@@ -12558,6 +12559,18 @@ Describe 'Get-OERInventory writes a group whose display name has the form of an 
             $Ar = @((Get-OERInventory -Include AccessReviews).AccessReviews)
             $Ar.Count | Should -Be 1
             $Ar[0].group | Should -BeExactly $script:GnGroupId
+        }
+
+        It 'writes a service principal named like an object id by its id, and keeps an ordinary service principal name (R-7)' {
+            $SpId1 = 'eeee5555-0000-0000-0000-0000000000e1'
+            $SpId2 = 'eeee5555-0000-0000-0000-0000000000e2'
+            $script:GnNames = @{ $SpId1 = $script:GnName; $SpId2 = 'Deploy App' }
+            $script:GnRas = @((New-GnRa -PrincipalId $SpId1 -PrincipalType 'ServicePrincipal'), (New-GnRa -PrincipalId $SpId2 -PrincipalType 'ServicePrincipal'))
+            $Ra = @((Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM).roleAssignments)
+            $Ra.Count | Should -Be 2
+            $Ra.principal | Should -Contain $SpId1
+            $Ra.principal | Should -Not -Contain $script:GnName
+            $Ra.principal | Should -Contain 'Deploy App'
         }
 
         It 'keeps an ordinary unique name at the index positions' {
@@ -12619,9 +12632,17 @@ Describe 'Get-OERInventory writes a group whose display name has the form of an 
             $Result = Get-OERInventory -Include Catalogs, AccessPackages
             $Res = @($Result.Catalogs[0].resources)
             ($Res | Where-Object type -eq 'Group').name | Should -BeExactly $script:GnGroupId
-            # An application whose name merely looks like a GUID is not a group: unchanged.
-            ($Res | Where-Object type -eq 'Application').name | Should -BeExactly $script:GnName
+            # R-7: an application whose name has the form of an object id is written by its id too.
+            ($Res | Where-Object type -eq 'Application').name | Should -BeExactly 'eeee5555-0000-0000-0000-0000000000b1'
             $Result.AccessPackages[0].resourceRoles[0].resource | Should -BeExactly $script:GnGroupId
+        }
+
+        It 'writes an application resource named like an object id by its id in the Catalogs section and in the package binding' {
+            $script:GnRoleOriginId = 'eeee5555-0000-0000-0000-0000000000b1'
+            $script:GnNames = @{ $script:GnGroupId = 'grp-new'; 'eeee5555-0000-0000-0000-0000000000b1' = $script:GnName }
+            $Result = Get-OERInventory -Include Catalogs, AccessPackages
+            ($Result.Catalogs[0].resources | Where-Object type -eq 'Application').name | Should -BeExactly 'eeee5555-0000-0000-0000-0000000000b1'
+            $Result.AccessPackages[0].resourceRoles[0].resource | Should -BeExactly 'eeee5555-0000-0000-0000-0000000000b1'
         }
 
         It 'keeps the ordinary current name of a group resource in both sections' {
@@ -12632,7 +12653,8 @@ Describe 'Get-OERInventory writes a group whose display name has the form of an 
             $Result.AccessPackages[0].resourceRoles[0].resource | Should -BeExactly 'grp-new'
         }
 
-        It 'keeps the catalog''s recorded name for a group resource the lookup did not return' {
+        # The real lookup maps every id it is given; this models a map that lacks the key (the guard's case).
+        It 'keeps the catalog''s recorded name for a group resource a lookup map holds no key for' {
             $script:GnNames = @{}
             $Result = Get-OERInventory -Include Catalogs
             ($Result.Catalogs[0].resources | Where-Object type -eq 'Group').name | Should -BeExactly 'recorded'
@@ -12807,7 +12829,7 @@ Describe 'Get-OERInventory counts a shared access review name over every review 
         $Partial[0].Exception.Message | Should -BeLike '*Causes: 2 live objects share the name accessReviews/Quarterly (compared without regard to letter case), so none of them is written: the apply engine refuses an ambiguous name.*'
         $Names = @((@($Info | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' }))[0].MessageData.Names)
         @($Names | ForEach-Object { "$($_.Section)|$($_.Name)|$($_.Count)" }) | Should -Be @('accessReviews|Quarterly|2')
-        @($Warn | Where-Object { "$_" -like '*1 review(s) of a group in a form the module cannot write back*' }).Count | Should -BeGreaterThan 0 -Because 'the skipped review is still counted in the skip warning'
+        @($Warn | Where-Object { "$_" -like '*1 review(s) of a group in a form the module cannot write back*' }).Count | Should -Be 1 -Because 'the skipped review is still counted in the skip warning'
     }
 
     It 'leaves out an exported review whose namesake is a skipped multi-stage review, and counts both' {

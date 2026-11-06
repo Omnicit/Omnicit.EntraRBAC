@@ -300,7 +300,9 @@ function Export-OERInventory {
     the apply engine refuses a name that more than one live object answers to, so inventory.json and
     the per-area files leave out every object whose name another object of its kind shares, compared
     without regard to letter case -- all of them (the Get-OERInventory help describes the rule).
-    Groups are counted over every group in the tenant, the roster's unfiltered listing, so a security
+    Access review names are counted over every definition read, the skipped ones included, so a
+    skipped review still makes its namesake a shared name. A group whose own display name has the
+    form of an object id is left out too, and named unread. Groups are counted over every group in the tenant, the roster's unfiltered listing, so a security
     group that shares its name with a Microsoft 365 group or a distribution group is left out too;
     when the roster could not be read, they are counted among the security-enabled groups the export
     reads. Whether a group named as the principal of a role assignment or a directory role assignment
@@ -1678,7 +1680,8 @@ function Export-OERInventory {
         # R3: the map holds the groups the reader READ IN FULL and nothing else. A group it did not
         # read in full -- every group of the roster that is not security-enabled, a security group
         # found not relevant (without -AllGroupsDetailed: decided from two requests, its members
-        # never asked for), and a group left out for a shared name -- has no entry, so its roster
+        # never asked for), and a group left out for a shared name or for a display name in the form
+        # of an object id -- has no entry, so its roster
         # row gets $null below: the roster's existing "not known" value. A count for those would
         # cost a request per group, and the one-request form (groups/{id}/members/$count) needs the
         # ConsistencyLevel: eventual header, which this module's single Graph transport never sends,
@@ -1700,7 +1703,8 @@ function Export-OERInventory {
         # map above holds null for it, which would read as "not known". The reader still reads a dynamic
         # group's members when it reads the group in full and counts what it found in DynamicMembers, one
         # entry per such group (none for a group whose members read failed, whose count stays not known,
-        # nor for a group left out for a shared name). The count goes in BEFORE the PimLeftOut addition
+        # nor for a group left out for a shared name or for a display name in the form of an object
+        # id). The count goes in BEFORE the PimLeftOut addition
         # below, which cannot apply to a dynamic group: PIM for Groups cannot manage one. A reader result
         # that carries no DynamicMembers list is filtered, as PimLeftOut's is, so it never becomes one null
         # entry.

@@ -151,16 +151,21 @@ function Get-OERInventory {
     CURRENT display name, looked up by the resource's originId (its object id when the lookup returns
     nothing) -- never under the name the catalog recorded when the resource was added, which Graph
     keeps after a rename, except as described above when the names cannot be read.
-    Invoke-OERStructure identifies such a resource by the object id its name resolves to.
+    Invoke-OERStructure identifies such a resource by the object id its name resolves to. A display
+    name that has the form of an object id is written as the object id instead, since the apply
+    engine reads such a name as an id.
     Only single-stage review definitions of an access package or of all members of one group are
     captured; a review of all members of one group is written with a group key (the group's name when
-    the tenant's group name index was read and exactly this group carries it, else its object id)
-    and no accessPackage or assignmentPolicy. A review of guest users only, of direct members only
+    the tenant's group name index was read and exactly this group carries it, else its object id;
+    a group, a reviewer or a fallback reviewer whose display name has the form of an object id is
+    written as the object id as well) and no accessPackage or assignmentPolicy. A review of guest
+    users only, of direct members only
     or of inactive users, an application, a directory-role, another scope or a multi-stage review is
     skipped, and so is a review (of either form) with a reviewer scope the document cannot express
     (for example the owners of a group): exporting it would drop that reviewer, and applying the
     export would rewrite the live review. The skips are named in one aggregate warning, counted by
-    kind (the offending reviewer queries are on the verbose stream). The AccessReviews projection
+    kind (the offending reviewer queries are on the verbose stream). A skipped review still makes
+    its namesake a shared name: the exported one is left out and counted. The AccessReviews projection
     carries accessPackage and assignmentPolicy (or group), reviewers and
     recurrence so a captured review round-trips through Invoke-OERStructure (create-or-update: a
     review is matched by displayName and created when it does not exist; when it does, it is
@@ -211,7 +216,9 @@ function Get-OERInventory {
     unconditioned one. In RoleAssignments and DirectoryRoleAssignments, a group is written by its
     display name only when no other group in the tenant carries that name, compared without regard
     to letter case; otherwise, or when the listing of every group fails, it is written by its object
-    id with principalType Group, which Invoke-OERStructure resolves verbatim. The listing is the one
+    id with principalType Group, which Invoke-OERStructure resolves verbatim. A principal of any
+    type whose display name has the form of an object id is written by its object id too, since
+    the apply engine reads such a name as an id. The listing is the one
     described below, made at most once per call, when the Groups section read at least one group or
     when a section holds a group principal whose name was read (one whose name could not be read is
     written by its object id with no listing), and shared by both; when it fails, the verbose stream
@@ -291,8 +298,9 @@ function Get-OERInventory {
     and prunes by (Select-OERManagedDirectoryRoleAssignment). A user is named by its user principal
     name and a group by its display name, each falling back to the object id when no name can be
     read, and a group by its object id as well when another group in the tenant carries its display
-    name, as described above; a service principal, or a principal of unknown type, is named by its
-    object id, and principalType is carried whenever the type is known. Entra does not keep group
+    name or when that name has the form of an object id, as described above; a service principal, or
+    a principal of unknown type, is named by its object id, and principalType is carried whenever the
+    type is known. Entra does not keep group
     display names unique, so a group whose display name matches, without regard to letter case,
     that of another principal holding the same role and assignment type is named by its object id
     instead (still with principalType Group): two entries with the same role, principal and
@@ -319,7 +327,10 @@ function Get-OERInventory {
     all of them -- and each such name is reported through the InventoryPartial error, since the apply
     engine refuses an ambiguous name and neither entry could be applied; leaving a top-level entry out
     removes nothing, because -Prune acts on child collections only, and leaving an assignment policy
-    out removes nothing either, because the apply engine never removes an assignment policy. A
+    out removes nothing either, because the apply engine never removes an assignment policy. Access
+    review names are counted over every definition read, the skipped ones included. A group whose
+    own display name has the form of an object id is left out too, and named unread, since the apply
+    engine reads such a name as an object id. A
     policy name is reported as accessPackages/ followed by the package name, /assignmentPolicies/ and
     the policy name, and the policies of two different packages never count against each other. An
     access package in a catalog whose name another catalog carries is written with that catalog's
@@ -413,7 +424,8 @@ function Get-OERInventory {
     -AccessReviewFilter); a review of guest users only, of direct members only or of inactive users, an
     application, a directory-role, another scope, a multi-stage review, or a review with a reviewer
     scope the document cannot express (a group's owners, for example) is skipped with a warning,
-    counted by kind. DirectoryRoleManagementPolicies and
+    counted by kind; a skipped review still makes its namesake a shared name, so the exported one is
+    left out and counted. DirectoryRoleManagementPolicies and
     DirectoryRoleAssignments read Microsoft Entra directory roles through Microsoft Graph and need no
     ARM token. RoleAssignments and RoleManagementPolicies need an ARM token and their targeting
     parameters: with a -Scope or a -Subscription the token is acquired up front, as -IncludeARM does
@@ -1371,13 +1383,14 @@ function Get-OERInventory {
                 $Ids = @($Resources | Where-Object { [string]$_.OriginSystem -in @('AadGroup', 'AadApplication') -and $_.OriginId } |
                         ForEach-Object { [string]$_.OriginId })
                 $CatalogResourceNames[$ForCatalogId] = if ($Ids.Count -gt 0) { Resolve-OERPrincipalName -Id $Ids -PreferDisplayName } else { @{} }
-                # R-2 (Sprint 13 step 2, BL-171c): a group resource whose display name is GUID-shaped is
-                # written as its object id (a shared name is kept, R-6). Applications are unchanged.
+                # R-2 and R-7 (Sprint 13 step 2, BL-171c): a group or application resource whose display
+                # name is GUID-shaped is written as its object id (a shared name is kept, R-6).
                 $LookedUp = $CatalogResourceNames[$ForCatalogId]
                 if ($LookedUp -is [hashtable]) {
-                    foreach ($GroupRes in @($Resources | Where-Object { [string]$_.OriginSystem -eq 'AadGroup' -and $_.OriginId })) {
+                    foreach ($GroupRes in @($Resources | Where-Object { [string]$_.OriginSystem -in @('AadGroup', 'AadApplication') -and $_.OriginId })) {
                         $GroupResId = [string]$GroupRes.OriginId
-                        # An id the lookup did not return keeps the catalog's recorded name, as before.
+                        # Resolve-OERPrincipalName maps every id it is given (one it did not return maps to
+                        # itself), so production always holds the key; this only covers a map without it.
                         if (-not $LookedUp.ContainsKey($GroupResId)) { continue }
                         $LookedUp[$GroupResId] = Get-OERGroupReference -Id $GroupResId -Name ([string]$LookedUp[$GroupResId]) -KeepSharedName
                     }
@@ -1909,6 +1922,11 @@ function Get-OERInventory {
                     # returns as it is, with no index read.
                     if ($PrincipalType -eq 'Group' -and $RaPrincipalId) {
                         $PrincipalName = Get-GroupPrincipalReference -Id $RaPrincipalId -Name ([string]$PrincipalName)
+                    } elseif ($RaPrincipalId) {
+                        # R-7: any other principal (a service principal, a user) whose chosen name has the
+                        # form of an object id is written as its id, since the apply engine reads such a
+                        # name as an id. No index is read; a UPN is never of that form.
+                        $PrincipalName = Get-OERGroupReference -Id $RaPrincipalId -Name ([string]$PrincipalName) -KeepSharedName
                     }
                     # BL-45: the role is written by its name, and by the role definition id the row already
                     # carries when the name is missing -- and a name that is only white space is missing too:

@@ -1377,6 +1377,17 @@ Describe 'Get-OERInventoryGroup' {
             @($Read.Result.SharedNames).Count | Should -Be 0
         }
 
+        It 'names a GUID-named group that -RelevantOnly would not have projected, as the pass walks every listed group (BL-171c)' {
+            $script:PimListing = @(
+                @{ Id = 'g-guid'; Name = '00000000-0000-0000-0000-000000000066'; Members = @(); Owners = @(); Eligibility = @() }
+                @{ Id = 'g-keep'; Name = 'role_sec_keep'; Members = @(); Owners = @(); Eligibility = @() }
+            )
+            $Read = & $script:ReadIn 'relevant-only'
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('role_sec_keep')
+            @($Read.Result.Unread) | Should -Be @('groups/00000000-0000-0000-0000-000000000066')
+            @($Read.Result.Causes).Count | Should -Be 1
+        }
+
         It 'reports a GUID-shaped name once when another group carries it too, and as the shared name under -ExcludeSharedName (BL-171c)' {
             $script:PimListing = @(
                 @{ Id = 'g-1'; Name = '00000000-0000-0000-0000-000000000066'; Members = @(); Owners = @(); Eligibility = @() }

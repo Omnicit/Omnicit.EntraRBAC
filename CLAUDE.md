@@ -1110,7 +1110,8 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   assignment.** Never re-implement either inline. `Get-OERGroupReference` also owns the rule that a
   name `Test-OERGuid` accepts is written as the group's id, at every position; the positions that keep
   a shared name (eligibility principal, reviewer and fallback reviewer, catalog resource and resource
-  role) call it with `-KeepSharedName`.
+  role) call it with `-KeepSharedName`; so do a non-group principal of a role assignment and an
+  application catalog resource, where the same GUID rule applies (R-7).
   `Why: docs/development/rationale.md#roster-identity-and-shared-names`
 - **`Export-OERInventory` is the only command that sets and clears the export run context
   (`$script:_OERInventoryRunContext`).** Created in ONE place, directly before the export's Entra ID

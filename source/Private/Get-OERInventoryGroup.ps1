@@ -1027,7 +1027,8 @@ function Get-OERInventoryGroup {
         # id. The name is reported once (letter case aside, the first listed spelling) as the unread
         # entry 'groups/<name>' with an inline cause, unless the shared-name pass above already
         # reported it (its groups are out already). PimLeftOut and DynamicMembers go with the group,
-        # by the same name rule.
+        # by the same name rule. Like the shared-name pass, this walks every listed group in scope, so
+        # under -RelevantOnly it also names a GUID-named group that would not have been projected.
         $GuidNamed = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
         foreach ($G in $GroupItems) {
             if (Test-OERGuid -Value ([string]$G.DisplayName)) { $null = $GuidNamed.Add([string]$G.DisplayName) }
