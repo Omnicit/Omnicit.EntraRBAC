@@ -810,6 +810,12 @@ function Get-OERInventoryGroup {
                     if (-not $E) { continue }
                     $PrincipalId = [string]$E.principalId
                     $Name = if ($PrincipalNameCache.ContainsKey($PrincipalId)) { $PrincipalNameCache[$PrincipalId] } else { $PrincipalId }
+                    # R-2 (Sprint 13 step 2, BL-171c): the principal's type is not read, so a written name
+                    # that differs from the id goes through the owner, which keeps a shared name (R-6) but
+                    # writes the id for a blank or GUID-shaped name (a UPN is never GUID-shaped).
+                    if ($PrincipalId -and [string]$Name -ne $PrincipalId) {
+                        $Name = Get-OERGroupReference -Id $PrincipalId -Name ([string]$Name) -KeepSharedName
+                    }
                     $EligProj = [ordered]@{ principal = $Name }
                     $EligProj.accessType = $(if ($E.accessId) { [string]$E.accessId } else { 'member' })
                     $EligDays = Resolve-OEREligibilityDuration -StartDateTime $E.startDateTime -EndDateTime $E.endDateTime

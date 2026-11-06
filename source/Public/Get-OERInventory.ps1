@@ -1371,6 +1371,17 @@ function Get-OERInventory {
                 $Ids = @($Resources | Where-Object { [string]$_.OriginSystem -in @('AadGroup', 'AadApplication') -and $_.OriginId } |
                         ForEach-Object { [string]$_.OriginId })
                 $CatalogResourceNames[$ForCatalogId] = if ($Ids.Count -gt 0) { Resolve-OERPrincipalName -Id $Ids -PreferDisplayName } else { @{} }
+                # R-2 (Sprint 13 step 2, BL-171c): a group resource whose display name is GUID-shaped is
+                # written as its object id (a shared name is kept, R-6). Applications are unchanged.
+                $LookedUp = $CatalogResourceNames[$ForCatalogId]
+                if ($LookedUp -is [hashtable]) {
+                    foreach ($GroupRes in @($Resources | Where-Object { [string]$_.OriginSystem -eq 'AadGroup' -and $_.OriginId })) {
+                        $GroupResId = [string]$GroupRes.OriginId
+                        # An id the lookup did not return keeps the catalog's recorded name, as before.
+                        if (-not $LookedUp.ContainsKey($GroupResId)) { continue }
+                        $LookedUp[$GroupResId] = Get-OERGroupReference -Id $GroupResId -Name ([string]$LookedUp[$GroupResId]) -KeepSharedName
+                    }
+                }
             }
             $CatalogResourceNames[$ForCatalogId]
         }
@@ -2358,7 +2369,11 @@ function Get-OERInventory {
                     # scope WITH a query that does not parse skipped the whole review above).
                     if ($Parsed.Kind -eq 'Unparsed') { continue }
                     $RvId = [string]$Parsed.Id
-                    $Reviewers.Add($(if ($PrincipalNameCache.ContainsKey($RvId)) { $PrincipalNameCache[$RvId] } else { $RvId }))
+                    $RvName = if ($PrincipalNameCache.ContainsKey($RvId)) { $PrincipalNameCache[$RvId] } else { $RvId }
+                    # R-2 (Sprint 13 step 2, BL-171c): a reviewer group whose name is GUID-shaped is
+                    # written as its id; a shared name is kept (R-6). A user reviewer is unchanged.
+                    if ($Parsed.Kind -eq 'Group') { $RvName = Get-OERGroupReference -Id $RvId -Name ([string]$RvName) -KeepSharedName }
+                    $Reviewers.Add($RvName)
                 }
                 if ($RawReviewers.Count -eq 0) { $Reviewers.Add('self') }
                 $Proj.reviewers = @($Reviewers)
@@ -2383,7 +2398,10 @@ function Get-OERInventory {
                         # user and group only) skipped the whole review above.
                         if ($Parsed.Id) {
                             $FbId = [string]$Parsed.Id
-                            $Fallbacks.Add($(if ($PrincipalNameCache.ContainsKey($FbId)) { $PrincipalNameCache[$FbId] } else { $FbId }))
+                            $FbName = if ($PrincipalNameCache.ContainsKey($FbId)) { $PrincipalNameCache[$FbId] } else { $FbId }
+                            # R-2 (Sprint 13 step 2, BL-171c): as for reviewers, a group by id when its name is GUID-shaped.
+                            if ($Parsed.Kind -eq 'Group') { $FbName = Get-OERGroupReference -Id $FbId -Name ([string]$FbName) -KeepSharedName }
+                            $Fallbacks.Add($FbName)
                         }
                     }
                     if ($Fallbacks.Count -gt 0) { $Proj.fallbackReviewers = @($Fallbacks) }

@@ -520,6 +520,26 @@ Describe 'Get-OERInventoryGroup' {
             }
         }
 
+        It 'writes an eligibility principal named like an object id by its id, and keeps any other name (Sprint 13 step 2, BL-171c, R-2)' {
+            $Cache = @{
+                'p-1' = 'aaaa3333-0000-0000-0000-0000000000d1'
+                'p-2' = 'Shared Name'
+                'p-3' = 'person1@example.com'
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                [PSCustomObject]@{
+                    Id = 'g-1'; DisplayName = 'role_sec_team'; Description = $null; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; Members = @(); Owners = @()
+                    PimEligibility = @(@{ principalId = 'p-1' }, @{ principalId = 'p-2' }, @{ principalId = 'p-3' })
+                }
+            }
+            $Group = (Invoke-GroupRead -Cache $Cache).Result.Groups[0]
+            @($Group.eligibility.principal) | Should -Contain 'p-1'
+            @($Group.eligibility.principal) | Should -Not -Contain 'aaaa3333-0000-0000-0000-0000000000d1'
+            @($Group.eligibility.principal) | Should -Contain 'Shared Name'
+            @($Group.eligibility.principal) | Should -Contain 'person1@example.com'
+        }
+
         It 'sends no principal lookup when every principal is already cached' {
             $Cache = @{ 'p-1' = 'Cached Person' }
             $Group = (Invoke-GroupRead -Cache $Cache).Result.Groups[0]

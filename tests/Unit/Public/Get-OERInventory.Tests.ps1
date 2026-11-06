@@ -12435,3 +12435,311 @@ Describe 'Get-OERInventory uses the principal name cache of its run context (Spr
         $null -eq (& (Get-Module $script:moduleName) { $script:_OERInventoryRunContext }) | Should -BeTrue
     }
 }
+
+Describe 'Get-OERInventory writes a group whose display name has the form of an object id by its id (Sprint 13 step 2, BL-171c, R-1, R-2)' {
+    # A group whose display name Test-OERGuid accepts is read by the apply engine as an object id wherever it
+    # resolves a group name, so the export writes such a group by its object id at every position that names
+    # a group. The index positions (roleAssignments, directoryRoleAssignments, accessReviews[].group) take it
+    # from Get-OERGroupReference's Index set; the R-6 positions (reviewers, fallback reviewers, catalog
+    # resources, access package resource roles, eligibility) take it from its KeepSharedName set and keep a
+    # shared ordinary name. Every id and every GUID-shaped name below is a placeholder that is not version-4.
+    BeforeAll {
+        $script:GnGroupId = 'eeee5555-0000-0000-0000-0000000000a1'
+        $script:GnGroupId2 = 'eeee5555-0000-0000-0000-0000000000a2'
+        $script:GnName = 'aaaa3333-0000-0000-0000-0000000000d1'
+        $script:GnUpperName = 'AAAA3333-0000-0000-0000-0000000000D2'
+        $script:GnUserId = 'dddd3333-0000-0000-0000-0000000000a1'
+        $script:GnSub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $script:GnDirRole = '11111111-1111-1111-1111-111111111111'
+        $script:GnGroupUri = 'v1.0/groups/eeee5555-0000-0000-0000-0000000000a1?$select=id,displayName'
+        function script:New-GnRa {
+            param([string]$PrincipalId, [string]$PrincipalType)
+            [PSCustomObject]@{
+                Scope = $script:GnSub; RoleName = 'Reader'
+                RoleDefinitionId = "$($script:GnSub)/providers/Microsoft.Authorization/roleDefinitions/bbbb1111-0000-0000-0000-000000000001"
+                PrincipalId = $PrincipalId; PrincipalType = $PrincipalType; PrincipalDisplayName = 'fixture'
+                RoleAssignmentId = "$($script:GnSub)/providers/Microsoft.Authorization/roleAssignments/$PrincipalId"
+            }
+        }
+        function script:New-GnDirRow {
+            param([string]$PrincipalId)
+            $Out = [PSCustomObject][ordered]@{
+                ScheduleId = 's-1'; RoleDefinitionId = $script:GnDirRole; RoleName = 'Fixture Role A'
+                PrincipalId = $PrincipalId; PrincipalDisplayName = 'fixture'; PrincipalType = 'Group'
+                DirectoryScopeId = '/'; MemberType = 'Direct'; Status = 'Provisioned'
+                StartDateTime = '2026-01-01T00:00:00Z'; EndDateTime = $null; ExpirationType = 'noExpiration'; DurationDays = $null
+            }
+            $Out.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.EligibleDirectoryRoleAssignment')
+            $Out
+        }
+        function script:New-GnReview {
+            param([string]$Name = 'Quarterly group review', [object[]]$Reviewers, [object[]]$Fallback = @())
+            [PSCustomObject]@{
+                Id = 'ar-gn'; DisplayName = $Name
+                Scope = "/v1.0/groups/$($script:GnGroupId)/transitiveMembers/microsoft.graph.user"; ScopeType = $null
+                AccessPackageId = $null; AssignmentPolicyId = $null
+                Reviewers = $Reviewers; FallbackReviewers = $Fallback
+                StageCount = 0; DurationInDays = 14
+                MailNotificationsEnabled = $false; ReminderNotificationsEnabled = $false
+                JustificationRequired = $false; RecommendationsEnabled = $false; AutoApplyDecisionsEnabled = $false
+                Settings = @{
+                    instanceDurationInDays = 14; mailNotificationsEnabled = $false; reminderNotificationsEnabled = $false
+                    justificationRequiredOnApproval = $false; recommendationsEnabled = $false; autoApplyDecisionsEnabled = $false
+                }
+                Recurrence = [PSCustomObject]@{
+                    pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 3 }
+                    range   = [PSCustomObject]@{ type = 'noEnd'; startDate = '2026-07-01' }
+                }
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        $script:GnNames = @{}
+        $script:GnTenant = @{}
+        $script:GnRas = @()
+        $script:GnEligible = @()
+        $script:GnReviews = @()
+        $script:GnGroupLookupName = 'Sales'
+        $script:GnCatalogResources = @()
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { & $script:NewHomeVerdict $Scope }
+        Mock -ModuleName $script:moduleName Get-OERDeletedPrincipalStatus { throw "unexpected deleted items read: $Id" }
+        Mock -ModuleName $script:moduleName Get-OERRoleAssignment { $script:GnRas }
+        Mock -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment { $script:GnEligible }
+        Mock -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment { @() }
+        Mock -ModuleName $script:moduleName Get-OERGroupNameIndex { & $script:NewGroupNameIndexOf $script:GnTenant }
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+            param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed)
+            & $script:AnswerPrincipalLookup $Id $Detailed.IsPresent $script:GnNames
+        }
+        Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition { $script:GnReviews }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected transport call: $Uri" }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = $script:GnGroupId; displayName = $script:GnGroupLookupName } } -ParameterFilter { $Uri -eq $script:GnGroupUri }
+        Mock -ModuleName $script:moduleName Get-OERCatalog { [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'CAT-Core'; Description = 'd' } }
+        Mock -ModuleName $script:moduleName Get-OERCatalogResource { $script:GnCatalogResources }
+        Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-1'; Description = 'd' } }
+        Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
+            [PSCustomObject]@{ ResourceDisplayName = 'Root'; RoleName = 'Member'; OriginId = $script:GnGroupId }
+        }
+        Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { @() }
+        Mock -ModuleName $script:moduleName Get-OERGroup { @() }
+        Mock -ModuleName $script:moduleName Get-OERGroupPimPolicy { $null }
+        Mock -ModuleName $script:moduleName Get-OERPimGroupPolicyId { $null }
+        Mock -ModuleName $script:moduleName Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $false; Reason = 'x' } }
+    }
+
+    Context 'the index positions (the owner''s first rules, one test each)' {
+        It 'writes a role assignment group named like an object id by its id, though the index holds the name for it alone' {
+            $script:GnNames = @{ $script:GnGroupId = $script:GnName }
+            $script:GnTenant = @{ $script:GnGroupId = $script:GnName }
+            $script:GnRas = @(New-GnRa -PrincipalId $script:GnGroupId -PrincipalType 'Group')
+            $Ra = @((Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM).roleAssignments)
+            $Ra.Count | Should -Be 1
+            $Ra[0].principal | Should -BeExactly $script:GnGroupId
+            $Ra[0].principalType | Should -BeExactly 'Group'
+        }
+
+        It 'writes a directory role assignment group named like an object id (upper case) by its id' {
+            $script:GnNames = @{ $script:GnGroupId = $script:GnUpperName }
+            $script:GnTenant = @{ $script:GnGroupId = $script:GnUpperName }
+            $script:GnEligible = @(New-GnDirRow -PrincipalId $script:GnGroupId)
+            $Rows = @((Get-OERInventory -Include DirectoryRoleAssignments).directoryRoleAssignments)
+            $Rows.Count | Should -Be 1
+            $Rows[0].principal | Should -BeExactly $script:GnGroupId
+        }
+
+        It 'writes the reviewed group of an access review named like an object id by its id' {
+            $script:GnGroupLookupName = $script:GnName
+            $script:GnTenant = @{ $script:GnGroupId = $script:GnName }
+            $script:GnReviews = @(New-GnReview -Reviewers @(@{ query = "/users/$($script:GnUserId)" }))
+            $script:GnNames = @{ $script:GnUserId = 'person1@example.com' }
+            $Ar = @((Get-OERInventory -Include AccessReviews).AccessReviews)
+            $Ar.Count | Should -Be 1
+            $Ar[0].group | Should -BeExactly $script:GnGroupId
+        }
+
+        It 'keeps an ordinary unique name at the index positions' {
+            $script:GnNames = @{ $script:GnGroupId = 'Solo' }
+            $script:GnTenant = @{ $script:GnGroupId = 'Solo' }
+            $script:GnRas = @(New-GnRa -PrincipalId $script:GnGroupId -PrincipalType 'Group')
+            @((Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM).roleAssignments)[0].principal | Should -BeExactly 'Solo'
+        }
+    }
+
+    Context 'access review reviewers (R-2)' {
+        It 'writes a group reviewer named like an object id by its id' {
+            $script:GnNames = @{ $script:GnGroupId2 = $script:GnName }
+            $script:GnReviews = @(New-GnReview -Reviewers @(@{ query = "/groups/$($script:GnGroupId2)" }))
+            $Ar = @((Get-OERInventory -Include AccessReviews).AccessReviews)
+            @($Ar[0].reviewers) | Should -Be @($script:GnGroupId2)
+        }
+
+        It 'keeps the ordinary name of a group reviewer, and a user reviewer is unchanged' {
+            $script:GnNames = @{ $script:GnGroupId2 = 'Reviewers'; $script:GnUserId = 'person1@example.com' }
+            $script:GnReviews = @(New-GnReview -Reviewers @(@{ query = "/groups/$($script:GnGroupId2)" }, @{ query = "/users/$($script:GnUserId)" }))
+            $Ar = @((Get-OERInventory -Include AccessReviews).AccessReviews)
+            @($Ar[0].reviewers) | Should -Be @('Reviewers', 'person1@example.com')
+        }
+
+        It 'keeps a SHARED ordinary name of a group reviewer (R-6 unchanged)' {
+            $script:GnNames = @{ $script:GnGroupId2 = 'Reviewers' }
+            $script:GnTenant = @{ $script:GnGroupId2 = 'Reviewers'; 'eeee5555-0000-0000-0000-0000000000a3' = 'Reviewers' }
+            $script:GnReviews = @(New-GnReview -Reviewers @(@{ query = "/groups/$($script:GnGroupId2)" }))
+            $Ar = @((Get-OERInventory -Include AccessReviews).AccessReviews)
+            @($Ar[0].reviewers) | Should -Be @('Reviewers')
+        }
+
+        It 'writes a group fallback reviewer named like an object id by its id' {
+            $script:GnNames = @{ $script:GnGroupId2 = $script:GnName; $script:GnUserId = 'person1@example.com' }
+            $script:GnReviews = @(New-GnReview -Reviewers @(@{ query = "/users/$($script:GnUserId)" }) -Fallback @(@{ query = "/groups/$($script:GnGroupId2)" }))
+            $Ar = @((Get-OERInventory -Include AccessReviews).AccessReviews)
+            @($Ar[0].fallbackReviewers) | Should -Be @($script:GnGroupId2)
+        }
+
+        It 'keeps the ordinary name of a group fallback reviewer, and a user fallback reviewer is unchanged' {
+            $script:GnNames = @{ $script:GnGroupId2 = 'Fallbacks'; $script:GnUserId = 'person1@example.com' }
+            $script:GnReviews = @(New-GnReview -Reviewers @(@{ query = "/users/$($script:GnUserId)" }) -Fallback @(@{ query = "/groups/$($script:GnGroupId2)" }, @{ query = "/users/$($script:GnUserId)" }))
+            $Ar = @((Get-OERInventory -Include AccessReviews).AccessReviews)
+            @($Ar[0].fallbackReviewers) | Should -Be @('Fallbacks', 'person1@example.com')
+        }
+    }
+
+    Context 'catalog resources and access package resource roles (R-2)' {
+        BeforeEach {
+            $script:GnCatalogResources = @(
+                [PSCustomObject]@{ Id = 'res-g'; DisplayName = 'recorded'; OriginId = $script:GnGroupId; OriginSystem = 'AadGroup'; ResourceType = 'Group' }
+                [PSCustomObject]@{ Id = 'res-a'; DisplayName = 'App Old'; OriginId = 'eeee5555-0000-0000-0000-0000000000b1'; OriginSystem = 'AadApplication'; ResourceType = 'Application' }
+            )
+        }
+
+        It 'writes a group resource named like an object id by its id in the Catalogs section and in the package binding' {
+            $script:GnNames = @{ $script:GnGroupId = $script:GnName; 'eeee5555-0000-0000-0000-0000000000b1' = $script:GnName }
+            $Result = Get-OERInventory -Include Catalogs, AccessPackages
+            $Res = @($Result.Catalogs[0].resources)
+            ($Res | Where-Object type -eq 'Group').name | Should -BeExactly $script:GnGroupId
+            # An application whose name merely looks like a GUID is not a group: unchanged.
+            ($Res | Where-Object type -eq 'Application').name | Should -BeExactly $script:GnName
+            $Result.AccessPackages[0].resourceRoles[0].resource | Should -BeExactly $script:GnGroupId
+        }
+
+        It 'keeps the ordinary current name of a group resource in both sections' {
+            $script:GnNames = @{ $script:GnGroupId = 'grp-new'; 'eeee5555-0000-0000-0000-0000000000b1' = 'App New' }
+            $Result = Get-OERInventory -Include Catalogs, AccessPackages
+            ($Result.Catalogs[0].resources | Where-Object type -eq 'Group').name | Should -BeExactly 'grp-new'
+            ($Result.Catalogs[0].resources | Where-Object type -eq 'Application').name | Should -BeExactly 'App New'
+            $Result.AccessPackages[0].resourceRoles[0].resource | Should -BeExactly 'grp-new'
+        }
+
+        It 'keeps the catalog''s recorded name for a group resource the lookup did not return' {
+            $script:GnNames = @{}
+            $Result = Get-OERInventory -Include Catalogs
+            ($Result.Catalogs[0].resources | Where-Object type -eq 'Group').name | Should -BeExactly 'recorded'
+        }
+    }
+
+    Context 'groups[].eligibility (R-2)' {
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Get-OERGroup {
+                [PSCustomObject]@{
+                    Id = 'eeee5555-0000-0000-0000-0000000000c1'; DisplayName = 'role_sec_test'; Description = 'd'; GroupType = 'Assigned'
+                    IsAssignableToRole = $true; SecurityEnabled = $true; Members = @(); Owners = @()
+                    PimEligibility = @(
+                        @{ principalId = 'eeee5555-0000-0000-0000-0000000000c2'; accessId = 'member'; startDateTime = $null; endDateTime = $null }
+                        @{ principalId = 'eeee5555-0000-0000-0000-0000000000c3'; accessId = 'member'; startDateTime = $null; endDateTime = $null }
+                    )
+                }
+            }
+        }
+
+        It 'writes an eligible principal named like an object id by its id' {
+            $script:GnNames = @{ 'eeee5555-0000-0000-0000-0000000000c2' = $script:GnName; 'eeee5555-0000-0000-0000-0000000000c3' = 'person1@example.com' }
+            $Group = @((Get-OERInventory -Include Groups).Groups)[0]
+            $Principals = @($Group.eligibility.principal)
+            $Principals | Should -Contain 'eeee5555-0000-0000-0000-0000000000c2'
+            $Principals | Should -Not -Contain $script:GnName
+        }
+
+        It 'keeps the name of an eligible principal that is not shaped like an object id, a shared name included' {
+            $script:GnNames = @{ 'eeee5555-0000-0000-0000-0000000000c2' = 'Shared Name'; 'eeee5555-0000-0000-0000-0000000000c3' = 'Shared Name' }
+            $Group = @((Get-OERInventory -Include Groups).Groups)[0]
+            @($Group.eligibility.principal) | Should -Be @('Shared Name', 'Shared Name')
+        }
+    }
+}
+Describe 'Get-OERInventory and Invoke-OERStructure, an access review whose groups are named like object ids (Sprint 13 step 2, BL-171c, R-2, G8)' {
+    # ONE live state: an access review of the members of a group whose display name has the form of an object
+    # id, with a reviewer group and a fallback reviewer group named so too. The real Get-OERInventory writes
+    # every one of the three by its id, and the real Invoke-OERStructure applies that export: every row is
+    # Unchanged and nothing but a GET is sent. The transport throws on any request the fixture does not
+    # answer, and the writers are mocked so a write would be seen.
+    BeforeAll {
+        $script:RtGroupId = 'eeee6666-0000-0000-0000-0000000000a1'
+        $script:RtReviewerGroupId = 'eeee6666-0000-0000-0000-0000000000a2'
+        $script:RtFallbackGroupId = 'eeee6666-0000-0000-0000-0000000000a3'
+        $script:RtGroupName = 'aaaa3333-0000-0000-0000-0000000000d1'
+        $script:RtReviewerName = 'aaaa3333-0000-0000-0000-0000000000d2'
+        $script:RtFallbackName = 'aaaa3333-0000-0000-0000-0000000000d3'
+        $script:RtUserId = 'dddd6666-0000-0000-0000-0000000000a1'
+        $script:RtGroupUri = 'v1.0/groups/eeee6666-0000-0000-0000-0000000000a1?$select=id,displayName'
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        $script:RtNameById = @{
+            $script:RtGroupId = $script:RtGroupName; $script:RtReviewerGroupId = $script:RtReviewerName
+            $script:RtFallbackGroupId = $script:RtFallbackName; $script:RtUserId = 'person1@example.com'
+        }
+        $script:RtLive = [PSCustomObject]@{
+            Id = 'ar-rt'; DisplayName = 'Quarterly group review'
+            Scope = "/v1.0/groups/$($script:RtGroupId)/transitiveMembers/microsoft.graph.user"; ScopeType = $null
+            AccessPackageId = $null; AssignmentPolicyId = $null
+            Reviewers = @(@{ query = "/groups/$($script:RtReviewerGroupId)" })
+            FallbackReviewers = @(@{ query = "/groups/$($script:RtFallbackGroupId)" })
+            StageCount = 0; DurationInDays = 14
+            MailNotificationsEnabled = $false; ReminderNotificationsEnabled = $false
+            JustificationRequired = $false; RecommendationsEnabled = $false; AutoApplyDecisionsEnabled = $false
+            Settings = @{
+                instanceDurationInDays = 14; mailNotificationsEnabled = $false; reminderNotificationsEnabled = $false
+                justificationRequiredOnApproval = $false; recommendationsEnabled = $false; autoApplyDecisionsEnabled = $false
+            }
+            Recurrence = [PSCustomObject]@{
+                pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 3 }
+                range   = [PSCustomObject]@{ type = 'noEnd'; startDate = '2026-07-01' }
+            }
+        }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition { $script:RtLive }
+        Mock -ModuleName $script:moduleName Get-OERGroupNameIndex { & $script:NewGroupNameIndexOf $script:RtNameById }
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+            param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed)
+            & $script:AnswerPrincipalLookup $Id $Detailed.IsPresent $script:RtNameById
+        }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected transport call: $Method $Uri" }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = $script:RtGroupId; displayName = $script:RtGroupName } } -ParameterFilter { $Uri -eq $script:RtGroupUri }
+        Mock -ModuleName $script:moduleName Set-OERAccessReviewDefinition { }
+        Mock -ModuleName $script:moduleName New-OERAccessReviewDefinition { }
+        Mock -ModuleName $script:moduleName Resolve-OERStructureDefault { $null }
+    }
+
+    It 'exports the reviewed group, the reviewer group and the fallback reviewer group by their ids' {
+        $Ar = @((Get-OERInventory -Include AccessReviews -ErrorAction Stop -WarningAction SilentlyContinue).AccessReviews)
+        $Ar.Count | Should -Be 1
+        $Ar[0].group | Should -BeExactly $script:RtGroupId
+        @($Ar[0].reviewers) | Should -Be @($script:RtReviewerGroupId)
+        @($Ar[0].fallbackReviewers) | Should -Be @($script:RtFallbackGroupId)
+    }
+
+    It 'applies the export with every row Unchanged and no write' {
+        $Inv = Get-OERInventory -Include AccessReviews -ErrorAction Stop -WarningAction SilentlyContinue
+        $Doc = ([PSCustomObject][ordered]@{ version = '1.0'; accessReviews = @($Inv.AccessReviews) } | ConvertTo-Json -Depth 12) | ConvertFrom-Json
+        $Rows = @(Invoke-OERStructure -InputObject $Doc -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        # Reach proof: the review was applied, not skipped, and the run was not refused.
+        @($Rows | Where-Object { $_.Section -eq 'accessReviews' -and $_.Item -eq 'Quarterly group review' }).Count | Should -BeGreaterThan 0
+        @($Rows | Where-Object { $_.Action -ne 'Unchanged' }) | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessReviewDefinition -Times 0 -Exactly
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessReviewDefinition -Times 0 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -and $Method -ne 'GET' }
+    }
+}
