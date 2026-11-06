@@ -7,8 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No changes to the module since 1.4.0. A preview published from this point differs from 1.4.0 only
-in documentation, tests or the build.
+The seven Azure role assignment cmdlets (`New-`, `Remove-`, `Enable-` and `Disable-` for role assignments and eligibility) report a role lookup that failed (missing permission, throttling, an incomplete answer) as that failure, and an ambiguous role name as `AmbiguousName`; `RoleDefinitionNotFound` now means only that no role has that name at the scope. An Azure answer with an empty or JSON null body is no longer read as "no such role" or, for role management policies, as an empty policy row: it is reported as `ArmPagingIncomplete`.
 
 ## [1.4.0] - 2026-11-06
 

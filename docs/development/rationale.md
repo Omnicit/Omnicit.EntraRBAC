@@ -1490,7 +1490,8 @@ Behaviour that follows from this design:
   [#graph-wrapper](#graph-wrapper)); for the first page `PartialValue` is `@()`, `NextLink` the
   `-Path` and `PageNumber` 1. One exception to the link: `ArmResponseUnreadable` on a LATER page
   carries the failing page's path (`PathAndQuery`, from `Get-ArmUnreadableBodyRecord -AtPath`), not the
-  absolute link every other later-page failure carries. Unchanged on purpose: a single request with an
+  absolute link every other later-page failure carries. Unchanged on purpose, unless the caller passes
+  `-RequireValue` (below): a single request with an
   empty body (204) and a FIRST page under `-All` with an empty body or a body of JSON `null` still return
   `$null` (a JSON `null` first page once threw "Cannot index into a null array" while reading its next
   link and, with no `try`, came back as `@{ value = @() }`; S14 holds it), and a later page whose
@@ -1505,6 +1506,30 @@ Behaviour that follows from this design:
   request, no record and an empty answer. The first call under `-All` stands in a
   `try` to attach the facts, which makes a throw in a nested function terminating even under
   silence; a single request stays outside it and is unchanged.
+  **`-RequireValue` (Sprint 13 step 1, BL-167a, decision A3).** A private switch, named and shaped
+  like the Graph transport's, for a caller that reads a list and must not take an answer that is not
+  one for "nothing there". With it, a first page of a `-All` walk, or a single request's answer,
+  whose 2xx body is empty, JSON `null` (a body that parses to nothing, `[]`, takes this cause) or has
+  no `value` member is refused with `ArmPagingIncomplete`, built by the same record helper with page 1,
+  the `-Path` as link and `@()` as the partial value, so the three facts ride on the exception in both
+  shapes. R-1: the id is `ArmPagingIncomplete`, not `ArmResponseUnreadable`, since the condition is
+  "not a page of a list", and that id's message says the body could not be read as JSON, which is false
+  for an empty body; a body that is not JSON keeps `ArmResponseUnreadable`, checked first. A body
+  whose `value` is JSON null has a `value` member and passes, as in Graph. R-2: unlike Graph's switch, which is ignored
+  without `-All`, this one also covers a single request, because `Resolve-OERRoleDefinitionId` reads
+  its `$filter` list as a single request; making it walk with `-All` was rejected as a behaviour change
+  (it would follow next links). The asymmetry is written in both transports' `.PARAMETER
+  RequireValue` help. The two readers pass it: `Resolve-OERRoleDefinitionId` (so an empty or null
+  answer is an unread lookup, not zero candidates and so "no match") and
+  `Get-OERRoleManagementPolicyForScope` (before it, a first page of JSON `null` or an empty body made
+  it emit ONE row with empty fields, measured: `foreach ($a in @($null.value))` iterates once).
+  `Get-OERRoleDefinition -Role` reads the same list and still turns a null body into
+  `RoleDefinitionNotFound`: A3 names two readers, so it is left as it was. **Proofs**
+  (`tests/Unit/Private/Invoke-OERArmRequest.Tests.ps1`): the Describe "Invoke-OERArmRequest
+  -RequireValue refuses an answer that is not a list (BL-167a)" and F3 case S15 (three causes, single
+  and `-All`, in the no-try runspace); mutations, all red: each of the three throws replaced or
+  deleted, the `return` after each new throw deleted, the switch forced on (three "without the switch"
+  controls), and the checks moved after the single-request return.
 - **The resource group list ignores `$top` (measured live in Sprint 11 step 12, BL-162).** At
   api-version `2021-04-01` the Microsoft.Resources resource group list did not limit its page to
   `$top`, so `$top` cannot force a second page there for a paging test. The module's resource group lists
@@ -11065,6 +11090,25 @@ the role definition list, an exhausted 429, an `ArmPagingIncomplete` and an ambi
 reached the operator as "the role does not exist". `-CommonRoles` did the same with a `Skipping
 role` warning, and `Get-OERInventory -CommonRoles` therefore reported a failed read as a smaller
 section, never as unread.
+
+**Sprint 13 step 1 (BL-167).** The seven Azure role assignment cmdlets (`New-OERRoleAssignment`,
+`New-OERActiveRoleAssignment`, `New-OEREligibleRoleAssignment`, `Remove-OERActiveRoleAssignment`,
+`Remove-OEREligibleRoleAssignment`, `Enable-OEREligibleRoleAssignment`,
+`Disable-OEREligibleRoleAssignment`) booked every failure of `Resolve-OERRoleDefinitionId` as
+`RoleDefinitionNotFound`: a 403, an exhausted 429, a paging refusal and an ambiguous name alike. They
+now call it with `-ThrowUnresolved` and decide with `Test-OERRoleLookupUnresolved`: a lookup that
+matched nothing still publishes `RoleDefinitionNotFound` (same message, category `ObjectNotFound`,
+target the role), anything else is published as itself, an ambiguous name as `AmbiguousName`. The
+apply engine is unchanged: `Sync-OERStructureRoleAssignment` still calls the resolver without
+`-ThrowUnresolved` and republishes its record as itself. The seven cmdlets joined
+`AmbiguousName.Guard.Tests.ps1`; replacing the condition by `$true` in all seven (the old behaviour)
+turned exactly their 14 guard cases red (the ambiguous name and the 403 case per cmdlet). The BL-167a
+half is the private `-RequireValue` switch of `Invoke-OERArmRequest` ([#arm-transport](#arm-transport)),
+which the resolver and `Get-OERRoleManagementPolicyForScope` now pass: before it an empty or null ARM
+answer was read by the resolver as zero candidates (no match) and made the policy lister emit one row
+with empty fields (`Get-OERRoleManagementPolicy -AllRolesAtScope` now reports `RoleEnumerationFailed`,
+carrying the `ArmPagingIncomplete` message, instead). Mutation proof for the two readers: removing the
+switch from either turned four tests red.
 
 The fix copies the approver cohort's design (`#approver-lookup`). `Resolve-OERRoleDefinitionId` and
 `Get-OERRoleManagementPolicyId` throw an `ErrorRecord` with an internal id --
