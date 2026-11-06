@@ -2045,6 +2045,149 @@ Describe 'Invoke-OERArmRequest -All never returns a partial walk and never loops
     }
 }
 
+Describe 'Invoke-OERArmRequest -RequireValue refuses an answer that is not a list (BL-167a)' {
+    # Mirror of the Graph wrapper's -RequireValue, which also covers a single request here (the role
+    # definition name lookup is a single list request). Without the switch nothing changes.
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC {
+            $script:_OERAuthState = @{
+                AuthMethod     = 'Interactive'
+                TenantId       = 'organizations'
+                ArmToken       = (ConvertTo-SecureString 'fake-arm-token' -AsPlainText -Force)
+                ArmResourceUrl = 'https://management.azure.com/'
+            }
+        }
+    }
+
+    It 'refuses <Name> with ArmPagingIncomplete (page 1, empty partial value, the -Path), one request, nothing returned' -ForEach @(
+        @{ Name = 'an empty 200 body, single'; Status = 200; Body = ''; All = $false; Cause = 'empty body' }
+        @{ Name = 'an empty 200 body, -All'; Status = 200; Body = ''; All = $true; Cause = 'empty body' }
+        @{ Name = 'an empty 204 body, single'; Status = 204; Body = ''; All = $false; Cause = 'empty body' }
+        @{ Name = 'an empty 204 body, -All'; Status = 204; Body = ''; All = $true; Cause = 'empty body' }
+        @{ Name = 'a JSON null body, single'; Status = 200; Body = 'null'; All = $false; Cause = 'JSON null' }
+        @{ Name = 'a JSON null body, -All'; Status = 200; Body = 'null'; All = $true; Cause = 'JSON null' }
+        @{ Name = 'an empty array body, single'; Status = 200; Body = '[]'; All = $false; Cause = 'JSON null' }
+        @{ Name = 'an empty array body, -All'; Status = 200; Body = '[]'; All = $true; Cause = 'JSON null' }
+        @{ Name = 'a body with no value member, single'; Status = 200; Body = '{"other":1}'; All = $false; Cause = 'no value member' }
+        @{ Name = 'a body with no value member, -All'; Status = 200; Body = '{"other":1}'; All = $true; Cause = 'no value member' }
+    ) {
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ Status = $Status; Body = $Body; All = $All; Cause = $Cause } {
+            $script:RvStatus = $Status
+            $script:RvBody = $Body
+            Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = $script:RvStatus; Content = $script:RvBody } }
+            $Path = '/providers/Microsoft.Authorization/roleDefinitions?api-version=2022-04-01'
+            $Err = $null
+            $Out = $null
+            try {
+                if ($All) { $Out = Invoke-OERArmRequest -Path $Path -All -RequireValue -ErrorAction Stop }
+                else { $Out = Invoke-OERArmRequest -Path $Path -RequireValue -ErrorAction Stop }
+            } catch { $Err = $PSItem }
+            $Out | Should -BeNullOrEmpty
+            $Err.FullyQualifiedErrorId | Should -Be 'ArmPagingIncomplete'
+            $Err.CategoryInfo.Category | Should -Be 'InvalidResult'
+            $Err.TargetObject | Should -Be $Path
+            $Err.Exception.Message | Should -Match ([regex]::Escape($Cause))
+            if ($All) {
+                $Err.Exception.Message | Should -Match 'page 1 of this enumeration cannot be read as part of a complete walk'
+            } else {
+                # A single request has no earlier pages and no walk: the message says so (ruling R-1).
+                $Err.Exception.Message | Should -Match '^The answer of Azure Resource Manager to this list request cannot be read as a list: '
+                $Err.Exception.Message | Should -Match 'It is refused rather than read as an empty list\.$'
+                $Err.Exception.Message | Should -Not -Match 'complete walk|earlier pages|enumeration'
+            }
+            @($Err.Exception.PartialValue).Count | Should -Be 0
+            $Err.Exception.NextLink | Should -Be $Path
+            $Err.Exception.PageNumber | Should -Be 1
+            Should -Invoke Invoke-WebRequest -Times 1 -Exactly
+        }
+    }
+
+    It 'still returns an empty value array, single and -All, with the switch' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[]}' } }
+            $Single = Invoke-OERArmRequest -Path '/x?api-version=1' -RequireValue
+            @($Single.value).Count | Should -Be 0
+            $Walk = Invoke-OERArmRequest -Path '/x?api-version=1' -All -RequireValue
+            @($Walk.value).Count | Should -Be 0
+        }
+    }
+
+    It 'does not refuse a body whose value member is null' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{"value":null}' } }
+            $Err = $null
+            $null = Invoke-OERArmRequest -Path '/x?api-version=1' -RequireValue -ErrorAction SilentlyContinue -ErrorVariable Err
+            @($Err).Count | Should -Be 0
+            $null = Invoke-OERArmRequest -Path '/x?api-version=1' -All -RequireValue -ErrorAction SilentlyContinue -ErrorVariable Err
+            @($Err).Count | Should -Be 0
+        }
+    }
+
+    It 'returns a body that carries values, single and -All' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"a"}]}' } }
+            @((Invoke-OERArmRequest -Path '/x?api-version=1' -RequireValue).value.id) | Should -Be @('a')
+            @((Invoke-OERArmRequest -Path '/x?api-version=1' -All -RequireValue).value.id) | Should -Be @('a')
+        }
+    }
+
+    It 'still refuses a body that is not JSON as ArmResponseUnreadable' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = 'not json <html>' } }
+            $Err = $null
+            try { $null = Invoke-OERArmRequest -Path '/x?api-version=1' -RequireValue -ErrorAction Stop } catch { $Err = $PSItem }
+            $Err.FullyQualifiedErrorId | Should -Be 'ArmResponseUnreadable'
+        }
+    }
+
+    It 'keeps the later-page refusal cause when page 2 of a -All walk is empty' {
+        InModuleScope Omnicit.EntraRBAC {
+            $script:Call = 0
+            Mock Invoke-WebRequest {
+                $script:Call++
+                if ($script:Call -eq 1) {
+                    [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/subs?api-version=2022-12-01&$skiptoken=p2"}' }
+                } else {
+                    [PSCustomObject]@{ StatusCode = 200; Content = '' }
+                }
+            }
+            $Err = $null
+            try { $null = Invoke-OERArmRequest -Path '/subs?api-version=2022-12-01' -All -RequireValue -ErrorAction Stop } catch { $Err = $PSItem }
+            $Err.FullyQualifiedErrorId | Should -Be 'ArmPagingIncomplete'
+            $Err.Exception.Message | Should -Match 'although the page before it carried a next link'
+            $Err.Exception.PageNumber | Should -Be 2
+            Should -Invoke Invoke-WebRequest -Times 2 -Exactly
+        }
+    }
+
+    It 'without the switch an empty single body returns $null and raises no record' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '' } }
+            $Err = $null
+            $Out = @(Invoke-OERArmRequest -Path '/x?api-version=1' -ErrorAction SilentlyContinue -ErrorVariable Err)
+            @($Err).Count | Should -Be 0
+            $Out[0] | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'without the switch a JSON null first page under -All returns $null and raises no record' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = 'null' } }
+            $Err = $null
+            $Out = @(Invoke-OERArmRequest -Path '/x?api-version=1' -All -ErrorAction SilentlyContinue -ErrorVariable Err)
+            @($Err).Count | Should -Be 0
+            $Out[0] | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'without the switch a single body with no value member is returned as parsed' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{"other":1}' } }
+            (Invoke-OERArmRequest -Path '/x?api-version=1').other | Should -Be 1
+        }
+    }
+}
+
 Describe 'Invoke-OERArmRequest stops at each of its own throws, outside any try (F3)' {
     # Under -ErrorAction SilentlyContinue or Ignore, with no try up the call stack, a function carries
     # on past its own throw to its next statement, and a throw inside a CATCH block resumes after the
@@ -2413,6 +2556,26 @@ if ($global:OERStopArmCalls -eq 1) {
         $R.Output | Should -Contain 'ARM CALLS: 1'
         # The empty first body returns $null, which counts as one item.
         $R.Output | Should -Contain 'RESULT COUNT: 1'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S15 (BL-167a): -RequireValue with <Name> ends the call with ArmPagingIncomplete as the only record: one request, nothing returned' -ForEach @(
+        @{ Name = 'an empty body, single request'; Body = ''; Switches = '' }
+        @{ Name = 'an empty body, -All'; Body = ''; Switches = '-All' }
+        @{ Name = 'a JSON null body, single request'; Body = 'null'; Switches = '' }
+        @{ Name = 'a JSON null body, -All'; Body = 'null'; Switches = '-All' }
+        @{ Name = 'a body with no value member, single request'; Body = '{"other":1}'; Switches = '' }
+        @{ Name = 'a body with no value member, -All'; Body = '{"other":1}'; Switches = '-All' }
+    ) {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $RespondText = "[pscustomobject]@{ StatusCode = 200; Headers = @{}; Content = '$Body' }"
+        $CallText = "Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' $Switches -RequireValue -ErrorAction SilentlyContinue"
+        $R = Invoke-ArmStopProbe -AuthMethod Interactive -Respond ([scriptblock]::Create($RespondText)) -Call ([scriptblock]::Create($CallText))
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('ArmPagingIncomplete')
+        $R.Output | Should -Contain 'ARM CALLS: 1'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
     }
 

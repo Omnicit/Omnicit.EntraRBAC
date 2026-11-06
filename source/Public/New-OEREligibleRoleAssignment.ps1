@@ -250,10 +250,16 @@ function New-OEREligibleRoleAssignment {
         Write-Verbose "[New-OEREligibleRoleAssignment] Target scope: '$TargetScope'."
         Write-Verbose "[New-OEREligibleRoleAssignment] Resolved principal to '$($Principal.PrincipalId)'."
         try {
-            $RoleDefinitionId = Resolve-OERRoleDefinitionId -Role $Role -Scope $TargetScope
+            $RoleDefinitionId = Resolve-OERRoleDefinitionId -Role $Role -Scope $TargetScope -ThrowUnresolved
         } catch {
             Remove-OERErrorRecord -Record $PSItem
-            Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'RoleDefinitionNotFound' -Category ObjectNotFound -TargetObject $Role -Cmdlet $PSCmdlet
+            # BL-167b: only a lookup that succeeded and matched nothing is RoleDefinitionNotFound; a failed
+            # read (403, paging refusal) and an ambiguous name are published as themselves.
+            if (Test-OERRoleLookupUnresolved -Record $PSItem) {
+                Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'RoleDefinitionNotFound' -Category ObjectNotFound -TargetObject $Role -Cmdlet $PSCmdlet
+            } else {
+                $PSCmdlet.WriteError($PSItem)
+            }
             return
         }
         Write-Verbose "[New-OEREligibleRoleAssignment] Resolved role '$Role' to '$RoleDefinitionId'."

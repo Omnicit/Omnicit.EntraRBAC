@@ -49,8 +49,9 @@ function Invoke-OERArmRequest {
     (the link, or the -Path for the first page; for ArmResponseUnreadable on a later page, the path of
     the failing page, not the absolute link) and PageNumber (1-based) as note properties on the
     thrown error's EXCEPTION, never on the ErrorRecord, the way Invoke-OERGraphRequest does. A single
-    request carries none of them. A single request whose 2xx body is empty (204) still returns $null,
-    and so does a FIRST page of a -All walk with an empty body or a body of JSON null.
+    request carries none of them, except a -RequireValue refusal. A single request whose 2xx body is
+    empty (204) still returns $null, and so does a FIRST page of a -All walk with an empty body or a
+    body of JSON null, unless -RequireValue is passed (see that parameter).
     Get-OERPageWalkLimit owns the page limit (100000 pages).
 
     Under -ErrorAction SilentlyContinue, with no try up the call stack, a failed call returns
@@ -92,6 +93,18 @@ function Invoke-OERArmRequest {
     link that is not an absolute URI, a walk past the page limit) fails with ArmPagingIncomplete, and
     an unreadable 2xx body with ArmResponseUnreadable; neither returns a partial list.
 
+    .PARAMETER RequireValue
+    Private opt-in (BL-167a, Sprint 13 step 1), the mirror of Invoke-OERGraphRequest's -RequireValue.
+    Without it an empty 2xx body (204) returns $null and a FIRST page of a -All walk with an empty
+    body or a body of JSON null returns $null, as documented above. With -RequireValue such an
+    answer, and one whose body has no value member, is refused with ArmPagingIncomplete (page 1;
+    cause 'it answered with an empty body', 'its body is JSON null' or 'it has no value member'),
+    for a single request as for the first page of a -All walk: the caller reads it as a read that
+    did not complete, never as an empty list. A body whose value is an empty array or null is still
+    a successful read, and a body that is not JSON is still ArmResponseUnreadable. Unlike the Graph
+    switch it also covers a single request, since the role definition name lookup is a single list
+    request.
+
     .EXAMPLE
     $Subs = (Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -All).value
     Lists all subscriptions across pages.
@@ -109,7 +122,9 @@ function Invoke-OERArmRequest {
 
         [hashtable]$Body,
 
-        [switch]$All
+        [switch]$All,
+
+        [switch]$RequireValue
     )
 
     # Suppress the Invoke-WebRequest progress bar for the lifetime of this call.
@@ -544,19 +559,32 @@ function Invoke-OERArmRequest {
     # this walk, and a walk past the page limit. The helper only BUILDS the record; each throw stands
     # in the loop with its own return (see the rule above the first-response checks). The facts ride
     # on the EXCEPTION, never on the ErrorRecord (F1, docs/development/rationale.md#graph-wrapper).
-    function Get-ArmPagingIncompleteRecord ([string]$Cause, [int]$AtPage, [string]$AtLink, [object[]]$Aggregated) {
+    function Get-ArmPagingIncompleteRecord ([string]$Cause, [int]$AtPage, [string]$AtLink, [object[]]$Aggregated, [switch]$SingleRequest) {
         $Count = @($Aggregated).Count
-        $IncompleteException = [System.Exception]::new(
+        # -SingleRequest (a first-answer refusal of a request that is not a -All walk) changes ONLY the
+        # wording: there are no earlier pages and no partial collection to speak of.
+        $IncompleteMessage = if ($SingleRequest) {
+            ("The answer of Azure Resource Manager to this list request cannot be read as a list: $Cause. " +
+            "It is refused rather than read as an empty list.")
+        } else {
             ("Azure Resource Manager page $AtPage of this enumeration cannot be read as part of a complete walk: $Cause. " +
             "$Count item(s) had already been aggregated from earlier pages; the partial collection is " +
-            "refused rather than returned as though it were complete."))
+            "refused rather than returned as though it were complete.")
+        }
+        $IncompleteException = [System.Exception]::new($IncompleteMessage)
         $IncompleteException | Add-Member -NotePropertyName PartialValue -NotePropertyValue @($Aggregated) -Force
         $IncompleteException | Add-Member -NotePropertyName NextLink -NotePropertyValue $AtLink -Force
         $IncompleteException | Add-Member -NotePropertyName PageNumber -NotePropertyValue $AtPage -Force
         # SECURITY: page number and item COUNT only; the next link can carry a $skiptoken.
-        Write-Verbose ("[Invoke-OERArmRequest] Page $AtPage cannot complete the walk ($Cause) with $Count " +
-            "item(s) already aggregated from earlier pages. PartialValue, NextLink and PageNumber are " +
-            "attached to the thrown error's Exception for a caller that opts in; the call still fails.")
+        if ($SingleRequest) {
+            Write-Verbose ("[Invoke-OERArmRequest] The answer cannot be read as a list ($Cause); the call " +
+                "still fails. PartialValue, NextLink and PageNumber are attached to the thrown error's " +
+                "Exception for a caller that opts in.")
+        } else {
+            Write-Verbose ("[Invoke-OERArmRequest] Page $AtPage cannot complete the walk ($Cause) with $Count " +
+                "item(s) already aggregated from earlier pages. PartialValue, NextLink and PageNumber are " +
+                "attached to the thrown error's Exception for a caller that opts in; the call still fails.")
+        }
         return [System.Management.Automation.ErrorRecord]::new(
             $IncompleteException,
             'ArmPagingIncomplete',
@@ -660,7 +688,13 @@ function Invoke-OERArmRequest {
     }
 
     # An empty FIRST body is an empty answer (204), under -All and for a single request alike.
-    if (-not $Response.Content) { return $null }
+    if (-not $Response.Content) {
+        if (-not $RequireValue) { return $null }
+        # BL-167a: the mirror of Invoke-OERGraphRequest's -RequireValue; an answer that is not a list is
+        # a read that did not complete, never an empty collection. Page 1, also for a single request.
+        throw (Get-ArmPagingIncompleteRecord -Cause 'it answered with an empty body' -AtPage 1 -AtLink $Path -Aggregated @() -SingleRequest:(-not $All))
+        return
+    }
     # BL-73: a 2xx body that cannot be parsed is neither $null nor an empty collection. It is refused
     # as itself, on a single request and on page one of a walk alike.
     $ParseFailed = $false
@@ -672,6 +706,20 @@ function Invoke-OERArmRequest {
         throw (Get-ArmUnreadableBodyRecord -AtPath $Path -AtPage 1 -Aggregated @() -WithFacts:$All)
     }
     if ($ParseFailed) { return }
+
+    # BL-167a (mirror of Invoke-OERGraphRequest's -RequireValue, which covers -All only; this one also
+    # covers a single request): a body of JSON null, or one with no value member, is refused. A body
+    # whose value is an empty array or null HAS a value member and passes.
+    if ($RequireValue) {
+        if ($null -eq $Parsed) {
+            throw (Get-ArmPagingIncompleteRecord -Cause 'its body is JSON null' -AtPage 1 -AtLink $Path -Aggregated @() -SingleRequest:(-not $All))
+            return
+        }
+        if ($null -eq $Parsed.PSObject.Properties['value']) {
+            throw (Get-ArmPagingIncompleteRecord -Cause 'it has no value member' -AtPage 1 -AtLink $Path -Aggregated @() -SingleRequest:(-not $All))
+            return
+        }
+    }
 
     if (-not $All) { return $Parsed }
 

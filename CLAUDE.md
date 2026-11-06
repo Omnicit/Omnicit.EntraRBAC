@@ -842,8 +842,11 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 - **A resolver on the cohort's list publishes its failure as itself and an ambiguous name as
   `Ambiguous*`, never `*NotFound`; a COHORT check holds that, not a helper.** Decided exception: the
   principal and Azure role definition lookups still publish a failed read as `PrincipalNotFound` or
-  `RoleDefinitionNotFound`, EXCEPT the role and policy lookups of `Get-OERRoleManagementPolicy` and
-  `Set-OERRoleManagementPolicy`, which tell no match from a failed read by the internal ids
+  `RoleDefinitionNotFound`, EXCEPT the role and policy lookups of `Get-OERRoleManagementPolicy`,
+  `Set-OERRoleManagementPolicy` and the seven Azure role assignment cmdlets (`New-OERRoleAssignment`,
+  `New-OERActiveRoleAssignment`, `New-OEREligibleRoleAssignment`, `Remove-OERActiveRoleAssignment`,
+  `Remove-OEREligibleRoleAssignment`, `Enable-OEREligibleRoleAssignment`,
+  `Disable-OEREligibleRoleAssignment`), which tell no match from a failed read by the internal ids
   `RoleDefinitionUnresolved` and `RolePolicyUnresolved` (published by none; the helpers throw them
   only under the private `-ThrowUnresolved`) through `Test-OERRoleLookupUnresolved`, the single
   owner of that test (cohort scan in its test file): `RoleDefinitionNotFound` and `PolicyNotFound`
@@ -1277,7 +1280,10 @@ added that checks something weaker than the rule. Keep it by review.
 **A `-All` walk that cannot complete is refused here too, never returned short:** an empty, JSON-null
 or `value`-less later page, a repeated path, a next link that is not an absolute URI and a walk past
 `Get-OERPageWalkLimit` end it with `ArmPagingIncomplete`, and a 2xx body that is not JSON with
-`ArmResponseUnreadable`. `Why: docs/development/rationale.md#arm-transport`
+`ArmResponseUnreadable`. The private `-RequireValue` switch (the mirror of the Graph transport's)
+refuses a first page or a single answer that is empty, JSON null or has no `value` with
+`ArmPagingIncomplete`; `Resolve-OERRoleDefinitionId` and `Get-OERRoleManagementPolicyForScope` pass
+it, and without it nothing changes. `Why: docs/development/rationale.md#arm-transport`
 
 `roleDefinitionId` in a role assignment body is always the FULL ARM resource id, never a bare GUID.
 Pinned api-versions, paging and retry semantics: `Why: docs/development/rationale.md#arm-transport`;

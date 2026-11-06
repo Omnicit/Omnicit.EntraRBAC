@@ -18,11 +18,13 @@ function Resolve-OERRoleDefinitionId {
     catch and route both.
 
     A failed read (a 403, an exhausted 429, a 5xx, a paging refusal) is never turned into the
-    not-found throw: the ARM transport's own error propagates. With -ThrowUnresolved the no-match
-    case, which is a lookup that SUCCEEDED and found nothing, is thrown as an ErrorRecord with the
-    internal id RoleDefinitionUnresolved (same message, category ObjectNotFound, target the role) so
-    a caller can tell it from a failed read through Test-OERRoleLookupUnresolved. The id is never
-    published. Without the switch the no-match throw is a plain string, as before:
+    not-found throw: the ARM transport's own error propagates. An answer with an empty body, a
+    body of JSON null or no value member is refused by the transport (-RequireValue) as
+    ArmPagingIncomplete, so it too is a failed read and never the no-match case. With
+    -ThrowUnresolved the no-match case, which is a lookup that SUCCEEDED and found nothing, is thrown
+    as an ErrorRecord with the internal id RoleDefinitionUnresolved (same message, category
+    ObjectNotFound, target the role) so a caller can tell it from a failed read through
+    Test-OERRoleLookupUnresolved. The id is never published. Without the switch the no-match throw is a plain string, as before:
     Sync-OERStructureRoleAssignment republishes that record as itself.
 
     .PARAMETER Role
@@ -33,8 +35,8 @@ function Resolve-OERRoleDefinitionId {
 
     .PARAMETER ThrowUnresolved
     Throws the no-match case as an ErrorRecord with the internal id RoleDefinitionUnresolved instead
-    of a plain string. Used by the two role management policy cmdlets, which classify it through
-    Test-OERRoleLookupUnresolved.
+    of a plain string. Used by the two role management policy cmdlets and the seven Azure role
+    assignment cmdlets, which classify it through Test-OERRoleLookupUnresolved.
 
     .EXAMPLE
     Resolve-OERRoleDefinitionId -Role 'Reader' -Scope '/subscriptions/00000000-0000-0000-0000-000000000001'
@@ -61,7 +63,7 @@ function Resolve-OERRoleDefinitionId {
 
     $Escaped = $Role.Replace("'", "''")
     $Filter = [uri]::EscapeDataString("roleName eq '$Escaped'")
-    $Response = Invoke-OERArmRequest -Path "$Scope/providers/Microsoft.Authorization/roleDefinitions?api-version=2022-04-01&`$filter=$Filter"
+    $Response = Invoke-OERArmRequest -Path "$Scope/providers/Microsoft.Authorization/roleDefinitions?api-version=2022-04-01&`$filter=$Filter" -RequireValue
     # The null filter is load-bearing: @($null).Count is 1, so without it a response whose value
     # array holds a single null would be counted as a match and return an empty string.
     $Candidates = @($Response.value | Where-Object { $null -ne $_ })
