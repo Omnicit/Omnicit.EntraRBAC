@@ -11,9 +11,10 @@ function Get-OERRoleDefinition {
     $filter=roleName eq '...' filter), a role definition GUID, or a full ARM id (both fetched
     directly). -Custom lists only custom roles ($filter=type eq 'CustomRole') and cannot be combined
     with -Role. With -Role, an Azure answer that is empty or carries no value list is a failed
-    read, published as itself (ArmPagingIncomplete), never RoleDefinitionNotFound. Output objects are tagged Omnicit.EntraRBAC.RoleDefinition and expose
-    RoleDefinitionId so they pipe into New-OERRoleAssignment. Requires an ARM token; authentication
-    is ensured at entry via Initialize-OERAuth -IncludeARM.
+    read, published as itself (ArmPagingIncomplete), never RoleDefinitionNotFound. Output objects are
+    tagged Omnicit.EntraRBAC.RoleDefinition and expose RoleDefinitionId so they pipe into
+    New-OERRoleAssignment. Requires an ARM token; authentication is ensured at entry via
+    Initialize-OERAuth -IncludeARM.
 
     .PARAMETER Role
     The role display name (e.g. 'Reader'), role definition GUID, or full ARM id. Tab-completion

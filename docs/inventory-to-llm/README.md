@@ -982,7 +982,8 @@ Supply at most one expiration form. `durationInDays` sets an ISO-8601 `P{n}D` du
 leaves the live expiration unchanged on apply.
 
 `expirationDateTime` holds a date and a time, which the reader keeps as the string written. A date
-alone, such as `2026-07-01`, stays a string too.
+alone, such as `2026-07-01`, stays a string too. An export writes a fixed expiration in the ISO 8601
+UTC round-trip form, such as `2026-12-31T00:00:00.0000000Z`; an input keeps the form written.
 
 ### Disable assignment emails
 
@@ -1048,7 +1049,11 @@ policies of its own access package only, and the name of an administrative unit,
 access review among the ones read (with `Get-OERInventory -Catalog`, only the catalogs it reads; an
 access review among every review definition the read returned, the ones the export skips included).
 A group whose display name has the form of an object id is written by its object id wherever the
-document references it, and its own `groups` entry is left out and named as unread. Leaving an
+document references it (an access package's catalog reference included), and its own `groups` entry
+is left out and named as unread, as are the own `catalogs` entry of a catalog and the own
+`accessReviews` entry of an access review with such a name. `Test-OERStructure` warns on a
+hand-written `groups`, `catalogs`, `accessPackages` or `accessReviews` `displayName` of that form.
+Leaving an
 object out changes nothing in the tenant: `-Prune` acts on child collections only, and the apply
 engine never removes an assignment policy.
 

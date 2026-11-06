@@ -23,12 +23,13 @@ function ConvertTo-OERAssignmentPolicy {
     downstream set comparison is order- and case-insensitive.
 
     DurationInDays is parsed from an afterDuration expiration's ISO 8601 duration when it is a whole-day
-    multiple, otherwise DurationInHours is set. A fixed expiration date-time is written as an ISO 8601 UTC
-    round-trip string (for example 2026-12-31T00:00:00.0000000Z), whatever form the read gives it. The access package id is read from the expanded
-    accessPackage relationship (accessPackage.id); on v1.0 the policy resource has no scalar
-    accessPackageId property, so a GET must request $expand=accessPackage for this to be populated. The
-    create/update paths, which already know the package id but receive a response without the expanded
-    relationship, can supply it via -AccessPackageId.
+    multiple, otherwise DurationInHours is set. A fixed expiration date-time is written as an ISO 8601
+    UTC round-trip string (for example 2026-12-31T00:00:00.0000000Z), whatever form the read gives it.
+    The access package id is read from the expanded accessPackage relationship (accessPackage.id); on
+    v1.0 the policy resource has no scalar accessPackageId property, so a GET must request
+    $expand=accessPackage for this to be populated. The create/update paths, which already know the
+    package id but receive a response without the expanded relationship, can supply it via
+    -AccessPackageId.
 
     .PARAMETER InputObject
     The raw Graph assignment policy object (hashtable or PSObject) to convert.

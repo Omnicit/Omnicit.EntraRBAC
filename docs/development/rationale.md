@@ -3729,6 +3729,25 @@ is refused with `ResourceGroupValueUnknown` (category InvalidData, target the re
 before the body is built and before `ShouldProcess`, so it reads the same under `-WhatIf` and no PUT
 is sent.
 
+Sprint 13 step 3 (BL-169a): `ConvertTo-OERPolicyBody` carried a live value into a read-modify-write
+update after a truthiness test, so an empty string, `false` or an empty list the policy held was
+replaced by the builder default or dropped (a live `questions: []` was not sent). It now carries every
+value the read has, falsy ones included, and uses the builder default only for a key the read lacks
+and the call does not name. Cost if wrong: an update sends a default over a setting the operator
+cleared.
+
+Sprint 13 step 3 (BL-161d): `Resolve-OERGroupPimPolicyChange` read a null live value as `false`. A
+declared permanence without its duration, or a declared `requireApproval`, over a live value the read
+did not give is now named in `UnknownLiveValues` and `Sync-OERStructureGroup` refuses that access type
+with `PimRuleValueUnknown`; a document declaring both halves over an unknown permanence sends the
+declared pair, since nothing is guessed then. Cost if wrong: a document that works today is refused
+until it declares both halves.
+
+Sprint 13 step 3 (BL-161c): the export's fixed assignment policy expiration had no single written
+form. `ConvertTo-OERAssignmentPolicy` now normalizes it from a datetime of any kind, a datetimeoffset
+or a string, so `Get-OERAccessPackageAssignmentPolicy`'s `ExpirationDateTime` too is an ISO 8601 UTC
+round-trip string such as `2026-12-31T00:00:00.0000000Z`; an input document keeps the form written.
+
 #### CLAUDE.md text for a-set-cmdlets-own-read-decides-a-written-value
 
 What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
@@ -13323,6 +13342,16 @@ name has the form of an object id would otherwise be applied as that id. A UPN i
 so a user is unchanged in practice; groups keep their index call. Cost if wrong: a private owner help
 sentence and two call sites to remove; a service principal named like an object id is written by id
 again.
+
+**BL-173 (Sprint 13 step 3: catalogs and access reviews).** The GUID rule also applies to a catalog
+and an access review. The export writes an access package's catalog reference to a catalog whose
+display name has the form of an object id by the catalog's id (`Get-OERGroupReference
+-KeepSharedName`), and leaves that catalog's own `catalogs` entry and an access review's own
+`accessReviews` entry with such a name out, named unread (`catalogs/NAME`, `accessReviews/NAME`) with
+a cause, since applying the name would read it as an id. The validator (BL-173b) warns, as a
+`Warning` and never an `Error`, on a hand-written `groups`, `catalogs`, `accessPackages` or
+`accessReviews` entry of that form, since a document that works today must keep working. Cost if
+wrong: one reference and two section reads to revert, and a warning to drop.
 
 ### CLAUDE.md text for roster-identity-and-shared-names
 
