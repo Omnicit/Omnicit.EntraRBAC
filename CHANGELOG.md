@@ -7,13 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-The seven cmdlets that create, remove, activate or deactivate Azure role assignments and eligible
-assignments report a role lookup that failed (a missing permission, throttling) as that failure, and
-an ambiguous role name as `AmbiguousName`; `RoleDefinitionNotFound` now means only that no role has
-that name at the scope. In those cmdlets and the Azure role management policy cmdlets, an Azure
-answer with an empty or JSON null body is no longer read as "no such role" or as an empty policy
-row: it is a failed read (`ArmPagingIncomplete`; `RoleEnumerationFailed` with that cause for
-`Get-OERRoleManagementPolicy -AllRolesAtScope`).
+The seven cmdlets that create, remove, activate or deactivate Azure role assignments report a
+failed role lookup as that failure and an ambiguous name as `AmbiguousName`; `RoleDefinitionNotFound`
+now means only that no role has that name at the scope. In those and the Azure role management policy
+cmdlets, an empty or JSON null Azure answer is no longer read as "no such role" or "no such policy"
+(`PolicyNotFound`) but as a failed read (`ArmPagingIncomplete`):
+`Get-OERRoleManagementPolicy -AllRolesAtScope` reports `RoleEnumerationFailed` instead of a parameter
+binding error, and `Get-OERInventory -CommonRoles` names the section unread instead of skipping each role.
 
 ## [1.4.0] - 2026-11-06
 

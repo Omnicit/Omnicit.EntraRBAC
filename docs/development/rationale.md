@@ -1522,9 +1522,15 @@ Behaviour that follows from this design:
   RequireValue` help. The two readers pass it: `Resolve-OERRoleDefinitionId` (so an empty or null
   answer is an unread lookup, not zero candidates and so "no match") and
   `Get-OERRoleManagementPolicyForScope` (before it, a first page of JSON `null` or an empty body made
-  it emit ONE row with empty fields, measured: `foreach ($a in @($null.value))` iterates once).
+  it emit ONE row with empty fields, measured: `foreach ($a in @($null.value))` iterates once;
+  that is what the lister itself output, no consumer showed an empty policy row: see
+  [#role-lookup-unresolved](#role-lookup-unresolved) for what they saw).
   `Get-OERRoleDefinition -Role` reads the same list and still turns a null body into
-  `RoleDefinitionNotFound`: A3 names two readers, so it is left as it was. **Proofs**
+  `RoleDefinitionNotFound`: A3 names two readers, so it is left as it was. The message of that refusal depends on the call: a
+  single request (not `-All`) says that the answer `cannot be read as a list` and is refused rather
+  than read as an empty list, since it has no earlier pages; under `-All` the walk text stays (the
+  record helper's `-SingleRequest`, which changes only the message, never the id, category, target or
+  the three exception facts). **Proofs**
   (`tests/Unit/Private/Invoke-OERArmRequest.Tests.ps1`): the Describe "Invoke-OERArmRequest
   -RequireValue refuses an answer that is not a list (BL-167a)" and F3 case S15 (three causes, single
   and `-All`, in the no-try runspace); mutations, all red: each of the three throws replaced or
@@ -11104,10 +11110,15 @@ apply engine is unchanged: `Sync-OERStructureRoleAssignment` still calls the res
 `AmbiguousName.Guard.Tests.ps1`; replacing the condition by `$true` in all seven (the old behaviour)
 turned exactly their 14 guard cases red (the ambiguous name and the 403 case per cmdlet). The BL-167a
 half is the private `-RequireValue` switch of `Invoke-OERArmRequest` ([#arm-transport](#arm-transport)),
-which the resolver and `Get-OERRoleManagementPolicyForScope` now pass: before it an empty or null ARM
-answer was read by the resolver as zero candidates (no match) and made the policy lister emit one row
-with empty fields (`Get-OERRoleManagementPolicy -AllRolesAtScope` now reports `RoleEnumerationFailed`,
-carrying the `ArmPagingIncomplete` message, instead). Mutation proof for the two readers: removing the
+which the resolver and `Get-OERRoleManagementPolicyForScope` now pass. Before it an empty or null ARM
+answer was read by the resolver as zero candidates (no match); the policy lister itself emitted one row
+with empty fields for it. What consumers SAW at the base (measured by the final review, not assumed):
+`Get-OERRoleManagementPolicy -AllRolesAtScope` failed with a
+parameter binding error out of `ConvertTo-OERRoleManagementPolicy` (`Rules` null), and
+`-Role`, `-CommonRoles` and `Set-OERRoleManagementPolicy` reported `PolicyNotFound` (no such
+policy); no consumer ever surfaced an empty policy row. Now `-AllRolesAtScope` reports
+`RoleEnumerationFailed`, carrying the `ArmPagingIncomplete` message, instead of a parameter binding
+error out of the converter, and the others publish the failed read as itself. Mutation proof for the two readers: removing the
 switch from either turned four tests red.
 
 The fix copies the approver cohort's design (`#approver-lookup`). `Resolve-OERRoleDefinitionId` and
