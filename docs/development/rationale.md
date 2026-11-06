@@ -3723,6 +3723,12 @@ Known limit: the apply engine calls `Set-OERAccessPackageAssignmentPolicy` only 
 "would update assignmentPolicy ...", while the real run reports it `Failed` with
 `AssignmentPolicyValueUnknown`. Latent: Microsoft Graph v1.0 answers with the keys.
 
+The second shape, `Set-OERResourceGroup` sending an empty location, is fixed in Sprint 13 step 3
+(BL-161a). A successful read whose answer is empty, JSON null, lacks `location` or holds a blank one
+is refused with `ResourceGroupValueUnknown` (category InvalidData, target the resource group name),
+before the body is built and before `ShouldProcess`, so it reads the same under `-WhatIf` and no PUT
+is sent.
+
 #### CLAUDE.md text for a-set-cmdlets-own-read-decides-a-written-value
 
 What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:

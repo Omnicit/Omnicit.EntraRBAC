@@ -991,9 +991,9 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `requestApprovalSettings`, `requestorSettings` or `notificationSettings` with
   `AssignmentPolicyValueUnknown` before `ShouldProcess` and the PUT unless the call names every value
   the missing block holds (a bound `-RequestorSettings` or `-DisableAssignmentNotifications` does),
-  `ConvertTo-OERPolicyBody` throwing the same four conditions as a backstop. Known and NOT fixed,
-  outside this rule (unmeasured): an empty Azure Resource Manager body makes `Set-OERResourceGroup`
-  send an empty location.
+  `ConvertTo-OERPolicyBody` throwing the same four conditions as a backstop.
+  `Set-OERResourceGroup` refuses a successful read without `location` with
+  `ResourceGroupValueUnknown` before `ShouldProcess` and the PUT (BL-161).
   `Why: docs/development/rationale.md#a-set-cmdlets-own-read-decides-a-written-value`
 - **`Send-OERPimRulePatch` is the single owner of sending a Microsoft Graph PIM rule set, one PATCH
   per rule**, including the pair put-back (the MFA / authentication-context pair) and the rule that
