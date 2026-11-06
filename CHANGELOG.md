@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No changes to the module since 1.4.0. A preview published from this point differs from 1.4.0 only
+in documentation, tests or the build.
+
+## [1.4.0] - 2026-11-06
+
 Omnicit.EntraRBAC now requires PowerShell 7.6 or later. PowerShell 7.4 and 7.5 reach end of support
 on 10 November 2026, and 7.6 is the current long-term support release; a host on 7.4 or 7.5 can
 keep using 1.3.1. Windows, Linux and macOS are supported as before, and no command changes. A
