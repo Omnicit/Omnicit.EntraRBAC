@@ -3737,11 +3737,12 @@ and the call does not name. Cost if wrong: an update sends a default over a sett
 cleared.
 
 Sprint 13 step 3 (BL-161d): `Resolve-OERGroupPimPolicyChange` read a null live value as `false`. A
-declared permanence without its duration, or a declared `requireApproval`, over a live value the read
-did not give is now named in `UnknownLiveValues` and `Sync-OERStructureGroup` refuses that access type
-with `PimRuleValueUnknown`; a document declaring both halves over an unknown permanence sends the
-declared pair, since nothing is guessed then. Cost if wrong: a document that works today is refused
-until it declares both halves.
+live value the read did not give is now named in `UnknownLiveValues` and `Sync-OERStructureGroup`
+refuses that access type with `PimRuleValueUnknown` when the half the document leaves out is unknown,
+when a declared permanence's own live value is unknown (the duration alone declared, or the permanence
+alone declared), or when a declared `requireApproval`'s live value is unknown. With both halves of a
+pair declared the declared pair is sent (R-1), since nothing is guessed then. Cost if wrong: a
+document that works today is refused until it declares both halves.
 
 Sprint 13 step 3 (BL-161c): the export's fixed assignment policy expiration had no single written
 form. `ConvertTo-OERAssignmentPolicy` now normalizes it from a datetime of any kind, a datetimeoffset
@@ -13343,15 +13344,17 @@ so a user is unchanged in practice; groups keep their index call. Cost if wrong:
 sentence and two call sites to remove; a service principal named like an object id is written by id
 again.
 
-**BL-173 (Sprint 13 step 3: catalogs and access reviews).** The GUID rule also applies to a catalog
-and an access review. The export writes an access package's catalog reference to a catalog whose
-display name has the form of an object id by the catalog's id (`Get-OERGroupReference
--KeepSharedName`), and leaves that catalog's own `catalogs` entry and an access review's own
-`accessReviews` entry with such a name out, named unread (`catalogs/NAME`, `accessReviews/NAME`) with
-a cause, since applying the name would read it as an id. The validator (BL-173b) warns, as a
-`Warning` and never an `Error`, on a hand-written `groups`, `catalogs`, `accessPackages` or
-`accessReviews` entry of that form, since a document that works today must keep working. Cost if
-wrong: one reference and two section reads to revert, and a warning to drop.
+**BL-173 (Sprint 13 step 3: catalogs).** The GUID rule also applies to a catalog. The export writes an
+access package's catalog reference to a catalog whose display name has the form of an object id by the
+catalog's id (`Get-OERGroupReference -KeepSharedName`), and leaves that catalog's own `catalogs` entry
+with such a name out, named unread (`catalogs/NAME`) with a cause, since applying the name would read
+it as an id. The validator (BL-173b) warns, as a `Warning` and never an `Error`, on a hand-written
+`groups`, `catalogs` or `accessPackages` entry of that form, since a document that works today must
+keep working. The access review half was dropped (Sprint 13 step 3 ruling R-7): the engine looks a
+review up by its display name only (`Find-ReviewDefinitionByName` in `Sync-OERStructureAccessReview`),
+never as an object id, so a review named like an object id round-trips by its name, leaving it out
+would lose data, and a validator warning on it would be false. Cost if wrong: one reference and a
+section read to revert, and a warning to drop.
 
 ### CLAUDE.md text for roster-identity-and-shared-names
 

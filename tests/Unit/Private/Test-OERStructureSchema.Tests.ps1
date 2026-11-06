@@ -7828,8 +7828,9 @@ Describe 'Test-OERStructureSchema access package displayName that is a GUID (BL-
 }
 
 Describe 'Test-OERStructureSchema a displayName in the form of an object id is a Warning (BL-173)' {
-    # groups, catalogs and accessReviews: Invoke-OERStructure reads a GUID displayName as an object id, so
-    # the entry reconciles the object with that id and not one with that name. A Warning, never an Error.
+    # groups and catalogs: Invoke-OERStructure reads a GUID displayName as an object id, so the entry
+    # reconciles the object with that id and not one with that name. A Warning, never an Error. An
+    # accessReviews entry is not checked: the engine looks a review up by its name only (ruling R-7).
     # No id below is version-4 shaped.
     BeforeAll {
         function Invoke-GuidNameValidation {
@@ -7850,7 +7851,7 @@ Describe 'Test-OERStructureSchema a displayName in the form of an object id is a
         }
     }
 
-    It 'warns at the four displayName paths for <Value>, with the exact texts, and raises no Error from them' -ForEach @(
+    It 'warns at the three displayName paths for <Value>, with the exact texts, and raises no Error from them' -ForEach @(
         @{ Value = '11111111-2222-3333-4444-555555555555' }
         @{ Value = 'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE' }
     ) {
@@ -7858,7 +7859,6 @@ Describe 'Test-OERStructureSchema a displayName in the form of an object id is a
         $Texts = @{
             'groups[0].displayName'        = "'displayName' at groups[0] is the GUID '$Value': Invoke-OERStructure reads a GUID as an object id, not as a name, so the entry reconciles the group with that object id, not a group with that name. Give the group a name that is not a GUID."
             'catalogs[0].displayName'      = "'displayName' at catalogs[0] is the GUID '$Value': Invoke-OERStructure reads a GUID as an object id, not as a name, so the entry reconciles the catalog with that object id, not a catalog with that name. Give the catalog a name that is not a GUID."
-            'accessReviews[0].displayName' = "'displayName' at accessReviews[0] is the GUID '$Value': Invoke-OERStructure reads a GUID as an object id, not as a name, so the entry reconciles the access review with that object id, not a review with that name. Give the access review a name that is not a GUID."
         }
         foreach ($Path in $Texts.Keys) {
             $Hit = @($V.Errors | Where-Object { $_.Path -eq $Path })
@@ -7866,6 +7866,8 @@ Describe 'Test-OERStructureSchema a displayName in the form of an object id is a
             $Hit[0].Severity | Should -BeExactly 'Warning'
             $Hit[0].Message | Should -BeExactly $Texts[$Path]
         }
+        # An access review named like an object id is no finding: the engine looks a review up by name.
+        @($V.Errors | Where-Object { $_.Path -eq 'accessReviews[0].displayName' }).Count | Should -Be 0
         $Ap = @($V.Errors | Where-Object { $_.Path -eq 'accessPackages[0].displayName' })
         $Ap.Count | Should -Be 1
         $Ap[0].Severity | Should -BeExactly 'Warning'

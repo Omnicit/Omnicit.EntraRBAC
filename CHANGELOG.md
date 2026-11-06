@@ -20,12 +20,12 @@ display name looks like an object id by its id wherever the document references 
 group's own `groups` entry out, named as unread, since applying such a name reads it as an object id.
 An access review whose namesake the export skips is now left out and counted as a shared name.
 
-`Set-OERAccessPackageAssignmentPolicy` and `Invoke-OERStructure` carry every setting the live
-assignment policy has into an update, an empty list or `false` included. `Set-OERResourceGroup`
-refuses a read without a location (`ResourceGroupValueUnknown`), and a group PIM policy value that
-could not be read is refused, never read as `false`. An exported fixed expiration is an ISO 8601 UTC
-string. A catalog or access review named like an object id is exported by id or left out, and the
-validator warns on such a name.
+An assignment policy update carries every setting the live policy has, an empty list or `false`
+included. `Set-OERResourceGroup` refuses a read without a location (`ResourceGroupValueUnknown`),
+`Get-OERRoleDefinition -Role` reports an empty Azure answer as `ArmPagingIncomplete`, and a group
+PIM policy value that could not be read is never taken as `false`. A policy's fixed expiration is
+read and exported as an ISO 8601 UTC string. A catalog named like an object id is exported by id,
+and the validator warns on such a name.
 
 ## [1.4.0] - 2026-11-06
 

@@ -112,11 +112,12 @@ function Test-OERStructureSchema {
     at least one; an approvalStages declared as an empty array is sent as the empty stage list, so the
     write carries no approval stage on create or on update whatever the live policy holds, and Microsoft
     Graph is expected to refuse it (that answer is not measured for this combination). It is a Warning
-    because the validator cannot see the live policy. A groups, catalogs, accessPackages or accessReviews displayName
+    because the validator cannot see the live policy. A groups, catalogs or accessPackages displayName
     that is a canonical GUID (Test-OERGuid) is a Warning at its displayName path (BL-24, BL-173b). For an accessPackages
     entry the engine creates the package with that name, and a GUID is read as an object id wherever an access review
-    or another reference names the package; for a groups, catalogs or accessReviews entry Invoke-OERStructure reads the
-    GUID as an object id, so the entry reconciles the object with that id and not one with that name.
+    or another reference names the package; for a groups or catalogs entry Invoke-OERStructure reads the
+    GUID as an object id, so the entry reconciles the object with that id and not one with that name. An
+    accessReviews displayName is not checked: the engine looks a review up by its name only.
     A group that declares template and no displayName, and whose template Resolve-OERName cannot
     resolve with the tokens given (a placeholder no token supplies, a name over 256 characters), is an Error at
     groups[i].template carrying Resolve-OERName's reason (BL-139); a value in tokens is inserted as
@@ -564,9 +565,9 @@ function Test-OERStructureSchema {
     }
 
     # BL-173b (A12): Invoke-OERStructure reads a displayName that is a canonical GUID (Test-OERGuid) as an
-    # object id, so a hand-written groups, catalogs or accessReviews entry named that way reconciles the
-    # object with that id and not one with that name. A Warning (the accessPackages one is BL-24, written
-    # inline where it stands). Only a declared displayName that is a string is checked; a type problem is
+    # object id, so a hand-written groups or catalogs entry named that way reconciles the object with that
+    # id and not one with that name. A Warning (the accessPackages one is BL-24, written inline where it
+    # stands; accessReviews is not checked, since the engine looks a review up by name, R-7). Only a declared displayName that is a string is checked; a type problem is
     # Add-DisplayNameTypeFinding's, and a template entry declares no displayName.
     function Add-GuidDisplayNameWarning {
         param([object]$Node, [string]$Section, [string]$Path, [string]$Noun, [string]$Other)
@@ -1792,7 +1793,6 @@ function Test-OERStructureSchema {
                         -Consequence $ARConsequence
                 }
                 Add-DisplayNameTypeFinding -Node $AR -Section 'accessReviews' -Path $ARPath
-                Add-GuidDisplayNameWarning -Node $AR -Section 'accessReviews' -Path $ARPath -Noun 'access review' -Other 'a review'
                 # A review renamed through the document is found under its previousDisplayName too (tenant-wide,
                 # as its displayName is), so that name is a claim of its own, checked after the displayName
                 # claim just as the units' and catalogs' is.

@@ -301,7 +301,7 @@ function Export-OERInventory {
     the per-area files leave out every object whose name another object of its kind shares, compared
     without regard to letter case -- all of them (the Get-OERInventory help describes the rule).
     Access review names are counted over every definition read, the skipped ones included, so a
-    skipped review still makes its namesake a shared name. A group, a catalog or an access review
+    skipped review still makes its namesake a shared name. A group or a catalog
     whose own display name has the form of an object id is left out too, and named unread. Groups are counted over every group in the tenant, the roster's unfiltered listing, so a security
     group that shares its name with a Microsoft 365 group or a distribution group is left out too;
     when the roster could not be read, they are counted among the security-enabled groups the export
@@ -2136,7 +2136,7 @@ function Export-OERInventory {
                 # (BL-156) the clause names the entries and points at the bundle README for what each
                 # kind means, instead of explaining every kind, which made a run with only shared group
                 # names carry a very long message.
-                $IncompletePart = "$($IncompleteReads.Count) partial Entra ID read entry(ies) name collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group, a catalog or an access review has the form of an object id, and are NOT stated as facts in the bundle -- one entry can name several collections, so read the entries rather than this count: $($IncompleteReads -join '; '). The bundle's README.md, which is not written under -WhatIf or a declined -Confirm, says what each kind of entry means and how an unread collection is written"
+                $IncompletePart = "$($IncompleteReads.Count) partial Entra ID read entry(ies) name collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group or a catalog has the form of an object id, and are NOT stated as facts in the bundle -- one entry can name several collections, so read the entries rather than this count: $($IncompleteReads -join '; '). The bundle's README.md, which is not written under -WhatIf or a declined -Confirm, says what each kind of entry means and how an unread collection is written"
                 # WHY the group collections are missing. The group reader writes no error record, so
                 # this message is the only error that carries its causes (the verbose stream shows
                 # each as it is seen, and Get-OERInventory's own partial message carries the causes of

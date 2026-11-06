@@ -4191,6 +4191,26 @@ $Item = '{ "displayName": "grp-luo", "owners": [ "person2@example.com" ] }' | Co
             }
         }
 
+        It 'a declared requireApproval over an unknown live approval is refused with the approval remedy, not the pair one, and nothing is sent (ruling R-8)' {
+            $Result = InModuleScope $script:moduleName {
+                # 'Absent': the live member policy has no Approval_EndUser_Assignment rule, so RequireApproval is $null.
+                $script:PuRules = 'Absent'
+                $Item = '{ "displayName": "role_sec_x", "pimPolicy": { "member": { "requireApproval": true } } }' | ConvertFrom-Json
+                $Rows = @(Invoke-SyncPuViaCaller -Item $Item -Confirm:$false -ErrorVariable Err -WarningAction SilentlyContinue 2>$null)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err) }
+            }
+            $Entry = 'requireApproval is declared, and whether the live policy requires approval on activation (Approval_EndUser_Assignment isApprovalRequired) is unknown: the read returned no value for it'
+            $Own = @($Result.Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncPuViaCaller' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -BeExactly 'PimRuleValueUnknown,Invoke-SyncPuViaCaller'
+            $Own[0].Exception.Message | Should -BeExactly "pimPolicy (member) of group 'role_sec_x' was not applied: $Entry. Read the policy with Get-OERGroupPimPolicy; the approval rule could not be read, so nothing was sent."
+            $Member = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy (member)*' })
+            $Member.Count | Should -Be 1
+            $Member[0].Action | Should -BeExactly 'Failed'
+            $Member[0].Detail | Should -BeExactly "pimPolicy (member) not applied: a value the document leaves to the live policy is unknown (PimRuleValueUnknown): $Entry; nothing was changed for 'member'. Read the policy with Get-OERGroupPimPolicy; the approval rule could not be read, so nothing was sent."
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 0 -Exactly
+        }
+
         It 'refuses before the PIM-in-use question and the gate, and names both pairs in one record when both leave out an unknown half' -ForEach @(
             @{ Entries = "$PuEligPerm; $PuActNone" }
         ) {

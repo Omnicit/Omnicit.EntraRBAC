@@ -328,10 +328,10 @@ function Get-OERInventory {
     engine refuses an ambiguous name and neither entry could be applied; leaving a top-level entry out
     removes nothing, because -Prune acts on child collections only, and leaving an assignment policy
     out removes nothing either, because the apply engine never removes an assignment policy. Access
-    review names are counted over every definition read, the skipped ones included. A group, a
-    catalog or an access review whose own display name has the form of an object id is left out too,
-    and named unread, since the apply engine reads such a name as an object id (the packages of such
-    a catalog are still exported, naming the catalog by its object id). A
+    review names are counted over every definition read, the skipped ones included. A group or a
+    catalog whose own display name has the form of an object id is left out too, and named unread,
+    since the apply engine reads such a name as an object id (the packages of such a catalog are
+    still exported, naming the catalog by its object id). A
     policy name is reported as accessPackages/ followed by the package name, /assignmentPolicies/ and
     the policy name, and the policies of two different packages never count against each other. An
     access package in a catalog whose name another catalog carries is written with that catalog's
@@ -2282,7 +2282,6 @@ function Get-OERInventory {
                 }
                 $AccessReviewExternalIds[$ArNameKey].Add([string]$Ar.Id)
             }
-            $GuidNamedReviews = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
             foreach ($Ar in $ArItems) {
                 # Two review forms round-trip: an access package review (the apply schema requires both
                 # accessPackage and assignmentPolicy) and a review of ALL members of one group (group;
@@ -2344,21 +2343,6 @@ function Get-OERInventory {
                 if ($UnwritableQueries.Count -gt 0) {
                     Write-Verbose "Skipping access review '$($Ar.DisplayName)': reviewer scope(s) the module cannot write back ($($UnwritableQueries -join ', '))."
                     $SkippedReviewerCount++
-                    continue
-                }
-
-                # Sprint 13 step 3 (BL-173a): a review whose own display name has the form of an object id
-                # is never written, since Invoke-OERStructure reads such a name as an object id. Left out
-                # here, before any reference lookup is sent for it, and reported once per name (letter
-                # case aside). $AccessReviewExternalIds above still counts it.
-                if (Test-OERGuid -Value ([string]$Ar.DisplayName)) {
-                    if ($GuidNamedReviews.Add([string]$Ar.DisplayName)) {
-                        $GuidArPath = "accessReviews/$($Ar.DisplayName)"
-                        $UnreadCollections.Add($GuidArPath)
-                        $GuidArCause = "the access review '$GuidArPath' was left out: its display name has the form of an object id, which Invoke-OERStructure reads as an object id and not as a name, so the review cannot be declared by its name"
-                        Write-Verbose "Get-OERInventory: $GuidArCause"
-                        Add-UnreadCause -Cause $GuidArCause -Target ''
-                    }
                     continue
                 }
 
@@ -2941,7 +2925,7 @@ function Get-OERInventory {
             $CauseClause = Format-OERUnreadCauseClause -Cause $UnreadCauses.ToArray()
             Write-CmdletError `
                 -Message ([System.Exception]::new(
-                    "This inventory is PARTIAL: $($UnreadCollections.Count) collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group, a catalog or an access review has the form of an object id, and are not stated as facts in the document (an accessReviews entry named as unread may still carry an id where a name could not be read). " +
+                    "This inventory is PARTIAL: $($UnreadCollections.Count) collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group or a catalog has the form of an object id, and are not stated as facts in the document (an accessReviews entry named as unread may still carry an id where a name could not be read). " +
                     "Unread: $($UnreadCollections -join ', '). A section reported here by its name alone could not be read at all and is written as an empty array, which does not mean the tenant has none. A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as " +
                     'leave untouched; do not hand-edit it to an empty array, and do not treat this document as a full tenant snapshot. ' +
                     'An entry ending in scopedRoles/principalType is not such a key: it names a unit some or all of whose scoped role rows are written without principalType, since their principals'' type could not be read.' +
