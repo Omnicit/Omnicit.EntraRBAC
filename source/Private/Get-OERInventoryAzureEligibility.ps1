@@ -58,7 +58,7 @@ function Get-OERInventoryAzureEligibility {
             # Every row read, before the deduplication: the selection only needs where each role
             # is eligible, and a duplicate costs nothing.
             $RoleScopes.Add([PSCustomObject]@{ Scope = [string]$Row.Scope; RoleDefinitionId = [string]$Row.RoleDefinitionId })
-            $Key = if ($Row.RoleEligibilityScheduleId) { [string]$Row.RoleEligibilityScheduleId }
+            $Key = if (-not [string]::IsNullOrWhiteSpace([string]$Row.RoleEligibilityScheduleId)) { [string]$Row.RoleEligibilityScheduleId }
                    else { '{0}|{1}|{2}' -f $Row.Scope, $Row.RoleDefinitionId, $Row.PrincipalId }
             if (-not $Seen.Add($Key)) { continue }
             $Items.Add([PSCustomObject][ordered]@{
