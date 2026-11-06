@@ -7817,14 +7817,66 @@ Describe 'Test-OERStructureSchema access package displayName that is a GUID (BL-
         @($V.Errors | Where-Object { $_.Message -like '*is the GUID*' }).Count | Should -Be 0
     }
 
-    It 'does not warn about a GUID displayName in another section' {
-        $Doc = ('{ "version": "1.0", "catalogs": [ { "displayName": "aaaa1111-0000-0000-0000-000000000001" } ], ' +
-            '"groups": [ { "displayName": "aaaa1111-0000-0000-0000-000000000002", "members": null } ] }') | ConvertFrom-Json
+    It 'leaves the accessPackages finding to accessPackages entries (the other sections have their own, BL-173b)' {
+        $Doc = '{ "version": "1.0", "catalogs": [ { "displayName": "aaaa1111-0000-0000-0000-000000000001" } ] }' | ConvertFrom-Json
         $V = InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
             param($Doc)
             Test-OERStructureSchema -Document $Doc
         }
+        @($V.Errors | Where-Object { $_.Message -like '*creates the access package*' }).Count | Should -Be 0
+    }
+}
+
+Describe 'Test-OERStructureSchema a displayName in the form of an object id is a Warning (BL-173)' {
+    # groups, catalogs and accessReviews: Invoke-OERStructure reads a GUID displayName as an object id, so
+    # the entry reconciles the object with that id and not one with that name. A Warning, never an Error.
+    # No id below is version-4 shaped.
+    BeforeAll {
+        function Invoke-GuidNameValidation {
+            param([string]$Json)
+            $Doc = $Json | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+        $script:GuidDoc = {
+            param([string]$Name)
+            ('{ "version": "1.0", ' +
+                '"groups": [ { "displayName": "' + $Name + '", "members": null } ], ' +
+                '"catalogs": [ { "displayName": "' + $Name + '" } ], ' +
+                '"accessPackages": [ { "displayName": "' + $Name + '", "catalog": "cat1" } ], ' +
+                '"accessReviews": [ { "displayName": "' + $Name + '" } ] }')
+        }
+    }
+
+    It 'warns at the four displayName paths for <Value>, with the exact texts, and raises no Error from them' -ForEach @(
+        @{ Value = '11111111-2222-3333-4444-555555555555' }
+        @{ Value = 'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE' }
+    ) {
+        $V = Invoke-GuidNameValidation -Json (& $script:GuidDoc $Value)
+        $Texts = @{
+            'groups[0].displayName'        = "'displayName' at groups[0] is the GUID '$Value': Invoke-OERStructure reads a GUID as an object id, not as a name, so the entry reconciles the group with that object id, not a group with that name. Give the group a name that is not a GUID."
+            'catalogs[0].displayName'      = "'displayName' at catalogs[0] is the GUID '$Value': Invoke-OERStructure reads a GUID as an object id, not as a name, so the entry reconciles the catalog with that object id, not a catalog with that name. Give the catalog a name that is not a GUID."
+            'accessReviews[0].displayName' = "'displayName' at accessReviews[0] is the GUID '$Value': Invoke-OERStructure reads a GUID as an object id, not as a name, so the entry reconciles the access review with that object id, not a review with that name. Give the access review a name that is not a GUID."
+        }
+        foreach ($Path in $Texts.Keys) {
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq $Path })
+            $Hit.Count | Should -Be 1 -Because "the warning at $Path must have been raised"
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Message | Should -BeExactly $Texts[$Path]
+        }
+        $Ap = @($V.Errors | Where-Object { $_.Path -eq 'accessPackages[0].displayName' })
+        $Ap.Count | Should -Be 1
+        $Ap[0].Severity | Should -BeExactly 'Warning'
+        @($V.Errors | Where-Object { $_.Message -like '*is the GUID*' -and $_.Severity -ne 'Warning' }).Count | Should -Be 0
+    }
+
+    It 'raises no GUID finding for an ordinary name or a template group' {
+        $V = Invoke-GuidNameValidation -Json (& $script:GuidDoc 'Contoso-Name')
         @($V.Errors | Where-Object { $_.Message -like '*is the GUID*' }).Count | Should -Be 0
+        $T = Invoke-GuidNameValidation -Json '{ "version": "1.0", "groups": [ { "template": "G-{x}", "tokens": { "x": "a" } } ] }'
+        @($T.Errors | Where-Object { $_.Message -like '*is the GUID*' }).Count | Should -Be 0
     }
 }
 

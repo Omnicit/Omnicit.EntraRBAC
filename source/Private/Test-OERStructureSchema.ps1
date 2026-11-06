@@ -112,9 +112,11 @@ function Test-OERStructureSchema {
     at least one; an approvalStages declared as an empty array is sent as the empty stage list, so the
     write carries no approval stage on create or on update whatever the live policy holds, and Microsoft
     Graph is expected to refuse it (that answer is not measured for this combination). It is a Warning
-    because the validator cannot see the live policy. An accessPackages displayName that is a canonical GUID (Test-OERGuid)
-    is a Warning at its displayName path (BL-24): the engine creates the package with that name, and
-    a GUID is read as an object id wherever an access review or another reference names the package.
+    because the validator cannot see the live policy. A groups, catalogs, accessPackages or accessReviews displayName
+    that is a canonical GUID (Test-OERGuid) is a Warning at its displayName path (BL-24, BL-173b). For an accessPackages
+    entry the engine creates the package with that name, and a GUID is read as an object id wherever an access review
+    or another reference names the package; for a groups, catalogs or accessReviews entry Invoke-OERStructure reads the
+    GUID as an object id, so the entry reconciles the object with that id and not one with that name.
     A group that declares template and no displayName, and whose template Resolve-OERName cannot
     resolve with the tokens given (a placeholder no token supplies, a name over 256 characters), is an Error at
     groups[i].template carrying Resolve-OERName's reason (BL-139); a value in tokens is inserted as
@@ -561,6 +563,21 @@ function Test-OERStructureSchema {
             -Message "'displayName' at $Path must be a string. Got: $(Get-FoundValueText -Value $NameValue)."
     }
 
+    # BL-173b (A12): Invoke-OERStructure reads a displayName that is a canonical GUID (Test-OERGuid) as an
+    # object id, so a hand-written groups, catalogs or accessReviews entry named that way reconciles the
+    # object with that id and not one with that name. A Warning (the accessPackages one is BL-24, written
+    # inline where it stands). Only a declared displayName that is a string is checked; a type problem is
+    # Add-DisplayNameTypeFinding's, and a template entry declares no displayName.
+    function Add-GuidDisplayNameWarning {
+        param([object]$Node, [string]$Section, [string]$Path, [string]$Noun, [string]$Other)
+        if (-not (Test-HasProp -Node $Node -Name 'displayName')) { return }
+        $NameValue = $Node.displayName
+        if ($NameValue -isnot [string] -or -not (Test-OERGuid -Value $NameValue)) { return }
+        Add-Finding -Section $Section -Item $NameValue -Path "$Path.displayName" -Severity 'Warning' `
+            -Message ("'displayName' at $Path is the GUID '$NameValue': Invoke-OERStructure reads a GUID as an object id, not as a name, " +
+                "so the entry reconciles the $Noun with that object id, not $Other with that name. Give the $Noun a name that is not a GUID.")
+    }
+
     $KnownTop = @('version', 'tenantId', 'tenantAlias', 'groups', 'administrativeUnits', 'catalogs',
         'accessPackages', 'accessReviews', 'directoryRoleManagementPolicies', 'directoryRoleAssignments',
         'roleAssignments', 'roleManagementPolicies')
@@ -693,6 +710,7 @@ function Test-OERStructureSchema {
                     }
                 }
                 Add-DisplayNameTypeFinding -Node $G -Section 'groups' -Path $GPath
+                Add-GuidDisplayNameWarning -Node $G -Section 'groups' -Path $GPath -Noun 'group' -Other 'a group'
 
                 # previousDisplayName renames the group found under it to displayName. An empty or
                 # non-string value names no group at all; one equal to displayName (Graph matches
@@ -1162,6 +1180,7 @@ function Test-OERStructureSchema {
                         -Consequence $CatConsequence
                 }
                 Add-DisplayNameTypeFinding -Node $Cat -Section 'catalogs' -Path $CatPath
+                Add-GuidDisplayNameWarning -Node $Cat -Section 'catalogs' -Path $CatPath -Noun 'catalog' -Other 'a catalog'
                 # The previous name is a claim of its own, as for administrative units.
                 $CatPrev = Test-SupportedRename -Node $Cat -Section 'catalogs' -Item $CatItem -Path $CatPath `
                     -SetCommand 'Set-OERCatalog'
@@ -1773,6 +1792,7 @@ function Test-OERStructureSchema {
                         -Consequence $ARConsequence
                 }
                 Add-DisplayNameTypeFinding -Node $AR -Section 'accessReviews' -Path $ARPath
+                Add-GuidDisplayNameWarning -Node $AR -Section 'accessReviews' -Path $ARPath -Noun 'access review' -Other 'a review'
                 # A review renamed through the document is found under its previousDisplayName too (tenant-wide,
                 # as its displayName is), so that name is a claim of its own, checked after the displayName
                 # claim just as the units' and catalogs' is.
