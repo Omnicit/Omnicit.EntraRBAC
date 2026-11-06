@@ -628,3 +628,79 @@ Describe 'Resolve-OERGroupPimPolicyChange: the undeclared half of an expiration 
         }
     }
 }
+
+Describe 'Resolve-OERGroupPimPolicyChange: permanence' {
+    Context 'an unknown live permanence is never read as false (BL-161d)' {
+        # Current is a plain object: the permanence property is present with $null, or absent. The
+        # live duration is known (30 days). Defined in the discovery phase, since -ForEach reads it then.
+        $PairCases = foreach ($Shape in 'null', 'absent') {
+            @{
+                Pair = 'eligible'; Shape = $Shape; Perm = 'allowPermanentEligibility'; Days = 'eligibleDurationDays'
+                LivePerm = 'AllowPermanentEligibility'; LiveDays = 'EligibleDurationDays'; SetPerm = 'AllowPermanentEligibility'; SetDur = 'EligibleDuration'
+                Text = 'allowPermanentEligibility is declared, and whether the live policy allows permanent eligible assignment (Expiration_Admin_Eligibility isExpirationRequired) is unknown: the read returned no value for it'
+            }
+            @{
+                Pair = 'active'; Shape = $Shape; Perm = 'allowPermanentActive'; Days = 'activeDurationDays'
+                LivePerm = 'AllowPermanentActive'; LiveDays = 'ActiveDurationDays'; SetPerm = 'AllowPermanentActive'; SetDur = 'ActiveDuration'
+                Text = 'allowPermanentActive is declared, and whether the live policy allows permanent active assignment (Expiration_Admin_Assignment isExpirationRequired) is unknown: the read returned no value for it'
+            }
+        }
+
+        It 'names the permanence and sends nothing: <Pair> pair, perm-only declared <DeclaredPerm>, live permanence <Shape>' -ForEach @(
+            foreach ($C in $PairCases) { foreach ($V in $false, $true) { $C + @{ DeclaredPerm = $V } } }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ C = $_ } {
+                param($C)
+                $Live = [ordered]@{ ActivationMaxHours = 8; $C.LiveDays = 30 }
+                if ($C.Shape -eq 'null') { $Live[$C.LivePerm] = $null }
+                $Declared = [pscustomobject]@{ $C.Perm = $C.DeclaredPerm }
+                $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current ([pscustomobject]$Live)
+                @($R.UnknownLiveValues) | Should -Be @($C.Text)
+                $R.SetParams.ContainsKey($C.SetDur) | Should -BeFalse
+                $R.SetParams.ContainsKey($C.SetPerm) | Should -BeFalse
+                $R.Changed | Should -BeFalse
+            }
+        }
+
+        It 'sends the declared pair and names nothing when both halves are declared: <Pair> pair, live permanence <Shape>' -ForEach $PairCases {
+            InModuleScope $script:moduleName -Parameters @{ C = $_ } {
+                param($C)
+                $Live = [ordered]@{ ActivationMaxHours = 8; $C.LiveDays = 30 }
+                if ($C.Shape -eq 'null') { $Live[$C.LivePerm] = $null }
+                $Declared = [pscustomobject]@{ $C.Perm = $false; $C.Days = 30 }
+                $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current ([pscustomobject]$Live)
+                @($R.UnknownLiveValues) | Should -BeNullOrEmpty
+                $R.Changed | Should -BeTrue
+                $R.SetParams[$C.SetPerm] | Should -BeFalse
+                $R.SetParams[$C.SetDur] | Should -Be 30
+            }
+        }
+
+        It 'sends nothing and names nothing for the days alone matching the live days: <Pair> pair, live permanence <Shape>' -ForEach $PairCases {
+            InModuleScope $script:moduleName -Parameters @{ C = $_ } {
+                param($C)
+                $Live = [ordered]@{ ActivationMaxHours = 8; $C.LiveDays = 30 }
+                if ($C.Shape -eq 'null') { $Live[$C.LivePerm] = $null }
+                $Declared = [pscustomobject]@{ $C.Days = 30 }
+                $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current ([pscustomobject]$Live)
+                @($R.UnknownLiveValues) | Should -BeNullOrEmpty
+                $R.Changed | Should -BeFalse
+                $R.SetParams.Keys.Count | Should -Be 0
+            }
+        }
+
+        It 'regression: a known live permanence of false equal to the declared one sends nothing and names nothing: <Pair> pair' -ForEach @(
+            @{ Pair = 'eligible'; Perm = 'allowPermanentEligibility'; LivePerm = 'AllowPermanentEligibility'; LiveDays = 'EligibleDurationDays' }
+            @{ Pair = 'active'; Perm = 'allowPermanentActive'; LivePerm = 'AllowPermanentActive'; LiveDays = 'ActiveDurationDays' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ C = $_ } {
+                param($C)
+                $Live = [ordered]@{ ActivationMaxHours = 8; $C.LiveDays = 30; $C.LivePerm = $false }
+                $R = Resolve-OERGroupPimPolicyChange -Declared ([pscustomobject]@{ $C.Perm = $false }) -Current ([pscustomobject]$Live)
+                @($R.UnknownLiveValues) | Should -BeNullOrEmpty
+                $R.Changed | Should -BeFalse
+                $R.SetParams.Keys.Count | Should -Be 0
+            }
+        }
+    }
+}
