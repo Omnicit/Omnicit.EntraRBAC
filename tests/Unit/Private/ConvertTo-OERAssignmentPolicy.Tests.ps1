@@ -241,7 +241,73 @@ Describe 'ConvertTo-OERAssignmentPolicy (full normalizer)' {
     It 'afterDateTime projects ExpirationDateTime' {
         InModuleScope Omnicit.EntraRBAC {
             $p = ConvertTo-OERAssignmentPolicy -InputObject @{ id = 'p'; expiration = @{ type = 'afterDateTime'; endDateTime = '2027-01-01T00:00:00Z' } } -AccessPackageId 'ap'
-            $p.ExpirationDateTime | Should -Be '2027-01-01T00:00:00Z'
+            $p.ExpirationDateTime | Should -Be '2027-01-01T00:00:00.0000000Z'
+        }
+    }
+    Context 'expirationDateTime is an ISO 8601 UTC round-trip string (BL-161c)' {
+        BeforeAll {
+            $script:Bl161cWant = '2026-12-31T10:20:30.0000000Z'
+        }
+        It 'writes a Utc datetime as the round-trip string' {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Want = $script:Bl161cWant } { param($Want)
+                $End = [datetime]::SpecifyKind([datetime]'2026-12-31T10:20:30', [System.DateTimeKind]::Utc)
+                $p = ConvertTo-OERAssignmentPolicy -InputObject @{ id = 'p'; expiration = @{ type = 'afterDateTime'; endDateTime = $End } } -AccessPackageId 'ap'
+                $p.ExpirationDateTime | Should -Be $Want
+            }
+        }
+        It 'reads an Unspecified datetime as UTC' {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Want = $script:Bl161cWant } { param($Want)
+                $End = [datetime]::SpecifyKind([datetime]'2026-12-31T10:20:30', [System.DateTimeKind]::Unspecified)
+                $p = ConvertTo-OERAssignmentPolicy -InputObject @{ id = 'p'; expiration = @{ type = 'afterDateTime'; endDateTime = $End } } -AccessPackageId 'ap'
+                $p.ExpirationDateTime | Should -Be $Want
+            }
+        }
+        It 'converts a Local datetime to UTC' {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Want = $script:Bl161cWant } { param($Want)
+                $End = [datetime]::SpecifyKind([datetime]'2026-12-31T10:20:30', [System.DateTimeKind]::Utc).ToLocalTime()
+                $p = ConvertTo-OERAssignmentPolicy -InputObject @{ id = 'p'; expiration = @{ type = 'afterDateTime'; endDateTime = $End } } -AccessPackageId 'ap'
+                $p.ExpirationDateTime | Should -Be $Want
+            }
+        }
+        It 'converts a datetimeoffset to UTC' {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Want = $script:Bl161cWant } { param($Want)
+                $End = [datetimeoffset]::new(2026, 12, 31, 12, 20, 30, [timespan]::FromHours(2))
+                $p = ConvertTo-OERAssignmentPolicy -InputObject @{ id = 'p'; expiration = @{ type = 'afterDateTime'; endDateTime = $End } } -AccessPackageId 'ap'
+                $p.ExpirationDateTime | Should -Be $Want
+            }
+        }
+        It 'normalizes a Z string to the round-trip string' {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Want = $script:Bl161cWant } { param($Want)
+                $p = ConvertTo-OERAssignmentPolicy -InputObject @{ id = 'p'; expiration = @{ type = 'afterDateTime'; endDateTime = '2026-12-31T10:20:30Z' } } -AccessPackageId 'ap'
+                $p.ExpirationDateTime | Should -Be $Want
+            }
+        }
+        It 'leaves a string that is not a date unchanged' {
+            InModuleScope Omnicit.EntraRBAC {
+                $p = ConvertTo-OERAssignmentPolicy -InputObject @{ id = 'p'; expiration = @{ type = 'afterDateTime'; endDateTime = 'not a date' } } -AccessPackageId 'ap'
+                $p.ExpirationDateTime | Should -Be 'not a date'
+            }
+        }
+        It 'does not depend on the current culture (<Culture>)' -ForEach @(@{ Culture = 'sv-SE' }, @{ Culture = 'en-US' }) {
+            $Saved = [cultureinfo]::CurrentCulture
+            try {
+                [cultureinfo]::CurrentCulture = [cultureinfo]::new($Culture)
+                InModuleScope Omnicit.EntraRBAC -Parameters @{ Want = $script:Bl161cWant } { param($Want)
+                    $End = [datetime]::SpecifyKind([datetime]'2026-12-31T10:20:30', [System.DateTimeKind]::Utc)
+                    $p = ConvertTo-OERAssignmentPolicy -InputObject @{ id = 'p'; expiration = @{ type = 'afterDateTime'; endDateTime = $End } } -AccessPackageId 'ap'
+                    $p.ExpirationDateTime | Should -Be $Want
+                }
+            } finally {
+                [cultureinfo]::CurrentCulture = $Saved
+            }
+        }
+        It 'round-trips a built body to the same string' {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Want = $script:Bl161cWant } { param($Want)
+                $Scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
+                $Body = ConvertTo-OERPolicyBody -DisplayName 'd' -AccessPackageId 'ap-1' -RequestorScope $Scope -ExpirationDateTime ([datetime]'2026-12-31T10:20:30Z')
+                $p = ConvertTo-OERAssignmentPolicy -InputObject $Body
+                $p.ExpirationDateTime | Should -Be $Want
+            }
         }
     }
     It 'sorts and lowercases requestor scope and stage GUID lists' {
