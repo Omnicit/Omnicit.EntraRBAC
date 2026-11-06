@@ -1351,6 +1351,81 @@ Describe 'Get-OERInventoryGroup' {
             Should -Invoke -ModuleName Omnicit.EntraRBAC Read-OERGroupPimAssignment -Exactly -Times 1 -ParameterFilter { $GroupId -eq 'g-pim' }
         }
 
+        It 'leaves a group with a GUID-shaped display name out, with or without -ExcludeSharedName, and keeps the rest (BL-171c, <Mode>)' -ForEach @(
+            @{ Mode = 'full'; Exclude = $false }
+            @{ Mode = 'full'; Exclude = $true }
+            @{ Mode = 'relevant-only'; Exclude = $false }
+        ) {
+            $GuidName = '00000000-0000-0000-0000-000000000066'
+            $script:PimListing = @(
+                @{ Id = 'g-guid'; Name = $GuidName
+                    Members = @(@{ id = 'u-std'; userPrincipalName = 'person1@contoso.com' }, @{ id = 'u-act'; userPrincipalName = 'person2@contoso.com' })
+                    Owners = @(); Eligibility = @() }
+                @{ Id = 'g-keep'; Name = 'role_sec_keep'; Members = @(); Owners = @(); Eligibility = @() }
+                @{ Id = 'g-part'; Name = "team-$GuidName"; Members = @(); Owners = @(); Eligibility = @() }
+            )
+            $script:PimRows['g-guid'] = @((& $script:Standing 'u-std' 'member'), (& $script:Activated 'u-act' 'member'))
+            $Read = & $script:ReadIn $Mode -ExcludeSharedName:$Exclude
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('role_sec_keep', "team-$GuidName")
+            @($Read.Result.Unread) | Should -Be @("groups/$GuidName")
+            @($Read.Result.Causes).Count | Should -Be 1
+            $Expected = "the group 'groups/$GuidName' was left out: its display name has the form of an object id, which Invoke-OERStructure reads as an object id and not as a name, so the group cannot be declared by its name"
+            $Read.Result.Causes[0].Cause | Should -BeExactly $Expected
+            [string]$Read.Result.Causes[0].Target | Should -BeExactly ''
+            @($Read.Verbose) | Should -Contain "Get-OERInventory: $Expected"
+            @($Read.Result.PimLeftOut | Where-Object { $_.Group -eq $GuidName }).Count | Should -Be 0
+            @($Read.Result.SharedNames).Count | Should -Be 0
+        }
+
+        It 'reports a GUID-shaped name once when another group carries it too, and as the shared name under -ExcludeSharedName (BL-171c)' {
+            $script:PimListing = @(
+                @{ Id = 'g-1'; Name = '00000000-0000-0000-0000-000000000066'; Members = @(); Owners = @(); Eligibility = @() }
+                @{ Id = 'g-2'; Name = '00000000-0000-0000-0000-000000000066'; Members = @(); Owners = @(); Eligibility = @() }
+                @{ Id = 'g-keep'; Name = 'role_sec_keep'; Members = @(); Owners = @(); Eligibility = @() }
+            )
+            $Plain = & $script:ReadIn 'full'
+            @($Plain.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('role_sec_keep')
+            @($Plain.Result.Unread) | Should -Be @('groups/00000000-0000-0000-0000-000000000066')
+            @($Plain.Result.Causes).Count | Should -Be 1
+            $Shared = & $script:ReadIn 'full' -ExcludeSharedName
+            @($Shared.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('role_sec_keep')
+            @($Shared.Result.Unread) | Should -Be @('groups/00000000-0000-0000-0000-000000000066')
+            @($Shared.Result.Causes).Count | Should -Be 1
+            $Shared.Result.Causes[0].Cause | Should -BeLike '2 live objects share the name groups/00000000-0000-0000-0000-000000000066 *'
+            @($Shared.Result.SharedNames).Count | Should -Be 1
+        }
+
+        It 'drops the count of a dynamic group left out for a GUID-shaped name (BL-171c)' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                [PSCustomObject]@{
+                    Id = 'g-d'; DisplayName = '00000000-0000-0000-0000-000000000066'; Description = $null; GroupType = 'Dynamic'
+                    IsAssignableToRole = $false; MembershipRule = 'user.department -eq "IT"'
+                    Members = @(@{ id = 'u-9'; userPrincipalName = 'person9@contoso.com' }); Owners = @(); PimEligibility = @()
+                }
+                [PSCustomObject]@{
+                    Id = 'g-o'; DisplayName = 'role_sec_other'; Description = $null; GroupType = 'Dynamic'
+                    IsAssignableToRole = $false; MembershipRule = 'user.department -eq "HR"'
+                    Members = @(@{ id = 'u-8'; userPrincipalName = 'person8@contoso.com' }); Owners = @(); PimEligibility = @()
+                }
+            }
+            $Read = Invoke-GroupRead
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('role_sec_other')
+            @($Read.Result.DynamicMembers | ForEach-Object { $_.GroupId }) | Should -Be @('g-o')
+        }
+
+        It 'leaves a group out that was PimLeftOut-listed under its GUID-shaped name (BL-171c)' {
+            $script:PimListing = @(
+                @{ Id = 'g-guid'; Name = '00000000-0000-0000-0000-000000000066'
+                    Members = @(@{ id = 'u-act'; userPrincipalName = 'person2@contoso.com' }); Owners = @(); Eligibility = @() }
+                @{ Id = 'g-pim'; Name = 'role_sec_pim'
+                    Members = @(@{ id = 'u-act'; userPrincipalName = 'person2@contoso.com' }); Owners = @(); Eligibility = @() }
+            )
+            $script:PimRows['g-guid'] = @(, (& $script:Activated 'u-act' 'member'))
+            $script:PimRows['g-pim'] = @(, (& $script:Activated 'u-act' 'member'))
+            $Read = & $script:ReadIn 'full'
+            @($Read.Result.PimLeftOut | ForEach-Object { $_.GroupId }) | Should -Be @('g-pim')
+        }
+
         It 'leaves a time-bound active member out (<Mode>)' -ForEach @(
             @{ Mode = 'full' }
             @{ Mode = 'relevant-only' }
