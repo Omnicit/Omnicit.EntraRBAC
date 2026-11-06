@@ -4075,6 +4075,140 @@ Describe 'Get-OERInventory' {
         }
     }
 
+    Context 'a catalog or access review whose display name has the form of an object id (BL-173)' {
+        # Sprint 13 step 3 (BL-173a): Invoke-OERStructure reads a name of that shape as an object id, so
+        # the export leaves such a catalog or review out of its own section, names it as unread, and
+        # writes the catalog by its object id in the packages that name it. No id is version-4 shaped.
+        BeforeAll {
+            $script:GnName = '11111111-2222-3333-4444-555555555555'
+            $script:GnCatBase = 'v1.0/identityGovernance/entitlementManagement/'
+            $script:GnApUri = $script:GnCatBase + 'accessPackages/aaaa1111-0000-0000-0000-000000000041?$expand=catalog'
+            $script:GnGuidApUri = $script:GnCatBase + 'accessPackages/aaaa1111-0000-0000-0000-000000000042?$expand=catalog'
+            function script:New-GnReview {
+                param([string]$Name, [string]$AccessPackageId, [string]$AssignmentPolicyId)
+                [PSCustomObject]@{
+                    Id = "ar-$Name"; DisplayName = $Name; AccessPackageId = $AccessPackageId; AssignmentPolicyId = $AssignmentPolicyId
+                    Reviewers = @(); Recurrence = $null; DurationInDays = 14
+                }
+            }
+            function script:Get-GnPartial {
+                param([object[]]$Record)
+                @($Record | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            }
+        }
+
+        BeforeEach {
+            $script:GnCatalogs = @()
+            $script:GnAccessPackages = @{}
+            $script:GnReviews = @()
+            Mock -ModuleName $script:moduleName Get-OERCatalog { $script:GnCatalogs }
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource { @() }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackage {
+                param($Catalog)
+                $script:GnAccessPackages[[string]$Catalog]
+            }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole { @() }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { }
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition { $script:GnReviews }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "Unexpected Graph request: $Uri" }
+            # The by-id name reads and the apply engine's own lookups for the ordinary review.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'aaaa1111-0000-0000-0000-000000000041'; displayName = 'AP-Sales' } } -ParameterFilter {
+                $Uri -eq $script:GnApUri
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'bbbb2222-0000-0000-0000-000000000041'; displayName = 'Default' } } -ParameterFilter {
+                $Uri -eq ($script:GnCatBase + 'assignmentPolicies/bbbb2222-0000-0000-0000-000000000041?$expand=accessPackage')
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'aaaa1111-0000-0000-0000-000000000041'; displayName = 'AP-Sales' }) } } -ParameterFilter {
+                $Uri -eq ($script:GnCatBase + "accessPackages?`$filter=displayName eq 'AP-Sales'&`$select=id,displayName")
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'bbbb2222-0000-0000-0000-000000000041'; displayName = 'Default' }) } } -ParameterFilter {
+                $Uri -eq ($script:GnCatBase + "assignmentPolicies?`$filter=accessPackage/id eq 'aaaa1111-0000-0000-0000-000000000041'")
+            }
+        }
+
+        It 'leaves a catalog named like an object id out of catalogs, reads none of its resources and names it as unread with its cause' {
+            $script:GnCatalogs = @([PSCustomObject]@{ Id = 'cat-g1'; DisplayName = $script:GnName; Description = 'd' })
+            $Inv = Get-OERInventory -Include Catalogs -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalog -Times 1 -Exactly
+            @($Inv.catalogs).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 0 -ParameterFilter { $Catalog -eq 'cat-g1' }
+            $Partial = Get-GnPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            $Msg = $Partial[0].Exception.Message
+            $Msg | Should -Match ('Unread: catalogs/' + $script:GnName + '\. ')
+            $Msg | Should -BeLike ("*the catalog 'catalogs/$($script:GnName)' was left out: its display name has the form of an object id, which Invoke-OERStructure reads as an object id and not as a name, so the catalog cannot be declared by its name*")
+            $Msg | Should -BeLike '*because the display name of a group, a catalog or an access review has the form of an object id*'
+        }
+
+        It 'writes the catalog by its object id in the package that names it, and still exports the package' {
+            $script:GnCatalogs = @([PSCustomObject]@{ Id = 'cat-g1'; DisplayName = $script:GnName; Description = 'd' })
+            $script:GnAccessPackages = @{ 'cat-g1' = @([PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'Sales'; Description = $null }) }
+            $Inv = Get-OERInventory -Include Catalogs, AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.catalogs).Count | Should -Be 0
+            @($Inv.accessPackages | ForEach-Object { "$($_.catalog)|$($_.displayName)" }) | Should -Be @('cat-g1|Sales')
+            $Partial = Get-GnPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            $Partial[0].Exception.Message | Should -Match ('Unread: catalogs/' + $script:GnName + '\. ')
+        }
+
+        It 'reports two catalogs whose object-id-shaped names differ only in letter case once, with the first spelling' {
+            $script:GnCatalogs = @(
+                [PSCustomObject]@{ Id = 'cat-g1'; DisplayName = '11111111-2222-3333-4444-555555555AAA'; Description = 'one' }
+                [PSCustomObject]@{ Id = 'cat-g2'; DisplayName = '11111111-2222-3333-4444-555555555aaa'; Description = 'two' }
+            )
+            $Inv = Get-OERInventory -Include Catalogs -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.catalogs).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 0 -Exactly
+            $Partial = Get-GnPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            $Partial[0].Exception.Message | Should -Match 'Unread: catalogs/11111111-2222-3333-4444-555555555AAA\. '
+            $Partial[0].Exception.Message | Should -Not -MatchExactly 'catalogs/11111111-2222-3333-4444-555555555aaa'
+        }
+
+        It 'leaves an access review named like an object id out of accessReviews, sends no reference lookup for it and names it as unread' {
+            $script:GnReviews = @(
+                New-GnReview -Name 'Q3 AP review' -AccessPackageId 'aaaa1111-0000-0000-0000-000000000041' -AssignmentPolicyId 'bbbb2222-0000-0000-0000-000000000041'
+                New-GnReview -Name $script:GnName -AccessPackageId 'aaaa1111-0000-0000-0000-000000000042' -AssignmentPolicyId 'bbbb2222-0000-0000-0000-000000000042'
+            )
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.accessReviews | ForEach-Object { $_.displayName }) | Should -Be @('Q3 AP review')
+            # Positive control: the ordinary review's package was read, the object-id-named review's never.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq $script:GnApUri }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -eq $script:GnGuidApUri }
+            $Partial = Get-GnPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            $Msg = $Partial[0].Exception.Message
+            $Msg | Should -Match ('Unread: accessReviews/' + $script:GnName + '\. ')
+            $Msg | Should -BeLike ("*the access review 'accessReviews/$($script:GnName)' was left out: its display name has the form of an object id, which Invoke-OERStructure reads as an object id and not as a name, so the review cannot be declared by its name*")
+        }
+
+        It 'reports two access reviews whose object-id-shaped names differ only in letter case once' {
+            $script:GnReviews = @(
+                New-GnReview -Name '11111111-2222-3333-4444-555555555AAA' -AccessPackageId 'aaaa1111-0000-0000-0000-000000000042' -AssignmentPolicyId 'bbbb2222-0000-0000-0000-000000000042'
+                New-GnReview -Name '11111111-2222-3333-4444-555555555aaa' -AccessPackageId 'aaaa1111-0000-0000-0000-000000000042' -AssignmentPolicyId 'bbbb2222-0000-0000-0000-000000000042'
+            )
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.accessReviews).Count | Should -Be 0
+            $Partial = Get-GnPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            $Partial[0].Exception.Message | Should -Match 'Unread: accessReviews/11111111-2222-3333-4444-555555555AAA\. '
+        }
+
+        It 'exports a catalog, its package and a review with ordinary names as before' {
+            $script:GnCatalogs = @([PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'Core'; Description = 'd' })
+            $script:GnAccessPackages = @{ 'cat-1' = @([PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'Sales'; Description = $null }) }
+            $script:GnReviews = @(New-GnReview -Name 'Q3 AP review' -AccessPackageId 'aaaa1111-0000-0000-0000-000000000041' -AssignmentPolicyId 'bbbb2222-0000-0000-0000-000000000041')
+            $Inv = Get-OERInventory -Include Catalogs, AccessPackages, AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.catalogs | ForEach-Object { $_.displayName }) | Should -Be @('Core')
+            @($Inv.accessPackages | ForEach-Object { "$($_.catalog)|$($_.displayName)" }) | Should -Be @('Core|Sales')
+            @($Inv.accessReviews | ForEach-Object { $_.displayName }) | Should -Be @('Q3 AP review')
+            # Positive control: read once by the catalogs section and once by the packages section.
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 2 -Exactly -ParameterFilter { $Catalog -eq 'cat-1' }
+            @(Get-GnPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+    }
+
     Context 'the export never writes a duplicate entry' {
         # Entra does not keep display names unique, and Azure returns scopes in whatever spelling it
         # stored. An export that wrote two entries the validator refuses as duplicates would make the
@@ -4249,7 +4383,7 @@ Describe 'Get-OERInventory' {
             [string]$Partial[0].TargetObject | Should -BeExactly 'groups/Dup'
             $Partial[0].Exception.Message | Should -Match '2 live objects share the name groups/Dup'
             $Partial[0].Exception.Message |
-                Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group has the form of an object id, and are not stated as facts in the document*'
+                Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group, a catalog or an access review has the form of an object id, and are not stated as facts in the document*'
         }
 
         It 'writes every group of a unique name and reports nothing when no two names collide' {
@@ -7347,7 +7481,7 @@ Describe 'Get-OERInventory' {
             # The lead-in is true of a section named alone too, which is neither a members nor a
             # nameless collection: the list could not be read at all.
             $Read.Partial[0].Exception.Message |
-                Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group has the form of an object id, and are not stated as facts in the document*'
+                Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group, a catalog or an access review has the form of an object id, and are not stated as facts in the document*'
             $Read.Partial[0].Exception.Message |
                 Should -BeLike '*Unread: groups. A section reported here by its name alone could not be read at all and is written as an empty array, which does not mean the tenant has none. A members, scopedRoles, resources or resourceRoles key reported here is an explicit null*'
         }
@@ -8216,7 +8350,7 @@ Describe 'Get-OERInventory' {
             # The lead-in is true of a collection that was READ but could not be written without an empty
             # name, not only of an unread one.
             $Partial[0].Exception.Message |
-                Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group has the form of an object id, and are not stated as facts in the document*'
+                Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group, a catalog or an access review has the form of an object id, and are not stated as facts in the document*'
         }
 
         It 'writes the package''s resourceRoles as an explicit null, and names it, when a binding has no role name' {
