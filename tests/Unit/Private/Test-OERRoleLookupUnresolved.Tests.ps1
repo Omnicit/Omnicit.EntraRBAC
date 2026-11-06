@@ -216,4 +216,27 @@ Describe 'Test-OERRoleLookupUnresolved cohort: the single owner of the role and 
         # ByRole asks twice (definition, policy); Get-OERRoleManagementPolicy asks a third time in -CommonRoles.
         $Calls.Count | Should -BeGreaterThan 1
     }
+
+    It '<_> (Azure role assignment cmdlet) asks Test-OERRoleLookupUnresolved' -ForEach @(
+        'Public/New-OERRoleAssignment.ps1'
+        'Public/New-OERActiveRoleAssignment.ps1'
+        'Public/New-OEREligibleRoleAssignment.ps1'
+        'Public/Remove-OERActiveRoleAssignment.ps1'
+        'Public/Remove-OEREligibleRoleAssignment.ps1'
+        'Public/Enable-OEREligibleRoleAssignment.ps1'
+        'Public/Disable-OEREligibleRoleAssignment.ps1'
+    ) {
+        $File = Join-Path $script:SourceRoot $_
+        $Tokens = $null
+        $ParseErrors = $null
+        $Ast = [System.Management.Automation.Language.Parser]::ParseFile($File, [ref]$Tokens, [ref]$ParseErrors)
+        @($ParseErrors).Count | Should -Be 0
+        $Calls = @($Ast.FindAll({
+                    param($Node)
+                    $Node -is [System.Management.Automation.Language.CommandAst] -and
+                    $Node.GetCommandName() -eq 'Test-OERRoleLookupUnresolved'
+                }, $true))
+        # One role definition lookup each (-ThrowUnresolved), so one test of what it threw.
+        $Calls.Count | Should -BeGreaterThan 0
+    }
 }

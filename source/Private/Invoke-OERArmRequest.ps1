@@ -559,19 +559,32 @@ function Invoke-OERArmRequest {
     # this walk, and a walk past the page limit. The helper only BUILDS the record; each throw stands
     # in the loop with its own return (see the rule above the first-response checks). The facts ride
     # on the EXCEPTION, never on the ErrorRecord (F1, docs/development/rationale.md#graph-wrapper).
-    function Get-ArmPagingIncompleteRecord ([string]$Cause, [int]$AtPage, [string]$AtLink, [object[]]$Aggregated) {
+    function Get-ArmPagingIncompleteRecord ([string]$Cause, [int]$AtPage, [string]$AtLink, [object[]]$Aggregated, [switch]$SingleRequest) {
         $Count = @($Aggregated).Count
-        $IncompleteException = [System.Exception]::new(
+        # -SingleRequest (a first-answer refusal of a request that is not a -All walk) changes ONLY the
+        # wording: there are no earlier pages and no partial collection to speak of.
+        $IncompleteMessage = if ($SingleRequest) {
+            ("The answer of Azure Resource Manager to this list request cannot be read as a list: $Cause. " +
+            "It is refused rather than read as an empty list.")
+        } else {
             ("Azure Resource Manager page $AtPage of this enumeration cannot be read as part of a complete walk: $Cause. " +
             "$Count item(s) had already been aggregated from earlier pages; the partial collection is " +
-            "refused rather than returned as though it were complete."))
+            "refused rather than returned as though it were complete.")
+        }
+        $IncompleteException = [System.Exception]::new($IncompleteMessage)
         $IncompleteException | Add-Member -NotePropertyName PartialValue -NotePropertyValue @($Aggregated) -Force
         $IncompleteException | Add-Member -NotePropertyName NextLink -NotePropertyValue $AtLink -Force
         $IncompleteException | Add-Member -NotePropertyName PageNumber -NotePropertyValue $AtPage -Force
         # SECURITY: page number and item COUNT only; the next link can carry a $skiptoken.
-        Write-Verbose ("[Invoke-OERArmRequest] Page $AtPage cannot complete the walk ($Cause) with $Count " +
-            "item(s) already aggregated from earlier pages. PartialValue, NextLink and PageNumber are " +
-            "attached to the thrown error's Exception for a caller that opts in; the call still fails.")
+        if ($SingleRequest) {
+            Write-Verbose ("[Invoke-OERArmRequest] The answer cannot be read as a list ($Cause); the call " +
+                "still fails. PartialValue, NextLink and PageNumber are attached to the thrown error's " +
+                "Exception for a caller that opts in.")
+        } else {
+            Write-Verbose ("[Invoke-OERArmRequest] Page $AtPage cannot complete the walk ($Cause) with $Count " +
+                "item(s) already aggregated from earlier pages. PartialValue, NextLink and PageNumber are " +
+                "attached to the thrown error's Exception for a caller that opts in; the call still fails.")
+        }
         return [System.Management.Automation.ErrorRecord]::new(
             $IncompleteException,
             'ArmPagingIncomplete',
@@ -679,7 +692,7 @@ function Invoke-OERArmRequest {
         if (-not $RequireValue) { return $null }
         # BL-167a: the mirror of Invoke-OERGraphRequest's -RequireValue; an answer that is not a list is
         # a read that did not complete, never an empty collection. Page 1, also for a single request.
-        throw (Get-ArmPagingIncompleteRecord -Cause 'it answered with an empty body' -AtPage 1 -AtLink $Path -Aggregated @())
+        throw (Get-ArmPagingIncompleteRecord -Cause 'it answered with an empty body' -AtPage 1 -AtLink $Path -Aggregated @() -SingleRequest:(-not $All))
         return
     }
     # BL-73: a 2xx body that cannot be parsed is neither $null nor an empty collection. It is refused
@@ -699,11 +712,11 @@ function Invoke-OERArmRequest {
     # whose value is an empty array or null HAS a value member and passes.
     if ($RequireValue) {
         if ($null -eq $Parsed) {
-            throw (Get-ArmPagingIncompleteRecord -Cause 'its body is JSON null' -AtPage 1 -AtLink $Path -Aggregated @())
+            throw (Get-ArmPagingIncompleteRecord -Cause 'its body is JSON null' -AtPage 1 -AtLink $Path -Aggregated @() -SingleRequest:(-not $All))
             return
         }
         if ($null -eq $Parsed.PSObject.Properties['value']) {
-            throw (Get-ArmPagingIncompleteRecord -Cause 'it has no value member' -AtPage 1 -AtLink $Path -Aggregated @())
+            throw (Get-ArmPagingIncompleteRecord -Cause 'it has no value member' -AtPage 1 -AtLink $Path -Aggregated @() -SingleRequest:(-not $All))
             return
         }
     }

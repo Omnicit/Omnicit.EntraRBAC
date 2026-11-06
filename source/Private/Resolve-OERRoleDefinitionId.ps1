@@ -21,10 +21,10 @@ function Resolve-OERRoleDefinitionId {
     not-found throw: the ARM transport's own error propagates. An answer with an empty body, a
     body of JSON null or no value member is refused by the transport (-RequireValue) as
     ArmPagingIncomplete, so it too is a failed read and never the no-match case. With
-    -ThrowUnresolved the no-match case, which is a lookup that SUCCEEDED and found nothing, is thrown as an ErrorRecord with the
-    internal id RoleDefinitionUnresolved (same message, category ObjectNotFound, target the role) so
-    a caller can tell it from a failed read through Test-OERRoleLookupUnresolved. The id is never
-    published. Without the switch the no-match throw is a plain string, as before:
+    -ThrowUnresolved the no-match case, which is a lookup that SUCCEEDED and found nothing, is thrown
+    as an ErrorRecord with the internal id RoleDefinitionUnresolved (same message, category
+    ObjectNotFound, target the role) so a caller can tell it from a failed read through
+    Test-OERRoleLookupUnresolved. The id is never published. Without the switch the no-match throw is a plain string, as before:
     Sync-OERStructureRoleAssignment republishes that record as itself.
 
     .PARAMETER Role

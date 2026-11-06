@@ -215,6 +215,17 @@ Describe 'Resolve-OERRoleDefinitionId asks the transport for a list (BL-167a)' {
         }
     }
 
+    It 'sends no request for a bare GUID or a full id' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-OERArmRequest { [PSCustomObject]@{ value = @() } }
+            $Guid = '00000000-0000-0000-0000-000000000001'
+            $Full = '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/' + $Guid
+            $null = Resolve-OERRoleDefinitionId -Role $Guid -Scope '/subscriptions/s1' -ErrorAction SilentlyContinue
+            $null = Resolve-OERRoleDefinitionId -Role $Full -Scope '/subscriptions/s1' -ErrorAction SilentlyContinue
+            Should -Invoke Invoke-OERArmRequest -Times 0
+        }
+    }
+
     Context 'through the real transport' {
         BeforeEach {
             InModuleScope Omnicit.EntraRBAC {

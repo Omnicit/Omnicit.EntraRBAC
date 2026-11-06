@@ -13,10 +13,10 @@ function Get-OERRoleManagementPolicyForScope {
     -AllRolesAtScope) reads them with one list call instead of one lookup per role.
     Get-OERRoleManagementPolicyId reuses this lister and matches a single roleDefinitionId client-side
     (the ARM list-for-scope endpoint has no $filter). Returns nothing when the scope has no policy
-    assignments (an empty scope is not an error). An answer whose first page has an empty body, a body of JSON null or no value member is
-    refused by the transport (-RequireValue) with ArmPagingIncomplete and propagates, never read as a
-    scope with no policies (before Sprint 13 step 1 such a first page came out as one row with empty
-    fields).
+    assignments (an empty scope is not an error). An answer whose first page has an empty body, a body of
+    JSON null or no value member is refused by the transport (-RequireValue) with ArmPagingIncomplete
+    and propagates, never read as a scope with no policies (before Sprint 13 step 1 this lister itself
+    emitted one row with empty fields for such a first page).
 
     Each result also carries PolicyMetadata: the row's policyAssignmentProperties.policy object as ARM
     returned it (the policy id, and lastModifiedDateTime and lastModifiedBy when ARM reports them), or

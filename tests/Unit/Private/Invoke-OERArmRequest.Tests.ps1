@@ -2087,6 +2087,14 @@ Describe 'Invoke-OERArmRequest -RequireValue refuses an answer that is not a lis
             $Err.CategoryInfo.Category | Should -Be 'InvalidResult'
             $Err.TargetObject | Should -Be $Path
             $Err.Exception.Message | Should -Match ([regex]::Escape($Cause))
+            if ($All) {
+                $Err.Exception.Message | Should -Match 'page 1 of this enumeration cannot be read as part of a complete walk'
+            } else {
+                # A single request has no earlier pages and no walk: the message says so (ruling R-1).
+                $Err.Exception.Message | Should -Match '^The answer of Azure Resource Manager to this list request cannot be read as a list: '
+                $Err.Exception.Message | Should -Match 'It is refused rather than read as an empty list\.$'
+                $Err.Exception.Message | Should -Not -Match 'complete walk|earlier pages|enumeration'
+            }
             @($Err.Exception.PartialValue).Count | Should -Be 0
             $Err.Exception.NextLink | Should -Be $Path
             $Err.Exception.PageNumber | Should -Be 1
