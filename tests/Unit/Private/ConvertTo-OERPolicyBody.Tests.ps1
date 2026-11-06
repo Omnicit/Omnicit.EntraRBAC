@@ -867,6 +867,18 @@ Describe 'ConvertTo-OERPolicyBody carries every value the read has (BL-169a)' {
             }
         }
 
+        It 'wraps a lone question hashtable in an array' {
+            InModuleScope $script:moduleName -Parameters @{ Base = $script:Bl169Base } {
+                param($Base)
+                $Existing = & $Base
+                $Question = @{ text = @{ defaultText = 'Why?' } }
+                $Existing.questions = $Question
+                $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+                $Body.questions -is [array] | Should -BeTrue
+                $Body.questions.Count | Should -Be 1
+                $Body.questions[0].text.defaultText | Should -Be 'Why?'
+            }
+        }
         It 'still writes the old defaults for keys the read does not have' {
             InModuleScope $script:moduleName -Parameters @{ Base = $script:Bl169Base } {
                 param($Base)
