@@ -100,6 +100,24 @@ BeforeDiscovery {
             }
         }
         @{
+            Cmdlet = 'Disable-OEREligibleRoleAssignment'; Resolver = 'Resolve-OERRoleDefinitionId'
+            ErrorId = 'AmbiguousName'; Pre = @{}
+            Invoke = {
+                Disable-OEREligibleRoleAssignment -Role 'Dup' -Scope '/subscriptions/s1' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' `
+                    -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            Cmdlet = 'Enable-OEREligibleRoleAssignment'; Resolver = 'Resolve-OERRoleDefinitionId'
+            ErrorId = 'AmbiguousName'; Pre = @{}
+            Invoke = {
+                Enable-OEREligibleRoleAssignment -Role 'Dup' -Scope '/subscriptions/s1' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' `
+                    -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
             Cmdlet = 'Get-OERAccessPackage'; Resolver = 'Resolve-OERCatalogId'
             ErrorId = 'AmbiguousCatalogName'; Pre = @{}
             Invoke = {
@@ -255,6 +273,15 @@ BeforeDiscovery {
             }
         }
         @{
+            Cmdlet = 'New-OERActiveRoleAssignment'; Resolver = 'Resolve-OERRoleDefinitionId'
+            ErrorId = 'AmbiguousName'; Pre = @{}
+            Invoke = {
+                New-OERActiveRoleAssignment -Role 'Dup' -Scope '/subscriptions/s1' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' -DurationDays 30 `
+                    -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
             Cmdlet = 'New-OEREligibleDirectoryRoleAssignment'; Resolver = 'Resolve-OERDirectoryRoleDefinitionId'
             ErrorId = 'AmbiguousRoleName'; FailureId = 'RoleDefinitionReadFailed'; Pre = @{}
             Invoke = {
@@ -264,11 +291,29 @@ BeforeDiscovery {
             }
         }
         @{
+            Cmdlet = 'New-OEREligibleRoleAssignment'; Resolver = 'Resolve-OERRoleDefinitionId'
+            ErrorId = 'AmbiguousName'; Pre = @{}
+            Invoke = {
+                New-OEREligibleRoleAssignment -Role 'Dup' -Scope '/subscriptions/s1' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' -DurationDays 30 `
+                    -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
             Cmdlet = 'New-OERAccessReviewDefinition'; Resolver = 'Resolve-OERGroupId'
             ErrorId = 'AmbiguousName'; Pre = @{}
             Invoke = {
                 New-OERAccessReviewDefinition -DisplayName 'Q3' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
                     -Group 'Dup' -SelfReview -Recurrence OneTime -StartDate ([datetime]'2026-07-05') `
+                    -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            Cmdlet = 'New-OERRoleAssignment'; Resolver = 'Resolve-OERRoleDefinitionId'
+            ErrorId = 'AmbiguousName'; Pre = @{}
+            Invoke = {
+                New-OERRoleAssignment -Role 'Dup' -Scope '/subscriptions/s1' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' `
                     -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
                 $Err
             }
@@ -309,6 +354,15 @@ BeforeDiscovery {
             }
         }
         @{
+            Cmdlet = 'Remove-OERActiveRoleAssignment'; Resolver = 'Resolve-OERRoleDefinitionId'
+            ErrorId = 'AmbiguousName'; Pre = @{}
+            Invoke = {
+                Remove-OERActiveRoleAssignment -Role 'Dup' -Scope '/subscriptions/s1' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' `
+                    -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
             Cmdlet = 'Remove-OERCatalog'; Resolver = 'Resolve-OERCatalogId'
             ErrorId = 'AmbiguousCatalogName'; Pre = @{}
             Invoke = {
@@ -330,6 +384,15 @@ BeforeDiscovery {
             ErrorId = 'AmbiguousRoleName'; FailureId = 'RoleDefinitionReadFailed'; Pre = @{}
             Invoke = {
                 Remove-OEREligibleDirectoryRoleAssignment -Role 'Dup' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' `
+                    -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            Cmdlet = 'Remove-OEREligibleRoleAssignment'; Resolver = 'Resolve-OERRoleDefinitionId'
+            ErrorId = 'AmbiguousName'; Pre = @{}
+            Invoke = {
+                Remove-OEREligibleRoleAssignment -Role 'Dup' -Scope '/subscriptions/s1' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' `
                     -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
                 $Err
             }
@@ -495,6 +558,8 @@ Describe 'An ambiguous display name is refused at every swept call site' {
     It '<Cmdlet> reports <ErrorId> and issues no Graph request when <Resolver> refuses an ambiguous name' -ForEach $script:GuardCases {
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}
+        # Azure cases: a default ARM mock BEFORE the Pre loop, so a case's own Pre mock still wins.
+        Mock -ModuleName $script:moduleName Invoke-OERArmRequest {}
         foreach ($PreName in @($Pre.Keys)) {
             Mock -ModuleName $script:moduleName -CommandName $PreName -MockWith ([scriptblock]::Create("'$($Pre[$PreName])'"))
         }
@@ -512,6 +577,8 @@ Describe 'An ambiguous display name is refused at every swept call site' {
 
         # The mutation is refused: nothing reached Graph at all.
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+        # Nor did an Azure case send an ARM request after the refused lookup.
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0
         # Cmdlet-qualified id: a bare-code match would pass even with the WriteError deleted, because
         # PowerShell re-records the mock's thrown record into -ErrorVariable at every call boundary.
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq "$ErrorId,$Cmdlet" }).Count | Should -Be 1
@@ -539,6 +606,8 @@ Describe 'A failed resolver lookup is reported as itself at every swept call sit
     It '<Cmdlet> reports a 403 out of <Resolver> as a failure, never as *NotFound' -ForEach $script:GuardCases {
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}
+        # Azure cases: a default ARM mock BEFORE the Pre loop, so a case's own Pre mock still wins.
+        Mock -ModuleName $script:moduleName Invoke-OERArmRequest {}
         foreach ($PreName in @($Pre.Keys)) {
             Mock -ModuleName $script:moduleName -CommandName $PreName -MockWith ([scriptblock]::Create("'$($Pre[$PreName])'"))
         }
@@ -576,5 +645,7 @@ Describe 'A failed resolver lookup is reported as itself at every swept call sit
         # Nothing reached Graph after the failed lookup. Only meaningful beside the count above, which
         # proves the catch was reached: a not-found fall-through also returns before any Graph call.
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+        # Nor did an Azure case send an ARM request after the refused lookup.
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0
     }
 }
