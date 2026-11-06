@@ -64,7 +64,10 @@ function Resolve-OERGroupPimPolicyChange {
     live value is unknown (isExpirationRequired gave none) is never read as false: when only the
     permanence is declared over a known duration it is named in UnknownLiveValues too and nothing is
     sent; with both halves declared an unknown live permanence counts as different, so the declared
-    pair is sent. A null Current is compared exactly as before.
+    pair is sent. A declared requireApproval over a live RequireApproval of null (the policy carries
+    no Approval_EndUser_Assignment rule) is named in UnknownLiveValues too, never read as false, and
+    no RequireApproval and no approver parameter is sent for that access type. A null Current is
+    compared exactly as before.
 
     .PARAMETER Declared
     The declared pimPolicy block for one access type: either a member/owner sub-object or the flat
@@ -255,7 +258,13 @@ function Resolve-OERGroupPimPolicyChange {
     }
 
     # -- scalar: requireApproval -------------------------------------------------------------
-    if (Test-DeclHas $Declared 'requireApproval') {
+    # A live policy with no Approval_EndUser_Assignment rule gives RequireApproval $null: unknown, never
+    # read as false (BL-161d). Nothing is sent for approval or approvers then; the handler refuses the
+    # access type with PimRuleValueUnknown.
+    $ApprovalUnknown = (Test-DeclHas $Declared 'requireApproval') -and $null -ne $Current -and $null -eq $Current.RequireApproval
+    if ($ApprovalUnknown) {
+        $UnknownLiveValues.Add('requireApproval is declared, and whether the live policy requires approval on activation (Approval_EndUser_Assignment isApprovalRequired) is unknown: the read returned no value for it')
+    } elseif (Test-DeclHas $Declared 'requireApproval') {
         $D = [bool]$Declared.requireApproval
         if ($null -eq $Current -or $D -ne [bool]$Current.RequireApproval) {
             $SetParams.RequireApproval = $D; $Changes.Add("requireApproval=$D")
@@ -280,7 +289,9 @@ function Resolve-OERGroupPimPolicyChange {
     $HasDeclUser  = Test-DeclHas $Declared.approvers 'users'
     $HasDeclGroup = Test-DeclHas $Declared.approvers 'groups'
     $ApprovalExplicitlyOff = (Test-DeclHas $Declared 'requireApproval') -and (-not [bool]$Declared.requireApproval)
-    if (($HasDeclUser -or $HasDeclGroup) -and $ApprovalExplicitlyOff) {
+    if ($ApprovalUnknown) {
+        # Nothing to send: approvers apply only while approval is required, which is unknown.
+    } elseif (($HasDeclUser -or $HasDeclGroup) -and $ApprovalExplicitlyOff) {
         $Changes.Add('approvers ignored: requireApproval=False takes precedence (approvers only apply when approval is required)')
     } elseif ($HasDeclUser -or $HasDeclGroup) {
         $CurAll   = if ($null -ne $Current) { @(@($Current.Approvers) | Where-Object { $_ }) } else { @() }

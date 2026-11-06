@@ -629,6 +629,48 @@ Describe 'Resolve-OERGroupPimPolicyChange: the undeclared half of an expiration 
     }
 }
 
+Describe 'Resolve-OERGroupPimPolicyChange: approval' {
+    Context 'an unknown live approval is never read as false (BL-161d)' {
+        BeforeAll {
+            $script:ApprovalText = 'requireApproval is declared, and whether the live policy requires approval on activation (Approval_EndUser_Assignment isApprovalRequired) is unknown: the read returned no value for it'
+        }
+
+        It 'names the approval and sends nothing: declared requireApproval <Declared>, live RequireApproval null' -ForEach @(
+            @{ Declared = $false }
+            @{ Declared = $true }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Declared = $Declared; Text = $script:ApprovalText } {
+                param($Declared, $Text)
+                $Current = [pscustomobject]@{ RequireApproval = $null }
+                $R = Resolve-OERGroupPimPolicyChange -Declared ([pscustomobject]@{ requireApproval = $Declared }) -Current $Current
+                @($R.UnknownLiveValues) | Should -Be @($Text)
+                $R.SetParams.ContainsKey('RequireApproval') | Should -BeFalse
+                $R.Changed | Should -BeFalse
+            }
+        }
+
+        It 'regression: declared false over a known live false sends nothing and names nothing' {
+            InModuleScope $script:moduleName {
+                $R = Resolve-OERGroupPimPolicyChange -Declared ([pscustomobject]@{ requireApproval = $false }) -Current ([pscustomobject]@{ RequireApproval = $false })
+                @($R.UnknownLiveValues) | Should -BeNullOrEmpty
+                $R.Changed | Should -BeFalse
+            }
+        }
+
+        It 'sends no RequireApproval and no approver parameter over an unknown live approval' {
+            InModuleScope $script:moduleName -Parameters @{ Text = $script:ApprovalText } {
+                param($Text)
+                $Declared = [pscustomobject]@{ requireApproval = $true; approvers = [pscustomobject]@{ users = @('11111111-1111-1111-1111-111111111111') } }
+                $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current ([pscustomobject]@{ RequireApproval = $null })
+                @($R.UnknownLiveValues) | Should -Be @($Text)
+                $R.SetParams.ContainsKey('RequireApproval') | Should -BeFalse
+                $R.SetParams.ContainsKey('ApproverUser') | Should -BeFalse
+                $R.Changed | Should -BeFalse
+            }
+        }
+    }
+}
+
 Describe 'Resolve-OERGroupPimPolicyChange: permanence' {
     Context 'an unknown live permanence is never read as false (BL-161d)' {
         # Current is a plain object: the permanence property is present with $null, or absent. The
