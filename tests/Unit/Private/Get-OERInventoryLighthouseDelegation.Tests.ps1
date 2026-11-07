@@ -300,6 +300,25 @@ Describe 'Get-OERInventoryLighthouseDelegation' {
             @($Result.Unread) | Should -Be @("lighthouseDelegations at $SubPath")
             @($Result.Causes)[0].Cause | Should -BeLike '*was listed without an id*'
         }
+
+        It 'raises the typed record LighthouseResourceGroupIdMissing, which reaches the caller''s -ErrorVariable with its message unchanged' {
+            $SubPath = "/subscriptions/$($script:SubA)"
+            $Unreferenced = New-LhDefinition -Sub $script:SubA -Guid '77777777-7777-7777-7777-777777777777'
+            $script:Replies["$SubPath$($script:AssignmentQuery)"] = New-LhList
+            $script:Replies["$SubPath$($script:DefinitionQuery)"] = New-LhList @($Unreferenced)
+            $script:Replies["$SubPath/resourcegroups?api-version=2025-04-01"] = New-LhList @([PSCustomObject]@{ id = ''; name = 'rg-one' })
+
+            $Run = InModuleScope $script:moduleName -Parameters @{ Sub = $script:SubA } {
+                $Out = Get-OERInventoryLighthouseDelegation -Scope "/subscriptions/$Sub" -WarningAction SilentlyContinue -ErrorVariable LhErr -ErrorAction SilentlyContinue
+                [PSCustomObject]@{ Out = $Out; Records = @($LhErr) }
+            }
+
+            $Message = "A resource group of the subscription '$($script:SubA)' was listed without an id, so its Azure Lighthouse delegations could not be read."
+            $Mine = @($Run.Records | Where-Object { [string]$_.FullyQualifiedErrorId -like 'LighthouseResourceGroupIdMissing*' })
+            $Mine.Count | Should -BeGreaterThan 0 -Because 'the record is observable in the caller''s -ErrorVariable'
+            $Mine[0].Exception.Message | Should -BeExactly $Message
+            @($Run.Out.Causes)[0].Cause | Should -BeExactly $Message
+        }
     }
 
     Context 'nothing is delegated' {
@@ -563,6 +582,25 @@ Describe 'Get-OERInventoryLighthouseDelegation' {
             @($Result.Delegations).Count | Should -Be 0
             @($Result.Unread) | Should -Be @("lighthouseDelegations at $SubPath")
             $Result.Causes[0].Cause | Should -BeExactly "The registration definition of the registration assignment '$($Assignment.id)' could not be read."
+        }
+
+        It 'raises the typed record RegistrationDefinitionUnread, which reaches the caller''s -ErrorVariable with its message unchanged' {
+            $SubPath = "/subscriptions/$($script:SubA)"
+            $Missing = New-LhDefinition -Sub $script:SubA -Guid '88888888-8888-8888-8888-888888888888'
+            $Assignment = New-LhAssignment -At $SubPath -Guid '66666666-6666-6666-6666-666666666666' -Definition $Missing
+            $script:Replies["$SubPath$($script:AssignmentQuery)"] = New-LhList @($Assignment)
+            $script:Replies["$SubPath$($script:DefinitionQuery)"] = New-LhList
+
+            $Run = InModuleScope $script:moduleName -Parameters @{ Sub = $script:SubA } {
+                $Out = Get-OERInventoryLighthouseDelegation -Scope "/subscriptions/$Sub" -WarningAction SilentlyContinue -ErrorVariable LhErr -ErrorAction SilentlyContinue
+                [PSCustomObject]@{ Out = $Out; Records = @($LhErr) }
+            }
+
+            $Message = "The registration definition of the registration assignment '$($Assignment.id)' could not be read."
+            $Mine = @($Run.Records | Where-Object { [string]$_.FullyQualifiedErrorId -like 'RegistrationDefinitionUnread*' })
+            $Mine.Count | Should -BeGreaterThan 0 -Because 'the record is observable in the caller''s -ErrorVariable'
+            $Mine[0].Exception.Message | Should -BeExactly $Message
+            $Run.Out.Causes[0].Cause | Should -BeExactly $Message
         }
 
         It 'scrubs the error record before it reads it' {

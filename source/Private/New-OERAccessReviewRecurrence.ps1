@@ -50,13 +50,21 @@ function New-OERAccessReviewRecurrence {
         [int]$DurationInDays
     )
     if ($PSBoundParameters.ContainsKey('EndDate') -and $PSBoundParameters.ContainsKey('Occurrences')) {
-        throw 'New-OERAccessReviewRecurrence: -EndDate and -Occurrences are mutually exclusive.'
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new('New-OERAccessReviewRecurrence: -EndDate and -Occurrences are mutually exclusive.'),
+            'MutuallyExclusiveParameter',
+            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+            $null)
     }
 
     $Invariant = [System.Globalization.CultureInfo]::InvariantCulture
     if ($Recurrence -eq 'OneTime') {
         if (-not $PSBoundParameters.ContainsKey('DurationInDays')) {
-            throw 'New-OERAccessReviewRecurrence: -DurationInDays is required for OneTime.'
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('New-OERAccessReviewRecurrence: -DurationInDays is required for OneTime.'),
+                'IncompleteRecurrence',
+                [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                $null)
         }
         # The measured Learn form: Graph reads the length of a one-time review from the range, so the
         # range ends -DurationInDays days after the start. A null pattern with a numbered range of

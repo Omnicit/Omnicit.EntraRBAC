@@ -106,7 +106,11 @@ function Resolve-OERAccessPackageId {
     )
     if ($Id) { return $Id }
     if (-not $DisplayName) {
-        throw 'Resolve-OERAccessPackageId requires either -Id or -DisplayName.'
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new('Resolve-OERAccessPackageId requires either -Id or -DisplayName.'),
+            'ResolverInputMissing',
+            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+            $null)
     }
     if (Test-OERGuid -Value $DisplayName) {
         # The declared codes are MEASURED, not guessed. A live run on 2026-09-11 issued exactly this

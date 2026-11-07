@@ -612,3 +612,77 @@ Describe 'Read-OERStructureDocument keeps a date-and-time string as written (BL-
         }
     }
 }
+
+Describe 'Read-OERStructureDocument typed error records' {
+    BeforeAll {
+        # The record Read-OERStructureDocument throws for the given arguments, or $null.
+        function Get-DocumentRecord {
+            param([hashtable]$Splat)
+            InModuleScope $script:moduleName -Parameters @{ Splat = $Splat } {
+                param($Splat)
+                $Record = $null
+                try { $null = Read-OERStructureDocument @Splat -ErrorAction Continue } catch { $Record = $PSItem }
+                $Record
+            }
+        }
+        function Write-TypedDocumentFile {
+            param([string]$Name, [string]$Text)
+            $File = Join-Path -Path $TestDrive -ChildPath $Name
+            [System.IO.File]::WriteAllText($File, $Text, [System.Text.UTF8Encoding]::new($false))
+            $File
+        }
+    }
+
+    It 'throws StructureDocumentNotAFile for a piped directory, naming its path' {
+        $Dir = Get-Item -LiteralPath $TestDrive
+        $R = Get-DocumentRecord -Splat @{ InputObject = $Dir }
+        $R | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $R.FullyQualifiedErrorId | Should -BeExactly 'StructureDocumentNotAFile'
+        $R.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $R.TargetObject | Should -BeExactly $Dir.FullName
+        $R.Exception.Message | Should -BeExactly "A directory ('$($Dir.FullName)') was piped to Read-OERStructureDocument. Pipe a file (or its path) instead, or use -Path directly."
+    }
+
+    It 'throws StructureDocumentNotFound for a path that is not a file' {
+        $Missing = Join-Path -Path $TestDrive -ChildPath 'typed-missing.json'
+        $R = Get-DocumentRecord -Splat @{ Path = $Missing }
+        $R | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $R.FullyQualifiedErrorId | Should -BeExactly 'StructureDocumentNotFound'
+        $R.CategoryInfo.Category | Should -Be 'ObjectNotFound'
+        $R.TargetObject | Should -BeExactly $Missing
+        $R.Exception.Message | Should -BeExactly "Structure document not found at path '$Missing'."
+    }
+
+    It 'throws StructureDocumentUnreadable with the caught exception inside when Get-Content throws' {
+        Mock -ModuleName $script:moduleName Get-Content { throw [System.IO.IOException]::new('read refused') }
+        $File = Write-TypedDocumentFile -Name 'typed-locked.json' -Text '{ "version": "1.0" }'
+        $R = Get-DocumentRecord -Splat @{ Path = $File }
+        $R | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $R.FullyQualifiedErrorId | Should -BeExactly 'StructureDocumentUnreadable'
+        $R.CategoryInfo.Category | Should -Be 'ReadError'
+        $R.TargetObject | Should -BeExactly $File
+        $R.Exception.Message | Should -BeExactly "The structure document at '$File' could not be read: read refused"
+        $R.Exception.InnerException.Message | Should -BeExactly 'read refused'
+    }
+
+    It 'throws StructureDocumentNotValid for <Name>' -ForEach @(
+        @{ Name = 'a file holding only white space'; Text = '  '; Message = 'The structure document is empty.'; Inner = $false }
+        @{ Name = 'a file that is not JSON'; Text = '{ not json'; Message = 'The structure document is not valid JSON: *'; Inner = $true }
+        @{ Name = 'a file whose root is an array'; Text = '[ 1 ]'; Message = 'The structure document root must be a single JSON object.'; Inner = $false }
+    ) {
+        $File = Write-TypedDocumentFile -Name 'typed-invalid.json' -Text $Text
+        $R = Get-DocumentRecord -Splat @{ Path = $File }
+        $R | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $R.FullyQualifiedErrorId | Should -BeExactly 'StructureDocumentNotValid'
+        $R.CategoryInfo.Category | Should -Be 'InvalidData'
+        $R.TargetObject | Should -BeExactly $File
+        $R.Exception.Message | Should -BeLike $Message
+        if ($Inner) { $R.Exception.InnerException | Should -Not -BeNullOrEmpty }
+    }
+
+    It 'throws StructureDocumentNotValid with a null target for inline JSON: Read-OERStructureDocument -Json ''[ 1 ]''' {
+        $R = Get-DocumentRecord -Splat @{ Json = '[ 1 ]' }
+        $R.FullyQualifiedErrorId | Should -BeExactly 'StructureDocumentNotValid'
+        $R.TargetObject | Should -BeNullOrEmpty
+    }
+}

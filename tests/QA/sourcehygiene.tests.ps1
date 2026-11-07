@@ -4878,3 +4878,203 @@ Invoke-ArmCallWithRefresh in the ARM wrapper (CLAUDE.md ## Authentication Archit
 '@
     }
 }
+
+Describe 'Private error record hygiene' -Tags 'SourceHygiene' {
+
+    BeforeAll {
+        $RootPath = (Resolve-Path -Path (Join-Path -Path $PSScriptRoot -ChildPath '..\..')).Path
+
+        function Test-OERStringExpression {
+            param($Ast)
+            while ($Ast -is [System.Management.Automation.Language.ParenExpressionAst]) {
+                $Inner = $Ast.Pipeline
+                if ($Inner -is [System.Management.Automation.Language.PipelineAst] -and
+                    $Inner.PipelineElements.Count -eq 1 -and
+                    $Inner.PipelineElements[0] -is [System.Management.Automation.Language.CommandExpressionAst]) {
+                    $Ast = $Inner.PipelineElements[0].Expression
+                } else {
+                    return $false
+                }
+            }
+            if ($Ast -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
+                $Ast -is [System.Management.Automation.Language.ExpandableStringExpressionAst]) {
+                return $true
+            }
+            if ($Ast -is [System.Management.Automation.Language.BinaryExpressionAst] -and
+                $Ast.Operator -in @('Plus', 'Format')) {
+                return ((Test-OERStringExpression -Ast $Ast.Left) -or (Test-OERStringExpression -Ast $Ast.Right))
+            }
+            $false
+        }
+
+        function Get-OERInnermostFunction {
+            param($Ast)
+            $Node = $Ast.Parent
+            while ($null -ne $Node -and $Node -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) {
+                $Node = $Node.Parent
+            }
+            $Node
+        }
+
+        function Get-OERStringThrow {
+            param(
+                [Parameter(Mandatory)]$Ast,
+                [Parameter(Mandatory)][string]$File
+            )
+            $Throws = $Ast.FindAll({ param($Node) $Node -is [System.Management.Automation.Language.ThrowStatementAst] }, $true)
+            foreach ($Throw in $Throws) {
+                if ($null -eq $Throw.Pipeline) { continue }
+                $Operand = $Throw.Pipeline
+                if ($Operand -is [System.Management.Automation.Language.PipelineAst] -and
+                    $Operand.PipelineElements.Count -eq 1 -and
+                    $Operand.PipelineElements[0] -is [System.Management.Automation.Language.CommandExpressionAst]) {
+                    $Operand = $Operand.PipelineElements[0].Expression
+                } else {
+                    continue
+                }
+                while ($Operand -is [System.Management.Automation.Language.ParenExpressionAst]) {
+                    $Inner = $Operand.Pipeline
+                    if ($Inner -is [System.Management.Automation.Language.PipelineAst] -and
+                        $Inner.PipelineElements.Count -eq 1 -and
+                        $Inner.PipelineElements[0] -is [System.Management.Automation.Language.CommandExpressionAst]) {
+                        $Operand = $Inner.PipelineElements[0].Expression
+                    } else {
+                        break
+                    }
+                }
+                $IsString = Test-OERStringExpression -Ast $Operand
+                if (-not $IsString -and $Operand -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                    $Name = $Operand.VariablePath.UserPath
+                    $Scope = Get-OERInnermostFunction -Ast $Throw
+                    $Root = if ($null -ne $Scope) { $Scope } else { $Ast }
+                    $Assignments = $Root.FindAll({
+                            param($Node)
+                            $Node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                            $Node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                            $Node.Left.VariablePath.UserPath -eq $Name
+                        }, $true)
+                    foreach ($Assignment in $Assignments) {
+                        if ($null -ne $Scope -and (Get-OERInnermostFunction -Ast $Assignment) -ne $Scope) { continue }
+                        $Right = $Assignment.Right
+                        if ($Right -is [System.Management.Automation.Language.PipelineAst] -and
+                            $Right.PipelineElements.Count -eq 1 -and
+                            $Right.PipelineElements[0] -is [System.Management.Automation.Language.CommandExpressionAst]) {
+                            $Right = $Right.PipelineElements[0].Expression
+                        } elseif ($Right -is [System.Management.Automation.Language.CommandExpressionAst]) {
+                            $Right = $Right.Expression
+                        }
+                        if (Test-OERStringExpression -Ast $Right) { $IsString = $true; break }
+                    }
+                }
+                if ($IsString) {
+                    [PSCustomObject]@{ File = $File; Line = $Throw.Extent.StartLineNumber; Operand = $Operand.Extent.Text }
+                }
+            }
+        }
+
+        function ConvertTo-OERMiniatureThrow {
+            param([string]$Code)
+            $Errors = $null
+            $Parsed = [System.Management.Automation.Language.Parser]::ParseInput($Code, [ref]$null, [ref]$Errors)
+            @(Get-OERStringThrow -Ast $Parsed -File 'mini.ps1')
+        }
+
+        # Named exceptions, keyed by file name and operand text, never by line. Each stays a string
+        # on purpose; the reasons are in docs/development/rationale.md#error-handling and
+        # docs/development/rationale.md#role-lookup-unresolved.
+        $ExceptionList = @(
+            # E1: its published id through Invoke-OERStructure IS the message today, and the
+            # internal RoleDefinitionUnresolved id must never be published by the apply engine.
+            @{ File = 'Resolve-OERRoleDefinitionId.ps1'; Operand = '$NotFoundMessage' }
+            # E2: the same no-match design as E1 for the policy lookup; a test pins FQID == message.
+            @{ File = 'Get-OERRoleManagementPolicyId.ps1'; Operand = '$NotFoundMessage' }
+        )
+
+        $ParseFailures = [System.Collections.Generic.List[string]]::new()
+        $FileCount = 0
+        $ThrowCount = 0
+        $TypedCount = 0
+        $Found = [System.Collections.Generic.List[object]]::new()
+        $Files = Get-ChildItem -Path (Join-Path -Path $RootPath -ChildPath 'source\Private'), (Join-Path -Path $RootPath -ChildPath 'source\Public') -Filter '*.ps1' -File
+        foreach ($File in $Files) {
+            $Errors = $null
+            $Parsed = [System.Management.Automation.Language.Parser]::ParseFile($File.FullName, [ref]$null, [ref]$Errors)
+            if ($Errors -and $Errors.Count -gt 0) { $ParseFailures.Add($File.Name); continue }
+            $FileCount++
+            $Throws = $Parsed.FindAll({ param($Node) $Node -is [System.Management.Automation.Language.ThrowStatementAst] }, $true)
+            $ThrowCount += @($Throws).Count
+            foreach ($Throw in $Throws) {
+                if ($Throw.Extent.Text -match '^throw\s+\[(System\.Management\.Automation\.)?ErrorRecord\]::new\(') { $TypedCount++ }
+            }
+            foreach ($Row in @(Get-OERStringThrow -Ast $Parsed -File $File.Name)) { $Found.Add($Row) }
+        }
+        $script:TypedErrorParseFailures = $ParseFailures
+        $script:TypedErrorFileCount = $FileCount
+        $script:TypedErrorThrowCount = $ThrowCount
+        $script:TypedErrorTypedCount = $TypedCount
+        $script:TypedErrorFound = $Found
+        $script:TypedErrorExceptions = $ExceptionList
+    }
+
+    It 'parses the tree and scans a meaningful number of throw statements' {
+        <#
+            Non-vacuity guard. Measured on 2026-11-07 over source/Private and source/Public after
+            Sprint 13 step 5: 155 throw statements, 88 of them typed ErrorRecord throws.
+        #>
+        $script:TypedErrorParseFailures | Should -BeNullOrEmpty -Because (
+            'a source file that no longer parses silently drops out of this scan; fix the file rather than letting the gate measure less than the tree')
+        $script:TypedErrorFileCount | Should -BeGreaterThan 190 -Because (
+            'source/Private and source/Public held more than 190 parseable files when this gate was written; below that the scan has lost a directory')
+        $script:TypedErrorThrowCount | Should -BeGreaterThan 145 -Because (
+            'the tree held 155 throw statements when this gate was written; below 145 the AST walk has broken, not found less code')
+        $script:TypedErrorTypedCount | Should -BeGreaterThan 80 -Because (
+            'the tree held 88 typed ErrorRecord throws when this gate was written; below 80 the typed-throw recognition has broken')
+    }
+
+    It 'recognises the string throw shapes it is written to detect (known answers)' {
+        $Flagged = [ordered]@{
+            'single-quoted'   = "function F { throw 'a message' }"
+            'double-quoted'   = 'function F { throw "a message $x" }'
+            'parenthesised'   = "function F { throw ('a message') }"
+            'plus'            = 'function F { throw ''a'' + $b }'
+            'format'          = 'function F { throw (''{0} bad'' -f $x) }'
+            'string variable' = 'function F { $Msg = ''x '' + $y; throw $Msg }'
+        }
+        foreach ($Name in $Flagged.Keys) {
+            @(ConvertTo-OERMiniatureThrow -Code $Flagged[$Name]).Count | Should -Be 1 -Because "the $Name throw is a string throw"
+        }
+        $Clean = [ordered]@{
+            'bare rethrow'               = 'function F { try { 1 } catch { throw } }'
+            'throw PSItem'               = 'function F { try { 1 } catch { throw $PSItem } }'
+            'record variable'            = 'function F { $Err = [System.Management.Automation.ErrorRecord]::new([System.Exception]::new(''m''), ''Id'', [System.Management.Automation.ErrorCategory]::InvalidArgument, $null); throw $Err }'
+            'ErrorRecord'                = 'function F { throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new(''m''), ''Id'', [System.Management.Automation.ErrorCategory]::InvalidArgument, $null) }'
+            'command call'               = 'function F { throw (New-OERSignInRefusedError -Reason x) }'
+            'variable in other function' = 'function G { $Msg = ''x'' } function F { throw $Msg }'
+        }
+        foreach ($Name in $Clean.Keys) {
+            @(ConvertTo-OERMiniatureThrow -Code $Clean[$Name]).Count | Should -Be 0 -Because "the $Name throw is not a string throw"
+        }
+    }
+
+    It 'has no stale entry in the exception list' {
+        foreach ($Entry in $script:TypedErrorExceptions) {
+            $Hits = @($script:TypedErrorFound | Where-Object { $_.File -eq $Entry.File -and $_.Operand -ceq $Entry.Operand })
+            $Hits.Count | Should -Be 1 -Because "the exception for $($Entry.File) ($($Entry.Operand)) must match exactly one string throw; remove an entry whose throw is gone"
+        }
+    }
+
+    It 'throws no string outside the named exceptions' {
+        $Violations = foreach ($Row in $script:TypedErrorFound) {
+            $Listed = @($script:TypedErrorExceptions | Where-Object { $_.File -eq $Row.File -and $_.Operand -ceq $Row.Operand })
+            if ($Listed.Count -eq 0) { "$($Row.File):$($Row.Line) throw $($Row.Operand)" }
+        }
+        $Violations -join "`n" | Should -BeNullOrEmpty -Because @'
+A bare string throw gives the caller a record whose FullyQualifiedErrorId is the message text,
+category OperationStopped and a RuntimeException: a caller that publishes the record as itself shows
+the operator the message as the id. Throw a typed
+[System.Management.Automation.ErrorRecord]::new(<exception>, '<ErrorId>', <ErrorCategory>, <target>)
+with the same message instead. Do NOT add an entry to the exception list without a ruling recorded in
+docs/development/rationale.md#error-handling.
+'@
+    }
+}

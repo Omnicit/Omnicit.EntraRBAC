@@ -149,36 +149,65 @@ function ConvertTo-OERPolicyBody {
     )
     if ($PSBoundParameters.ContainsKey('RequestorScope')) {
         if ($RequestorScope.PSObject.TypeNames -notcontains 'Omnicit.EntraRBAC.RequestorScope') {
-            throw '-RequestorScope must be an object from New-OERAccessPackageRequestorScope.'
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('-RequestorScope must be an object from New-OERAccessPackageRequestorScope.'),
+                'PolicyBuilderObjectRequired',
+                [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                $RequestorScope)
         }
     } elseif (-not $Existing) {
-        throw '-RequestorScope is required when no -Existing policy is supplied.'
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new('-RequestorScope is required when no -Existing policy is supplied.'),
+            'RequestorScopeRequired',
+            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+            $null)
     }
     if ($PSBoundParameters.ContainsKey('RequestorSettings') -and
         $RequestorSettings.PSObject.TypeNames -notcontains 'Omnicit.EntraRBAC.RequestorSettings') {
-        throw '-RequestorSettings must be an object from New-OERAccessPackageRequestorSettings.'
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new('-RequestorSettings must be an object from New-OERAccessPackageRequestorSettings.'),
+            'PolicyBuilderObjectRequired',
+            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+            $RequestorSettings)
     }
 
     # BL-161a backstop: with -Existing, a read lacking expiration, requestApprovalSettings,
     # requestorSettings or notificationSettings must not fall to the builder default. Set-OERAccessPackageAssignmentPolicy refuses first; this throws.
     if ($Existing) {
+        $ExistingPolicyId = $Existing['id']
         if ($null -eq $Existing.expiration -and
             -not ($PSBoundParameters.ContainsKey('DurationInDays') -or
                 $PSBoundParameters.ContainsKey('DurationInHours') -or
                 $PSBoundParameters.ContainsKey('ExpirationDateTime'))) {
-            throw 'The existing policy has no expiration and no -DurationInDays, -DurationInHours or -ExpirationDateTime was given; writing the default would replace it.'
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('The existing policy has no expiration and no -DurationInDays, -DurationInHours or -ExpirationDateTime was given; writing the default would replace it.'),
+                'AssignmentPolicyValueUnknown',
+                [System.Management.Automation.ErrorCategory]::InvalidData,
+                $ExistingPolicyId)
         }
         if ($null -eq $Existing.requestApprovalSettings -and
             -not ($PSBoundParameters.ContainsKey('ApprovalStage') -and
                 $PSBoundParameters.ContainsKey('RequireRequestorJustification') -and
                 $PSBoundParameters.ContainsKey('RequireApprovalForUpdate'))) {
-            throw 'The existing policy has no requestApprovalSettings and -ApprovalStage, -RequireRequestorJustification and -RequireApprovalForUpdate were not all given; writing the default would replace it.'
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('The existing policy has no requestApprovalSettings and -ApprovalStage, -RequireRequestorJustification and -RequireApprovalForUpdate were not all given; writing the default would replace it.'),
+                'AssignmentPolicyValueUnknown',
+                [System.Management.Automation.ErrorCategory]::InvalidData,
+                $ExistingPolicyId)
         }
         if ($null -eq $Existing.requestorSettings -and -not $PSBoundParameters.ContainsKey('RequestorSettings')) {
-            throw 'The existing policy has no requestorSettings and no -RequestorSettings was given; writing the default would replace it.'
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('The existing policy has no requestorSettings and no -RequestorSettings was given; writing the default would replace it.'),
+                'AssignmentPolicyValueUnknown',
+                [System.Management.Automation.ErrorCategory]::InvalidData,
+                $ExistingPolicyId)
         }
         if ($null -eq $Existing.notificationSettings -and -not $PSBoundParameters.ContainsKey('DisableAssignmentNotifications')) {
-            throw 'The existing policy has no notificationSettings and no -DisableAssignmentNotifications was given; writing the default would replace it.'
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('The existing policy has no notificationSettings and no -DisableAssignmentNotifications was given; writing the default would replace it.'),
+                'AssignmentPolicyValueUnknown',
+                [System.Management.Automation.ErrorCategory]::InvalidData,
+                $ExistingPolicyId)
         }
     }
 
@@ -186,7 +215,11 @@ function ConvertTo-OERPolicyBody {
     foreach ($Stage in @($ApprovalStage)) {
         if ($null -eq $Stage) { continue }
         if ($Stage.PSObject.TypeNames -notcontains 'Omnicit.EntraRBAC.ApprovalStage') {
-            throw '-ApprovalStage entries must be objects from New-OERAccessPackageApprovalStage.'
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('-ApprovalStage entries must be objects from New-OERAccessPackageApprovalStage.'),
+                'PolicyBuilderObjectRequired',
+                [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                $Stage)
         }
         $Stages += $Stage.GraphStage
     }
@@ -370,7 +403,11 @@ function ConvertTo-OERPolicyBody {
                 $Extension = $StageSetting['customExtension']
                 $ExtensionId = if ($Extension -is [System.Collections.IDictionary]) { [string]$Extension['id'] } else { '' }
                 if ([string]::IsNullOrWhiteSpace($ExtensionId)) {
-                    throw "The existing policy has a custom extension stage '$([string]$StageSetting['stage'])' whose custom extension id was not read, so it cannot be carried forward and the update would remove it. No update was sent; read the policy with its custom extension stages (or remove the stage) before updating it."
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("The existing policy has a custom extension stage '$([string]$StageSetting['stage'])' whose custom extension id was not read, so it cannot be carried forward and the update would remove it. No update was sent; read the policy with its custom extension stages (or remove the stage) before updating it."),
+                        'CustomExtensionStageUnread',
+                        [System.Management.Automation.ErrorCategory]::InvalidData,
+                        [string]$StageSetting['stage'])
                 }
                 $Ref = @{ id = $ExtensionId }
                 if ($Extension['@odata.type']) { $Ref['@odata.type'] = [string]$Extension['@odata.type'] }

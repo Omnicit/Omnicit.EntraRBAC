@@ -2268,6 +2268,36 @@ $Item = '{ "displayName": "grp-luo", "owners": [ "person2@example.com" ] }' | Co
                 Should -Invoke New-OERGroup -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'literal_name' }
             }
         }
+
+        It 'publishes the real Resolve-OERName refusal as the typed record NameTemplateUnresolved and writes nothing' {
+            # The handler has no catch around the name resolution, so the record that leaves it is the one
+            # Invoke-OERStructure's handler catch republishes as itself.
+            $Caught = InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = $DisplayName } }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    template = 'role_sec_{area}_{tier}'
+                    tokens   = [PSCustomObject]@{ area = 'identity' }
+                }
+                $Result = $null
+                try { Invoke-SyncGroupViaCaller -Item $Item | Out-Null } catch { $Result = $PSItem }
+                Should -Invoke New-OERGroup -Times 0 -Exactly
+                $Result
+            }
+            $Caught | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+            $Caught.FullyQualifiedErrorId | Should -BeExactly 'NameTemplateUnresolved'
+            $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Caught.TargetObject | Should -BeExactly 'role_sec_{area}_{tier}'
+            $Caught.Exception.Message | Should -BeExactly "Naming template 'role_sec_{area}_{tier}' has unresolved token(s): tier. Supply a value for each token."
+        }
     }
 
     Context 'tokens hash passed to Resolve-OERName (site 121)' {

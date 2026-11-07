@@ -62,3 +62,18 @@ Describe 'New-OERScheduleInfo' {
         }
     }
 }
+
+Describe 'New-OERScheduleInfo typed error records' {
+    It 'throws MutuallyExclusiveParameter as a typed record: New-OERScheduleInfo -Duration PT1H -Permanent' {
+        $Caught = InModuleScope 'Omnicit.EntraRBAC' {
+            $Result = $null
+            try { New-OERScheduleInfo -Duration 'PT1H' -Permanent } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'MutuallyExclusiveParameter'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject | Should -BeNullOrEmpty
+        $Caught.Exception.Message | Should -BeExactly 'Supply at most one of -Duration, -EndDateTime or -Permanent (got: -Duration, -Permanent).'
+    }
+}

@@ -73,7 +73,11 @@ function New-OERDirectoryRoleScheduleRequestBody {
         [string]$TicketSystem
     )
     if ($Duration -and $PSBoundParameters.ContainsKey('EndDateTime')) {
-        throw 'Supply either -Duration or -EndDateTime, not both.'
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new('Supply either -Duration or -EndDateTime, not both.'),
+            'MutuallyExclusiveParameter',
+            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+            $null)
     }
     $Body = @{
         action           = $Action

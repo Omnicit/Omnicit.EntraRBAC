@@ -95,7 +95,11 @@ function Read-OERStructureDocument {
     $EffectivePath = $Path
     if ($PSCmdlet.ParameterSetName -eq 'InputObject') {
         if ($InputObject -is [System.IO.DirectoryInfo]) {
-            throw "A directory ('$($InputObject.FullName)') was piped to Read-OERStructureDocument. Pipe a file (or its path) instead, or use -Path directly."
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new("A directory ('$($InputObject.FullName)') was piped to Read-OERStructureDocument. Pipe a file (or its path) instead, or use -Path directly."),
+                'StructureDocumentNotAFile',
+                [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                $InputObject.FullName)
         }
         elseif ($InputObject -is [System.IO.FileInfo]) {
             $EffectiveParameterSetName = 'Path'
@@ -131,7 +135,11 @@ function Read-OERStructureDocument {
     }
     if ($EffectiveParameterSetName -eq 'Path') {
         if (-not (Test-Path -LiteralPath $EffectivePath -PathType Leaf)) {
-            throw "Structure document not found at path '$EffectivePath'."
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new("Structure document not found at path '$EffectivePath'."),
+                'StructureDocumentNotFound',
+                [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                $EffectivePath)
         }
         try {
             # -ErrorAction Stop (BL-154): for a file it cannot open (a lock, no read permission) Get-Content
@@ -141,11 +149,19 @@ function Read-OERStructureDocument {
             $Json = Get-Content -LiteralPath $EffectivePath -Raw -ErrorAction Stop
         } catch {
             Remove-OERErrorRecord -Record $PSItem
-            throw "The structure document at '$EffectivePath' could not be read: $($PSItem.Exception.Message)"
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new("The structure document at '$EffectivePath' could not be read: $($PSItem.Exception.Message)", $PSItem.Exception),
+                'StructureDocumentUnreadable',
+                [System.Management.Automation.ErrorCategory]::ReadError,
+                $EffectivePath)
         }
     }
     if ([string]::IsNullOrWhiteSpace($Json)) {
-        throw 'The structure document is empty.'
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new('The structure document is empty.'),
+            'StructureDocumentNotValid',
+            [System.Management.Automation.ErrorCategory]::InvalidData,
+            $EffectivePath)
     }
     # BL-154 (R-11): -DateKind String leaves every string as written, so a string that holds an ISO 8601
     # date and time with seconds never becomes a [datetime] while it parses. The parse names the
@@ -156,10 +172,18 @@ function Read-OERStructureDocument {
         $Doc = $Json | Microsoft.PowerShell.Utility\ConvertFrom-Json @ParseParameters
     } catch {
         Remove-OERErrorRecord -Record $PSItem
-        throw "The structure document is not valid JSON: $($PSItem.Exception.Message)"
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new("The structure document is not valid JSON: $($PSItem.Exception.Message)", $PSItem.Exception),
+            'StructureDocumentNotValid',
+            [System.Management.Automation.ErrorCategory]::InvalidData,
+            $EffectivePath)
     }
     if ($Doc -is [System.Array] -or $null -eq $Doc -or $Doc -is [string] -or $Doc -is [ValueType]) {
-        throw 'The structure document root must be a single JSON object.'
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new('The structure document root must be a single JSON object.'),
+            'StructureDocumentNotValid',
+            [System.Management.Automation.ErrorCategory]::InvalidData,
+            $EffectivePath)
     }
     # --- Enum casing normalization -----------------------------------------------------------
     # Resolve-OERStructureEnumCasing owns the canonical spelling. Test-OERStructureSchema accepts any

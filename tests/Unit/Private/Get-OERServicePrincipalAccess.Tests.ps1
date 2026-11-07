@@ -789,6 +789,34 @@ Describe 'Get-OERServicePrincipalAccess' {
             $Result.Causes[0].Target | Should -BeExactly $script:PermissionListUri
         }
 
+        It 'raises the typed record <Id> inside, which reaches the caller''s -ErrorVariable with its message unchanged, and still names the cause' -ForEach @(
+            @{ Id = 'GraphListValueMissing'; Case = 'novalue'; Message = 'Microsoft Graph returned no value collection for the list.' }
+            @{ Id = 'GraphListedIdMissing'; Case = 'noid'; Message = 'Microsoft Graph listed a service principal without an id.' }
+            @{ Id = 'GraphExpansionMissing'; Case = 'noexpansion'; Message = 'Microsoft Graph returned it without its expanded owners collection, so the expansion did not happen.' }
+            @{ Id = 'GraphAppRolesMissing'; Case = 'noroles'; Message = 'Microsoft Graph returned it without its appRoles collection, so the roles it declares are not known.' }
+            @{ Id = 'GraphOwnerIdMissing'; Case = 'noownerid'; Message = 'Microsoft Graph returned an owner without its id.' }
+        ) {
+            switch ($Case) {
+                'novalue' { $script:Replies[$script:SpOwnerListUri] = @{ other = 1 } }
+                'noid' { $script:Replies[$script:PermissionListUri].value[1].Remove('id') }
+                'noexpansion' { $script:Replies[$script:AppOwnerListUri].value[0].Remove('owners') }
+                'noroles' { $script:Replies[$script:PermissionListUri].value[1].Remove('appRoles') }
+                'noownerid' {
+                    $script:Replies[$script:SpOwnerListUri].value[0].owners = @(@{ '@odata.type' = '#microsoft.graph.user'; displayName = 'Person Two' })
+                    $script:Replies[(Get-SpOwnerReReadUri -Id $script:ClientId)] = New-SpaList @(@{ '@odata.type' = '#microsoft.graph.user'; id = '  '; displayName = 'Person Two' })
+                }
+            }
+            $Run = InModuleScope $script:moduleName {
+                $Read = Get-OERServicePrincipalAccess -ErrorVariable SpaErr -ErrorAction SilentlyContinue
+                [PSCustomObject]@{ Result = $Read; Records = @($SpaErr) }
+            }
+            $Mine = @($Run.Records | Where-Object { [string]$_.FullyQualifiedErrorId -like "$Id*" })
+            $Mine.Count | Should -BeGreaterThan 0 -Because "the record $Id is observable in the caller's -ErrorVariable"
+            $Mine[0].Exception.Message | Should -BeExactly $Message
+            [string]$Mine[0].FullyQualifiedErrorId | Should -Not -BeExactly $Message
+            @($Run.Result.Causes | Where-Object { $_.Cause -like "*$Message" }).Count | Should -BeGreaterThan 0
+        }
+
         It 'leaves the grants unread when the lookup answers Read false for a user, naming each such user' {
             $script:Lookup[$script:UserGone] = [PSCustomObject]@{ Id = $script:UserGone; Read = $false; Found = $false; Name = $null; ObjectType = $null; DisplayName = $null; UserPrincipalName = $null; Cause = 'Too many requests (429).' }
             $Result = Invoke-Spa

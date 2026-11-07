@@ -98,7 +98,13 @@ function Resolve-OERPolicyRulePatch {
     # locals (which PSReviewUnusedParameter cannot follow into nested functions).
     function Get-RuleClone ([hashtable]$Source, [hashtable]$Cache, [string]$Id) {
         if ($Cache.ContainsKey($Id)) { return $Cache[$Id] }
-        if (-not $Source.ContainsKey($Id)) { throw "The policy has no '$Id' rule to update." }
+        if (-not $Source.ContainsKey($Id)) {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new("The policy has no '$Id' rule to update."),
+                'PolicyRuleMissing',
+                [System.Management.Automation.ErrorCategory]::InvalidData,
+                $Id)
+        }
         $Clone = $Source[$Id] | ConvertTo-Json -Depth 100 | ConvertFrom-Json
         $Cache[$Id] = $Clone
         $Clone
@@ -349,7 +355,11 @@ function Resolve-OERPolicyRulePatch {
 
     switch ($Resolution.Action) {
         'Conflict' {
-            throw 'Cannot enable both multi-factor authentication and an authentication context on activation; Azure PIM treats them as mutually exclusive. Set only one.'
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Cannot enable both multi-factor authentication and an authentication context on activation; Azure PIM treats them as mutually exclusive. Set only one.'),
+                'MfaAuthenticationContextConflict',
+                [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                $null)
         }
         'DisableAuthContext' {
             $Rule = Get-RuleClone -Source $ById -Cache $Touched -Id 'AuthenticationContext_EndUser_Assignment'

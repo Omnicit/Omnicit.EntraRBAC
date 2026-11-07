@@ -27,6 +27,17 @@ stages:
           vmImage: 'ubuntu-latest'
         steps:
           - pwsh: |
+              $Floor = [version]'7.6'
+              $Declared = [version](Import-PowerShellDataFile -Path ./source/Omnicit.EntraRBAC.psd1).PowerShellVersion
+              if ($Declared -gt $Floor) { $Floor = $Declared }
+              $Actual = $PSVersionTable.PSVersion
+              Write-Host "PowerShell $Actual on $($PSVersionTable.OS); the module requires $Floor or later."
+              if ([version]::new($Actual.Major, $Actual.Minor, $Actual.Patch) -lt $Floor) {
+                  Write-Host "##vso[task.logissue type=error]PowerShell $Actual is older than $Floor, the floor the module manifest declares."
+                  exit 1
+              }
+            displayName: 'Check PowerShell version'
+          - pwsh: |
               dotnet tool install --global GitVersion.Tool --version 5.*
               $gitVersionObject = dotnet-gitversion | ConvertFrom-Json
               $gitVersionObject.PSObject.Properties.ForEach{
@@ -64,6 +75,17 @@ stages:
         pool:
           vmImage: 'ubuntu-latest'
         steps:
+          - pwsh: |
+              $Floor = [version]'7.6'
+              $Declared = [version](Import-PowerShellDataFile -Path ./source/Omnicit.EntraRBAC.psd1).PowerShellVersion
+              if ($Declared -gt $Floor) { $Floor = $Declared }
+              $Actual = $PSVersionTable.PSVersion
+              Write-Host "PowerShell $Actual on $($PSVersionTable.OS); the module requires $Floor or later."
+              if ([version]::new($Actual.Major, $Actual.Minor, $Actual.Patch) -lt $Floor) {
+                  Write-Host "##vso[task.logissue type=error]PowerShell $Actual is older than $Floor, the floor the module manifest declares."
+                  exit 1
+              }
+            displayName: 'Check PowerShell version'
           - task: DownloadPipelineArtifact@2
             displayName: 'Download Build Artifact'
             inputs:
@@ -100,6 +122,17 @@ stages:
         pool:
           vmImage: 'windows-latest'
         steps:
+          - pwsh: |
+              $Floor = [version]'7.6'
+              $Declared = [version](Import-PowerShellDataFile -Path ./source/Omnicit.EntraRBAC.psd1).PowerShellVersion
+              if ($Declared -gt $Floor) { $Floor = $Declared }
+              $Actual = $PSVersionTable.PSVersion
+              Write-Host "PowerShell $Actual on $($PSVersionTable.OS); the module requires $Floor or later."
+              if ([version]::new($Actual.Major, $Actual.Minor, $Actual.Patch) -lt $Floor) {
+                  Write-Host "##vso[task.logissue type=error]PowerShell $Actual is older than $Floor, the floor the module manifest declares."
+                  exit 1
+              }
+            displayName: 'Check PowerShell version'
           - task: DownloadPipelineArtifact@2
             displayName: 'Download Build Artifact'
             inputs:
@@ -137,6 +170,17 @@ stages:
         pool:
           vmImage: 'macos-latest'
         steps:
+          - pwsh: |
+              $Floor = [version]'7.6'
+              $Declared = [version](Import-PowerShellDataFile -Path ./source/Omnicit.EntraRBAC.psd1).PowerShellVersion
+              if ($Declared -gt $Floor) { $Floor = $Declared }
+              $Actual = $PSVersionTable.PSVersion
+              Write-Host "PowerShell $Actual on $($PSVersionTable.OS); the module requires $Floor or later."
+              if ([version]::new($Actual.Major, $Actual.Minor, $Actual.Patch) -lt $Floor) {
+                  Write-Host "##vso[task.logissue type=error]PowerShell $Actual is older than $Floor, the floor the module manifest declares."
+                  exit 1
+              }
+            displayName: 'Check PowerShell version'
           - task: DownloadPipelineArtifact@2
             displayName: 'Download Build Artifact'
             inputs:
@@ -179,6 +223,17 @@ stages:
           vmImage: 'ubuntu-latest'
         timeoutInMinutes: 0
         steps:
+          - pwsh: |
+              $Floor = [version]'7.6'
+              $Declared = [version](Import-PowerShellDataFile -Path ./source/Omnicit.EntraRBAC.psd1).PowerShellVersion
+              if ($Declared -gt $Floor) { $Floor = $Declared }
+              $Actual = $PSVersionTable.PSVersion
+              Write-Host "PowerShell $Actual on $($PSVersionTable.OS); the module requires $Floor or later."
+              if ([version]::new($Actual.Major, $Actual.Minor, $Actual.Patch) -lt $Floor) {
+                  Write-Host "##vso[task.logissue type=error]PowerShell $Actual is older than $Floor, the floor the module manifest declares."
+                  exit 1
+              }
+            displayName: 'Check PowerShell version'
           - pwsh: |
               $repositoryOwner,$repositoryName = $env:BUILD_REPOSITORY_NAME -split '/'
               echo "##vso[task.setvariable variable=RepositoryOwner;isOutput=true]$repositoryOwner"

@@ -208,3 +208,44 @@ Describe 'Resolve-OERName' {
         }
     }
 }
+
+Describe 'Resolve-OERName typed error records' {
+    It 'throws NameTemplateUnresolved as a typed record: Resolve-OERName -Template x-{a} -Tokens @{}' {
+        $Caught = InModuleScope 'Omnicit.EntraRBAC' {
+            $Result = $null
+            try { Resolve-OERName -Template 'x-{a}' -Tokens @{} } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'NameTemplateUnresolved'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject | Should -BeExactly 'x-{a}'
+        $Caught.Exception.Message | Should -BeExactly 'Naming template ''x-{a}'' has unresolved token(s): a. Supply a value for each token.'
+    }
+
+    It 'throws NameTooLong as a typed record: Resolve-OERName -Template abcdef -Tokens @{} -MaxLength 3' {
+        $Caught = InModuleScope 'Omnicit.EntraRBAC' {
+            $Result = $null
+            try { Resolve-OERName -Template 'abcdef' -Tokens @{} -MaxLength 3 } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'NameTooLong'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject | Should -BeExactly 'abcdef'
+        $Caught.Exception.Message | Should -BeExactly 'Resolved name ''abcdef'' exceeds the maximum length of 3 characters.'
+    }
+
+    It 'throws NameCharacterDisallowed as a typed record: Resolve-OERName -Template a/b -Tokens @{} -Strict' {
+        $Caught = InModuleScope 'Omnicit.EntraRBAC' {
+            $Result = $null
+            try { Resolve-OERName -Template 'a/b' -Tokens @{} -Strict } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'NameCharacterDisallowed'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject | Should -BeExactly 'a/b'
+        $Caught.Exception.Message | Should -BeExactly 'Resolved name ''a/b'' contains a disallowed character for an Entra ID object name.'
+    }
+}

@@ -147,7 +147,11 @@ function Get-OERServicePrincipalAccess {
     function Get-ListValue {
         param([object]$Response)
         if (-not (Test-HasKey -Item $Response -Key 'value') -or $null -eq $Response.value) {
-            throw 'Microsoft Graph returned no value collection for the list.'
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Microsoft Graph returned no value collection for the list.'),
+                'GraphListValueMissing',
+                [System.Management.Automation.ErrorCategory]::InvalidResult,
+                $null)
         }
         , [object[]]@(@($Response.value) | Where-Object { $null -ne $_ })
     }
@@ -156,7 +160,13 @@ function Get-OERServicePrincipalAccess {
     function Get-ListedId {
         param([object]$Item, [string]$Kind)
         $ItemId = Get-IdOrNull -Value $Item.id
-        if ($null -eq $ItemId) { throw "Microsoft Graph listed a $Kind without an id." }
+        if ($null -eq $ItemId) {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new("Microsoft Graph listed a $Kind without an id."),
+                'GraphListedIdMissing',
+                [System.Management.Automation.ErrorCategory]::InvalidResult,
+                $null)
+        }
         $ItemId
     }
 
@@ -182,7 +192,11 @@ function Get-OERServicePrincipalAccess {
     function Get-ExpandedEntry {
         param([object]$Item, [string]$Key, [string]$ItemId, [string]$ReReadFormat, [string[]]$RequiredKey)
         if (-not (Test-HasKey -Item $Item -Key $Key) -or $null -eq $Item.$Key) {
-            throw "Microsoft Graph returned it without its expanded $Key collection, so the expansion did not happen."
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new("Microsoft Graph returned it without its expanded $Key collection, so the expansion did not happen."),
+                'GraphExpansionMissing',
+                [System.Management.Automation.ErrorCategory]::InvalidResult,
+                $ItemId)
         }
         $Entries = [object[]]@(@($Item.$Key) | Where-Object { $null -ne $_ })
         if ($Entries.Count -ge $ExpandedCap -or (Get-MissingKey -Entry $Entries -Key $RequiredKey).Count -gt 0) {
@@ -245,7 +259,11 @@ function Get-OERServicePrincipalAccess {
             # that declares none: every appRoleValue on that resource would otherwise be written null.
             $Step = "the app roles of the service principal '$ServicePrincipalId'"
             if (-not (Test-HasKey -Item $Listing -Key 'appRoles') -or $null -eq $Listing.appRoles) {
-                throw 'Microsoft Graph returned it without its appRoles collection, so the roles it declares are not known.'
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Microsoft Graph returned it without its appRoles collection, so the roles it declares are not known.'),
+                    'GraphAppRolesMissing',
+                    [System.Management.Automation.ErrorCategory]::InvalidResult,
+                    $ServicePrincipalId)
             }
             $RoleValue = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
             foreach ($AppRole in @(@($Listing.appRoles) | Where-Object { $null -ne $_ })) {
@@ -319,7 +337,13 @@ function Get-OERServicePrincipalAccess {
             $ServicePrincipalDisplayName = Get-TextOrNull -Value $Listing.displayName
             $Owners = Get-ExpandedEntry -Item $Listing -Key 'owners' -ItemId $ServicePrincipalId -ReReadFormat $ServicePrincipalOwnerReReadFormat -RequiredKey $OwnerRequiredKey
             # An owner that even the full read returns without its id cannot become a row naming it.
-            if ((Get-MissingKey -Entry $Owners -Key $OwnerRequiredKey).Count -gt 0) { throw 'Microsoft Graph returned an owner without its id.' }
+            if ((Get-MissingKey -Entry $Owners -Key $OwnerRequiredKey).Count -gt 0) {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Microsoft Graph returned an owner without its id.'),
+                    'GraphOwnerIdMissing',
+                    [System.Management.Automation.ErrorCategory]::InvalidResult,
+                    $ServicePrincipalId)
+            }
             foreach ($Owner in $Owners) {
                 [PSCustomObject][ordered]@{
                     servicePrincipalId          = $ServicePrincipalId
@@ -356,7 +380,13 @@ function Get-OERServicePrincipalAccess {
             $ApplicationDisplayName = Get-TextOrNull -Value $Listing.displayName
             $Owners = Get-ExpandedEntry -Item $Listing -Key 'owners' -ItemId $ApplicationId -ReReadFormat $ApplicationOwnerReReadFormat -RequiredKey $OwnerRequiredKey
             # An owner that even the full read returns without its id cannot become a row naming it.
-            if ((Get-MissingKey -Entry $Owners -Key $OwnerRequiredKey).Count -gt 0) { throw 'Microsoft Graph returned an owner without its id.' }
+            if ((Get-MissingKey -Entry $Owners -Key $OwnerRequiredKey).Count -gt 0) {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Microsoft Graph returned an owner without its id.'),
+                    'GraphOwnerIdMissing',
+                    [System.Management.Automation.ErrorCategory]::InvalidResult,
+                    $ApplicationId)
+            }
             foreach ($Owner in $Owners) {
                 [PSCustomObject][ordered]@{
                     applicationId          = $ApplicationId

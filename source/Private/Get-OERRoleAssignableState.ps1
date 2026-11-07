@@ -29,7 +29,11 @@ function Get-OERRoleAssignableState {
         [string]$PrincipalId
     )
     if (-not (Test-OERGuid -Value $PrincipalId)) {
-        throw "'$PrincipalId' is not an object id (GUID)."
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new("'$PrincipalId' is not an object id (GUID)."),
+            'InvalidPrincipalId',
+            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+            $PrincipalId)
     }
     $Response = Invoke-OERGraphRequest -Uri "v1.0/groups/$PrincipalId`?`$select=id,isAssignableToRole" `
         -ExpectedErrorCode 'Request_ResourceNotFound', 'ResourceNotFound'

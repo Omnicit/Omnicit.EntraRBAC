@@ -35,7 +35,11 @@ function Resolve-OERUserId {
     )
     if ($Id) { return $Id }
     if (-not $UserPrincipalName) {
-        throw 'Resolve-OERUserId requires either -Id or -UserPrincipalName.'
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new('Resolve-OERUserId requires either -Id or -UserPrincipalName.'),
+            'ResolverInputMissing',
+            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+            $null)
     }
     if (Test-OERGuid -Value $UserPrincipalName) {
         return $UserPrincipalName

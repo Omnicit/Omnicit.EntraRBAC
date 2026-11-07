@@ -47,7 +47,11 @@ function New-OERScheduleInfo {
     if ($PSBoundParameters.ContainsKey('EndDateTime')) { $Supplied += '-EndDateTime' }
     if ($Permanent) { $Supplied += '-Permanent' }
     if ($Supplied.Count -gt 1) {
-        throw "Supply at most one of -Duration, -EndDateTime or -Permanent (got: $($Supplied -join ', '))."
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new("Supply at most one of -Duration, -EndDateTime or -Permanent (got: $($Supplied -join ', '))."),
+            'MutuallyExclusiveParameter',
+            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+            $null)
     }
 
     $Expiration = if ($Duration) {

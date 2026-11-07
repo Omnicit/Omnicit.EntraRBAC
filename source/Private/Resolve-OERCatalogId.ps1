@@ -35,7 +35,11 @@ function Resolve-OERCatalogId {
     )
     if ($Id) { return $Id }
     if (-not $DisplayName) {
-        throw 'Resolve-OERCatalogId requires either -Id or -DisplayName.'
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new('Resolve-OERCatalogId requires either -Id or -DisplayName.'),
+            'ResolverInputMissing',
+            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+            $null)
     }
     if (Test-OERGuid -Value $DisplayName) {
         return $DisplayName

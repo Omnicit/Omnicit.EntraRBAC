@@ -160,7 +160,7 @@ cmdlet; `Get-OERRequiredScope` reports the Graph/Azure permissions each needs.
 per-function PSScriptAnalyzer, a unit test file for every exported function); `about.tests.ps1`
 (about topic byte-identical to source, ASCII/BOM-free, names every exported cmdlet and no other);
 `requiredscope.tests.ps1` (`Get-OERRequiredScopeMap` vs the module's own call graph);
-`sourcehygiene.tests.ps1` (the ten static source gates,
+`sourcehygiene.tests.ps1` (the eleven static source gates,
 `Why: docs/development/rationale.md#static-source-gates`); `dochygiene.tests.ps1` (no unredacted
 tenant object ids, tenant domains outside an allowlist, non-documentation email addresses or
 credentials in tracked files, and no angle bracket GitHub would render as a tag in tracked
@@ -1223,8 +1223,14 @@ hyphens) for em-dash contexts in comments and help text, and straight quotes `'`
   `try { ... } catch { $PSCmdlet.WriteError($Err); return }`, with `continue` in place of `return` in
   a loop. Never use bare `throw` in a public function -- it terminates the pipeline and defeats
   `-ErrorAction SilentlyContinue`.
-- **Private pure helpers** such as `Resolve-OERName` may `throw` on caller error (they have no
-  `$PSCmdlet`); the caller catches and routes it.
+- **Private helpers** such as `Resolve-OERName` may `throw` on caller error (they have no
+  `$PSCmdlet`; the caller catches and routes it), but a TYPED `[System.Management.Automation.ErrorRecord]`
+  (id, category, target), never a bare string: a string throw's id is its message text. The two named
+  exceptions are the no-match `throw $NotFoundMessage` of `Resolve-OERRoleDefinitionId` and
+  `Get-OERRoleManagementPolicyId`; gate 11 of `tests/QA/sourcehygiene.tests.ps1` holds it, and an
+  exception needs a ruling first. Gate 11 checks string throws only; a `throw` of a bare
+  `[System.*Exception]` object has the same defect (seven remain, not yet converted), and a new one is
+  not added. `Why: docs/development/rationale.md#error-handling`
 - **Every Graph or ARM `catch` block** must call `Remove-OERErrorRecord -Record $PSItem` as its
   **first** statement. The older `$null = $Error.Remove($PSItem)` idiom looks equivalent but is
   **inert** -- it never removed anything. `Why: docs/development/rationale.md#bearer-scrub`
@@ -1394,11 +1400,11 @@ only if a `Justification` string is provided. Never suppress a rule that hides a
   only: `-Times 0` already means EXACTLY zero**, since Pester implies `-Exactly` at zero. Do not
   "fix" a bare `-Times 0`, and never justify adding `-Exactly` at zero by calling the bare form
   vacuous. `Why: docs/development/rationale.md#bearer-scrub-tests`
-- **Eight rules in this file are machine-checked** by `tests/QA/sourcehygiene.tests.ps1` (ten
+- **Nine rules in this file are machine-checked** by `tests/QA/sourcehygiene.tests.ps1` (eleven
   `Describe` blocks in total): encoding, bearer-scrub-first catches, the single owners
   (`ConvertTo-OERDuration`, `Get-OERCloudEndpoint`, `Test-OERDeclaredProperty`/
   `Test-OERDeclaredNull`), the `suffix.ps1` mirroring, no Az cmdlet that could establish an Az
-  context, and the transport gates. The tripwire rule is checked separately, by
+  context, the transport gates, and typed error records. The tripwire rule is checked separately, by
   `tests/QA/testhygiene.tests.ps1`. When a new catch trips the scrub gate, add the scrub -- do not
   add an exemption. Call-site rules the gate holds that no other section states: `Get-MgContext`
   only in `Get-OERGraphSessionFingerprint`; `Get-OERSignInRefusal` only in the two transport

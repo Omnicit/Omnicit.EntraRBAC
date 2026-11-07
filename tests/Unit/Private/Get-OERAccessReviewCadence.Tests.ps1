@@ -304,3 +304,18 @@ Describe 'no other source file spells the cadence and interval vocabulary (BL-11
         }
     }
 }
+
+Describe 'Get-OERAccessReviewCadence typed error records' {
+    It 'throws UnknownAccessReviewCadence as a typed record: Get-OERAccessReviewCadence -Cadence Bogus' {
+        $Caught = InModuleScope 'Omnicit.EntraRBAC' {
+            $Result = $null
+            try { Get-OERAccessReviewCadence -Cadence 'Bogus' } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'UnknownAccessReviewCadence'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject | Should -BeExactly 'Bogus'
+        $Caught.Exception.Message | Should -BeExactly 'Get-OERAccessReviewCadence: ''Bogus'' is not an access review cadence.'
+    }
+}

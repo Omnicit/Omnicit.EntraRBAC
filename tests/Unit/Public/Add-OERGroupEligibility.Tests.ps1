@@ -645,6 +645,15 @@ Describe 'Add-OERGroupEligibility' {
             $Err | Where-Object { $_.FullyQualifiedErrorId -like 'InvalidDuration*' } | Should -Not -BeNullOrEmpty
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
         }
+
+        It 'publishes one InvalidDuration and keeps the inner DurationInputInvalid record in -ErrorVariable' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}
+            Add-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid -Duration 'bogus' `
+                -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable EV | Out-Null
+            @($EV | Where-Object { $_.FullyQualifiedErrorId -like 'InvalidDuration*' }).Count | Should -Be 1
+            @($EV | Where-Object { $_.FullyQualifiedErrorId -like 'DurationInputInvalid*' }).Count | Should -BeGreaterOrEqual 1
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+        }
     }
 
     Context 'a request Graph accepts but answers status Failed (Sprint 8 step 3, BL-04)' {

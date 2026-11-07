@@ -72,3 +72,18 @@ Describe 'New-OERDirectoryRoleScheduleRequestBody' {
         }
     }
 }
+
+Describe 'New-OERDirectoryRoleScheduleRequestBody typed error records' {
+    It 'throws MutuallyExclusiveParameter as a typed record: New-OERDirectoryRoleScheduleRequestBody -Action adminAssign -PrincipalId p -RoleDefinitionId r -Duration P1D -EndDateTime [datetime]2026-01-01 -Justification j' {
+        $Caught = InModuleScope 'Omnicit.EntraRBAC' {
+            $Result = $null
+            try { New-OERDirectoryRoleScheduleRequestBody -Action adminAssign -PrincipalId 'p' -RoleDefinitionId 'r' -Duration 'P1D' -EndDateTime ([datetime]'2026-01-01') -Justification 'j' } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'MutuallyExclusiveParameter'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject | Should -BeNullOrEmpty
+        $Caught.Exception.Message | Should -BeExactly 'Supply either -Duration or -EndDateTime, not both.'
+    }
+}

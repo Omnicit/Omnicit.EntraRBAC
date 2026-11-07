@@ -523,3 +523,35 @@ Describe 'Resolve-OERPolicyRulePatch' {
         }
     }
 }
+
+Describe 'Resolve-OERPolicyRulePatch typed error records' {
+    It 'throws PolicyRuleMissing naming the rule id when a required rule is absent' {
+        $R = InModuleScope Omnicit.EntraRBAC {
+            $R = $null
+            try { Resolve-OERPolicyRulePatch -CurrentRule @() -Setting @{ AllowPermanentEligibility = $true } } catch { $R = $PSItem }
+            $R
+        }
+        $R | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $R.FullyQualifiedErrorId | Should -BeExactly 'PolicyRuleMissing'
+        $R.CategoryInfo.Category | Should -Be 'InvalidData'
+        $R.TargetObject | Should -BeExactly 'Expiration_Admin_Eligibility'
+        $R.Exception.Message | Should -BeExactly "The policy has no 'Expiration_Admin_Eligibility' rule to update."
+    }
+
+    It 'throws MfaAuthenticationContextConflict when both are requested' {
+        $R = InModuleScope Omnicit.EntraRBAC {
+            $Rules = @(
+                [pscustomobject]@{ id = 'Enablement_EndUser_Assignment'; enabledRules = @('Justification') }
+                [pscustomobject]@{ id = 'AuthenticationContext_EndUser_Assignment'; isEnabled = $false; claimValue = '' }
+            )
+            $R = $null
+            try { Resolve-OERPolicyRulePatch -CurrentRule $Rules -Setting @{ AuthenticationContextId = 'c1'; RequireMfaOnActivation = $true } } catch { $R = $PSItem }
+            $R
+        }
+        $R | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $R.FullyQualifiedErrorId | Should -BeExactly 'MfaAuthenticationContextConflict'
+        $R.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $R.TargetObject | Should -BeNullOrEmpty
+        $R.Exception.Message | Should -BeExactly 'Cannot enable both multi-factor authentication and an authentication context on activation; Azure PIM treats them as mutually exclusive. Set only one.'
+    }
+}

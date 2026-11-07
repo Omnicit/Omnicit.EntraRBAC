@@ -123,3 +123,31 @@ Describe 'Resolve-OERPrincipal' {
         }
     }
 }
+
+Describe 'Resolve-OERPrincipal typed error records' {
+    It 'throws ResolverInputMissing as a typed record: Resolve-OERPrincipal' {
+        $Caught = InModuleScope 'Omnicit.EntraRBAC' {
+            $Result = $null
+            try { Resolve-OERPrincipal } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'ResolverInputMissing'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject | Should -BeNullOrEmpty
+        $Caught.Exception.Message | Should -BeExactly 'Resolve-OERPrincipal requires one of -User, -Group or -ServicePrincipal.'
+    }
+
+    It 'throws MutuallyExclusiveParameter as a typed record: Resolve-OERPrincipal -User a -Group b' {
+        $Caught = InModuleScope 'Omnicit.EntraRBAC' {
+            $Result = $null
+            try { Resolve-OERPrincipal -User 'a' -Group 'b' } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'MutuallyExclusiveParameter'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject | Should -BeNullOrEmpty
+        $Caught.Exception.Message | Should -BeExactly 'Supply only one of -User, -Group or -ServicePrincipal (got: -User, -Group).'
+    }
+}

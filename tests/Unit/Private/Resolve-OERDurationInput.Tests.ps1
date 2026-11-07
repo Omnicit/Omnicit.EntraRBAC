@@ -59,3 +59,44 @@ Describe 'Resolve-OERDurationInput' {
         }
     }
 }
+
+Describe 'Resolve-OERDurationInput typed error records' {
+    It 'throws DurationInputInvalid as a typed record: Resolve-OERDurationInput -Value    ' {
+        $Caught = InModuleScope 'Omnicit.EntraRBAC' {
+            $Result = $null
+            try { Resolve-OERDurationInput -Value '   ' } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'DurationInputInvalid'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject | Should -BeExactly '   '
+        $Caught.Exception.Message | Should -BeExactly 'A duration value is required. Supply a whole number of days (e.g. 365) or an ISO 8601 duration (e.g. ''P365D'').'
+    }
+
+    It 'throws DurationInputInvalid as a typed record: Resolve-OERDurationInput -Value 5000' {
+        $Caught = InModuleScope 'Omnicit.EntraRBAC' {
+            $Result = $null
+            try { Resolve-OERDurationInput -Value '5000' } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'DurationInputInvalid'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject | Should -BeExactly '5000'
+        $Caught.Exception.Message | Should -BeExactly 'Duration ''5000'' is out of range: a whole number of days must be between 1 and 3650.'
+    }
+
+    It 'throws DurationInputInvalid as a typed record: Resolve-OERDurationInput -Value bogus' {
+        $Caught = InModuleScope 'Omnicit.EntraRBAC' {
+            $Result = $null
+            try { Resolve-OERDurationInput -Value 'bogus' } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'DurationInputInvalid'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject | Should -BeExactly 'bogus'
+        $Caught.Exception.Message | Should -BeExactly 'Duration ''bogus'' is not a valid duration. Supply a whole number of days (e.g. 365) or an ISO 8601 duration (e.g. ''P365D'' or ''PT8H'').'
+    }
+}
