@@ -28,6 +28,9 @@ function ConvertTo-OERAccessReviewDefinition {
     accessReviewStageSettings spells it plural ("Insights"), while accessReviewScheduleSettings spells
     the sibling key singular ("Insight") -- sharing one member name between the two projections would
     be a trap for no benefit here.
+    PrincipalScopes and ResourceScopes surface the inner scopes (Query, QueryType, QueryRoot, ScopeType)
+    of a principal resource memberships scope, which is the scope of a directory role review and has no
+    top-level query (see Resolve-OERAccessReviewRoleScope); each is an empty array for any other scope.
     This private converter is the single owner of the definition output shape and is used by
     New/Get/Set-OERAccessReviewDefinition.
 
@@ -61,6 +64,37 @@ function ConvertTo-OERAccessReviewDefinition {
             $ScopeType = $ScopeNode.PSObject.Properties['@odata.type'].Value
         }
         if ($null -ne $ScopeType) { $ScopeType = [string]$ScopeType }
+        # The inner scopes of a principal resource memberships scope (a role review has no top-level
+        # query), read dictionary-safely; an array, empty when absent, never one $null.
+        $ReadScopeList = {
+            param([object]$Node, [string]$Name)
+            $List = $null
+            if ($Node -is [System.Collections.IDictionary]) {
+                if ($Node.Contains($Name)) { $List = $Node[$Name] }
+            }
+            elseif ($null -ne $Node -and $null -ne $Node.PSObject.Properties[$Name]) {
+                $List = $Node.PSObject.Properties[$Name].Value
+            }
+            $Read = {
+                param([object]$Item, [string]$Key)
+                if ($Item -is [System.Collections.IDictionary]) {
+                    if ($Item.Contains($Key)) { return $Item[$Key] }
+                    return $null
+                }
+                if ($null -ne $Item.PSObject.Properties[$Key]) { return $Item.PSObject.Properties[$Key].Value }
+                return $null
+            }
+            , @(foreach ($Item in @($List | Where-Object { $null -ne $_ })) {
+                    [PSCustomObject]@{
+                        Query     = & $Read $Item 'query'
+                        QueryType = & $Read $Item 'queryType'
+                        QueryRoot = & $Read $Item 'queryRoot'
+                        ScopeType = & $Read $Item '@odata.type'
+                    }
+                })
+        }
+        $PrincipalScopes = & $ReadScopeList $ScopeNode 'principalScopes'
+        $ResourceScopes = & $ReadScopeList $ScopeNode 'resourceScopes'
         $AccessPackageId = $null
         $AssignmentPolicyId = $null
         if ($ScopeQuery) {
@@ -101,6 +135,8 @@ function ConvertTo-OERAccessReviewDefinition {
             DescriptionForReviewers       = $InputObject.descriptionForReviewers
             Scope                         = $ScopeQuery
             ScopeType                     = $ScopeType
+            PrincipalScopes               = $PrincipalScopes
+            ResourceScopes                = $ResourceScopes
             AccessPackageId               = $AccessPackageId
             AssignmentPolicyId            = $AssignmentPolicyId
             Reviewers                     = @($InputObject.reviewers | Where-Object { $_ })

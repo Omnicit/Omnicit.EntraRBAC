@@ -44,4 +44,31 @@ Describe 'New-OERAccessReviewScopeQuery' {
             $s.query | Should -BeLike "*accessPackage/id eq 'a''b'*"
         }
     }
+    It 'builds exactly the measured written form for -DirectoryRoleId' {
+        InModuleScope Omnicit.EntraRBAC {
+            $Id = '00000000-0000-0000-0000-000000000041'
+            $Expected = @{
+                '@odata.type'   = '#microsoft.graph.principalResourceMembershipsScope'
+                principalScopes = @(@{ '@odata.type' = '#microsoft.graph.accessReviewQueryScope'; query = '/users'; queryType = 'MicrosoftGraph' })
+                resourceScopes  = @(@{ '@odata.type' = '#microsoft.graph.accessReviewQueryScope'; query = "/roleManagement/directory/roleDefinitions/$Id"; queryType = 'MicrosoftGraph' })
+            }
+            $s = New-OERAccessReviewScopeQuery -DirectoryRoleId $Id
+            ($s | ConvertTo-Json -Depth 5 -Compress) | Should -Be ($Expected | ConvertTo-Json -Depth 5 -Compress)
+            $s.ContainsKey('query') | Should -BeFalse
+        }
+    }
+    It 'builds a directory role scope that the role owner reads as All, fed through the converter shape' {
+        InModuleScope Omnicit.EntraRBAC {
+            $Id = '00000000-0000-0000-0000-000000000041'
+            $Def = ConvertTo-OERAccessReviewDefinition -InputObject @{ id = 'd'; scope = (New-OERAccessReviewScopeQuery -DirectoryRoleId $Id) }
+            $R = Resolve-OERAccessReviewRoleScope -Query $Def.Scope -ScopeType $Def.ScopeType -PrincipalScope $Def.PrincipalScopes -ResourceScope $Def.ResourceScopes
+            $R.Kind | Should -Be 'All'
+            $R.RoleDefinitionId | Should -Be $Id
+        }
+    }
+    It 'refuses -DirectoryRoleId combined with -GroupId' {
+        InModuleScope Omnicit.EntraRBAC {
+            { New-OERAccessReviewScopeQuery -DirectoryRoleId 'r' -GroupId 'g' } | Should -Throw
+        }
+    }
 }
