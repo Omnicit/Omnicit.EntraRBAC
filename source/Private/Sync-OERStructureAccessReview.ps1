@@ -83,6 +83,13 @@ function Sync-OERStructureAccessReview {
     A declared group GUID that differs from the live review's group is reported as a not applied
     change, since the scope is immutable.
 
+    A review of a directory role (an entry that declares directoryRole): the same, created with
+    New-OERAccessReviewDefinition -DirectoryRole. It reads nothing in the rename map and calls no
+    Get-OERStructureRenameTarget. The role a live review of that name reviews is checked by
+    Get-OERAccessReviewTargetMismatch: a review of another role, or of the role in a form this module
+    does not write, is refused with AccessReviewScopeMismatch, and a role that cannot be resolved is a
+    Failed row ("could not resolve the directory role of access review"), nothing written either way.
+
     An access package or assignment policy the same document renames (BL-128): the entry's
     accessPackage and assignmentPolicy are read in the run's rename map (-RenameMap) first, before any
     Graph call for the entry, through Get-OERStructureRenameTarget -- the access package by its name (a
@@ -312,8 +319,12 @@ function Sync-OERStructureAccessReview {
         # (there is no rename map for groups; a group the document creates or renames is looked up by name
         # in the tenant, by the target check and the create).
         $IsGroupReview = Test-OERDeclaredProperty -Node $Item -Name 'group'
+        # A review of a directory role reads nothing in the rename map either: the role is looked up in
+        # the tenant by the target check and the create.
+        $IsRoleReview = Test-OERDeclaredProperty -Node $Item -Name 'directoryRole'
+        $IsPackageFree = $IsGroupReview -or $IsRoleReview
         $PackageTarget = $null
-        if (-not $IsGroupReview -and -not (Test-OERGuid -Value $PackageRef)) {
+        if (-not $IsPackageFree -and -not (Test-OERGuid -Value $PackageRef)) {
             $PackageTarget = Get-OERStructureRenameTarget -Section 'accessPackages' -Name $PackageRef -RenameMap $RenameMap
         }
         # BL-147 (R-8): every accessPackages entry registers its package here, not only a rename. An entry
@@ -350,7 +361,7 @@ function Sync-OERStructureAccessReview {
             return
         }
         $PolicyTarget = $null
-        if (-not $IsGroupReview) {
+        if (-not $IsPackageFree) {
             $PolicyTarget = Get-OERStructureRenameTarget -Section 'assignmentPolicies' -Name $PolicyRef -AccessPackage $PackageRef -RenameMap $RenameMap
         }
         if ($PolicyTarget -and $PolicyTarget.Refused) {
@@ -659,6 +670,9 @@ function Sync-OERStructureAccessReview {
                 $Caller.WriteError($TargetMismatch)
                 $MismatchDetail = if (([string]$TargetMismatch.FullyQualifiedErrorId).StartsWith('AccessReviewScopeMismatch', [System.StringComparison]::Ordinal)) {
                     $TargetMismatch.Exception.Message
+                } elseif ($IsRoleReview) {
+                    "could not resolve the directory role of access review '$Name': " +
+                    "$($TargetMismatch.Exception.Message); nothing was written"
                 } elseif (Test-OERDeclaredProperty -Node $Item -Name 'group') {
                     "could not resolve the group of access review '$Name': " +
                     "$($TargetMismatch.Exception.Message); nothing was written"
@@ -957,7 +971,9 @@ function Sync-OERStructureAccessReview {
 
         # What the review reviews: the group whose members it reviews (looked up by name in the tenant by
         # New-OERAccessReviewDefinition), or the package and policy as $TargetItem carries them.
-        if ($IsGroupReview) {
+        if ($IsRoleReview) {
+            $NewParams.DirectoryRole = [string]$Item.directoryRole
+        } elseif ($IsGroupReview) {
             $NewParams.Group = [string]$Item.group
         } else {
             $NewParams.AccessPackage = $TargetItem.accessPackage

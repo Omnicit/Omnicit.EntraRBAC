@@ -1,16 +1,21 @@
 function New-OERAccessReviewDefinition {
     <#
     .SYNOPSIS
-    Creates an access review schedule definition scoped to an access package or to the members of a group.
+    Creates an access review schedule definition scoped to an access package, the members of a group, or a Microsoft Entra directory role.
 
     .DESCRIPTION
     Creates a v1.0 accessReviewScheduleDefinition via Microsoft Graph, scoped to the assignments
-    of one access package under one assignment policy. Supports both single-stage (inline reviewer
+    of one access package under one assignment policy, to the members of a group, or to a Microsoft
+    Entra directory role. Supports both single-stage (inline reviewer
     parameters) and multi-stage (pre-built stage objects from New-OERAccessReviewStage) reviews.
     Recurrence cadences OneTime, Weekly, Monthly, Quarterly, SemiAnnually (every six months) and
     Annually are supported; OneTime produces a single instance.
     With -Group the review covers the members of a group instead of an access package: every direct
     and transitive member is reviewed (the review scope query is /groups/{id}/transitiveMembers).
+    With -DirectoryRole the review covers the users assigned to one Microsoft Entra directory role. The scope is
+    written in the form Microsoft Graph accepts for it (a principalResourceMembershipsScope over all
+    users and the role definition; the query form Microsoft Learn shows for this review is refused).
+    Who Microsoft Graph asks to review was not measured.
     Scope, reviewer, and catalog ids are resolved from friendly display names or GUIDs. Supports
     -WhatIf and -Confirm.
 
@@ -31,6 +36,16 @@ function New-OERAccessReviewDefinition {
     access package: every direct and transitive member is in scope. A display name that several
     groups share is refused with AmbiguousName, naming their ids; a name matching no group is
     refused with GroupNotFound. Not combined with -AccessPackage, -AssignmentPolicy or -Catalog.
+
+    .PARAMETER DirectoryRole
+    The display name (any letter case) or role definition id of the Microsoft Entra directory role whose
+    assignments are reviewed, in place of an access package: the users assigned to the role are in
+    scope. A name is resolved through the same lookup as the directory role
+    cmdlets: a name matching more than one role definition is refused with AmbiguousRoleName (naming the
+    ids), a name matching none with RoleDefinitionNotFound, and a lookup that fails with
+    RoleDefinitionReadFailed; each is a non-terminating error and nothing is sent. Tab-completion offers
+    the built-in directory roles; any other role name is still accepted. Not combined with -AccessPackage,
+    -AssignmentPolicy, -Catalog or -Group.
 
     .PARAMETER AssignmentPolicy
     The assignment policy display name or id whose assignments are reviewed. A display name that
@@ -138,6 +153,12 @@ function New-OERAccessReviewDefinition {
         -DescriptionForReviewers 'Please review membership' -Group 'Sales Team' `
         -Reviewer 'manager@contoso.com' -Recurrence Annually -StartDate (Get-Date '2027-01-01')
     Creates a yearly single-stage access review of every direct and transitive member of the group.
+
+    .EXAMPLE
+    New-OERAccessReviewDefinition -DisplayName 'Reports Reader holders' -DescriptionForAdmins 'Yearly review' `
+        -DescriptionForReviewers 'Please review role access' -DirectoryRole 'Reports Reader' `
+        -Reviewer 'manager@contoso.com' -Recurrence Annually -StartDate (Get-Date '2027-01-01')
+    Creates a yearly single-stage access review of every user holding the Reports Reader directory role.
     #>
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'SingleStage')]
     [OutputType([PSCustomObject])]
@@ -160,6 +181,11 @@ function New-OERAccessReviewDefinition {
         [ValidateNotNullOrEmpty()]
         [string]$Group,
 
+        [Parameter(ParameterSetName = 'DirectoryRoleSingleStage', Mandatory)]
+        [Parameter(ParameterSetName = 'DirectoryRoleMultiStage', Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]$DirectoryRole,
+
         [Parameter(ParameterSetName = 'SingleStage', Mandatory)]
         [Parameter(ParameterSetName = 'MultiStage', Mandatory)]
         [string]$AssignmentPolicy,
@@ -170,30 +196,37 @@ function New-OERAccessReviewDefinition {
 
         [Parameter(ParameterSetName = 'SingleStage')]
         [Parameter(ParameterSetName = 'GroupSingleStage')]
+        [Parameter(ParameterSetName = 'DirectoryRoleSingleStage')]
         [string[]]$Reviewer,
 
         [Parameter(ParameterSetName = 'SingleStage')]
         [Parameter(ParameterSetName = 'GroupSingleStage')]
+        [Parameter(ParameterSetName = 'DirectoryRoleSingleStage')]
         [string[]]$ReviewerGroup,
 
         [Parameter(ParameterSetName = 'SingleStage')]
         [Parameter(ParameterSetName = 'GroupSingleStage')]
+        [Parameter(ParameterSetName = 'DirectoryRoleSingleStage')]
         [switch]$Manager,
 
         [Parameter(ParameterSetName = 'SingleStage')]
         [Parameter(ParameterSetName = 'GroupSingleStage')]
+        [Parameter(ParameterSetName = 'DirectoryRoleSingleStage')]
         [switch]$SelfReview,
 
         [Parameter(ParameterSetName = 'SingleStage')]
         [Parameter(ParameterSetName = 'GroupSingleStage')]
+        [Parameter(ParameterSetName = 'DirectoryRoleSingleStage')]
         [string[]]$FallbackReviewer,
 
         [Parameter(ParameterSetName = 'SingleStage')]
         [Parameter(ParameterSetName = 'GroupSingleStage')]
+        [Parameter(ParameterSetName = 'DirectoryRoleSingleStage')]
         [string[]]$FallbackReviewerGroup,
 
         [Parameter(ParameterSetName = 'MultiStage', Mandatory)]
         [Parameter(ParameterSetName = 'GroupMultiStage', Mandatory)]
+        [Parameter(ParameterSetName = 'DirectoryRoleMultiStage', Mandatory)]
         [PSCustomObject[]]$Stage,
 
         [Parameter(Mandatory)]
@@ -291,6 +324,24 @@ function New-OERAccessReviewDefinition {
                 return
             }
             $Scope = New-OERAccessReviewScopeQuery -GroupId $GroupId
+        }
+        elseif ($PSCmdlet.ParameterSetName -like 'DirectoryRole*') {
+            # Resolved through the directory role cmdlets' own lookup, so a refusal carries the ids they publish
+            # (AmbiguousRoleName, RoleDefinitionReadFailed, RoleDefinitionNotFound) and nothing is sent.
+            $RoleInput = Resolve-OERDirectoryRoleInput -Role $DirectoryRole
+            if ($RoleInput.ErrorId) {
+                $ErrParams = @{
+                    Message      = [System.Exception]::new($RoleInput.Message)
+                    ErrorId      = $RoleInput.ErrorId
+                    Category     = $RoleInput.Category
+                    TargetObject = $DirectoryRole
+                    Cmdlet       = $PSCmdlet
+                }
+                if ($RoleInput.InnerException) { $ErrParams.InnerException = $RoleInput.InnerException }
+                Write-CmdletError @ErrParams
+                return
+            }
+            $Scope = New-OERAccessReviewScopeQuery -DirectoryRoleId $RoleInput.RoleDefinitionId
         }
         else {
             $ScopeParams = @{ AccessPackage = $AccessPackage; AssignmentPolicy = $AssignmentPolicy }

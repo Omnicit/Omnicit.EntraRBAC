@@ -797,7 +797,7 @@ Describe 'Get-OERStructureSchemaJson round-trip precedence documentation' {
     It 'documents that an existing access review is updated only when it reviews the declared package and policy (BL-127)' {
         InModuleScope Omnicit.EntraRBAC {
             (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.accessReviews.description |
-                Should -Match ([regex]::Escape('an existing review is updated in place only when it reviews the declared accessPackage and assignmentPolicy, or the declared group; otherwise the entry fails and nothing is written.'))
+                Should -Match ([regex]::Escape('an existing review is updated in place only when it reviews the declared accessPackage and assignmentPolicy, the declared group or the declared directory role; otherwise the entry fails and nothing is written.'))
         }
     }
 
@@ -1339,7 +1339,7 @@ Describe 'Get-OERStructureSchemaJson renames of administrative units, catalogs a
             $Prev.minLength | Should -Be 1
             $Prev.description | Should -BeExactly 'The access review''s current display name or object id, when displayName declares a new one. The name is looked up tenant-wide, as displayName is. When only this value matches a live access review, that review is renamed in place; when displayName also matches a different review, the entry fails and nothing is merged; when neither matches, the entry fails and nothing is created. The review found under either name must review the declared accessPackage and assignmentPolicy, or the entry fails and nothing is written. A name lookup can follow a rename with a delay: keep this value until the new name resolves, then remove it. Not exported by Get-OERInventory.'
             # The section description keeps what it said about the update and the match key, and adds the rename.
-            $Reviews.description | Should -Match ([regex]::Escape('displayName is the match key: an existing review is updated in place only when it reviews the declared accessPackage and assignmentPolicy, or the declared group; otherwise the entry fails and nothing is written.'))
+            $Reviews.description | Should -Match ([regex]::Escape('displayName is the match key: an existing review is updated in place only when it reviews the declared accessPackage and assignmentPolicy, the declared group or the declared directory role; otherwise the entry fails and nothing is written.'))
             $Reviews.description | Should -Match ([regex]::Escape('To rename a review, declare its new name as displayName and its current name (or object id) as previousDisplayName: the name is looked up tenant-wide, as displayName is, and the review found under either name must review the declared accessPackage and assignmentPolicy, or the entry fails and nothing is written. When the same document renames the access package or the policy, name it by its new name (or object id) here.'))
             # BL-147 (Sprint 11 step 6): a package the same document declares is reached through its entry.
             $Reviews.description | Should -Match ([regex]::Escape('An accessPackage named by the displayName of an accessPackages entry of the same document is the package that entry found in its catalog or created there, never one of that name in another catalog'))
@@ -1353,7 +1353,42 @@ Describe 'Get-OERStructureSchemaJson renames of administrative units, catalogs a
             @($Items.required) | Should -Be @('displayName')
             $Items.properties.group.type | Should -BeExactly 'string'
             $Items.properties.group.minLength | Should -Be 1
-            @($Items.oneOf).Count | Should -Be 2
+            @($Items.oneOf).Count | Should -Be 3
+        }
+    }
+
+    It 'declares directoryRole with a description and a oneOf branch that excludes the other two forms (Sprint 13 step 4)' {
+        InModuleScope $script:moduleName {
+            $Items = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.accessReviews.items
+            $Items.properties.directoryRole.type | Should -BeExactly 'string'
+            $Items.properties.directoryRole.minLength | Should -Be 1
+            $Items.properties.directoryRole.description | Should -BeExactly 'The Microsoft Entra directory role whose assignments the review reviews (the users assigned to the role): a display name or role definition id. A name is looked up as New-OERAccessReviewDefinition -DirectoryRole looks it up. Declare exactly one of directoryRole, group, or accessPackage and assignmentPolicy.'
+            $Branches = @($Items.oneOf)
+            $RoleBranch = @($Branches | Where-Object { @($_.required) -contains 'directoryRole' })
+            $RoleBranch.Count | Should -Be 1
+            @($RoleBranch[0].not.anyOf.required) | Should -Contain 'group'
+            @($RoleBranch[0].not.anyOf.required) | Should -Contain 'accessPackage'
+            @($RoleBranch[0].not.anyOf.required) | Should -Contain 'assignmentPolicy'
+            $PackageBranch = @($Branches | Where-Object { @($_.required) -contains 'accessPackage' })
+            @($PackageBranch[0].not.anyOf.required) | Should -Contain 'directoryRole'
+            @($PackageBranch[0].not.anyOf.required) | Should -Contain 'group'
+            $GroupBranch = @($Branches | Where-Object { @($_.required) -contains 'group' })
+            @($GroupBranch[0].not.anyOf.required) | Should -Contain 'directoryRole'
+            $Items.properties.directoryRole.description | Should -Match 'directoryRole'
+            (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.accessReviews.description | Should -Match ([regex]::Escape('the declared group or the declared directory role; otherwise'))
+        }
+    }
+
+    It 'validates a directory role review and rejects every mixed form (Sprint 13 step 4)' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson
+            $Wrap = { param($Item) '{ "version": "1.0", "accessReviews": [ ' + $Item + ' ] }' }
+            Test-Json -Json (& $Wrap '{ "displayName": "R", "directoryRole": "Global Reader" }') -Schema $Schema | Should -BeTrue
+            Test-Json -Json (& $Wrap '{ "displayName": "R", "directoryRole": "Global Reader", "group": "G" }') -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+            Test-Json -Json (& $Wrap '{ "displayName": "R", "directoryRole": "Global Reader", "accessPackage": "AP" }') -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+            Test-Json -Json (& $Wrap '{ "displayName": "R", "directoryRole": "Global Reader", "assignmentPolicy": "P" }') -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+            Test-Json -Json (& $Wrap '{ "displayName": "R", "directoryRole": "" }') -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+            Test-Json -Json (& $Wrap '{ "displayName": "R", "directoryRole": "Global Reader", "group": "G", "accessPackage": "AP", "assignmentPolicy": "P" }') -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
         }
     }
 

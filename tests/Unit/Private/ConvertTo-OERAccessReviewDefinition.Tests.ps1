@@ -325,4 +325,59 @@ Describe 'ConvertTo-OERAccessReviewDefinition' {
             }
         }
     }
+
+    Context 'inner scopes of a principal resource memberships scope' {
+        It 'surfaces PrincipalScopes and ResourceScopes from a hashtable answer, with Scope null' {
+            InModuleScope 'Omnicit.EntraRBAC' {
+                $Raw = @{
+                    id    = 'ar-1'
+                    scope = @{
+                        '@odata.type'   = '#microsoft.graph.principalResourceMembershipsScope'
+                        principalScopes = @(@{ '@odata.type' = '#microsoft.graph.accessReviewQueryScope'; query = '/v1.0/users'; queryType = 'MicrosoftGraph'; queryRoot = $null })
+                        resourceScopes  = @(@{ '@odata.type' = '#microsoft.graph.accessReviewQueryScope'; query = '/beta/roleManagement/directory/roleDefinitions/00000000-0000-0000-0000-000000000041'; queryType = 'MicrosoftGraph'; queryRoot = $null })
+                    }
+                }
+                $Def = ConvertTo-OERAccessReviewDefinition -InputObject $Raw
+                $Def.Scope | Should -BeNullOrEmpty
+                $Def.ScopeType | Should -Be '#microsoft.graph.principalResourceMembershipsScope'
+                @($Def.PrincipalScopes).Count | Should -Be 1
+                $Def.PrincipalScopes[0].Query | Should -Be '/v1.0/users'
+                $Def.PrincipalScopes[0].QueryType | Should -Be 'MicrosoftGraph'
+                $Def.PrincipalScopes[0].ScopeType | Should -Be '#microsoft.graph.accessReviewQueryScope'
+                @($Def.ResourceScopes).Count | Should -Be 1
+                $Def.ResourceScopes[0].Query | Should -Match 'roleDefinitions/00000000-0000-0000-0000-000000000041$'
+                $Def.ResourceScopes[0].QueryRoot | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'surfaces them from a PSCustomObject fixture' {
+            InModuleScope 'Omnicit.EntraRBAC' {
+                $Raw = [PSCustomObject]@{
+                    id    = 'ar-2'
+                    scope = [PSCustomObject]@{
+                        '@odata.type'   = '#microsoft.graph.principalResourceMembershipsScope'
+                        principalScopes = @([PSCustomObject]@{ '@odata.type' = '#microsoft.graph.accessReviewQueryScope'; query = '/users'; queryType = 'MicrosoftGraph'; queryRoot = '/v1.0/groups' })
+                        resourceScopes  = @([PSCustomObject]@{ query = '/roleManagement/directory/roleDefinitions/x' })
+                    }
+                }
+                $Def = ConvertTo-OERAccessReviewDefinition -InputObject $Raw
+                $Def.PrincipalScopes[0].Query | Should -Be '/users'
+                $Def.PrincipalScopes[0].QueryRoot | Should -Be '/v1.0/groups'
+                $Def.ResourceScopes[0].Query | Should -Be '/roleManagement/directory/roleDefinitions/x'
+                $Def.ResourceScopes[0].ScopeType | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'is an empty array (Count 0) for a plain query scope and for no scope' {
+            InModuleScope 'Omnicit.EntraRBAC' {
+                $Def = ConvertTo-OERAccessReviewDefinition -InputObject @{ id = 'a'; scope = @{ query = '/groups/x/transitiveMembers' } }
+                $Def.PrincipalScopes.GetType().IsArray | Should -BeTrue
+                $Def.PrincipalScopes.Count | Should -Be 0
+                $Def.ResourceScopes.Count | Should -Be 0
+                $None = ConvertTo-OERAccessReviewDefinition -InputObject ([PSCustomObject]@{ id = 'b' })
+                $None.PrincipalScopes.Count | Should -Be 0
+                $None.ResourceScopes.Count | Should -Be 0
+            }
+        }
+    }
 }

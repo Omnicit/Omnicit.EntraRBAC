@@ -497,3 +497,224 @@ Describe 'Get-OERAccessReviewTargetMismatch for an entry that declares group' {
         $R.Out[0].CategoryInfo.Category | Should -Be 'PermissionDenied'
     }
 }
+
+# Sprint 13 step 4: an entry that declares directoryRole is a review of every user's assignments to one
+# directory role. The role branch runs first and decides alone; the live scope is classified by
+# Resolve-OERAccessReviewRoleScope (real here), the role name by Resolve-OERDirectoryRoleInput (mocked).
+Describe 'Get-OERAccessReviewTargetMismatch for an entry that declares directoryRole' {
+    BeforeAll {
+        $script:RlName = 'Reports Reader review'
+        $script:RlId = '00000000-0000-0000-0000-000000000041'
+        $script:RlOtherId = '00000000-0000-0000-0000-000000000042'
+        $script:RlNotUnique = 'Access review display names are not unique: give the entry or the review in the tenant another display name.'
+        $script:RlMemberships = '#microsoft.graph.principalResourceMembershipsScope'
+        $script:RlPlain = '#microsoft.graph.accessReviewQueryScope'
+
+        function New-RlInner {
+            param([string]$Query)
+            [PSCustomObject]@{ Query = $Query; QueryType = 'MicrosoftGraph'; QueryRoot = $null; ScopeType = $script:RlPlain }
+        }
+        function New-RlLive {
+            param([string]$Scope, [string]$ScopeType, $PrincipalScopes, $ResourceScopes)
+            [PSCustomObject]@{
+                AccessReviewDefinitionId = 'cccc3333-0000-0000-0000-000000000001'
+                DisplayName              = $script:RlName
+                Scope                    = $Scope
+                ScopeType                = $(if ($ScopeType) { $ScopeType } else { $null })
+                PrincipalScopes          = @($PrincipalScopes)
+                ResourceScopes           = @($ResourceScopes)
+                AccessPackageId          = $null
+                AssignmentPolicyId       = $null
+            }
+        }
+        function New-RlAllLive {
+            param([string]$RoleId)
+            New-RlLive -ScopeType $script:RlMemberships `
+                -PrincipalScopes (New-RlInner '/v1.0/users') `
+                -ResourceScopes (New-RlInner "/beta/roleManagement/directory/roleDefinitions/$RoleId")
+        }
+        function New-RlEntry {
+            param($Role)
+            [PSCustomObject]@{ displayName = $script:RlName; directoryRole = $Role; durationInDays = 21 }
+        }
+        function Invoke-RlCheck {
+            param([Parameter(Mandatory)]$Declared, [Parameter(Mandatory)]$Current)
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Declared = $Declared; Current = $Current } {
+                param($Declared, $Current)
+                $Ev = $null
+                $Wv = $null
+                $Out = @(Get-OERAccessReviewTargetMismatch -Declared $Declared -Current $Current -ErrorAction Continue -ErrorVariable Ev `
+                        -WarningAction SilentlyContinue -WarningVariable Wv)
+                [PSCustomObject]@{ Out = $Out; Errors = @($Ev); Warnings = @($Wv) }
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { throw 'Unexpected Graph request.' }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput { throw 'Unexpected directory role lookup.' }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERGroupId { throw 'Unexpected group lookup.' }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId { throw 'Unexpected access package lookup.' }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId { throw 'Unexpected assignment policy lookup.' }
+    }
+
+    It 'returns nothing for a role GUID that matches the live role, in <Case>, with no lookup' -ForEach @(
+        @{ Case = 'lower case'; Declared = '00000000-0000-0000-0000-000000000041'; LiveId = '00000000-0000-0000-0000-000000000041' }
+        @{ Case = 'upper case'; Declared = '0000000A-0000-0000-0000-000000000041'; LiveId = '0000000a-0000-0000-0000-000000000041' }
+    ) {
+        $R = Invoke-RlCheck -Declared (New-RlEntry -Role $Declared) -Current (New-RlAllLive -RoleId $LiveId)
+        $R.Out.Count | Should -Be 0
+        $R.Errors.Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+    }
+
+    It 'returns nothing for a role name in another letter case that the resolver maps to the live id, with one lookup' {
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput { [PSCustomObject]@{ RoleDefinitionId = '00000000-0000-0000-0000-000000000041'; ErrorId = $null } }
+        $R = Invoke-RlCheck -Declared (New-RlEntry -Role 'REPORTS reader') -Current (New-RlAllLive -RoleId $script:RlId)
+        $R.Out.Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput -Times 1 -Exactly -ParameterFilter { $Role -ceq 'REPORTS reader' }
+    }
+
+    It 'refuses an entry that declares directoryRole beside <Name>, with no request and no lookup' -ForEach @(
+        @{ Name = 'group' }
+        @{ Name = 'accessPackage' }
+        @{ Name = 'assignmentPolicy' }
+    ) {
+        $Entry = New-RlEntry -Role $script:RlId
+        $Entry | Add-Member -NotePropertyName $Name -NotePropertyValue 'x'
+        $R = Invoke-RlCheck -Declared $Entry -Current (New-RlAllLive -RoleId $script:RlId)
+        $R.Out.Count | Should -Be 1
+        [string]$R.Out[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewScopeMismatch'
+        $R.Out[0].CategoryInfo.Category | Should -Be 'InvalidOperation'
+        $R.Out[0].TargetObject | Should -BeExactly $script:RlName
+        $R.Out[0].Exception.Message | Should -BeExactly ("Access review entry 'Reports Reader review' declares a directory role together with another review target (a group, " +
+            'an access package or an assignment policy), or declares no role, so the review in the tenant with that display name ' +
+            'cannot be shown to be the one it declares. Nothing was written.')
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+    }
+
+    It 'refuses an entry whose directoryRole is white space only, with no request and no lookup' {
+        $R = Invoke-RlCheck -Declared (New-RlEntry -Role '   ') -Current (New-RlAllLive -RoleId $script:RlId)
+        $R.Out.Count | Should -Be 1
+        [string]$R.Out[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewScopeMismatch'
+        $R.Out[0].Exception.Message | Should -BeLike '*declares no role*'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput -Times 0
+    }
+
+    It 'decides the role branch before the group branch for an entry declaring both' {
+        $Entry = New-RlEntry -Role $script:RlId
+        $Entry | Add-Member -NotePropertyName group -NotePropertyValue '11111111-1111-1111-1111-111111111111'
+        $R = Invoke-RlCheck -Declared $Entry `
+            -Current (New-RlLive -Scope '/v1.0/groups/11111111-1111-1111-1111-111111111111/transitiveMembers/microsoft.graph.user')
+        $R.Out.Count | Should -Be 1
+        $R.Out[0].Exception.Message | Should -BeLike '*declares a directory role together with another review target*'
+    }
+
+    It 'refuses a live scope in <Case>, naming the live scope, with no request and no lookup' -ForEach @(
+        @{ Case = 'a group review'; Scope = '/v1.0/groups/11111111-1111-1111-1111-111111111111/transitiveMembers/microsoft.graph.user' }
+        @{ Case = 'a package review'; Scope = "/identityGovernance/entitlementManagement/assignments?`$filter=(accessPackage/id eq 'x')" }
+        @{ Case = 'an empty scope'; Scope = '' }
+        @{ Case = 'the eligible form'; Scope = "/beta/roleManagement/directory/roleEligibilityScheduleInstances?`$expand=principal&`$filter=(isof(principal,'microsoft.graph.user') and roleDefinitionId eq '00000000-0000-0000-0000-000000000041')" }
+        @{ Case = 'the active form'; Scope = "/beta/roleManagement/directory/roleAssignmentScheduleInstances?`$expand=principal&`$filter=(assignmentType eq 'Assigned' and isof(principal,'microsoft.graph.user') and roleDefinitionId eq '00000000-0000-0000-0000-000000000041')" }
+    ) {
+        $R = Invoke-RlCheck -Declared (New-RlEntry -Role $script:RlId) -Current (New-RlLive -Scope $Scope)
+        $R.Out.Count | Should -Be 1
+        [string]$R.Out[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewScopeMismatch'
+        $Shown = if ($Scope) { $Scope } else { 'none' }
+        $R.Out[0].Exception.Message | Should -BeExactly ("Access review 'Reports Reader review' in the tenant does not review every user's assignments to a directory role in the form " +
+            "this module writes (its scope is '$Shown'), so it is not the review this entry declares for directory " +
+            "role '00000000-0000-0000-0000-000000000041'. Nothing was written. $($script:RlNotUnique)")
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+    }
+
+    It 'refuses the guest form of the RIGHT role under the entry''s name, naming the principal and resource queries' {
+        $Live = New-RlLive -ScopeType $script:RlMemberships `
+            -PrincipalScopes (New-RlInner "/v1.0/users?`$filter=(userType eq 'Guest')") `
+            -ResourceScopes (New-RlInner "/beta/roleManagement/directory/roleDefinitions/$($script:RlId)")
+        $R = Invoke-RlCheck -Declared (New-RlEntry -Role $script:RlId) -Current $Live
+        $R.Out.Count | Should -Be 1
+        [string]$R.Out[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewScopeMismatch'
+        $R.Out[0].Exception.Message | Should -BeExactly ("Access review 'Reports Reader review' in the tenant does not review every user's assignments to a directory role in the form " +
+            "this module writes (its scope is principals '/v1.0/users?`$filter=(userType eq 'Guest')' and resources " +
+            "'/beta/roleManagement/directory/roleDefinitions/00000000-0000-0000-0000-000000000041'), so it is not the review this entry declares for directory " +
+            "role '00000000-0000-0000-0000-000000000041'. Nothing was written. $($script:RlNotUnique)")
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput -Times 0
+    }
+
+    It 'names an empty principal resource memberships scope as none and a scope of another type beside the query' {
+        $R = Invoke-RlCheck -Declared (New-RlEntry -Role $script:RlId) -Current (New-RlLive -ScopeType $script:RlMemberships)
+        $R.Out.Count | Should -Be 1
+        $R.Out[0].Exception.Message | Should -BeLike "*(its scope is principals 'none' and resources 'none')*"
+        $R2 = Invoke-RlCheck -Declared (New-RlEntry -Role $script:RlId) `
+            -Current (New-RlLive -Scope '/v1.0/groups/11111111-1111-1111-1111-111111111111/transitiveMembers' -ScopeType '#microsoft.graph.accessReviewInactiveUsersQueryScope')
+        $R2.Out[0].Exception.Message | Should -BeLike "*and its scope type is '#microsoft.graph.accessReviewInactiveUsersQueryScope')*"
+    }
+
+    It 'returns <ErrorId> from the role lookup as itself, with one lookup and the inner exception kept' -ForEach @(
+        @{ ErrorId = 'RoleDefinitionNotFound'; Category = 'ObjectNotFound' }
+        @{ ErrorId = 'AmbiguousRoleName'; Category = 'InvalidArgument' }
+        @{ ErrorId = 'RoleDefinitionReadFailed'; Category = 'ReadError' }
+    ) {
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput -MockWith {
+            param([string]$Role)
+            [PSCustomObject]@{
+                RoleDefinitionId = $null
+                ErrorId          = $ErrorId
+                Message          = "lookup said $ErrorId"
+                Category         = $Category
+                TargetObject     = $Role
+                InnerException   = [System.InvalidOperationException]::new('inner')
+            }
+        }
+        $R = Invoke-RlCheck -Declared (New-RlEntry -Role 'Reports Reader') -Current (New-RlAllLive -RoleId $script:RlId)
+        $R.Out.Count | Should -Be 1
+        [string]$R.Out[0].FullyQualifiedErrorId | Should -BeExactly $ErrorId
+        $R.Out[0].CategoryInfo.Category | Should -Be $Category
+        $R.Out[0].TargetObject | Should -BeExactly 'Reports Reader'
+        $R.Out[0].Exception.Message | Should -BeExactly "lookup said $ErrorId"
+        $R.Out[0].Exception.InnerException.Message | Should -BeExactly 'inner'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput -Times 1 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+    }
+
+    It 'refuses a live review of another role, naming both ids, after the role lookup only' {
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput { [PSCustomObject]@{ RoleDefinitionId = '00000000-0000-0000-0000-000000000041'; ErrorId = $null } }
+        $R = Invoke-RlCheck -Declared (New-RlEntry -Role 'Reports Reader') -Current (New-RlAllLive -RoleId $script:RlOtherId)
+        $R.Out.Count | Should -Be 1
+        [string]$R.Out[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewScopeMismatch'
+        $R.Out[0].CategoryInfo.Category | Should -Be 'InvalidOperation'
+        $R.Out[0].TargetObject | Should -BeExactly $script:RlName
+        $R.Out[0].Exception.Message | Should -BeExactly ("Access review 'Reports Reader review' in the tenant reviews the assignments to directory role " +
+            "'00000000-0000-0000-0000-000000000042', not the directory role 'Reports Reader' ('00000000-0000-0000-0000-000000000041') this entry declares, " +
+            "so it is not the review this entry declares. Nothing was written. $($script:RlNotUnique)")
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput -Times 1 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+    }
+
+    It 'refuses a declared role GUID that is not the live role, with no lookup' {
+        $R = Invoke-RlCheck -Declared (New-RlEntry -Role $script:RlId) -Current (New-RlAllLive -RoleId $script:RlOtherId)
+        $R.Out.Count | Should -Be 1
+        $R.Out[0].Exception.Message | Should -BeExactly ("Access review 'Reports Reader review' in the tenant reviews the assignments to directory role " +
+            "'00000000-0000-0000-0000-000000000042', not the directory role '00000000-0000-0000-0000-000000000041' this entry declares, " +
+            "so it is not the review this entry declares. Nothing was written. $($script:RlNotUnique)")
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput -Times 0
+    }
+
+    It 'still refuses a group entry against a live role review by the group check' {
+        $Entry = [PSCustomObject]@{ displayName = $script:RlName; group = '11111111-1111-1111-1111-111111111111' }
+        $R = Invoke-RlCheck -Declared $Entry -Current (New-RlAllLive -RoleId $script:RlId)
+        $R.Out.Count | Should -Be 1
+        $R.Out[0].Exception.Message | Should -BeLike '*does not review the members of a group*'
+    }
+
+    It 'still refuses a package entry against a live role review by the package check' {
+        $Entry = [PSCustomObject]@{ displayName = $script:RlName; accessPackage = 'aaaa1111-0000-0000-0000-000000000001'; assignmentPolicy = 'bbbb2222-0000-0000-0000-000000000001' }
+        $R = Invoke-RlCheck -Declared $Entry -Current (New-RlAllLive -RoleId $script:RlId)
+        $R.Out.Count | Should -Be 1
+        $R.Out[0].Exception.Message | Should -BeLike '*does not review an access package*'
+    }
+}

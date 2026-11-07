@@ -191,6 +191,16 @@ BeforeDiscovery {
             }
         }
         @{
+            Cmdlet = 'New-OERAccessReviewDefinition'; Resolver = 'Resolve-OERDirectoryRoleDefinitionId'
+            ErrorId = 'AmbiguousRoleName'; FailureId = 'RoleDefinitionReadFailed'; Pre = @{}
+            Invoke = {
+                New-OERAccessReviewDefinition -DisplayName 'Role review' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
+                    -DirectoryRole 'Dup' -SelfReview -Recurrence Annually -StartDate ([datetime]'2027-01-01') `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
             Cmdlet = 'Get-OEREligibleDirectoryRoleAssignment'; Resolver = 'Resolve-OERDirectoryRoleDefinitionId'
             ErrorId = 'AmbiguousRoleName'; FailureId = 'RoleDefinitionReadFailed'; Pre = @{}
             Invoke = {

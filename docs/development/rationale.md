@@ -12407,6 +12407,81 @@ guest-only review is skipped by the export and refused by the check, never widen
 requires exactly one form per entry: `group`, or `accessPackage` with `assignmentPolicy`.
 `New-OERAccessReviewDefinition -Group` creates the review (`GroupSingleStage` or `GroupMultiStage`).
 
+## access-review-role-scope
+
+Sprint 13 step 4. Before this step an access review of a Microsoft Entra directory role was invisible to
+the engine: not exportable and not declarable. The step adds the review of one role's assignments in both
+directions, the way [#access-review-group-scope](#access-review-group-scope) did for a group.
+
+**Measured live on 2026-11-07** (test tenant, `oer-live-cc`; forms from Microsoft Learn, "Configure access
+review scope by using Microsoft Graph APIs", examples 11, 12.1, 12.2 and 14). `{id}` is the role definition id.
+
+| Written | POST | Read back (by id and in the list, identical) |
+|---|---|---|
+| 12.1 `accessReviewQueryScope`, query `/roleManagement/directory/roleDefinitions/{id}` | 400 "Query ... is not supported" | -- |
+| the form Graph's 400 names, `/roleManagement/directory/roleAssignmentAndEligbilitySchedules?$filter=roleDefinitionId eq '{id}'` (both spellings) | 400 | -- |
+| All: `principalResourceMembershipsScope`, principal scopes `[{query '/users'}]`, resource scopes `[{query '/roleManagement/directory/roleDefinitions/{id}'}]` | 201 | type `#microsoft.graph.principalResourceMembershipsScope`; one principal scope `/v1.0/users`; one resource scope `/beta/roleManagement/directory/roleDefinitions/{id}`; every inner scope `#microsoft.graph.accessReviewQueryScope`, `queryType` `MicrosoftGraph`, `queryRoot` null; no top-level `query` |
+| 12.2 eligible: query over `roleEligibilityScheduleInstances` with `$expand=principal` and a filter on user principals and `roleDefinitionId` | 201 | the same query with a leading `/beta`, type `accessReviewQueryScope` |
+| 12.2 active: query over `roleAssignmentScheduleInstances`, filter `assignmentType eq 'Assigned'` plus the same | 201 | the same query with a leading `/beta` |
+| 11 service principals: `roleAssignmentScheduleInstances` filtered on service principal principals | 201 | exactly the All form (`/v1.0/users` by role) |
+| 14 guests: principal scopes `[{query "/users?$filter=(userType eq 'Guest')"}]` by the role | 201 | principal scope `/v1.0/users?$filter=(userType eq 'Guest')`, resource scope as All |
+| principal scopes `[{query '/servicePrincipals'}]` by the role | 400 "not supported" | -- |
+
+A full-object PUT carrying the read-back scope (what `Set-OERAccessReviewDefinition` sends) answered 204 for
+the All, eligible, active and guest forms, and the scope read back unchanged. A role definition by an unknown
+id answers 404 `Request_ResourceNotFound`. The tenant holds 145 role definitions, no two names equal ignoring
+case.
+
+**The classifier (`Resolve-OERAccessReviewRoleScope`).** The single owner of which scope is a review of a
+role's assignments the module can write back. `All`: the principal resource memberships scope with no
+top-level query, exactly one principal scope `/users` and one resource scope naming the role definition,
+both of the plain type with an empty `queryRoot`. `Eligible` and `Active`: the whole query is the measured
+12.2 text. `OtherForm`: a GUID role with any other shape (guest principal scope, second principal scope, a
+`queryRoot`, a trailing slash, an inner scope of another type). `NotRole`: everything else.
+
+**Why OtherForm, Eligible and Active are never written back.** The only scope the module writes for
+`directoryRole` is the All form. Exporting a guest-only review as `directoryRole` would widen it when the document
+is applied: a change of who is reviewed, made by an export. So the export
+skips every kind but `All`, counts the skips, and the target check refuses a document entry against such a
+live review.
+
+**Rulings (each with an "If wrong" line):**
+
+- **R-1, only the All form is declarable.** Eligible-only and active-only can be written by Graph, but
+  creating them needs a second public parameter on `New-OERAccessReviewDefinition` (the engine creates
+  through it), and only `-DirectoryRole` is allowed. So there is no enum key; the owner still classifies
+  `Eligible` and `Active`. If wrong: a later step adds the enum key and one parameter; the owner already
+  names both forms.
+- **R-2, Learn's example 12.1 is not writable** (400, measured), so the All form is written as the
+  `principalResourceMembershipsScope` above. If wrong: Graph starts accepting 12.1 and the module writes the
+  longer form for nothing; reads are unaffected.
+- **R-3, the service principal form (example 11) is stored as the All form** (measured). The module reads what
+  Graph stores, so such a review exports as `directoryRole` and applying it again is Unchanged. A finding about
+  Graph, not changed. If wrong: an export lists a service principal review as a user review.
+- **R-4, the converter grows two additive properties.** The All form has no top-level `query`, so
+  `ConvertTo-OERAccessReviewDefinition` adds `PrincipalScopes` and `ResourceScopes`. If wrong: a consumer of
+  the type sees two properties it ignores.
+- **R-5, no new ErrorId.** A role name is resolved through `Resolve-OERDirectoryRoleInput`, so a failure is
+  published with the ids the directory role cmdlets already publish (`RoleDefinitionNotFound`,
+  `AmbiguousRoleName`, `RoleDefinitionReadFailed`); a review of something else is the existing
+  `AccessReviewScopeMismatch`. If wrong: a caller wanting a review-specific id gets the role cmdlets' id.
+- **R-6, the export names a role through the resolver itself**, never a copy of its lookup. Known limit: an
+  ambiguous role name can leave a record in a caller's `-ErrorVariable`. If wrong: a role is written by id
+  where its name was unique.
+- **R-7, permissions.** `oer-live-cc` holds `RoleManagement.ReadWrite.Directory`, which covers the read; the
+  map row names the least privileged `RoleManagement.Read.Directory`. If wrong: a caller holding only the
+  read scope is refused by Graph on a write, as for any write.
+
+Measured: the written form is accepted, Learn's example 12.1 (the role definition alone as a query) is refused
+(400), and a role's service principal review (example 11) reads back in the written form. Not measured, and
+not stated by Microsoft Learn for the written form: who Graph asks to review (Learn describes example 14, minus
+its guest filter, only as users "assigned to a directory role"). The documents therefore say only "the users
+assigned to one directory role".
+
+**The target check branch.** See [#access-review-target](#access-review-target): the role branch compares the
+role definition id case-insensitively and reuses `AccessReviewScopeMismatch`. `New-OERAccessReviewDefinition
+-DirectoryRole` creates the review (`DirectoryRoleSingleStage` or `DirectoryRoleMultiStage`).
+
 ## policy-update-keeps-custom-extensions
 
 Sprint 11 step 3 made `Set-OERAccessPackageAssignmentPolicy` stop dropping what Microsoft Graph

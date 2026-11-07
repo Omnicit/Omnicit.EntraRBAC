@@ -31,9 +31,23 @@ function New-OERAccessReviewScopeQuery {
     .PARAMETER GroupId
     The group whose transitive members are reviewed (parameter set Group).
 
+    With -DirectoryRoleId (parameter set DirectoryRole) it builds the scope of a review of the users
+    assigned to one directory role (who Microsoft Graph asks to review was not measured): a principalResourceMembershipsScope with the
+    principal scope '/users' and the resource scope '/roleManagement/directory/roleDefinitions/{id}'
+    (measured 2026-11-07). Microsoft Learn's example 12.1, an accessReviewQueryScope whose query is the
+    role definition alone, is refused by Graph on write (400), so it is never built. Graph reads the form
+    back with '/v1.0/users' and a '/beta' resource query; Resolve-OERAccessReviewRoleScope reads that.
+
+    .PARAMETER DirectoryRoleId
+    The directory role definition whose assignments are reviewed (parameter set DirectoryRole).
+
     .EXAMPLE
     New-OERAccessReviewScopeQuery -AccessPackageId $ap -AssignmentPolicyId $pol
     Returns the scope object for the access package's assignments under the policy.
+
+    .EXAMPLE
+    New-OERAccessReviewScopeQuery -DirectoryRoleId $role
+    Returns the scope object for every user's assignments to the directory role.
 
     .EXAMPLE
     New-OERAccessReviewScopeQuery -GroupId $group
@@ -46,8 +60,28 @@ function New-OERAccessReviewScopeQuery {
     param(
         [Parameter(Mandatory, ParameterSetName = 'AccessPackage')][string]$AccessPackageId,
         [Parameter(Mandatory, ParameterSetName = 'AccessPackage')][string]$AssignmentPolicyId,
-        [Parameter(Mandatory, ParameterSetName = 'Group')][string]$GroupId
+        [Parameter(Mandatory, ParameterSetName = 'Group')][string]$GroupId,
+        [Parameter(Mandatory, ParameterSetName = 'DirectoryRole')][string]$DirectoryRoleId
     )
+    if ($PSCmdlet.ParameterSetName -eq 'DirectoryRole') {
+        return @{
+            '@odata.type'  = '#microsoft.graph.principalResourceMembershipsScope'
+            principalScopes = @(
+                @{
+                    '@odata.type' = '#microsoft.graph.accessReviewQueryScope'
+                    query         = '/users'
+                    queryType     = 'MicrosoftGraph'
+                }
+            )
+            resourceScopes = @(
+                @{
+                    '@odata.type' = '#microsoft.graph.accessReviewQueryScope'
+                    query         = "/roleManagement/directory/roleDefinitions/$DirectoryRoleId"
+                    queryType     = 'MicrosoftGraph'
+                }
+            )
+        }
+    }
     if ($PSCmdlet.ParameterSetName -eq 'Group') {
         return @{
             '@odata.type' = '#microsoft.graph.accessReviewQueryScope'

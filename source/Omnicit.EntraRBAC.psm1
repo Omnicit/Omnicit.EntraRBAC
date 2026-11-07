@@ -180,3 +180,10 @@ Register-ArgumentCompleter -CommandName 'Get-OERDirectoryRoleManagementPolicy', 
     param($CommandName, $ParameterName, $WordToComplete, $CommandAst, $FakeBoundParameters)
     Resolve-OERBuiltInDirectoryRoleCompletion -WordToComplete $WordToComplete
 }
+
+# Argument completer for -DirectoryRole on New-OERAccessReviewDefinition (a review of one Microsoft Entra
+# directory role). Same offline built-in list as the -Role completer above; additive, no ValidateSet.
+Register-ArgumentCompleter -CommandName 'New-OERAccessReviewDefinition' -ParameterName 'DirectoryRole' -ScriptBlock {
+    param($CommandName, $ParameterName, $WordToComplete, $CommandAst, $FakeBoundParameters)
+    Resolve-OERBuiltInDirectoryRoleCompletion -WordToComplete $WordToComplete
+}

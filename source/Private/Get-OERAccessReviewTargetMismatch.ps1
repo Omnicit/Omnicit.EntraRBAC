@@ -14,9 +14,27 @@ function Get-OERAccessReviewTargetMismatch {
     docs/development/rationale.md#access-review-target.
 
     Returns nothing when the live review reviews the access package AND the assignment policy the entry
-    declares, or, for an entry that declares group, the members of that group. Otherwise returns ONE
+    declares, or, for an entry that declares group, the members of that group, or, for an entry that
+    declares directoryRole, every user's assignments to that role. Otherwise returns ONE
     ErrorRecord, which it never writes (the caller writes it). It writes no error and no warning of its
     own.
+
+    An entry that declares directoryRole (Test-OERDeclaredProperty) is a review of the active and
+    eligible assignments to one Microsoft Entra directory role. It is checked by the role branch alone,
+    which runs before the group branch, and the first check that fails decides:
+    r1. An entry that also declares group, accessPackage or assignmentPolicy, or whose directoryRole is
+        empty or white space, is refused. No request.
+    r2. A live scope that Resolve-OERAccessReviewRoleScope (given the live ScopeType, PrincipalScopes and
+        ResourceScopes) does not classify as All (a package or group review, a guest filter, an
+        eligible-only or active-only review, anything else) is refused, naming the live scope: the query,
+        or for a principal resource memberships scope the principal and resource queries ('none' when
+        empty), and the scope type when it is not the plain one. No request.
+    r3. The declared role is a GUID verbatim (lower-cased), else it goes through
+        Resolve-OERDirectoryRoleInput. A failure (RoleDefinitionNotFound, AmbiguousRoleName,
+        RoleDefinitionReadFailed) is returned as a record with the helper's own id, category, message and
+        inner exception, targeting the declared value; the helper has scrubbed it already.
+    r4. The declared role id is compared with the live role id (case-insensitively); another role is
+        refused, naming both.
 
     An entry that declares group (Test-OERDeclaredProperty) is a review of a group's members. It is
     checked by the group branch alone, which runs first, and the first check that fails decides:
@@ -58,12 +76,12 @@ function Get-OERAccessReviewTargetMismatch {
     and never as a mismatch.
 
     .PARAMETER Declared
-    One accessReviews[] entry from the structure document. Only displayName, group, accessPackage and
-    assignmentPolicy are read, the last three through Test-OERDeclaredProperty.
+    One accessReviews[] entry from the structure document. Only displayName, directoryRole, group,
+    accessPackage and assignmentPolicy are read, the last four through Test-OERDeclaredProperty.
 
     .PARAMETER Current
-    The live definition as returned by Get-OERAccessReviewDefinition, carrying Scope, AccessPackageId and
-    AssignmentPolicyId.
+    The live definition as returned by Get-OERAccessReviewDefinition, carrying Scope, ScopeType,
+    PrincipalScopes, ResourceScopes, AccessPackageId and AssignmentPolicyId.
 
     .EXAMPLE
     $Refusal = Get-OERAccessReviewTargetMismatch -Declared $Item -Current $Existing
@@ -95,6 +113,67 @@ function Get-OERAccessReviewTargetMismatch {
             "${Kind}NotFound",
             [System.Management.Automation.ErrorCategory]::ObjectNotFound,
             $Value)
+    }
+
+    # The role branch: an entry that declares directoryRole reviews every user's assignments to one
+    # directory role, and decides alone. It runs before the group branch.
+    if (Test-OERDeclaredProperty -Node $Declared -Name 'directoryRole') {
+        [string]$DeclaredRole = [string]$Declared.directoryRole
+        # r1. A role beside a package, policy or group, or a role that names nothing, cannot be compared.
+        if ((Test-OERDeclaredProperty -Node $Declared -Name 'group') -or
+            (Test-OERDeclaredProperty -Node $Declared -Name 'accessPackage') -or
+            (Test-OERDeclaredProperty -Node $Declared -Name 'assignmentPolicy') -or
+            [string]::IsNullOrWhiteSpace($DeclaredRole)) {
+            return (& $NewMismatch ("Access review entry '$Name' declares a directory role together with another review target (a group, " +
+                    'an access package or an assignment policy), or declares no role, so the review in the tenant with that display name ' +
+                    'cannot be shown to be the one it declares. Nothing was written.'))
+        }
+        # r2. Only the every-user form the module writes is the review this entry declares.
+        $LiveRoleScope = Resolve-OERAccessReviewRoleScope -Query ([string]$Current.Scope) -ScopeType ([string]$Current.ScopeType) `
+            -PrincipalScope $Current.PrincipalScopes -ResourceScope $Current.ResourceScopes
+        if ($LiveRoleScope.Kind -ne 'All') {
+            [string]$LiveScopeType = $Current.ScopeType
+            $LiveScopeText = if ($LiveScopeType -ieq '#microsoft.graph.principalResourceMembershipsScope') {
+                $PrincipalText = (@($Current.PrincipalScopes | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_.Query }) -join ', ')
+                $ResourceText = (@($Current.ResourceScopes | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_.Query }) -join ', ')
+                if (-not $PrincipalText) { $PrincipalText = 'none' }
+                if (-not $ResourceText) { $ResourceText = 'none' }
+                "principals '$PrincipalText' and resources '$ResourceText'"
+            } else {
+                $QueryText = [string]$Current.Scope
+                if (-not $QueryText) { $QueryText = 'none' }
+                "'$QueryText'"
+            }
+            # The memberships type is already named by the principals and resources text above.
+            $TypeText = if ($LiveScopeType -and $LiveScopeType -ine '#microsoft.graph.accessReviewQueryScope' -and
+                $LiveScopeType -ine '#microsoft.graph.principalResourceMembershipsScope') { " and its scope type is '$LiveScopeType'" } else { '' }
+            return (& $NewMismatch ("Access review '$Name' in the tenant does not review every user's assignments to a directory role in the form " +
+                    "this module writes (its scope is $LiveScopeText$TypeText), so it is not the review this entry declares for directory " +
+                    "role '$DeclaredRole'. Nothing was written. $NotUnique"))
+        }
+        # r3. The role, a GUID verbatim, else resolved as the directory role cmdlets resolve it.
+        if (Test-OERGuid -Value $DeclaredRole) {
+            $DeclaredRoleId = $DeclaredRole.ToLowerInvariant()
+            $RoleLabel = "'$DeclaredRole'"
+        } else {
+            $RoleInput = Resolve-OERDirectoryRoleInput -Role $DeclaredRole
+            if ($RoleInput.ErrorId) {
+                # The input helper has scrubbed its record; the failure keeps its own id and category.
+                return [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new([string]$RoleInput.Message, $RoleInput.InnerException),
+                    [string]$RoleInput.ErrorId,
+                    [System.Management.Automation.ErrorCategory]$RoleInput.Category,
+                    $DeclaredRole)
+            }
+            $DeclaredRoleId = ([string]$RoleInput.RoleDefinitionId).ToLowerInvariant()
+            $RoleLabel = "'$DeclaredRole' ('$DeclaredRoleId')"
+        }
+        # r4. Another role is another review.
+        if ($DeclaredRoleId -ine [string]$LiveRoleScope.RoleDefinitionId) {
+            return (& $NewMismatch ("Access review '$Name' in the tenant reviews the assignments to directory role '$($LiveRoleScope.RoleDefinitionId)', " +
+                    "not the directory role $RoleLabel this entry declares, so it is not the review this entry declares. Nothing was written. $NotUnique"))
+        }
+        return
     }
 
     # The group branch: an entry that declares group reviews a group's members, and decides alone.

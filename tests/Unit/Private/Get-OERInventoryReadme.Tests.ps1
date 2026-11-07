@@ -42,6 +42,10 @@ Describe 'Get-OERInventoryReadme' {
             $Md | Should -Match 'not captured anywhere in this bundle'
             $Md | Should -Match 'SKIPPED entirely'
             $Md | Should -Match 'ACCESS-PACKAGE-SCOPED'
+            # Sprint 13 step 4: the directory role review of all assignments is captured, the other role forms are not
+            $MdCollapsed = $Md -replace '\s+', ' '
+            $MdCollapsed | Should -Match ([regex]::Escape('reviews of all assignments of one directory role (written with a `directoryRole` key) are captured at all'))
+            $MdCollapsed | Should -Match ([regex]::Escape('a directory role in another form (eligible only, active only, guest users only)'))
             foreach ($Cmdlet in @('New-OERResourceGroup', 'Get-OERResource',
                     'New-OEREligibleRoleAssignment', 'Remove-OEREligibleRoleAssignment',
                     'New-OERActiveRoleAssignment', 'New-OERAccessReviewStage')) {

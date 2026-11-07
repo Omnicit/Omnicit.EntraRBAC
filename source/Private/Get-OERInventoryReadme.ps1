@@ -1002,9 +1002,11 @@ differently -- do not read this bundle as a complete picture of the tenant:
   of being fabricated as a single-stage self review. It never appears in `accessReviews.json` or
   `inventory.json` -- its absence here is not evidence the tenant has none. Manage it directly with
   `New-OERAccessReviewStage`.
-- Only ACCESS-PACKAGE-SCOPED reviews and reviews of all members of one group are captured at all,
+- Only ACCESS-PACKAGE-SCOPED reviews, reviews of all members of one group and reviews of all
+  assignments of one directory role (written with a `directoryRole` key) are captured at all,
   regardless of stage count or the `-AccessReviewFilter` narrowing. A review scoped to an
-  application, a directory role, or a group in another form (guest-only, direct members, owners) is
+  application, a directory role in another form (eligible only, active only, guest users only),
+  or a group in another form (guest-only, direct members, owners) is
   skipped entirely and never appears in `accessReviews.json` or `inventory.json` -- again, its
   absence here is not evidence the tenant has none.
 
