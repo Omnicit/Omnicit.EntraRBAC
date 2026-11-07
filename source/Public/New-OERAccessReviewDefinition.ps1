@@ -12,9 +12,10 @@ function New-OERAccessReviewDefinition {
     Annually are supported; OneTime produces a single instance.
     With -Group the review covers the members of a group instead of an access package: every direct
     and transitive member is reviewed (the review scope query is /groups/{id}/transitiveMembers).
-    With -DirectoryRole the review covers one Microsoft Entra directory role: every user with an active or
-    eligible assignment of that role is reviewed. The scope is written in the one form Microsoft Graph
-    accepts for that (a principalResourceMembershipsScope over all users and the role definition).
+    With -DirectoryRole the review covers the users assigned to one Microsoft Entra directory role. The scope is
+    written in the form Microsoft Graph accepts for it (a principalResourceMembershipsScope over all
+    users and the role definition; the query form Microsoft Learn shows for this review is refused).
+    Who Microsoft Graph asks to review was not measured.
     Scope, reviewer, and catalog ids are resolved from friendly display names or GUIDs. Supports
     -WhatIf and -Confirm.
 
@@ -38,8 +39,8 @@ function New-OERAccessReviewDefinition {
 
     .PARAMETER DirectoryRole
     The display name (any letter case) or role definition id of the Microsoft Entra directory role whose
-    assignments are reviewed, in place of an access package: every user with an active or eligible
-    assignment of the role is in scope. A name is resolved through the same lookup as the directory role
+    assignments are reviewed, in place of an access package: the users assigned to the role are in
+    scope. A name is resolved through the same lookup as the directory role
     cmdlets: a name matching more than one role definition is refused with AmbiguousRoleName (naming the
     ids), a name matching none with RoleDefinitionNotFound, and a lookup that fails with
     RoleDefinitionReadFailed; each is a non-terminating error and nothing is sent. Tab-completion offers

@@ -1362,7 +1362,7 @@ Describe 'Get-OERStructureSchemaJson renames of administrative units, catalogs a
             $Items = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.accessReviews.items
             $Items.properties.directoryRole.type | Should -BeExactly 'string'
             $Items.properties.directoryRole.minLength | Should -Be 1
-            $Items.properties.directoryRole.description | Should -BeExactly 'The Microsoft Entra directory role whose assignments the review reviews (every user with an active or eligible assignment): a display name or role definition id. A name is looked up as New-OERAccessReviewDefinition -DirectoryRole looks it up. Declare exactly one of directoryRole, group, or accessPackage and assignmentPolicy.'
+            $Items.properties.directoryRole.description | Should -BeExactly 'The Microsoft Entra directory role whose assignments the review reviews (the users assigned to the role): a display name or role definition id. A name is looked up as New-OERAccessReviewDefinition -DirectoryRole looks it up. Declare exactly one of directoryRole, group, or accessPackage and assignmentPolicy.'
             $Branches = @($Items.oneOf)
             $RoleBranch = @($Branches | Where-Object { @($_.required) -contains 'directoryRole' })
             $RoleBranch.Count | Should -Be 1

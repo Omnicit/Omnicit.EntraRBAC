@@ -163,6 +163,10 @@ function Get-OERInventory {
     assignments of one directory role is written with a directoryRole key (the role's display name when
     the module's own role resolver finds exactly this role by it, else the role definition id; a name
     with the form of an object id is written as the id) and no group, accessPackage or assignmentPolicy.
+    A review of a role's service principals created elsewhere is stored by Graph in the same form, so
+    it is read and written as a directoryRole review. Known limit: when two role definitions share a
+    review's role name, the role is written by its id, and the lookup can leave an error record in a
+    caller's -ErrorVariable (nothing is published as an error of the export).
     A review of guest users only, of direct members only
     or of inactive users, an application, a directory role in a form other than all assignments (eligible
     only, active only, guest users only or another query), another scope or a multi-stage review is

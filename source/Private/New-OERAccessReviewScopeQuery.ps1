@@ -31,8 +31,8 @@ function New-OERAccessReviewScopeQuery {
     .PARAMETER GroupId
     The group whose transitive members are reviewed (parameter set Group).
 
-    With -DirectoryRoleId (parameter set DirectoryRole) it builds the scope of a review of every user's
-    active and eligible assignments to one directory role: a principalResourceMembershipsScope with the
+    With -DirectoryRoleId (parameter set DirectoryRole) it builds the scope of a review of the users
+    assigned to one directory role (who Microsoft Graph asks to review was not measured): a principalResourceMembershipsScope with the
     principal scope '/users' and the resource scope '/roleManagement/directory/roleDefinitions/{id}'
     (measured 2026-11-07). Microsoft Learn's example 12.1, an accessReviewQueryScope whose query is the
     role definition alone, is refused by Graph on write (400), so it is never built. Graph reads the form

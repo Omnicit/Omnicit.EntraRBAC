@@ -135,9 +135,9 @@ function Test-OERStructureSchema {
     catalogResourceType, approverInfoVisibility, accessReviewRecurrence, accessReviewDefaultDecision,
     principalType, directoryRoleAssignmentType, principalStatus) is accepted in any casing, but a non-canonically cased
     value is reported as a Warning naming the canonical spelling Get-OERStructureSchemaJson declares,
-    because draft-07 matches "enum" case-sensitively. An accessReviews item declares either 'group'
-    (the group whose members the review reviews: a display name or object id) or 'accessPackage' and
-    'assignmentPolicy'. A declared 'group' replaces the two required findings; 'group' beside either
+    because draft-07 matches "enum" case-sensitively. An accessReviews item declares one of three forms: 'group'
+    (the group whose members the review reviews: a display name or object id), 'accessPackage' with
+    'assignmentPolicy', or 'directoryRole' (below). A declared 'group' replaces the two required findings; 'group' beside either
     of the other two is an Error at accessReviews[i].group, and a 'group' that is not a non-empty
     string is an Error there too (an explicit null is undeclared). A third form, 'directoryRole' (the
     Microsoft Entra directory role whose assignments the review reviews: a display name or role

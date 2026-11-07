@@ -397,7 +397,7 @@ function Invoke-OERStructure {
     of all members of that group and is updated only when the live review is a review of exactly that
     group's transitive members; a review of another group, a package or a guest-only or direct-member
     scope is refused with the same error. An entry that declares directoryRole (a role name or id) is
-    a review of every user with an active or eligible assignment of that directory role and is updated
+    a review of the users assigned to that directory role and is updated
     only when the live review is exactly that form for the same role (ids compared without regard to
     letter case); a review of another role, only eligible or only active assignments, a guest-only
     scope, a group or a package is refused with the same error. A name compared as the map's id is named by that id in the error the

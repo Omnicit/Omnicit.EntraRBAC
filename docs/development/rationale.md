@@ -12440,12 +12440,12 @@ both of the plain type with an empty `queryRoot`. `Eligible` and `Active`: the w
 `queryRoot`, a trailing slash, an inner scope of another type). `NotRole`: everything else.
 
 **Why OtherForm, Eligible and Active are never written back.** The only scope the module writes for
-`directoryRole` is the All form. Exporting a guest-only review as `directoryRole` would widen it, where it is
-created, to every user with an assignment: a change of who is reviewed, made by an export. So the export
+`directoryRole` is the All form. Exporting a guest-only review as `directoryRole` would widen it when the document
+is applied: a change of who is reviewed, made by an export. So the export
 skips every kind but `All`, counts the skips, and the target check refuses a document entry against such a
 live review.
 
-**Rulings (each reported "om fel"):**
+**Rulings (each with an "If wrong" line):**
 
 - **R-1, only the All form is declarable.** Eligible-only and active-only can be written by Graph, but
   creating them needs a second public parameter on `New-OERAccessReviewDefinition` (the engine creates
@@ -12472,8 +12472,11 @@ live review.
   map row names the least privileged `RoleManagement.Read.Directory`. If wrong: a caller holding only the
   read scope is refused by Graph on a write, as for any write.
 
-Who Graph asks to review for a role review was not measured; the documents say only "every user with an
-active or eligible assignment", as the schema does.
+Measured: the written form is accepted, Learn's example 12.1 (the role definition alone as a query) is refused
+(400), and a role's service principal review (example 11) reads back in the written form. Not measured, and
+not stated by Microsoft Learn for the written form: who Graph asks to review (Learn describes example 14, minus
+its guest filter, only as users "assigned to a directory role"). The documents therefore say only "the users
+assigned to one directory role".
 
 **The target check branch.** See [#access-review-target](#access-review-target): the role branch compares the
 role definition id case-insensitively and reuses `AccessReviewScopeMismatch`. `New-OERAccessReviewDefinition

@@ -819,7 +819,7 @@ write a scoped role, so a proposal may keep it, leave it out, or add it for a ne
 An `accessReviews[]` entry is matched to a live review by `displayName`, looked up in the whole
 tenant, and access review display names are not unique. An entry declares ONE of three forms: `group`
 (a display name or an object id), a review of all members of that group, `directoryRole` (a role name
-or id), a review of every user with an active or eligible assignment of that directory role, or
+or id), a review of the users assigned to one directory role, or
 `accessPackage` together with `assignmentPolicy`, a review of an access package assignment policy. The
 review found is
 therefore updated only when it reviews exactly what the entry declares:
@@ -828,8 +828,8 @@ therefore updated only when it reviews exactly what the entry declares:
   the same group's guest users only, its direct members only, its inactive users or its owners, and a
   review of another group, are not that review. The group is looked up the way creation looks it up
   (an id as written, a name through the tenant).
-- A `directoryRole` entry: the review found must review all active and eligible assignments of that
-  role. A review of only eligible or only active assignments, of guest users only, or of another
+- A `directoryRole` entry: the review found must be the form the module writes for a review of that
+  role (all users, all assignment types). A review of only eligible or only active assignments, of guest users only, or of another
   role, is not that review. The role is looked up the way creation looks it up (an id as written, a
   name through the tenant).
 - An `accessPackage` and `assignmentPolicy` entry: a GUID is compared as written, and a name is

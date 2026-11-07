@@ -197,7 +197,7 @@ change on either side to the other, so they agree hit for hit.
 the manifest's cmdlet count; a new export moves the numbers it holds (item 3 of **Checklist: Adding
 a New Function**).
 
-**Test files named after no single function.** Ten cross-cutting suites exist; do **NOT** delete any
+**Test files named after no single function.** Eleven cross-cutting suites exist; do **NOT** delete any
 of them as an orphan when auditing the one-test-file-per-function invariant
 (`Why: docs/development/rationale.md#qa-gates`):
 
@@ -222,6 +222,9 @@ of them as an orphan when auditing the one-test-file-per-function invariant
   `Get-OERInventory`, applies them back through `Invoke-OERStructure` with and without `-Prune`:
   every row `Unchanged`; applied under another tenant the export is refused with
   `DocumentTenantMismatch`, reading and writing nothing.
+- `Unit/Public/AccessReviewDirectoryRole.RoundTrip.Tests.ps1` -- exports a directory role access
+  review from a mocked live state with `Get-OERInventory`, applies it back through
+  `Invoke-OERStructure` with the real role resolvers: every row `Unchanged`, nothing written.
 - `Unit/Public/WarningBeforeConfirmation.Cohort.Tests.ps1` -- AST-driven: no `source/Public/*.ps1`
   file writes `Write-Warning` after its first `$PSCmdlet.ShouldProcess`, except allowlisted warnings.
   `OER_COHORT_SOURCE_ROOT` (a source-root override for the AST cohorts, also read by
@@ -913,7 +916,7 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   root scope.
   `Why: docs/development/rationale.md#root-scope-is-not-in-the-document`
 - **`Get-OERAccessReviewTargetMismatch` is the single owner of whether a live access review found by
-  display name reviews the access package and assignment policy, or the group, an `accessReviews[]`
+  display name reviews the access package and assignment policy, or the group, or the directory role, an `accessReviews[]`
   entry declares**; `Resolve-OERAssignmentPolicyId` owns the assignment policy name lookup it
   shares with creation (`Resolve-OERAccessReviewScopeTarget`). A review that does not is refused with
   `AccessReviewScopeMismatch` before any reviewer lookup or `ShouldProcess`, nothing written to it.
