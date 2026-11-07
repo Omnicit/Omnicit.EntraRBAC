@@ -154,7 +154,9 @@ function New-OERAccessReviewDefinition {
     Creates a yearly single-stage access review of every direct and transitive member of the group.
 
     .EXAMPLE
-    New-OERAccessReviewDefinition -DisplayName 'Reports Reader holders' -DescriptionForAdmins 'Yearly review' `n        -DescriptionForReviewers 'Please review role access' -DirectoryRole 'Reports Reader' `n        -Reviewer 'manager@contoso.com' -Recurrence Annually -StartDate (Get-Date '2027-01-01')
+    New-OERAccessReviewDefinition -DisplayName 'Reports Reader holders' -DescriptionForAdmins 'Yearly review' `
+        -DescriptionForReviewers 'Please review role access' -DirectoryRole 'Reports Reader' `
+        -Reviewer 'manager@contoso.com' -Recurrence Annually -StartDate (Get-Date '2027-01-01')
     Creates a yearly single-stage access review of every user holding the Reports Reader directory role.
     #>
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'SingleStage')]

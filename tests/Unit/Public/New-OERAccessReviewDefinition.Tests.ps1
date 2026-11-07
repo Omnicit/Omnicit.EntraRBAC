@@ -1102,6 +1102,50 @@ New-OERAccessReviewDefinition -DisplayName r -DescriptionForAdmins a -Descriptio
         }
     }
 
+    # The same runspace WITHOUT -ErrorAction Stop: the refusal is written non-terminating and the script
+    # carries on. Exactly one record reaches the error stream (a missing return would add the builder's
+    # own failure), it carries the resolver's id, and no POST was sent.
+    It 'writes the resolver refusal non-terminating in a script with no try, and sends no POST' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Text = @'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERDirectoryRoleInput -Value {
+        param([string]$Role)
+        [PSCustomObject]@{ RoleDefinitionId = $null; ErrorId = 'RoleDefinitionNotFound'; Message = 'no such role'
+            Category = 'ObjectNotFound'; TargetObject = $Role; InnerException = $null }
+    }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        [System.IO.File]::AppendAllText('#LOG#', "$Method`n")
+        return $null
+    }
+    foreach ($Fn in 'Initialize-OERAuth', 'Resolve-OERDirectoryRoleInput', 'Invoke-OERGraphRequest') {
+        $Cmd = Get-Command $Fn
+        if ($Cmd.ModuleName -ne 'Omnicit.EntraRBAC' -or $Cmd.CommandType -ne 'Function') { throw "stub $Fn does not resolve to the module-scope function" }
+    }
+}
+[System.IO.File]::AppendAllText('#LOG#', "STUBS:ok`n")
+New-OERAccessReviewDefinition -DisplayName r -DescriptionForAdmins a -DescriptionForReviewers r -DirectoryRole 'Nope' -SelfReview -Recurrence Annually -StartDate ([datetime]'2027-01-01')
+[System.IO.File]::AppendAllText('#LOG#', "AFTER`n")
+'@
+        $Ps = [powershell]::Create()
+        try {
+            $null = $Ps.AddScript($Text.Replace('#LOG#', $Log.Replace("'", "''")))
+            $null = $Ps.Invoke()
+            $Logged = @(Get-Content -LiteralPath $Log)
+            $Logged | Should -Contain 'STUBS:ok'
+            $Logged | Should -Contain 'AFTER'
+            @($Logged | Where-Object { $_ -eq 'POST' }).Count | Should -Be 0
+            $Errors = @($Ps.Streams.Error)
+            $Errors.Count | Should -Be 1
+            $Errors[0].FullyQualifiedErrorId | Should -Be 'RoleDefinitionNotFound,New-OERAccessReviewDefinition'
+        } finally {
+            $Ps.Dispose()
+        }
+    }
+
     It 'refuses -DirectoryRole beside <Other> at binding and sends nothing' -ForEach @(
         @{ Other = '-AccessPackage'; Extra = @{ AccessPackage = 'AP'; AssignmentPolicy = 'Standard' } }
         @{ Other = '-Group'; Extra = @{ Group = 'grp' } }
