@@ -11,7 +11,7 @@ only of the two low-risk directory roles Reports Reader and Message Center Reade
 script creates the security group `oer-s134-grp` (no member), the catalog `oer-s134-cat`, the access
 package `oer-s134-ap` with its direct-assignment policy `oer-s134-pol`, and four self-review access
 reviews that start seven days ahead and send no mail: `oer-s134-pkg` (the package and policy),
-`oer-s134-grpr` (the members of `oer-s134-grp`), `oer-s134-other` (every assignment of Message
+`oer-s134-grpr` (the members of `oer-s134-grp`), `oer-s134-other` (the users assigned to Message
 Center Reader) and `oer-s134-elig` (the eligible assignments of Reports Reader). The checks create
 `oer-s134-role` and `oer-s134-cmd` the same way and change the description of `oer-s134-role`, and
 nothing else. Every check runs with a request fence in the module's scope that refuses a write whose
@@ -413,6 +413,7 @@ Result:
 - [ ] **5.1** With the base commit's build, `Get-OERInventory` of the same filter writes `oer-s134-pkg` and `oer-s134-grpr` byte-for-byte as the export of 3.1 does, and none of the role reviews. #type/subtask
 
 ```powershell
+$env:PSModulePath = (Join-Path $Cfg.Repo 'output\RequiredModules') + [System.IO.Path]::PathSeparator + $env:PSModulePath
 Import-Module (Join-Path $env:OER_BASE_MODULE 'Omnicit.EntraRBAC') -Force -Global
 $Base = Get-Module -Name Omnicit.EntraRBAC
 Connect-OerLive -Arm
