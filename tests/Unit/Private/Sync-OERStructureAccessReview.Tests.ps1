@@ -5944,3 +5944,198 @@ Describe 'Sync-OERStructureAccessReview applies a review of a group''s members (
         Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
     }
 }
+
+# Sprint 13 step 4 (Task 5): an accessReviews[] entry that declares directoryRole. The handler runs the
+# real Resolve-OERAccessReviewChange and Get-OERAccessReviewTargetMismatch (and the real role scope
+# owner); only the role name lookup, the reads, the writes and the sign-in are mocked. Ids are placeholders.
+Describe 'Sync-OERStructureAccessReview applies a review of a directory role' {
+
+    BeforeAll {
+        $script:moduleName = 'Omnicit.EntraRBAC'
+        $script:DrName = 'Q3 role review'
+        $script:DrDefId = 'cccc3333-0000-0000-0000-000000000001'
+        $script:DrRoleId = '00000000-0000-0000-0000-000000000041'
+        $script:DrOtherRoleId = '00000000-0000-0000-0000-000000000042'
+
+        function New-DrScope {
+            param([string]$RoleId)
+            [PSCustomObject]@{ Query = "/beta/roleManagement/directory/roleDefinitions/$RoleId"; QueryType = 'MicrosoftGraph'; QueryRoot = $null; ScopeType = '#microsoft.graph.accessReviewQueryScope' }
+        }
+        # The live definition as Get-OERAccessReviewDefinition returns an All form role review.
+        function New-DrLive {
+            param([string]$RoleId = $script:DrRoleId, [string]$Description = 'admin text', [string]$PrincipalQuery = '/v1.0/users')
+            [PSCustomObject]@{
+                Id                      = $script:DrDefId
+                DisplayName             = $script:DrName
+                Status                  = 'InProgress'
+                DescriptionForAdmins    = $Description
+                DescriptionForReviewers = 'reviewer text'
+                Scope                   = $null
+                ScopeType               = '#microsoft.graph.principalResourceMembershipsScope'
+                PrincipalScopes         = @([PSCustomObject]@{ Query = $PrincipalQuery; QueryType = 'MicrosoftGraph'; QueryRoot = $null; ScopeType = '#microsoft.graph.accessReviewQueryScope' })
+                ResourceScopes          = @(New-DrScope -RoleId $RoleId)
+                AccessPackageId         = $null
+                AssignmentPolicyId      = $null
+                Reviewers               = @(@{ query = '/users/usr-1' })
+                FallbackReviewers       = @()
+                DurationInDays          = 14
+                Recurrence              = @{
+                    pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }
+                    range   = @{ type = 'noEnd'; startDate = '2026-07-01' }
+                }
+                Settings                = @{ instanceDurationInDays = 14 }
+            }
+        }
+        function New-DrEntry {
+            param([string]$Role = 'Reports Reader', [string]$DescriptionForAdmins)
+            $Entry = [PSCustomObject]@{
+                displayName    = $script:DrName
+                directoryRole  = $Role
+                durationInDays = 14
+                reviewers      = @('person1@example.com')
+            }
+            if ($DescriptionForAdmins) { $Entry | Add-Member -NotePropertyName descriptionForAdmins -NotePropertyValue $DescriptionForAdmins }
+            $Entry
+        }
+        function Invoke-DrSync {
+            param([Parameter(Mandatory)]$Item, [switch]$WhatIf)
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Item = $Item; PlanOnly = $WhatIf.IsPresent } {
+                param($Item, $PlanOnly)
+                function Invoke-SyncArViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet
+                }
+                $Published = $null
+                $Rows = @(Invoke-SyncArViaCaller -Item $Item -WhatIf:$PlanOnly -ErrorAction SilentlyContinue -ErrorVariable Published -WarningAction SilentlyContinue)
+                [PSCustomObject]@{
+                    Rows   = $Rows
+                    Errors = @($Published | Where-Object {
+                            $_ -is [System.Management.Automation.ErrorRecord] -and
+                            ([string]$_.FullyQualifiedErrorId).EndsWith(',Invoke-SyncArViaCaller')
+                        })
+                }
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        $script:DrLiveNow = $null
+        $script:DrRoleAnswer = [PSCustomObject]@{ RoleDefinitionId = '00000000-0000-0000-0000-000000000041'; ErrorId = $null }
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { param($Uri) throw "Unexpected Graph request: $Uri" }
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition { $script:DrLiveNow }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERStructurePrincipal { 'usr-1' }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput { $script:DrRoleAnswer }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERGroupId { throw 'Unexpected group lookup.' }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId { throw 'Unexpected access package lookup.' }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId { throw 'Unexpected assignment policy lookup.' }
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERStructureRenameTarget { throw 'Unexpected rename map read.' }
+        Mock -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-new' } }
+        Mock -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition { $script:DrLiveNow = New-DrLive -Description 'new text'; $script:DrLiveNow }
+    }
+
+    It 'creates a missing role review with the role and no package, policy or group, and reads no rename map (<Mode>)' -ForEach @(
+        @{ Mode = 'a real run'; PlanOnly = $false }
+        @{ Mode = 'a plan under -WhatIf'; PlanOnly = $true }
+    ) {
+        $Run = Invoke-DrSync -Item (New-DrEntry) -WhatIf:$PlanOnly
+        $Run.Rows.Count | Should -Be 1
+        if ($PlanOnly) {
+            $Run.Rows[0].Action | Should -Be 'Skipped'
+            $Run.Rows[0].Detail | Should -BeExactly "would create access review 'Q3 role review'"
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+        } else {
+            $Run.Rows[0].Action | Should -Be 'Created'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter {
+                $DirectoryRole -ceq 'Reports Reader' -and $null -eq $Group -and $null -eq $AccessPackage -and $null -eq $AssignmentPolicy -and $DurationInDays -eq 14
+            }
+        }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERStructureRenameTarget -Times 0
+    }
+
+    It 'reports the entry against the read-back All form role review Unchanged and writes nothing (G8)' {
+        $script:DrLiveNow = New-DrLive
+        $Run = Invoke-DrSync -Item (New-DrEntry)
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -Be 'Unchanged'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput -Times 1 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERStructureRenameTarget -Times 0
+    }
+
+    It 'updates a changed descriptionForAdmins once, then reports the updated live state Unchanged (G8)' {
+        $script:DrLiveNow = New-DrLive
+        $First = Invoke-DrSync -Item (New-DrEntry -DescriptionForAdmins 'new text')
+        $First.Rows.Count | Should -Be 1
+        $First.Rows[0].Action | Should -Be 'Updated'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter { $DescriptionForAdmins -ceq 'new text' }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+
+        $Second = Invoke-DrSync -Item (New-DrEntry -DescriptionForAdmins 'new text')
+        $Second.Rows.Count | Should -Be 1
+        $Second.Rows[0].Action | Should -Be 'Unchanged'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 1 -Exactly
+    }
+
+    It 'refuses a live namesake reviewing ANOTHER role, in <Mode>, with nothing written' -ForEach @(
+        @{ Mode = 'a real run'; PlanOnly = $false }
+        @{ Mode = 'a plan under -WhatIf'; PlanOnly = $true }
+    ) {
+        $script:DrLiveNow = New-DrLive -RoleId $script:DrOtherRoleId
+        $Run = Invoke-DrSync -Item (New-DrEntry) -WhatIf:$PlanOnly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput -Times 1 -Exactly
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -Be 'Failed'
+        [string]$Run.Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'AccessReviewScopeMismatch*'
+        $Run.Rows[0].Detail | Should -BeLike "*reviews the assignments to directory role '$($script:DrOtherRoleId)', not the directory role*"
+        $Run.Errors.Count | Should -Be 1
+        [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewScopeMismatch,Invoke-SyncArViaCaller'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+    }
+
+    It 'refuses a live review of the right role in the guest form with AccessReviewScopeMismatch, nothing written' {
+        $script:DrLiveNow = New-DrLive -PrincipalQuery "/v1.0/users?`$filter=(userType eq 'Guest')"
+        $Run = Invoke-DrSync -Item (New-DrEntry)
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -Be 'Failed'
+        [string]$Run.Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'AccessReviewScopeMismatch*'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+    }
+
+    It 'fails an entry whose role cannot be resolved with the lookup''s own id and the role detail, nothing written' {
+        $script:DrLiveNow = New-DrLive
+        $script:DrRoleAnswer = [PSCustomObject]@{
+            RoleDefinitionId = $null
+            ErrorId          = 'RoleDefinitionNotFound'
+            Message          = "Directory role 'Reports Reader' not found."
+            Category         = [System.Management.Automation.ErrorCategory]::ObjectNotFound
+            InnerException   = $null
+        }
+        $Run = Invoke-DrSync -Item (New-DrEntry)
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -Be 'Failed'
+        $Run.Rows[0].Detail | Should -BeExactly "could not resolve the directory role of access review 'Q3 role review': Directory role 'Reports Reader' not found.; nothing was written"
+        [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeExactly 'RoleDefinitionNotFound,Invoke-SyncArViaCaller'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+    }
+
+    It 'creates a group review with -Group only and a package review with -AccessPackage and -AssignmentPolicy only' {
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERStructureRenameTarget { [PSCustomObject]@{ Id = 'aaaa1111-0000-0000-0000-000000000001'; PreviousName = $null; Refused = $false; CreatePending = $false } }
+        $GroupEntry = [PSCustomObject]@{ displayName = 'Q3 group'; group = 'Sales'; durationInDays = 14; reviewers = @('person1@example.com') }
+        $PackageEntry = [PSCustomObject]@{ displayName = 'Q3 package'; accessPackage = 'AP-Sales'; assignmentPolicy = 'Standard'; durationInDays = 14; reviewers = @('person1@example.com') }
+        $null = Invoke-DrSync -Item $GroupEntry
+        $null = Invoke-DrSync -Item $PackageEntry
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter {
+            $Group -ceq 'Sales' -and $null -eq $DirectoryRole -and $null -eq $AccessPackage -and $null -eq $AssignmentPolicy
+        }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter {
+            $null -ne $AccessPackage -and $null -ne $AssignmentPolicy -and $null -eq $DirectoryRole -and $null -eq $Group
+        }
+    }
+}
