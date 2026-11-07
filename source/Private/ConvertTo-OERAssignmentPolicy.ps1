@@ -23,11 +23,13 @@ function ConvertTo-OERAssignmentPolicy {
     downstream set comparison is order- and case-insensitive.
 
     DurationInDays is parsed from an afterDuration expiration's ISO 8601 duration when it is a whole-day
-    multiple, otherwise DurationInHours is set. The access package id is read from the expanded
-    accessPackage relationship (accessPackage.id); on v1.0 the policy resource has no scalar
-    accessPackageId property, so a GET must request $expand=accessPackage for this to be populated. The
-    create/update paths, which already know the package id but receive a response without the expanded
-    relationship, can supply it via -AccessPackageId.
+    multiple, otherwise DurationInHours is set. A fixed expiration date-time is written as an ISO 8601
+    UTC round-trip string (for example 2026-12-31T00:00:00.0000000Z), whatever form the read gives it.
+    The access package id is read from the expanded accessPackage relationship (accessPackage.id); on
+    v1.0 the policy resource has no scalar accessPackageId property, so a GET must request
+    $expand=accessPackage for this to be populated. The create/update paths, which already know the
+    package id but receive a response without the expanded relationship, can supply it via
+    -AccessPackageId.
 
     .PARAMETER InputObject
     The raw Graph assignment policy object (hashtable or PSObject) to convert.
@@ -87,7 +89,27 @@ function ConvertTo-OERAssignmentPolicy {
                 $DurationInHours = $null
             }
         } elseif ($Expiration -and $Expiration.type -eq 'afterDateTime' -and $Expiration.endDateTime) {
-            $ExpirationDateTime = [string]$Expiration.endDateTime
+            $EndValue = $Expiration.endDateTime
+            $Utc = $null
+            if ($EndValue -is [datetime]) {
+                $Utc = switch ($EndValue.Kind) {
+                    'Utc' { $EndValue }
+                    'Local' { $EndValue.ToUniversalTime() }
+                    default { [datetime]::SpecifyKind($EndValue, [System.DateTimeKind]::Utc) }
+                }
+            } elseif ($EndValue -is [datetimeoffset]) {
+                $Utc = $EndValue.UtcDateTime
+            } elseif ($EndValue -is [string]) {
+                $Dto = [datetimeoffset]::MinValue
+                if ([datetimeoffset]::TryParse($EndValue, [cultureinfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal, [ref]$Dto)) {
+                    $Utc = $Dto.UtcDateTime
+                }
+            }
+            $ExpirationDateTime = if ($null -ne $Utc) {
+                $Utc.ToString('o', [cultureinfo]::InvariantCulture)
+            } else {
+                [string]$EndValue
+            }
         }
         # A non-positive day count (a degenerate value) is not a meaningful lifetime -- treat it as no
         # duration so it omits cleanly and round-trips (the schema requires durationInDays >= 1).

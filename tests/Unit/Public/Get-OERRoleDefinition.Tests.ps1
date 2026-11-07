@@ -50,6 +50,28 @@ Describe 'Get-OERRoleDefinition' {
             Should -Throw -ErrorId 'RoleDefinitionNotFound,Get-OERRoleDefinition'
     }
 
+    It 'reads the -Role list with -RequireValue and the plain list without it (BL-172)' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { [PSCustomObject]@{ value = @() } }
+        $null = Get-OERRoleDefinition -Role 'Reader' -ErrorAction SilentlyContinue
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $RequireValue }
+        $null = Get-OERRoleDefinition
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { -not $RequireValue -and $All }
+    }
+
+    It 'publishes a refused -Role read as ArmPagingIncomplete, never RoleDefinitionNotFound (BL-172)' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest {
+            $Err = [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('The Azure answer was empty.'), 'ArmPagingIncomplete',
+                [System.Management.Automation.ErrorCategory]::InvalidResult, 'Reader')
+            throw $Err
+        }
+        $Err = $null
+        $null = Get-OERRoleDefinition -Role 'Reader' -ErrorAction SilentlyContinue -ErrorVariable Err
+        $Ids = @($Err | ForEach-Object { ($_.FullyQualifiedErrorId -split ',')[0] })
+        $Ids | Should -Contain 'ArmPagingIncomplete'
+        $Ids | Should -Not -Contain 'RoleDefinitionNotFound'
+    }
+
     It 'tells the operator how to list the available roles when a name matches nothing' {
         Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { [PSCustomObject]@{ value = @() } }
         $Err = $null

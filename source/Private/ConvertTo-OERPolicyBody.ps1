@@ -13,13 +13,15 @@ function ConvertTo-OERPolicyBody {
 
     Each piece of the body is resolved with overlay precedence: a value passed by the caller wins;
     otherwise, when -Existing (the current raw Graph policy, used by Set's read-modify-write) is
-    supplied, the corresponding value is carried forward from it; otherwise a New-default is applied.
+    supplied, the corresponding value is carried forward from it as it is, an empty string, false or an
+    empty list included; otherwise a New-default is applied, written only when the read has no value for
+    the key and the call names none.
     -Existing is the raw Graph hashtable and is read by key/dot access, never via .PSObject.Properties.
     The description is always emitted: an explicit -Description wins, otherwise it is carried forward
     from -Existing, and only on New (no -Existing) does it default to the display name. Expiration is
     afterDuration when -DurationInDays or -DurationInHours is given, afterDateTime
     when -ExpirationDateTime is given, the carried-forward -Existing expiration when present, otherwise
-    noExpiration. reviewSettings and questions are preserved verbatim from -Existing when present and are
+    noExpiration. reviewSettings and questions are preserved verbatim from -Existing when it has a value for them and are
     omitted entirely on New. -RequestorScope follows the same overlay: when supplied its
     allowedTargetScope and specificAllowedTargets win; when omitted, both are carried forward from
     -Existing together as a single unit (never mixed from different sources), so a read-modify-write Set
@@ -100,7 +102,9 @@ function ConvertTo-OERPolicyBody {
 
     .PARAMETER Existing
     The current raw Graph accessPackageAssignmentPolicy hashtable, supplied by Set for read-modify-write.
-    Values not provided as parameters are carried forward from it, and reviewSettings and questions are
+    Values not provided as parameters are carried forward from it as they are (an empty string, false or an
+    empty list included; the builder default is written only when the read has no value for the key and the
+    call names none), and reviewSettings and questions are
     preserved verbatim. Its customExtensionStageSettings must hold each custom extension's id (read with
     $expand=customExtensionStageSettings($expand=customExtension)) or the function throws, and its
     automaticRequestSettings is carried only while -RequestorScope is omitted. Absent on New.
@@ -209,7 +213,7 @@ function ConvertTo-OERPolicyBody {
         @{ type = 'afterDuration'; duration = ConvertTo-OERDuration -Hours $DurationInHours }
     } elseif ($PSBoundParameters.ContainsKey('ExpirationDateTime')) {
         @{ type = 'afterDateTime'; endDateTime = $ExpirationDateTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }
-    } elseif ($Existing -and $Existing.expiration) {
+    } elseif ($null -ne $Existing -and $null -ne $Existing.expiration) {
         $Existing.expiration
     } else {
         @{ type = 'noExpiration' }
@@ -256,12 +260,12 @@ function ConvertTo-OERPolicyBody {
         }
     }
 
-    $ExistingApproval = if ($Existing) { $Existing.requestApprovalSettings } else { $null }
+    $ExistingApproval = if ($null -ne $Existing) { $Existing.requestApprovalSettings } else { $null }
 
     # stages: provided ApprovalStage wins, else carry from Existing, else empty.
     $ResolvedStages = if ($PSBoundParameters.ContainsKey('ApprovalStage')) {
         @($Stages)
-    } elseif ($ExistingApproval -and $ExistingApproval.stages) {
+    } elseif ($null -ne $ExistingApproval -and $null -ne $ExistingApproval.stages) {
         @($ExistingApproval.stages)
     } else {
         @()
@@ -272,7 +276,7 @@ function ConvertTo-OERPolicyBody {
         [bool]$RequireApproval
     } elseif ($PSBoundParameters.ContainsKey('ApprovalStage')) {
         [bool]($Stages.Count -gt 0)
-    } elseif ($ExistingApproval) {
+    } elseif ($null -ne $ExistingApproval) {
         [bool]$ExistingApproval.isApprovalRequiredForAdd
     } else {
         $false
@@ -280,7 +284,7 @@ function ConvertTo-OERPolicyBody {
 
     $ResolvedRequireJustification = if ($PSBoundParameters.ContainsKey('RequireRequestorJustification')) {
         [bool]$RequireRequestorJustification
-    } elseif ($ExistingApproval) {
+    } elseif ($null -ne $ExistingApproval) {
         [bool]$ExistingApproval.isRequestorJustificationRequired
     } else {
         $false
@@ -288,7 +292,7 @@ function ConvertTo-OERPolicyBody {
 
     $ResolvedRequireApprovalForUpdate = if ($PSBoundParameters.ContainsKey('RequireApprovalForUpdate')) {
         [bool]$RequireApprovalForUpdate
-    } elseif ($ExistingApproval) {
+    } elseif ($null -ne $ExistingApproval) {
         [bool]$ExistingApproval.isApprovalRequiredForUpdate
     } else {
         $false
@@ -297,7 +301,7 @@ function ConvertTo-OERPolicyBody {
     # notificationSettings: explicit flag wins, else carry from Existing, else not-disabled New-default.
     $ResolvedNotificationSettings = if ($PSBoundParameters.ContainsKey('DisableAssignmentNotifications')) {
         @{ isAssignmentNotificationDisabled = [bool]$DisableAssignmentNotifications }
-    } elseif ($Existing -and $Existing.notificationSettings) {
+    } elseif ($null -ne $Existing -and $null -ne $Existing.notificationSettings) {
         $Existing.notificationSettings
     } else {
         @{ isAssignmentNotificationDisabled = $false }
@@ -308,14 +312,14 @@ function ConvertTo-OERPolicyBody {
     # SpecificDirectoryUsers scope whenever an unrelated field is updated.
     $ResolvedAllowedTargetScope = if ($PSBoundParameters.ContainsKey('RequestorScope')) {
         $RequestorScope.AllowedTargetScope
-    } elseif ($Existing -and $Existing.allowedTargetScope) {
+    } elseif ($null -ne $Existing -and $null -ne $Existing.allowedTargetScope) {
         $Existing.allowedTargetScope
     } else {
         $null
     }
     $ResolvedSpecificTargets = if ($PSBoundParameters.ContainsKey('RequestorScope')) {
         @($RequestorScope.SpecificAllowedTargets)
-    } elseif ($Existing -and $Existing.specificAllowedTargets) {
+    } elseif ($null -ne $Existing -and $null -ne $Existing.specificAllowedTargets) {
         @($Existing.specificAllowedTargets)
     } else {
         @()
@@ -339,8 +343,17 @@ function ConvertTo-OERPolicyBody {
     }
 
     # Preserve carry-forward-only collections verbatim from Existing; omitted entirely on New.
-    if ($Existing -and $Existing.reviewSettings) { $Body.reviewSettings = $Existing.reviewSettings }
-    if ($Existing -and $Existing.questions) { $Body.questions = $Existing.questions }
+    # A value the read carries is carried as it is (BL-169a): the test is $null, never truthiness, so
+    # $false, an empty string and an empty list are sent back. A list stays an array, a lone question too.
+    if ($null -ne $Existing -and $null -ne $Existing.reviewSettings) { $Body.reviewSettings = $Existing.reviewSettings }
+    if ($null -ne $Existing -and $null -ne $Existing.questions) {
+        $ExistingQuestions = $Existing.questions
+        if ($ExistingQuestions -is [System.Collections.IList] -or $ExistingQuestions -is [System.Collections.IDictionary]) {
+            $Body.questions = @($ExistingQuestions)
+        } else {
+            $Body.questions = $ExistingQuestions
+        }
+    }
 
     # Custom extension stages (measured 2026-10-13, Sprint 11 step 3): Microsoft Graph REMOVES a
     # policy's customExtensionStageSettings on a PUT that omits them, so a read-modify-write must send

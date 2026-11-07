@@ -165,6 +165,15 @@ Describe 'Resolve-OERAssignmentPolicyChange' {
             (Resolve-OERAssignmentPolicyChange -Desired $d -Current $c -DeclaredFields @('expiration')).Differs | Should -BeFalse }
     }
 
+    It 'expiration: the exported round-trip string and the declared Z string compare equal (BL-161c)' {
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ b = $script:base } { param($b)
+            $d = $b.PSObject.Copy(); $d.DurationInDays = $null; $d.ExpirationDateTime = '2026-12-31T10:20:30Z'
+            $c = $b.PSObject.Copy(); $c.DurationInDays = $null; $c.ExpirationDateTime = '2026-12-31T10:20:30.0000000Z'
+            $r = Resolve-OERAssignmentPolicyChange -Desired $d -Current $c -DeclaredFields @('expiration')
+            $r.Differs | Should -BeFalse
+            $r.ChangedFields | Should -Not -Contain 'expiration' }
+    }
+
     It 'expiration genuinely different dates -> diff' {
         InModuleScope Omnicit.EntraRBAC -Parameters @{ b = $script:base } { param($b)
             $d = $b.PSObject.Copy(); $d.DurationInDays = $null; $d.ExpirationDateTime = '2026-12-31T00:00:00Z'

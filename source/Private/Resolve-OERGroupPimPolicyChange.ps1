@@ -60,8 +60,14 @@ function Resolve-OERGroupPimPolicyChange {
     half of that pair is in SetParams and UnknownLiveValues names the pair (one text per pair, the
     eligible pair first); the handler then refuses the access type with PimRuleValueUnknown and sends
     nothing for it. UnknownLiveValues is an empty array otherwise. A declared half that already
-    matches its known live value sends nothing and names nothing; both halves declared, and a null
-    Current, are compared exactly as before.
+    matches its known live value sends nothing and names nothing. A declared permanence whose own
+    live value is unknown (isExpirationRequired gave none) is never read as false: when only the
+    permanence is declared over a known duration it is named in UnknownLiveValues too and nothing is
+    sent; with both halves declared an unknown live permanence counts as different, so the declared
+    pair is sent. A declared requireApproval over a live RequireApproval of null (the policy carries
+    no Approval_EndUser_Assignment rule) is named in UnknownLiveValues too, never read as false, and
+    no RequireApproval and no approver parameter is sent for that access type. A null Current is
+    compared exactly as before.
 
     .PARAMETER Declared
     The declared pimPolicy block for one access type: either a member/owner sub-object or the flat
@@ -170,7 +176,14 @@ function Resolve-OERGroupPimPolicyChange {
         )
         if (-not $Read -or $HasPerm -eq $HasDur) { return $null }
         if ($HasPerm) {
-            if ($LiveDays) { return $null }
+            if ($LiveDays) {
+                # The duration is known, but the live permanence may not be: a declared value is never
+                # compared with a $null read as if it were $false (BL-161d).
+                if ($null -eq $LivePerm) {
+                    return "$PermName is declared, and whether the live policy allows $Permanent ($RuleId isExpirationRequired) is unknown: the read returned no value for it"
+                }
+                return $null
+            }
             if ($null -ne $LivePerm -and [bool]$DeclaredPerm -eq [bool]$LivePerm) { return $null }
             $Why = if ([string]::IsNullOrWhiteSpace([string]$LiveDuration)) { 'the read returned no value for it' } else { "it reads '$LiveDuration', which is not a positive whole number of days" }
             return "$PermName is declared without $DurName, and the live $Expiration ($RuleId maximumDuration) is unknown: $Why"
@@ -191,9 +204,9 @@ function Resolve-OERGroupPimPolicyChange {
     if ($EligUnknown) {
         $UnknownLiveValues.Add($EligUnknown)
     } elseif ($HasEligPerm -or $HasEligDur) {
-        $DPerm = if ($HasEligPerm) { [bool]$Declared.allowPermanentEligibility } elseif ($null -ne $Current) { [bool]$Current.AllowPermanentEligibility } else { $false }
+        $DPerm = if ($HasEligPerm) { [bool]$Declared.allowPermanentEligibility } elseif ($null -ne $Current -and $null -ne $Current.AllowPermanentEligibility) { [bool]$Current.AllowPermanentEligibility } elseif ($null -ne $Current) { $null } else { $false }
         $DDur  = if ($HasEligDur)  { [int]$Declared.eligibleDurationDays } elseif ($null -ne $Current -and $Current.EligibleDurationDays) { [int]$Current.EligibleDurationDays } else { 365 }
-        $CPerm = if ($null -ne $Current) { [bool]$Current.AllowPermanentEligibility } else { $null }
+        $CPerm = if ($null -ne $Current -and $null -ne $Current.AllowPermanentEligibility) { [bool]$Current.AllowPermanentEligibility } else { $null }
         $CDur  = if ($null -ne $Current -and $Current.EligibleDurationDays) { [int]$Current.EligibleDurationDays } else { $null }
         if ($null -eq $Current -or ($HasEligPerm -and $DPerm -ne $CPerm) -or ($HasEligDur -and $DDur -ne $CDur)) {
             $SetParams.EligibleDuration = $DDur
@@ -213,9 +226,9 @@ function Resolve-OERGroupPimPolicyChange {
     if ($ActUnknown) {
         $UnknownLiveValues.Add($ActUnknown)
     } elseif ($HasActPerm -or $HasActDur) {
-        $DPerm = if ($HasActPerm) { [bool]$Declared.allowPermanentActive } elseif ($null -ne $Current) { [bool]$Current.AllowPermanentActive } else { $false }
+        $DPerm = if ($HasActPerm) { [bool]$Declared.allowPermanentActive } elseif ($null -ne $Current -and $null -ne $Current.AllowPermanentActive) { [bool]$Current.AllowPermanentActive } elseif ($null -ne $Current) { $null } else { $false }
         $DDur  = if ($HasActDur)  { [int]$Declared.activeDurationDays } elseif ($null -ne $Current -and $Current.ActiveDurationDays) { [int]$Current.ActiveDurationDays } else { 180 }
-        $CPerm = if ($null -ne $Current) { [bool]$Current.AllowPermanentActive } else { $null }
+        $CPerm = if ($null -ne $Current -and $null -ne $Current.AllowPermanentActive) { [bool]$Current.AllowPermanentActive } else { $null }
         $CDur  = if ($null -ne $Current -and $Current.ActiveDurationDays) { [int]$Current.ActiveDurationDays } else { $null }
         if ($null -eq $Current -or ($HasActPerm -and $DPerm -ne $CPerm) -or ($HasActDur -and $DDur -ne $CDur)) {
             $SetParams.ActiveDuration = $DDur
@@ -245,7 +258,13 @@ function Resolve-OERGroupPimPolicyChange {
     }
 
     # -- scalar: requireApproval -------------------------------------------------------------
-    if (Test-DeclHas $Declared 'requireApproval') {
+    # A live policy with no Approval_EndUser_Assignment rule gives RequireApproval $null: unknown, never
+    # read as false (BL-161d). Nothing is sent for approval or approvers then; the handler refuses the
+    # access type with PimRuleValueUnknown.
+    $ApprovalUnknown = (Test-DeclHas $Declared 'requireApproval') -and $null -ne $Current -and $null -eq $Current.RequireApproval
+    if ($ApprovalUnknown) {
+        $UnknownLiveValues.Add('requireApproval is declared, and whether the live policy requires approval on activation (Approval_EndUser_Assignment isApprovalRequired) is unknown: the read returned no value for it')
+    } elseif (Test-DeclHas $Declared 'requireApproval') {
         $D = [bool]$Declared.requireApproval
         if ($null -eq $Current -or $D -ne [bool]$Current.RequireApproval) {
             $SetParams.RequireApproval = $D; $Changes.Add("requireApproval=$D")
@@ -270,7 +289,9 @@ function Resolve-OERGroupPimPolicyChange {
     $HasDeclUser  = Test-DeclHas $Declared.approvers 'users'
     $HasDeclGroup = Test-DeclHas $Declared.approvers 'groups'
     $ApprovalExplicitlyOff = (Test-DeclHas $Declared 'requireApproval') -and (-not [bool]$Declared.requireApproval)
-    if (($HasDeclUser -or $HasDeclGroup) -and $ApprovalExplicitlyOff) {
+    if ($ApprovalUnknown) {
+        # Nothing to send: approvers apply only while approval is required, which is unknown.
+    } elseif (($HasDeclUser -or $HasDeclGroup) -and $ApprovalExplicitlyOff) {
         $Changes.Add('approvers ignored: requireApproval=False takes precedence (approvers only apply when approval is required)')
     } elseif ($HasDeclUser -or $HasDeclGroup) {
         $CurAll   = if ($null -ne $Current) { @(@($Current.Approvers) | Where-Object { $_ }) } else { @() }

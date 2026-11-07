@@ -10,7 +10,9 @@ function Set-OERResourceGroup {
     a clean ResourceGroupNotFound error -- then PUTs the preserved location together with the tags. The
     -Tag set REPLACES the existing tags (an empty hashtable clears them); -Tag is required, and omitting
     it emits a non-terminating NothingToUpdate error instead of silently re-applying the current tags.
-    The resource group location cannot be changed once created, so it is not exposed. Supports
+    The resource group location cannot be changed once created, so it is not exposed. A read that
+    succeeds without the location is refused with ResourceGroupValueUnknown before anything is sent,
+    since the update would otherwise send an empty location. Supports
     -WhatIf/-Confirm. Requires an ARM token; authentication is ensured at entry via
     Initialize-OERAuth -IncludeARM.
 
@@ -87,6 +89,18 @@ function Set-OERResourceGroup {
             } else {
                 $PSCmdlet.WriteError($PSItem)
             }
+            return
+        }
+
+        # A successful read without the location (the transport returns $null for an empty or JSON-null
+        # body) cannot be written back: the PUT would send an empty location. Refuse before ShouldProcess.
+        if ([string]::IsNullOrWhiteSpace([string]$Current.location)) {
+            Write-CmdletError `
+                -Message ([System.Exception]::new("Azure Resource Manager returned resource group '$Name' without its location, and an update must send the location it has, so nothing was sent. Read the resource group with Get-OERResourceGroup and try again.")) `
+                -ErrorId 'ResourceGroupValueUnknown' `
+                -Category InvalidData `
+                -TargetObject $Name `
+                -Cmdlet $PSCmdlet
             return
         }
 

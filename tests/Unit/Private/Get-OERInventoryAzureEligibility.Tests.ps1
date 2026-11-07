@@ -69,6 +69,26 @@ Describe 'Get-OERInventoryAzureEligibility' {
         @($Result.Eligibilities).Count | Should -Be 1
     }
 
+    It 'keys rows whose schedule id is white space by scope, role and principal, never by the blank id (BL-161e)' {
+        Mock -ModuleName $script:moduleName Get-OEREligibleRoleAssignment {
+            foreach ($P in @('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'cccccccc-cccc-cccc-cccc-cccccccccccc')) {
+                [PSCustomObject]@{
+                    RoleEligibilityScheduleId = '  '
+                    Scope                     = '/subscriptions/11111111-1111-1111-1111-111111111111'
+                    RoleDefinitionId          = '/providers/Microsoft.Authorization/roleDefinitions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+                    RoleName                  = 'Owner'
+                    PrincipalId               = $P
+                    PrincipalDisplayName      = $P
+                    PrincipalType             = 'User'
+                }
+            }
+        }
+        $Result = InModuleScope $script:moduleName {
+            Get-OERInventoryAzureEligibility -Scope '/subscriptions/11111111-1111-1111-1111-111111111111'
+        }
+        @($Result.Eligibilities).Count | Should -Be 2
+    }
+
     It 'lists a failing scope in SkippedScopes, warns once, and still reads the other scope' {
         Mock -ModuleName $script:moduleName Get-OEREligibleRoleAssignment {
             param($Scope, $AtScope)

@@ -985,15 +985,15 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   decides a written value: the put-back read of the pair's first half (a failure only loses the
   put-back; it warns before any PATCH and writes no default) and the authentication context
   validation read (a failure skips the validation). In the apply engine `Sync-OERStructureGroup`
-  refuses an access type whose expiration pair `Resolve-OERGroupPimPolicyChange` names in
-  `UnknownLiveValues` with `PimRuleValueUnknown`, before `ShouldProcess` -- never a default.
+  refuses an access type whose expiration pair or declared `requireApproval`
+  `Resolve-OERGroupPimPolicyChange` names in `UnknownLiveValues` with `PimRuleValueUnknown`, before `ShouldProcess` -- never a default.
   `Set-OERAccessPackageAssignmentPolicy` refuses a successful read lacking `expiration`,
   `requestApprovalSettings`, `requestorSettings` or `notificationSettings` with
   `AssignmentPolicyValueUnknown` before `ShouldProcess` and the PUT unless the call names every value
   the missing block holds (a bound `-RequestorSettings` or `-DisableAssignmentNotifications` does),
-  `ConvertTo-OERPolicyBody` throwing the same four conditions as a backstop. Known and NOT fixed,
-  outside this rule (unmeasured): an empty Azure Resource Manager body makes `Set-OERResourceGroup`
-  send an empty location.
+  `ConvertTo-OERPolicyBody` throwing the same four conditions as a backstop.
+  `Set-OERResourceGroup` refuses a successful read without `location` with
+  `ResourceGroupValueUnknown` before `ShouldProcess` and the PUT (BL-161a).
   `Why: docs/development/rationale.md#a-set-cmdlets-own-read-decides-a-written-value`
 - **`Send-OERPimRulePatch` is the single owner of sending a Microsoft Graph PIM rule set, one PATCH
   per rule**, including the pair put-back (the MFA / authentication-context pair) and the rule that
@@ -1110,7 +1110,7 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   assignment.** Never re-implement either inline. `Get-OERGroupReference` also owns the rule that a
   name `Test-OERGuid` accepts is written as the group's id, at every position; the positions that keep
   a shared name (eligibility principal, reviewer and fallback reviewer, catalog resource and resource
-  role) call it with `-KeepSharedName`; so do a non-group principal of a role assignment and an
+  role, an access package's catalog reference) call it with `-KeepSharedName`; so do a non-group principal of a role assignment and an
   application catalog resource, where the same GUID rule applies (R-7).
   `Why: docs/development/rationale.md#roster-identity-and-shared-names`
 - **`Export-OERInventory` is the only command that sets and clears the export run context

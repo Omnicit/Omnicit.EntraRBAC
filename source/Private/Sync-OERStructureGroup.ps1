@@ -187,7 +187,9 @@ function Sync-OERStructureGroup {
        THAT access type reports Failed with a PimRuleValueUnknown record (target the group name)
        before the approver check, the PIM-in-use question and the ShouldProcess gate, in a real run
        and under -WhatIf alike; nothing is written for it, and the other access type is processed as
-       usual.
+       usual. A declared requireApproval whose live approval value the read did not give is refused
+       the same way; its record ends with "Read the policy with Get-OERGroupPimPolicy", not with the
+       advice to declare both values of a pair (ruling R-8).
     5. Reconcile permanent eligibility entries (those without durationDays) -- must come after
        pimPolicy has been set to allow permanent eligibility. Matched and diffed the same way, so a
        time-bound eligibility that the document declares permanent is re-issued as permanent, again
@@ -1697,14 +1699,27 @@ function Sync-OERStructureGroup {
                 # the next access type. Final review of Sprint 11 step 11, Important 1.
                 if (@($Change.UnknownLiveValues).Count -gt 0) {
                     $UnknownText = @($Change.UnknownLiveValues) -join '; '
+                    # The remedy depends on the kind of text (ruling R-8): the approval text starts with
+                    # 'requireApproval is declared' and is no pair, so "declare both values" does not fit it.
+                    $UnknownApproval = @(@($Change.UnknownLiveValues) | Where-Object { ([string]$_).StartsWith('requireApproval is declared', [System.StringComparison]::Ordinal) })
+                    $UnknownPair = @(@($Change.UnknownLiveValues) | Where-Object { -not ([string]$_).StartsWith('requireApproval is declared', [System.StringComparison]::Ordinal) })
+                    $ApprovalRemedy = 'Read the policy with Get-OERGroupPimPolicy; the approval rule could not be read, so nothing was sent.'
+                    $UnknownRemedy = @(
+                        if ($UnknownPair.Count -gt 0) { "A value the document leaves out is taken from the live policy, never from a default, so nothing was changed for '$AccessType'. Declare both values of the pair in the document." }
+                        if ($UnknownApproval.Count -gt 0) { $ApprovalRemedy }
+                    ) -join ' '
+                    $UnknownDetailRemedy = @(
+                        if ($UnknownPair.Count -gt 0) { 'Declare both values of the pair in the document.' }
+                        if ($UnknownApproval.Count -gt 0) { $ApprovalRemedy }
+                    ) -join ' '
                     $ErrRec = [System.Management.Automation.ErrorRecord]::new(
-                        [System.Exception]::new("pimPolicy ($AccessType) of group '$Name' was not applied: $UnknownText. A value the document leaves out is taken from the live policy, never from a default, so nothing was changed for '$AccessType'. Declare both values of the pair in the document."),
+                        [System.Exception]::new("pimPolicy ($AccessType) of group '$Name' was not applied: $UnknownText. $UnknownRemedy"),
                         'PimRuleValueUnknown',
                         [System.Management.Automation.ErrorCategory]::InvalidData,
                         $Name)
                     $Caller.WriteError($ErrRec)
                     ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
-                        -Detail "pimPolicy ($AccessType) not applied: a value the document leaves to the live policy is unknown (PimRuleValueUnknown): $UnknownText; nothing was changed for '$AccessType'. Declare both values of the pair in the document." `
+                        -Detail "pimPolicy ($AccessType) not applied: a value the document leaves to the live policy is unknown (PimRuleValueUnknown): $UnknownText; nothing was changed for '$AccessType'. $UnknownDetailRemedy" `
                         -ErrorRecord $ErrRec
                     continue
                 }

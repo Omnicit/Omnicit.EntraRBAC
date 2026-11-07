@@ -177,13 +177,17 @@ GROUPS IN AN EXPORT
     reads; an access review among every review definition the read
     returned, the ones the export skips included). A group whose display name
     has the form of an object id is written by its object id wherever the
-    document references it, and its own groups entry is left out and named as
-    unread, since Invoke-OERStructure reads such a name as an object id. The
-    export warns once, and its README lists each name, with how many objects
-    carry it, under "Names two or more objects share". An access package's catalog, an access review's access package or assignment policy, and a
-    group named as the principal of a role assignment or a directory role
-    assignment (with principalType Group) are written by object id when their
-    name is shared. Test-OERStructure refuses two assignment policies of one
+    document references it (an access package's catalog reference included),
+    and its own groups entry is left out and named as unread, as is the own
+    catalogs entry of a catalog with such a name, since Invoke-OERStructure
+    reads such a name as an object id. Test-OERStructure warns on a
+    hand-written groups, catalogs or accessPackages displayName of that form.
+    The export warns once, and its README lists each name, with how many
+    objects carry it, under "Names two or more objects share". An access
+    package's catalog, an access review's access package or assignment
+    policy, and a group named as the principal of a role assignment or a
+    directory role assignment (with principalType Group) are written by
+    object id when their name is shared. Test-OERStructure refuses two assignment policies of one
     name in one access package.
 
 PIM ACTIVATIONS ARE NOT STANDING MEMBERS
@@ -588,7 +592,9 @@ VALIDATING AND APPLYING A DOCUMENT
     string that holds an ISO 8601 date and time with seconds, such as an
     assignment policy's expirationDateTime of 2027-01-01T00:00:00Z, stays the
     text written, as does a date alone, such as 2026-07-01, or a time without
-    seconds, such as 2026-07-01T10:00. A displayName that is not a string is
+    seconds, such as 2026-07-01T10:00. An export writes a fixed expiration as
+    an ISO 8601 UTC round-trip string, such as 2026-12-31T00:00:00.0000000Z.
+    A displayName that is not a string is
     an Error, and so is a group template that cannot be turned into a name
     with its tokens, which used to be that group's Failed row and now
     refuses the whole document before anything is read or written. A token's

@@ -757,3 +757,140 @@ Describe 'ConvertTo-OERPolicyBody refuses an -Existing without expiration or req
         }
     }
 }
+
+Describe 'ConvertTo-OERPolicyBody carries every value the read has (BL-169a)' {
+    Context 'carries every value the read has (BL-169a)' {
+        BeforeAll {
+            # A complete read; each It overrides the one key it is about.
+            $script:Bl169Base = {
+                @{
+                    allowedTargetScope      = 'allMemberUsers'
+                    expiration              = @{ type = 'noExpiration' }
+                    requestApprovalSettings = @{ isApprovalRequiredForAdd = $false; isApprovalRequiredForUpdate = $false; isRequestorJustificationRequired = $false; stages = @() }
+                    requestorSettings       = @{ enableTargetsToSelfAddAccess = $false }
+                    notificationSettings    = @{ isAssignmentNotificationDisabled = $false }
+                }
+            }
+        }
+
+        It 'carries an empty-string expiration as it is' {
+            InModuleScope $script:moduleName -Parameters @{ Base = $script:Bl169Base } {
+                param($Base)
+                $Existing = & $Base
+                $Existing.expiration = ''
+                $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+                $Body.expiration | Should -BeOfType [string]
+                $Body.expiration | Should -Be ''
+            }
+        }
+
+        It 'carries a false notificationSettings as it is' {
+            InModuleScope $script:moduleName -Parameters @{ Base = $script:Bl169Base } {
+                param($Base)
+                $Existing = & $Base
+                $Existing.notificationSettings = $false
+                $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+                $Body.notificationSettings | Should -BeOfType [bool]
+                $Body.notificationSettings | Should -BeFalse
+            }
+        }
+
+        It 'carries the three approval flags true and an empty stages list from the read' {
+            InModuleScope $script:moduleName -Parameters @{ Base = $script:Bl169Base } {
+                param($Base)
+                $Existing = & $Base
+                $Existing.requestApprovalSettings = @{ isApprovalRequiredForAdd = $true; isRequestorJustificationRequired = $true; isApprovalRequiredForUpdate = $true; stages = @() }
+                $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+                $Body.requestApprovalSettings.isApprovalRequiredForAdd | Should -BeTrue
+                $Body.requestApprovalSettings.isRequestorJustificationRequired | Should -BeTrue
+                $Body.requestApprovalSettings.isApprovalRequiredForUpdate | Should -BeTrue
+                $Body.requestApprovalSettings.stages -is [array] | Should -BeTrue
+                $Body.requestApprovalSettings.stages.Count | Should -Be 0
+            }
+        }
+
+        It 'carries an empty-string allowedTargetScope, not null' {
+            InModuleScope $script:moduleName -Parameters @{ Base = $script:Bl169Base } {
+                param($Base)
+                $Existing = & $Base
+                $Existing.allowedTargetScope = ''
+                $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+                $null -eq $Body.allowedTargetScope | Should -BeFalse
+                $Body.allowedTargetScope | Should -BeOfType [string]
+                $Body.allowedTargetScope | Should -Be ''
+            }
+        }
+
+        It 'carries an empty specificAllowedTargets list as an empty array' {
+            InModuleScope $script:moduleName -Parameters @{ Base = $script:Bl169Base } {
+                param($Base)
+                $Existing = & $Base
+                $Existing.specificAllowedTargets = @()
+                $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+                $Body.specificAllowedTargets -is [array] | Should -BeTrue
+                $Body.specificAllowedTargets.Count | Should -Be 0
+            }
+        }
+
+        It 'sends reviewSettings with the false value the read holds' {
+            InModuleScope $script:moduleName -Parameters @{ Base = $script:Bl169Base } {
+                param($Base)
+                $Existing = & $Base
+                $Existing.reviewSettings = $false
+                $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+                $Body.ContainsKey('reviewSettings') | Should -BeTrue
+                $Body.reviewSettings | Should -BeOfType [bool]
+                $Body.reviewSettings | Should -BeFalse
+            }
+        }
+
+        It 'sends questions as an empty array when the read holds an empty list' {
+            InModuleScope $script:moduleName -Parameters @{ Base = $script:Bl169Base } {
+                param($Base)
+                $Existing = & $Base
+                $Existing.questions = @()
+                $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+                $Body.ContainsKey('questions') | Should -BeTrue
+                $Body.questions -is [array] | Should -BeTrue
+                $Body.questions.Count | Should -Be 0
+            }
+        }
+
+        It 'keeps a lone question an array' {
+            InModuleScope $script:moduleName -Parameters @{ Base = $script:Bl169Base } {
+                param($Base)
+                $Existing = & $Base
+                $Existing.questions = @(@{ text = @{ defaultText = 'Why?' } })
+                $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+                $Body.questions -is [array] | Should -BeTrue
+                $Body.questions.Count | Should -Be 1
+            }
+        }
+
+        It 'wraps a lone question hashtable in an array' {
+            InModuleScope $script:moduleName -Parameters @{ Base = $script:Bl169Base } {
+                param($Base)
+                $Existing = & $Base
+                $Question = @{ text = @{ defaultText = 'Why?' } }
+                $Existing.questions = $Question
+                $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+                $Body.questions -is [array] | Should -BeTrue
+                $Body.questions.Count | Should -Be 1
+                $Body.questions[0].text.defaultText | Should -Be 'Why?'
+            }
+        }
+        It 'still writes the old defaults for keys the read does not have' {
+            InModuleScope $script:moduleName -Parameters @{ Base = $script:Bl169Base } {
+                param($Base)
+                $Existing = & $Base
+                $Existing.Remove('allowedTargetScope')
+                $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+                $Body.ContainsKey('reviewSettings') | Should -BeFalse
+                $Body.ContainsKey('questions') | Should -BeFalse
+                $null -eq $Body.allowedTargetScope | Should -BeTrue
+                $Body.specificAllowedTargets -is [array] | Should -BeTrue
+                $Body.specificAllowedTargets.Count | Should -Be 0
+            }
+        }
+    }
+}

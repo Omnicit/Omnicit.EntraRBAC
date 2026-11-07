@@ -28,7 +28,8 @@ function Get-OERGroupReference {
     -KeepSharedName is for the positions where R-6 of
     docs/development/rationale.md#roster-identity-and-shared-names keeps a shared name: a PIM for
     Groups eligibility principal, an access review reviewer or fallback reviewer, a catalog resource
-    and an access package resource role. They write the name even when other groups carry it, but a
+    and an access package resource role, and (Sprint 13 step 3, BL-173a) an access package's catalog
+    reference. They write the name even when other groups carry it, but a
     name that Test-OERGuid accepts is written as the id there as well. The set also serves two
     positions that are not a group (R-7): the principal of a role assignment that is a service
     principal or a user, and an application resource of an access package catalog, so an object
