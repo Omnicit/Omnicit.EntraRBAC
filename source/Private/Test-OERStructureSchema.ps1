@@ -139,7 +139,11 @@ function Test-OERStructureSchema {
     (the group whose members the review reviews: a display name or object id) or 'accessPackage' and
     'assignmentPolicy'. A declared 'group' replaces the two required findings; 'group' beside either
     of the other two is an Error at accessReviews[i].group, and a 'group' that is not a non-empty
-    string is an Error there too (an explicit null is undeclared). An accessReviews item validates
+    string is an Error there too (an explicit null is undeclared). A third form, 'directoryRole' (the
+    Microsoft Entra directory role whose assignments the review reviews: a display name or role
+    definition id), replaces the two required findings the same way; 'directoryRole' beside 'group',
+    'accessPackage' or 'assignmentPolicy' is one Error at accessReviews[i].directoryRole, and a
+    'directoryRole' that is not a non-empty string is an Error there too. An accessReviews item validates
     reviewers/fallbackReviewers as string arrays,
     descriptionForAdmins/descriptionForReviewers as strings, the five review settings booleans
     (mailNotification, reminderNotification, requireJustification, recommendationsEnabled,
@@ -1767,11 +1771,13 @@ function Test-OERStructureSchema {
                 $ARPath = "accessReviews[$I]"
                 $ARItem = if (Test-HasProp -Node $AR -Name 'displayName') { $AR.displayName } else { "accessReviews[$I]" }
 
-                # A review reviews either the members of a group ('group') or the assignments of an access
-                # package ('accessPackage' and 'assignmentPolicy'); the two forms are never mixed.
+                # A review reviews the members of a group ('group'), the assignments of a directory role
+                # ('directoryRole') or the assignments of an access package ('accessPackage' and
+                # 'assignmentPolicy'); the forms are never mixed.
                 $ArDeclaresGroup = Test-HasProp -Node $AR -Name 'group'
+                $ArDeclaresRole = Test-HasProp -Node $AR -Name 'directoryRole'
                 $ArDeclaresPackageForm = (Test-HasProp -Node $AR -Name 'accessPackage') -or (Test-HasProp -Node $AR -Name 'assignmentPolicy')
-                $ArRequired = if ($ArDeclaresGroup) { @('displayName') } else { @('displayName', 'accessPackage', 'assignmentPolicy') }
+                $ArRequired = if ($ArDeclaresGroup -or $ArDeclaresRole) { @('displayName') } else { @('displayName', 'accessPackage', 'assignmentPolicy') }
                 foreach ($Req in $ArRequired) {
                     if (-not (Test-HasProp -Node $AR -Name $Req)) {
                         Add-Finding -Section 'accessReviews' -Item $ARItem `
@@ -1779,7 +1785,13 @@ function Test-OERStructureSchema {
                             -Message "'$Req' is required at $ARPath."
                     }
                 }
-                if ($ArDeclaresGroup -and $ArDeclaresPackageForm) {
+                if ($ArDeclaresRole -and ($ArDeclaresGroup -or $ArDeclaresPackageForm)) {
+                    Add-Finding -Section 'accessReviews' -Item $ARItem -Path "$ARPath.directoryRole" `
+                        -Message "'directoryRole' at $ARPath cannot be combined with 'group', 'accessPackage' or 'assignmentPolicy': a review reviews the assignments of a directory role, the members of a group or the assignments of an access package. Declare one form."
+                } elseif ($ArDeclaresRole -and (($AR.directoryRole -isnot [string]) -or [string]::IsNullOrWhiteSpace($AR.directoryRole))) {
+                    Add-Finding -Section 'accessReviews' -Item $ARItem -Path "$ARPath.directoryRole" `
+                        -Message "'directoryRole' at $ARPath must be a directory role display name or role definition id."
+                } elseif ($ArDeclaresGroup -and $ArDeclaresPackageForm) {
                     Add-Finding -Section 'accessReviews' -Item $ARItem -Path "$ARPath.group" `
                         -Message "'group' at $ARPath cannot be combined with 'accessPackage' or 'assignmentPolicy': a review reviews either the members of a group or the assignments of an access package. Declare one form."
                 } elseif ($ArDeclaresGroup -and (($AR.group -isnot [string]) -or [string]::IsNullOrWhiteSpace($AR.group))) {

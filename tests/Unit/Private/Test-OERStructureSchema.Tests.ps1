@@ -447,6 +447,59 @@ Describe 'Test-OERStructureSchema' {
         }
     }
 
+    It 'accepts an accessReview declaring directoryRole alone, with no unknown-key warning (Sprint 13 step 4)' {
+        InModuleScope $script:moduleName {
+            $Doc = '{ "version": "1.0", "accessReviews": [ { "displayName": "r", "directoryRole": "Global Reader", "reviewers": [ "self" ] } ] }' | ConvertFrom-Json
+            $Result = Test-OERStructureSchema -Document $Doc
+            @($Result.Errors).Count | Should -Be 0
+            @($Result.Warnings | Where-Object { $_.Message -like '*Unknown key*' }).Count | Should -Be 0
+        }
+    }
+
+    It 'refuses directoryRole beside <Other> with exactly one Error at accessReviews[0].directoryRole' -ForEach @(
+        @{ Other = 'group'; Extra = '"group": "g"' }
+        @{ Other = 'accessPackage'; Extra = '"accessPackage": "ap"' }
+        @{ Other = 'assignmentPolicy'; Extra = '"assignmentPolicy": "p"' }
+        @{ Other = 'group, accessPackage and assignmentPolicy'; Extra = '"group": "g", "accessPackage": "ap", "assignmentPolicy": "p"' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Extra = $Extra } {
+            $Doc = ('{ "version": "1.0", "accessReviews": [ { "displayName": "r", "directoryRole": "Global Reader", ' + $Extra + ', "reviewers": [ "self" ] } ] }') | ConvertFrom-Json
+            $Errors = @((Test-OERStructureSchema -Document $Doc).Errors)
+            $Errors.Count | Should -Be 1
+            $Errors[0].Path | Should -BeExactly 'accessReviews[0].directoryRole'
+            $Errors[0].Message | Should -BeExactly "'directoryRole' at accessReviews[0] cannot be combined with 'group', 'accessPackage' or 'assignmentPolicy': a review reviews the assignments of a directory role, the members of a group or the assignments of an access package. Declare one form."
+        }
+    }
+
+    It 'refuses a directoryRole of <Case> with the string Error' -ForEach @(
+        @{ Case = 'an empty string'; Value = '""' }
+        @{ Case = 'white space'; Value = '"  "' }
+        @{ Case = 'a number'; Value = '5' }
+        @{ Case = 'an empty array'; Value = '[]' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Value = $Value } {
+            $Doc = ('{ "version": "1.0", "accessReviews": [ { "displayName": "r", "directoryRole": ' + $Value + ', "reviewers": [ "self" ] } ] }') | ConvertFrom-Json
+            $Errors = @((Test-OERStructureSchema -Document $Doc).Errors)
+            $Errors.Count | Should -Be 1
+            $Errors[0].Path | Should -BeExactly 'accessReviews[0].directoryRole'
+            $Errors[0].Message | Should -BeExactly "'directoryRole' at accessReviews[0] must be a directory role display name or role definition id."
+        }
+    }
+
+    It 'keeps both package Errors for an entry declaring only displayName (Sprint 13 step 4)' {
+        InModuleScope $script:moduleName {
+            $Doc = '{ "version": "1.0", "accessReviews": [ { "displayName": "r", "reviewers": [ "self" ] } ] }' | ConvertFrom-Json
+            @((Test-OERStructureSchema -Document $Doc).Errors).Path | Should -Be @('accessReviews[0].accessPackage', 'accessReviews[0].assignmentPolicy')
+        }
+    }
+
+    It 'reads an explicit null directoryRole as undeclared and keeps the two required Errors' {
+        InModuleScope $script:moduleName {
+            $Doc = '{ "version": "1.0", "accessReviews": [ { "displayName": "r", "directoryRole": null, "reviewers": [ "self" ] } ] }' | ConvertFrom-Json
+            @((Test-OERStructureSchema -Document $Doc).Errors).Path | Should -Be @('accessReviews[0].accessPackage', 'accessReviews[0].assignmentPolicy')
+        }
+    }
+
     It 'flags a role assignment missing scope/role/principal' {
         InModuleScope $script:moduleName {
             $Doc = '{ "version": "1.0", "roleAssignments": [ { "role": "Reader" } ] }' | ConvertFrom-Json
