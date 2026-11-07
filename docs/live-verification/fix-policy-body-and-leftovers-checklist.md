@@ -80,7 +80,7 @@ helpers block H.1** (the runner prepends H.1 to every block).
 
 ### H.1. The helpers every check uses
 
-- [ ] **H.1** The helpers load; nothing is printed and nothing is sent. #type/subtask
+- [x] **H.1** The helpers load; nothing is printed and nothing is sent. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -92,7 +92,10 @@ $EmBase = 'v1.0/identityGovernance/entitlementManagement'
 $IdFile = Join-Path $Raw 'known-ids.json'
 $Ids0 = if (Test-Path -LiteralPath $IdFile) { Get-Content -LiteralPath $IdFile -Raw | ConvertFrom-Json -AsHashtable } else { @{} }
 $PimId = [string]$Ids0['pim'].Id; $CatId = [string]$Ids0['cat'].Id; $ApId = [string]$Ids0['ap'].Id
-$PolId = [string]$Ids0['pol'].Id; $Expiry = [string]$Ids0['pol'].Expiry
+$PolId = [string]$Ids0['pol'].Id
+# ConvertFrom-Json turns the recorded ISO string into a DateTime; take it back as the UTC string written.
+$ExpiryRaw = $Ids0['pol'].Expiry
+$Expiry = if ($ExpiryRaw -is [datetime]) { $ExpiryRaw.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ', [cultureinfo]::InvariantCulture) } else { [string]$ExpiryRaw }
 $RgCreated = [bool]($Ids0.ContainsKey('rg') -and $Ids0['rg'].Created)
 $Allowed = @($PimId, $CatId, $ApId, $PolId) | Where-Object { $_ }
 function Connect-S133 {
@@ -137,7 +140,7 @@ function Connect-S133 {
 }
 function Set-S133NoWrite { param([bool]$On) & $script:S133Module { param($V) $script:S133NoWrite = $V } $On }
 function Get-S133Count { & $script:S133Module { '{0} read(s), {1} write(s)' -f @($script:S133Log | Where-Object { $_ -eq 'read' }).Count, @($script:S133Log | Where-Object { $_ -ne 'read' }).Count } }
-function Get-S133Bodies { & $script:S133Module { , $script:S133Bodies.ToArray() } }
+function Get-S133Bodies { & $script:S133Module { $script:S133Bodies.ToArray() } }
 function Show-S133Row { param($Rows) foreach ($R in @($Rows)) { Write-OerLiveStep ("row: {0} | {1} | {2} | record: {3}" -f $R.Section, $R.Item, $R.Action, $(if ($R.Error) { ([string]$R.Error.FullyQualifiedErrorId -split ',')[0] } else { 'none' })) } }
 function Read-S133Policy {
     # The policy read raw through the module's own transport, as the cmdlets read it.
@@ -162,11 +165,15 @@ function Get-S133ChangedKey {
 **Expect:** nothing printed.
 **Failure looks like:** a parse error -- fix the block before any check runs.
 
-Result:
+Result: 2026-11-07 01:08 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The helpers parse and load in every check (the runner prepends them). Two runner-found block bugs were fixed before the recorded runs: the recorded expiry is read back as the UTC string written (ConvertFrom-Json had turned it into a DateTime), and Get-S133Bodies returns the bodies unwrapped (it returned them as one nested array).
+```
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the prerequisite objects are recorded. #type/subtask
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the prerequisite objects are recorded. #type/subtask
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -177,7 +184,7 @@ $Psd1 = Get-ChildItem -Path (Join-Path $Cfg.Repo 'output\module\Omnicit.EntraRBA
 $Psm1 = Get-Content -LiteralPath (Join-Path $Psd1.DirectoryName 'Omnicit.EntraRBAC.psm1') -Raw
 foreach ($Marker in @(
         , @('A', 'BL-169a')
-        , @('B', 'yyyy-MM-ddTHH:mm:ss.fffffffZ')
+        , @('B', 'ToString(''o'', [cultureinfo]::InvariantCulture)')
         , @('C', 'isExpirationRequired) is unknown: the read returned no value for it')
         , @('E', 'ResourceGroupValueUnknown')
         , @('F (export)', 'so the catalog cannot be declared by its name')
@@ -191,13 +198,27 @@ Write-OerLiveStep "Recorded: group $([bool]$PimId), catalog $([bool]$CatId), pac
 branch's tip; 0 tracked changes.
 **Failure looks like:** `False` on a marker (rebuild the worktree), or the main clone named.
 
-Result:
+Result: 2026-11-07 01:08 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The module loads from the step worktree's build of this branch; every marker is present; every prerequisite is recorded. Tracked changes 1 is this checklist itself, whose block fixes were not yet committed at the run (marker B was corrected to the code's ToString('o', ...) form).
+
+[oer-s133] The module loads from a worktree that is not the main clone: True
+[oer-s133] Worktree: branch fix/policy-body-and-leftovers; HEAD c2fb87b Add the live verification checklist for the policy body and the leftovers; tracked changes: 1
+[oer-s133] The build carries A: True
+[oer-s133] The build carries B: True
+[oer-s133] The build carries C: True
+[oer-s133] The build carries E: True
+[oer-s133] The build carries F (export): True
+[oer-s133] The build carries F (validator): True
+[oer-s133] Recorded: group True, catalog True, package True, policy True, expiry True, resource group created True
+```
 
 ## 1. The assignment policy (A, B)
 
 ### 1.1. How Microsoft Graph gives a fixed expiration date-time, and how the module writes it
 
-- [ ] **1.1** The raw read's `endDateTime` type and kind are printed, and `Get-OERAccessPackageAssignmentPolicy` writes the same instant as an ISO 8601 UTC round-trip string. #type/subtask
+- [x] **1.1** The raw read's `endDateTime` type and kind are printed, and `Get-OERAccessPackageAssignmentPolicy` writes the same instant as an ISO 8601 UTC round-trip string. #type/subtask
 
 ```powershell
 Connect-S133
@@ -218,11 +239,24 @@ Write-OerLiveStep "Requests: $(Get-S133Count)"
 **Failure looks like:** `False` on the instant (the module moved the time), or a string that is not
 the round-trip form.
 
-Result:
+Result: 2026-11-07 01:08 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Measured: Microsoft Graph (through the module's transport) gives endDateTime as a DateTime of Kind Utc -- before this branch the export stringified it without a zone. The module writes the same instant as an ISO 8601 UTC round-trip string. 0 writes.
+
+[oer-s133] The module is the worktree's build: True
+[oer-s133] Token fence in place: True
+[oer-s133] Request fences in place: True
+[oer-s133] Raw endDateTime: type DateTime; kind Utc
+[oer-s133] Raw endDateTime is the instant the prereq wrote (UTC): True
+[oer-s133] ExpirationDateTime is an ISO 8601 UTC round-trip string: True
+[oer-s133] ExpirationDateTime is the written instant: True
+[oer-s133] Requests: 2 read(s), 0 write(s)
+```
 
 ### 1.2. The export round-trips the fixed expiration date-time: apply reports only Unchanged
 
-- [ ] **1.2** `Get-OERInventory` of the prefix catalog writes `expirationDateTime` in round-trip form, and `Invoke-OERStructure` of that document reports every row Unchanged with no write. #type/subtask
+- [x] **1.2** `Get-OERInventory` of the prefix catalog writes `expirationDateTime` in round-trip form, and `Invoke-OERStructure` of that document reports every row Unchanged with no write. #type/subtask
 
 ```powershell
 Connect-S133
@@ -244,11 +278,26 @@ Write-OerLiveStep "Requests: $(Get-S133Count)"
 **Failure looks like:** an `Updated` policy row (the expiration did not round-trip) or a fence
 refusal.
 
-Result:
+Result: 2026-11-07 01:08 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The export of the prefix catalog writes expirationDateTime as the round-trip string of the written instant, and applying it reports the catalog, the package and the policy Unchanged with 0 writes.
+
+[oer-s133] The module is the worktree's build: True
+[oer-s133] Token fence in place: True
+[oer-s133] Request fences in place: True
+[oer-s133] The export holds the policy: True
+[oer-s133] expirationDateTime in the export is the round-trip string of the written instant: True
+[oer-s133] row: catalogs | oer-s133-cat | Unchanged | record: none
+[oer-s133] row: accessPackages | oer-s133-ap | Unchanged | record: none
+[oer-s133] row: accessPackages | oer-s133-ap | Unchanged | record: none
+[oer-s133] Every row Unchanged: True (3 row(s))
+[oer-s133] Requests: 18 read(s), 0 write(s)
+```
 
 ### 1.3. An apply that changes the description keeps every false and empty setting (G8)
 
-- [ ] **1.3** The export of 1.2 with a new policy description is applied twice: the first run updates the policy and the update carries the settings the read had (an empty `questions` list included); the second run reports only Unchanged. #type/subtask
+- [x] **1.3** The export of 1.2 with a new policy description is applied twice: the first run updates the policy and the update carries the settings the read had (an empty `questions` list included); the second run reports only Unchanged. #type/subtask
 
 ```powershell
 Connect-S133
@@ -280,16 +329,38 @@ run 2: every row `Unchanged`, writes in total `1`.
 **Failure looks like:** a key other than the description that changed, a body without `questions`,
 or an `Updated` row in run 2.
 
-Result:
+Result: 2026-11-07 01:08 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS (G8). Run 1 updates only the policy (one write), and the PUT sends questions as an empty list, notifications disabled and every requestor setting false, as read; read raw before and after, only the description changed. Run 2: every row Unchanged, writes in total 1. This is the second run of 1.3: the first run (same outcome on every line) read the sent body through the unwrapped-list bug in H.1, and 1.4 put the description back before this run.
+
+[oer-s133] The module is the worktree's build: True
+[oer-s133] Token fence in place: True
+[oer-s133] Request fences in place: True
+[oer-s133] row: catalogs | oer-s133-cat | Unchanged | record: none
+[oer-s133] row: accessPackages | oer-s133-ap | Unchanged | record: none
+[oer-s133] row: accessPackages | oer-s133-ap | Updated | record: none
+[oer-s133] Run 1: one write: True
+[oer-s133] The update sends questions as an empty list: True
+[oer-s133] The update keeps notifications disabled: True
+[oer-s133] The update keeps every requestor setting false: True
+[oer-s133] read the policy after run 1: converged after 1 read(s), 0.1 s.
+[oer-s133] Read raw before and after: only the description changed: True
+[oer-s133] questions before and after: 0 and 0
+[oer-s133] row: catalogs | oer-s133-cat | Unchanged | record: none
+[oer-s133] row: accessPackages | oer-s133-ap | Unchanged | record: none
+[oer-s133] row: accessPackages | oer-s133-ap | Unchanged | record: none
+[oer-s133] Run 2: every row Unchanged: True; writes in total: 1
+```
 
 ### 1.4. Set-OERAccessPackageAssignmentPolicy changes the description and keeps the rest
 
-- [ ] **1.4** The cmdlet's own read-modify-write puts the description back and keeps every other key as it read it. #type/subtask
+- [x] **1.4** The cmdlet's own read-modify-write puts the description back and keeps every other key as it read it. #type/subtask
 
 ```powershell
 Connect-S133
 $Before = Read-S133Policy
-$Out = Set-OERAccessPackageAssignmentPolicy -Id $PolId -Description 'Sprint 13 step 3 live check (oer-s133-)' -Confirm:$false -ErrorAction Stop
+$Out = Set-OERAccessPackageAssignmentPolicy -Id $PolId -DisplayName 'oer-s133-pol' -Description 'Sprint 13 step 3 live check (oer-s133-)' -Confirm:$false -ErrorAction Stop
 $B = @(Get-S133Bodies)[0]
 Write-OerLiveStep "One write, which sends questions as an empty list: $(@(Get-S133Bodies).Count -eq 1 -and $B.ContainsKey('questions') -and @($B.questions).Count -eq 0)"
 $After = Wait-OerLiveConverged -Activity 'read the policy after the update' -Read { Read-S133Policy } -Test { param($V) [string]$V.description -ceq 'Sprint 13 step 3 live check (oer-s133-)' }
@@ -301,13 +372,25 @@ Write-OerLiveStep "The output's ExpirationDateTime is the round-trip string: $([
 **Expect:** every line `True`.
 **Failure looks like:** a changed key besides the description.
 
-Result:
+Result: 2026-11-07 01:08 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Set-OERAccessPackageAssignmentPolicy sends one PUT carrying questions as an empty list; read raw before and after, only the description changed; the output's ExpirationDateTime is the round-trip string. (The block first lacked the mandatory -DisplayName; fixed before this run.)
+
+[oer-s133] The module is the worktree's build: True
+[oer-s133] Token fence in place: True
+[oer-s133] Request fences in place: True
+[oer-s133] One write, which sends questions as an empty list: True
+[oer-s133] read the policy after the update: converged after 1 read(s), 0.2 s.
+[oer-s133] Read raw before and after: only the description changed: True
+[oer-s133] The output's ExpirationDateTime is the round-trip string: True
+```
 
 ## 2. The PIM for Groups policy diff (C, G8)
 
 ### 2.1. A declared eligible expiration converges
 
-- [ ] **2.1** A document declaring the member policy's eligible expiration of `oer-s133-pim` is applied twice (run 1 Updated, run 2 Unchanged), and a document declaring only the permanence over the known live value changes nothing. #type/subtask
+- [x] **2.1** A document declaring the member policy's eligible expiration of `oer-s133-pim` is applied twice (run 1 Updated, run 2 Unchanged), and a document declaring only the permanence over the known live value changes nothing. #type/subtask
 
 ```powershell
 Connect-S133
@@ -332,13 +415,32 @@ every row `Unchanged` and no further write; the live policy `False` and `90`.
 **Failure looks like:** an `Updated` row in run 2, or a `PimRuleValueUnknown` refusal (the live
 value is known here).
 
-Result:
+Result: 2026-11-07 01:08 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS (G8). Run 1 updates the member policy of oer-s133-pim (one write, after the documented onboarding warning); run 2 and the permanence-only document report every row Unchanged with no further write; the live policy reads permanent eligibility False and 90 days. The unknown-value refusal itself is class B.
+
+[oer-s133] The module is the worktree's build: True
+[oer-s133] Token fence in place: True
+[oer-s133] Request fences in place: True
+WARNING: Sync-OERStructureGroup: group 'oer-s133-pim' was not found to use PIM for Groups (no PIM policy of the group has been modified and no PIM eligibility was counted); applying its pimPolicy onboards it to PIM for Groups, which cannot be undone (Microsoft Graph documentation, 'Onboarding groups to PIM for Groups').
+[oer-s133] row: groups | oer-s133-pim | Unchanged | record: none
+[oer-s133] row: groups | oer-s133-pim | Updated | record: none
+[oer-s133] Run 1: writes 1
+[oer-s133] row: groups | oer-s133-pim | Unchanged | record: none
+[oer-s133] row: groups | oer-s133-pim | Unchanged | record: none
+[oer-s133] Run 2: every row Unchanged: True
+[oer-s133] row: groups | oer-s133-pim | Unchanged | record: none
+[oer-s133] row: groups | oer-s133-pim | Unchanged | record: none
+[oer-s133] Permanence only, over the known live value: every row Unchanged: True; writes in total: 1
+[oer-s133] Live member policy: permanent eligibility False, eligible days 90
+```
 
 ## 3. Get-OERRoleDefinition -Role (D)
 
 ### 3.1. A role that exists and a role that does not
 
-- [ ] **3.1** `-Role Reader` at the test subscription returns the role; a role name that does not exist gives `RoleDefinitionNotFound`; nothing is written. #type/subtask
+- [x] **3.1** `-Role Reader` at the test subscription returns the role; a role name that does not exist gives `RoleDefinitionNotFound`; nothing is written. #type/subtask
 
 ```powershell
 Connect-S133
@@ -356,13 +458,24 @@ Write-OerLiveStep "Requests: $(Get-S133Count)"
 0 writes.
 **Failure looks like:** `ArmPagingIncomplete` for a real empty list, or a write.
 
-Result:
+Result: 2026-11-07 01:08 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. -Role Reader returns the role; a role name that does not exist gives RoleDefinitionNotFound (a real empty value list is still "no such role"); 0 writes.
+
+[oer-s133] The module is the worktree's build: True
+[oer-s133] Token fence in place: True
+[oer-s133] Request fences in place: True
+[oer-s133] Reader: 1 role(s), named Reader: True
+[oer-s133] No such role: 0 object(s); own record(s): RoleDefinitionNotFound
+[oer-s133] Requests: 2 read(s), 0 write(s)
+```
 
 ## 4. Set-OERResourceGroup (E)
 
 ### 4.1. An update sends the location it read
 
-- [ ] **4.1** `Set-OERResourceGroup` on `oer-s133-rg` sends the location the read returned and the given tags, twice. #type/subtask
+- [x] **4.1** `Set-OERResourceGroup` on `oer-s133-rg` sends the location the read returned and the given tags, twice. #type/subtask
 
 ```powershell
 if (-not $RgCreated) { Write-OerLiveStep 'The subscription refused the resource group in the prereq: class B.'; return }
@@ -371,7 +484,7 @@ $Before = Get-OERResourceGroup -Subscription $Cfg.SubscriptionId -Name 'oer-s133
 foreach ($Run in 1, 2) {
     $Out = Set-OERResourceGroup -Subscription $Cfg.SubscriptionId -Name 'oer-s133-rg' -Tag @{ step = 'oer-s133-'; check = '4.1' } -Confirm:$false -ErrorAction Stop
     $B = @(Get-S133Bodies)[-1]
-    Write-OerLiveStep "Run ${Run}: the PUT sends the location read: $([string]$B.location -ceq [string]$Before.Location -and -not [string]::IsNullOrWhiteSpace([string]$B.location)); output location unchanged: $([string]$Out.Location -ceq [string]$Before.Location); tags: $((@($Out.Tags.Keys | Sort-Object) -join ','))"
+    Write-OerLiveStep "Run ${Run}: the PUT sends the location read: $([string]$B.location -ceq [string]$Before.Location -and -not [string]::IsNullOrWhiteSpace([string]$B.location)); output location unchanged: $([string]$Out.Location -ceq [string]$Before.Location); tags: $((@($(if ($Out.Tags -is [System.Collections.IDictionary]) { $Out.Tags.Keys } else { $Out.Tags.PSObject.Properties.Name }) | Sort-Object) -join ','))"
 }
 Write-OerLiveStep "Writes in total: $(@(Get-S133Bodies).Count)"
 ```
@@ -381,13 +494,24 @@ tags on every call; it compares nothing).
 **Failure looks like:** an empty location in the body, or `ResourceGroupValueUnknown` on a resource
 group that has a location.
 
-Result:
+Result: 2026-11-07 01:08 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS (G8 analogue). Both runs send the location the read returned and the given tags; the output location is unchanged; 2 writes (the cmdlet replaces the tags on every call). The tag print was fixed before this run (Tags is an object, not a hashtable). The refusal itself is class B.
+
+[oer-s133] The module is the worktree's build: True
+[oer-s133] Token fence in place: True
+[oer-s133] Request fences in place: True
+[oer-s133] Run 1: the PUT sends the location read: True; output location unchanged: True; tags: check,step
+[oer-s133] Run 2: the PUT sends the location read: True; output location unchanged: True; tags: check,step
+[oer-s133] Writes in total: 2
+```
 
 ## 5. The validator (F)
 
 ### 5.1. A hand-written displayName in the form of an object id is a Warning in three sections
 
-- [ ] **5.1** `Test-OERStructure` warns, and does not refuse, for a `groups`, `catalogs` and `accessPackages` entry whose display name has the form of an object id, and not for an `accessReviews` entry. Offline: no sign-in. #type/subtask
+- [x] **5.1** `Test-OERStructure` warns, and does not refuse, for a `groups`, `catalogs` and `accessPackages` entry whose display name has the form of an object id, and not for an `accessReviews` entry. Offline: no sign-in. #type/subtask
 
 ```powershell
 $Psd1 = Get-ChildItem -Path (Join-Path $Cfg.Repo 'output\module\Omnicit.EntraRBAC\*\Omnicit.EntraRBAC.psd1') | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -412,13 +536,22 @@ Write-OerLiveStep "Three Warnings at the groups, catalogs and accessPackages dis
 `accessPackages[0].displayName`, and `True`.
 **Failure looks like:** another count, a finding at `accessReviews[0].displayName`, or an `Error`.
 
-Result:
+Result: 2026-11-07 01:08 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Offline: three Warnings, at groups, catalogs and accessPackages displayName, none for accessReviews (ruling R-7), no Error.
+
+[oer-s133] finding: Warning | groups[0].displayName
+[oer-s133] finding: Warning | catalogs[0].displayName
+[oer-s133] finding: Warning | accessPackages[0].displayName
+[oer-s133] Three Warnings at the groups, catalogs and accessPackages displayName paths, none for accessReviews, no Error among them: True
+```
 
 ## Teardown
 
 ### T.1. The prerequisite objects are removed
 
-- [ ] **T.1** `Initialize-OerS133Prereq.ps1 -Teardown -Unattended` removes the resource group and every prefixed object, and the sweep is 0. #type/subtask
+- [x] **T.1** `Initialize-OerS133Prereq.ps1 -Teardown -Unattended` removes the resource group and every prefixed object, and the sweep is 0. #type/subtask
 
 ```powershell
 pwsh -NoProfile -NonInteractive -File (Join-Path $VaultDir 'Initialize-OerS133Prereq.ps1') -Teardown -Unattended
@@ -427,11 +560,40 @@ pwsh -NoProfile -NonInteractive -File (Join-Path $VaultDir 'Initialize-OerS133Pr
 **Expect:** `the resource group reads 404: True` (when created), `Teardown complete: the sweep is 0.`
 **Failure looks like:** `Teardown NOT complete` -- run it again later and write the residue here.
 
-Result:
+Result: 2026-11-07 01:08 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The resource group was deleted and reads 404; Remove-OerLiveTestObjects removed 4 objects (policy, package, catalog, group), residue 0; the sweep is 0.
+
+[oer-s133] Transcript (redacted): raw\s133\prereq-teardown-20261107-010622Z.log; OerLive 1.1.0.
+[oer-s133] Residue: raw\residue.json holds 5 row(s); 0 carry the prefix 'oer-s133-', the other 5 are left untouched.
+[oer-s133] Teardown: DELETE oer-s133-rg answered 200.
+[oer-s133] Teardown: the resource group reads 404: True
+[oer-s133] Teardown: Remove-OerLiveTestObjects for the prefix with the recorded ids.
+[oer-s133] Teardown of 'oer-s133-': users 0, groups 1, access packages 1, access review definitions 0, catalogs 1; administrative units 0 and app registrations 0 are reported only.
+[oer-s133] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s133] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s133] Teardown 3/6: access review definitions, access package resource roles, access packages, catalog resources, catalogs.
+[oer-s133] Deleted: oer-s133-ap: assignment policy 'oer-s133-pol' (204).
+[oer-s133] Deleted: access package oer-s133-ap (204, 1 attempt(s)).
+[oer-s133] Deleted: catalog oer-s133-cat (204, 1 attempt(s)).
+[oer-s133] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s133] Teardown 5/6: the prefixed groups.
+[oer-s133] Deleted: group oer-s133-pim (204).
+[oer-s133] Teardown 6/6: the prefixed users.
+[oer-s133] Teardown of 'oer-s133-': removed 4, residue 0, unreadable 0, already gone 0, skipped 0.
+[oer-s133] Teardown summary: Removed 4, Residue 0, Unreadable 0, Unread 0, AlreadyGone 0, Skipped 0
+[oer-s133] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s133-' is left.
+[oer-s133] Sweep: 1 object(s) with the prefix, 0 unread kind(s).
+[oer-s133] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s133-' is left.
+[oer-s133] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s133-' is left.
+[oer-s133] Sweep: 0 object(s) with the prefix, 0 unread kind(s).
+[oer-s133] Teardown complete: the sweep is 0.
+```
 
 ### T.2. A read-back a minute later is clean
 
-- [ ] **T.2** A sweep a minute after T.1 lists nothing with the prefix, and the step's raw folder is deleted. #type/subtask
+- [x] **T.2** A sweep a minute after T.1 lists nothing with the prefix, and the step's raw folder is deleted. #type/subtask
 
 ```powershell
 Connect-OerLive -Graph
@@ -443,4 +605,12 @@ if ($Left.Count -eq 0) { Remove-Item -LiteralPath $Raw -Recurse -Force -ErrorAct
 **Expect:** `Sweep: 0`, `raw\s133 deleted: True`.
 **Failure looks like:** a listed object -- write it here as residue.
 
-Result:
+Result: 2026-11-07 01:09 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. A sweep a minute after T.1 lists nothing with the prefix, and raw\s133 is deleted.
+
+[oer-s133] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s133-' is left.
+[oer-s133] Sweep: 0 object(s) or unread kind(s) with the prefix.
+[oer-s133] raw\s133 deleted: True
+```
