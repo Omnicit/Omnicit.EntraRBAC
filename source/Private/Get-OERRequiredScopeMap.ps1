@@ -291,8 +291,10 @@ function Get-OERRequiredScopeMap {
         @{
             Cmdlet = 'New-OERAccessReviewDefinition'; Transport = 'Graph'
             GraphScope = 'AccessReview.ReadWrite.All', 'EntitlementManagement.Read.All', 'Group.Read.All',
-                         'User.ReadBasic.All'
-            Note = 'Group.Read.All also covers the -Group display name lookup (a group review).'
+                         'RoleManagement.Read.Directory', 'User.ReadBasic.All'
+            Note = 'Group.Read.All also covers the -Group display name lookup (a group review). ' +
+                   'RoleManagement.Read.Directory resolves -DirectoryRole through roleDefinitions (a directory role review); ' +
+                   'the default sign-in''s RoleManagement.ReadWrite.Directory covers it.'
         }
         @{
             Cmdlet = 'New-OERAccessReviewStage'; Transport = 'Graph'

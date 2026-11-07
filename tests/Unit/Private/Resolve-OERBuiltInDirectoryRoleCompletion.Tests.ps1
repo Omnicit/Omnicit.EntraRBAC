@@ -86,6 +86,12 @@ Describe 'Built-in directory role argument completer registration' {
         $Completion.CompletionMatches.CompletionText | Should -Contain "'Reports Reader'"
     }
 
+    It 'completes -DirectoryRole on New-OERAccessReviewDefinition with a prefix match' {
+        $Line = 'New-OERAccessReviewDefinition -DirectoryRole Reports'
+        $Completion = TabExpansion2 -inputScript $Line -cursorColumn $Line.Length
+        $Completion.CompletionMatches.CompletionText | Should -Contain "'Reports Reader'"
+    }
+
     It 'completes -Role on Set-OERDirectoryRoleManagementPolicy with a prefix match' {
         $Line = 'Set-OERDirectoryRoleManagementPolicy -Role Reports'
         $Completion = TabExpansion2 -inputScript $Line -cursorColumn $Line.Length

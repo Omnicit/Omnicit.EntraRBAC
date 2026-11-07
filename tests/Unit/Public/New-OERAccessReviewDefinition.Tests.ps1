@@ -678,9 +678,9 @@ Describe 'New-OERAccessReviewDefinition -Group (a review of a group''s members)'
     }
 
     Context 'parameter sets' {
-        It 'declares the four sets with the default SingleStage' {
+        It 'declares the six sets with the default SingleStage' {
             $Cmd = Get-Command New-OERAccessReviewDefinition
-            @($Cmd.ParameterSets.Name | Sort-Object) | Should -Be @('GroupMultiStage', 'GroupSingleStage', 'MultiStage', 'SingleStage')
+            @($Cmd.ParameterSets.Name | Sort-Object) | Should -Be @('DirectoryRoleMultiStage', 'DirectoryRoleSingleStage', 'GroupMultiStage', 'GroupSingleStage', 'MultiStage', 'SingleStage')
             ($Cmd.ParameterSets | Where-Object IsDefault).Name | Should -Be 'SingleStage'
         }
 
@@ -689,13 +689,14 @@ Describe 'New-OERAccessReviewDefinition -Group (a review of a group''s members)'
             @{ Name = 'AssignmentPolicy'; Sets = 'MultiStage,SingleStage'; Mandatory = 'MultiStage,SingleStage' }
             @{ Name = 'Catalog'; Sets = 'MultiStage,SingleStage'; Mandatory = '' }
             @{ Name = 'Group'; Sets = 'GroupMultiStage,GroupSingleStage'; Mandatory = 'GroupMultiStage,GroupSingleStage' }
-            @{ Name = 'Stage'; Sets = 'GroupMultiStage,MultiStage'; Mandatory = 'GroupMultiStage,MultiStage' }
-            @{ Name = 'Reviewer'; Sets = 'GroupSingleStage,SingleStage'; Mandatory = '' }
-            @{ Name = 'ReviewerGroup'; Sets = 'GroupSingleStage,SingleStage'; Mandatory = '' }
-            @{ Name = 'Manager'; Sets = 'GroupSingleStage,SingleStage'; Mandatory = '' }
-            @{ Name = 'SelfReview'; Sets = 'GroupSingleStage,SingleStage'; Mandatory = '' }
-            @{ Name = 'FallbackReviewer'; Sets = 'GroupSingleStage,SingleStage'; Mandatory = '' }
-            @{ Name = 'FallbackReviewerGroup'; Sets = 'GroupSingleStage,SingleStage'; Mandatory = '' }
+            @{ Name = 'DirectoryRole'; Sets = 'DirectoryRoleMultiStage,DirectoryRoleSingleStage'; Mandatory = 'DirectoryRoleMultiStage,DirectoryRoleSingleStage' }
+            @{ Name = 'Stage'; Sets = 'DirectoryRoleMultiStage,GroupMultiStage,MultiStage'; Mandatory = 'DirectoryRoleMultiStage,GroupMultiStage,MultiStage' }
+            @{ Name = 'Reviewer'; Sets = 'DirectoryRoleSingleStage,GroupSingleStage,SingleStage'; Mandatory = '' }
+            @{ Name = 'ReviewerGroup'; Sets = 'DirectoryRoleSingleStage,GroupSingleStage,SingleStage'; Mandatory = '' }
+            @{ Name = 'Manager'; Sets = 'DirectoryRoleSingleStage,GroupSingleStage,SingleStage'; Mandatory = '' }
+            @{ Name = 'SelfReview'; Sets = 'DirectoryRoleSingleStage,GroupSingleStage,SingleStage'; Mandatory = '' }
+            @{ Name = 'FallbackReviewer'; Sets = 'DirectoryRoleSingleStage,GroupSingleStage,SingleStage'; Mandatory = '' }
+            @{ Name = 'FallbackReviewerGroup'; Sets = 'DirectoryRoleSingleStage,GroupSingleStage,SingleStage'; Mandatory = '' }
         ) {
             $Attrs = (Get-Command New-OERAccessReviewDefinition).Parameters[$Name].Attributes |
                 Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] }
@@ -930,6 +931,221 @@ Describe 'New-OERAccessReviewDefinition -Group (a review of a group''s members)'
             New-OERAccessReviewDefinition -DisplayName 'Q3' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
                 -Group 'grp' -SelfReview -Recurrence OneTime -StartDate ([datetime]'2026-07-05') -WhatIf
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'POST' }
+        }
+    }
+}
+
+Describe 'New-OERAccessReviewDefinition -DirectoryRole (a review of one directory role)' {
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC {
+            $script:_OERAuthState = $null
+            $global:OERTask2Posted = @()
+            $global:OERTask2ScopeCalls = @()
+            $global:OERTask2Refusal = $null
+        }
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewScopeTarget {
+            @{ AccessPackageId = 'ap'; AssignmentPolicyId = 'pol'; CatalogId = 'cat'; FailedKind = $null; FailedValue = $null }
+        }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERGroupId { '33333333-3333-3333-3333-333333333333' }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput {
+            param($Role)
+            $Refusal = $global:OERTask2Refusal
+            [PSCustomObject]@{
+                RoleDefinitionId = if ($Refusal) { $null } else { '00000000-0000-0000-0000-000000000042' }
+                ErrorId          = if ($Refusal) { $Refusal.ErrorId } else { $null }
+                Message          = if ($Refusal) { "refused $($Refusal.ErrorId)" } else { $null }
+                Category         = if ($Refusal) { $Refusal.Category } else { $null }
+                TargetObject     = $Role
+                InnerException   = $null
+            }
+        }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            param($Uri, $Method, $Body)
+            if ($Method -eq 'POST') {
+                $global:OERTask2Posted += , $Body
+                return @{ id = 'new-def'; displayName = 'Role review'; status = 'NotStarted' }
+            }
+            return $null
+        }
+    }
+
+    AfterAll {
+        Remove-Variable -Name OERTask2Posted, OERTask2ScopeCalls, OERTask2Refusal -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    It 'declares -DirectoryRole non-empty at binding' {
+        $Threw = $false; $Id = $null
+        try {
+            New-OERAccessReviewDefinition -DisplayName 'R' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
+                -DirectoryRole '' -SelfReview -Recurrence OneTime -StartDate ([datetime]'2026-07-05') -ErrorAction Stop
+        } catch { $Threw = $true; $Id = $PSItem.FullyQualifiedErrorId }
+        $Threw | Should -BeTrue
+        $Id | Should -Match '^ParameterArgumentValidationError.*,New-OERAccessReviewDefinition$'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -Exactly
+    }
+
+    It 'keeps SingleStage as the default parameter set' {
+        (Get-Command New-OERAccessReviewDefinition).DefaultParameterSet | Should -Be 'SingleStage'
+    }
+
+    It 'POSTs the scope the builder writes for the resolved role id (single stage)' {
+        New-OERAccessReviewDefinition -DisplayName 'Role review' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
+            -DirectoryRole 'Reports Reader' -SelfReview -Recurrence Annually -StartDate ([datetime]'2027-01-01') -Confirm:$false
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput -Times 1 -Exactly -ParameterFilter { $Role -eq 'Reports Reader' }
+        $Got = InModuleScope Omnicit.EntraRBAC {
+            @{
+                Count    = @($global:OERTask2Posted).Count
+                Scope    = ($global:OERTask2Posted[0].scope | ConvertTo-Json -Depth 10 -Compress)
+                Expected = (New-OERAccessReviewScopeQuery -DirectoryRoleId '00000000-0000-0000-0000-000000000042' | ConvertTo-Json -Depth 10 -Compress)
+                HasRev   = $global:OERTask2Posted[0].ContainsKey('reviewers')
+                HasStage = $global:OERTask2Posted[0].ContainsKey('stageSettings')
+            }
+        }
+        $Got.Count | Should -Be 1
+        $Got.Scope | Should -Be $Got.Expected
+        $Got.Scope | Should -Match '00000000-0000-0000-0000-000000000042'
+        $Got.HasRev | Should -BeTrue
+        $Got.HasStage | Should -BeFalse
+    }
+
+    It 'POSTs the scope the builder writes for the resolved role id (multi stage)' {
+        $Stage = New-OERAccessReviewStage -StageId '1' -DurationInDays 7 -Reviewer '11111111-1111-1111-1111-111111111111'
+        New-OERAccessReviewDefinition -DisplayName 'Role review' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
+            -DirectoryRole 'Reports Reader' -Stage $Stage -Recurrence Annually -StartDate ([datetime]'2027-01-01') -Confirm:$false
+        $Got = InModuleScope Omnicit.EntraRBAC {
+            @{
+                Count    = @($global:OERTask2Posted).Count
+                Scope    = ($global:OERTask2Posted[0].scope | ConvertTo-Json -Depth 10 -Compress)
+                Expected = (New-OERAccessReviewScopeQuery -DirectoryRoleId '00000000-0000-0000-0000-000000000042' | ConvertTo-Json -Depth 10 -Compress)
+                HasRev   = $global:OERTask2Posted[0].ContainsKey('reviewers')
+                Stages   = @($global:OERTask2Posted[0].stageSettings).Count
+            }
+        }
+        $Got.Count | Should -Be 1
+        $Got.Scope | Should -Be $Got.Expected
+        $Got.HasRev | Should -BeFalse
+        $Got.Stages | Should -Be 1
+    }
+
+    It 'sends no POST under -WhatIf' {
+        New-OERAccessReviewDefinition -DisplayName 'Role review' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
+            -DirectoryRole 'Reports Reader' -SelfReview -Recurrence Annually -StartDate ([datetime]'2027-01-01') -WhatIf
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput -Times 1 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'POST' }
+    }
+
+    It 'publishes <ErrorId> as itself with target the -DirectoryRole value and sends no POST' -ForEach @(
+        @{ ErrorId = 'RoleDefinitionNotFound'; Category = 'ObjectNotFound' }
+        @{ ErrorId = 'AmbiguousRoleName'; Category = 'InvalidArgument' }
+        @{ ErrorId = 'RoleDefinitionReadFailed'; Category = 'ReadError' }
+    ) {
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ E = $ErrorId; C = $Category } {
+            param($E, $C)
+            $global:OERTask2Refusal = @{ ErrorId = $E; Category = $C }
+        }
+        $Err = $null
+        New-OERAccessReviewDefinition -DisplayName 'Role review' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
+            -DirectoryRole 'Some Role' -SelfReview -Recurrence Annually -StartDate ([datetime]'2027-01-01') `
+            -ErrorAction SilentlyContinue -ErrorVariable Err
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput -Times 1 -Exactly
+        $Mine = @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,New-OERAccessReviewDefinition' })
+        $Mine.Count | Should -Be 1
+        $Mine[0].FullyQualifiedErrorId | Should -Be "$ErrorId,New-OERAccessReviewDefinition"
+        $Mine[0].CategoryInfo.Category | Should -Be $Category
+        $Mine[0].TargetObject | Should -Be 'Some Role'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'POST' }
+    }
+
+    # The cmdlet in a runspace with no try above it, the way a script calls it. The fakes live in the
+    # runspace's copy of the module scope and are checked before the call; the POST counter is a file.
+    It 'stops with the resolver refusal in a script with no try, and sends no POST' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Text = @'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERDirectoryRoleInput -Value {
+        param([string]$Role)
+        [PSCustomObject]@{ RoleDefinitionId = $null; ErrorId = 'RoleDefinitionNotFound'; Message = 'no such role'
+            Category = 'ObjectNotFound'; TargetObject = $Role; InnerException = $null }
+    }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        [System.IO.File]::AppendAllText('#LOG#', "$Method`n")
+        return $null
+    }
+    foreach ($Fn in 'Initialize-OERAuth', 'Resolve-OERDirectoryRoleInput', 'Invoke-OERGraphRequest') {
+        $Cmd = Get-Command $Fn
+        if ($Cmd.ModuleName -ne 'Omnicit.EntraRBAC' -or $Cmd.CommandType -ne 'Function') { throw "stub $Fn does not resolve to the module-scope function" }
+    }
+}
+[System.IO.File]::AppendAllText('#LOG#', "STUBS:ok`n")
+New-OERAccessReviewDefinition -DisplayName r -DescriptionForAdmins a -DescriptionForReviewers r -DirectoryRole 'Nope' -SelfReview -Recurrence Annually -StartDate ([datetime]'2027-01-01') -ErrorAction Stop
+[System.IO.File]::AppendAllText('#LOG#', "AFTER`n")
+'@
+        $Ps = [powershell]::Create()
+        try {
+            $null = $Ps.AddScript($Text.Replace('#LOG#', $Log.Replace("'", "''")))
+            $Thrown = $null
+            try { $null = $Ps.Invoke() } catch { $Thrown = $PSItem }
+            $Thrown | Should -Not -BeNullOrEmpty
+            $Cause = $Thrown.Exception
+            if ($Cause -is [System.Management.Automation.MethodInvocationException] -and $Cause.InnerException) { $Cause = $Cause.InnerException }
+            $Cause.ErrorRecord.FullyQualifiedErrorId | Should -Be 'RoleDefinitionNotFound,New-OERAccessReviewDefinition'
+            $Logged = @(Get-Content -LiteralPath $Log)
+            $Logged | Should -Contain 'STUBS:ok'
+            $Logged | Should -Not -Contain 'AFTER'
+            @($Logged | Where-Object { $_ -eq 'POST' }).Count | Should -Be 0
+        } finally {
+            $Ps.Dispose()
+        }
+    }
+
+    It 'refuses -DirectoryRole beside <Other> at binding and sends nothing' -ForEach @(
+        @{ Other = '-AccessPackage'; Extra = @{ AccessPackage = 'AP'; AssignmentPolicy = 'Standard' } }
+        @{ Other = '-Group'; Extra = @{ Group = 'grp' } }
+        @{ Other = '-AssignmentPolicy'; Extra = @{ AssignmentPolicy = 'Standard' } }
+        @{ Other = '-Catalog'; Extra = @{ Catalog = 'Cat' } }
+    ) {
+        $Threw = $false; $Id = $null
+        $Splat = @{
+            DisplayName = 'R'; DescriptionForAdmins = 'a'; DescriptionForReviewers = 'r'; DirectoryRole = 'Reports Reader'
+            SelfReview = $true; Recurrence = 'OneTime'; StartDate = [datetime]'2026-07-05'; ErrorAction = 'Stop'
+        }
+        foreach ($Key in $Extra.Keys) { $Splat[$Key] = $Extra[$Key] }
+        try { New-OERAccessReviewDefinition @Splat } catch { $Threw = $true; $Id = $PSItem.FullyQualifiedErrorId }
+        $Threw | Should -BeTrue
+        $Id | Should -Match '^(AmbiguousParameterSet|ParameterSetCannotBeResolved),New-OERAccessReviewDefinition$'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput -Times 0 -Exactly
+    }
+
+    Context 'the existing shapes still use their own scope builder' {
+        BeforeEach {
+            Mock -ModuleName Omnicit.EntraRBAC New-OERAccessReviewScopeQuery {
+                param([string]$AccessPackageId, [string]$AssignmentPolicyId, [string]$GroupId, [string]$DirectoryRoleId)
+                $global:OERTask2ScopeCalls += , (($PSBoundParameters.Keys | Sort-Object) -join ',')
+                @{ query = 'stub'; queryType = 'MicrosoftGraph' }
+            }
+        }
+
+        It 'resolves <Shape> through <Expected> and never DirectoryRoleId' -ForEach @(
+            @{ Shape = 'a package single stage'; Expected = 'AccessPackageId,AssignmentPolicyId'; Splat = @{ AccessPackage = 'AP'; AssignmentPolicy = 'Standard'; SelfReview = $true } }
+            @{ Shape = 'a package multi stage'; Expected = 'AccessPackageId,AssignmentPolicyId'; Splat = @{ AccessPackage = 'AP'; AssignmentPolicy = 'Standard'; Stage = 'STAGE' } }
+            @{ Shape = 'a group single stage'; Expected = 'GroupId'; Splat = @{ Group = 'grp'; SelfReview = $true } }
+            @{ Shape = 'a group multi stage'; Expected = 'GroupId'; Splat = @{ Group = 'grp'; Stage = 'STAGE' } }
+        ) {
+            if ($Splat.Stage -eq 'STAGE') {
+                $Splat.Stage = New-OERAccessReviewStage -StageId '1' -DurationInDays 7 -Reviewer '11111111-1111-1111-1111-111111111111'
+            }
+            New-OERAccessReviewDefinition -DisplayName 'Q3' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
+                @Splat -Recurrence OneTime -StartDate ([datetime]'2026-07-05') -Confirm:$false
+            $Calls = InModuleScope Omnicit.EntraRBAC { , @($global:OERTask2ScopeCalls) }
+            $Calls.Count | Should -Be 1
+            $Calls[0] | Should -Be $Expected
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput -Times 0 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
         }
     }
 }
