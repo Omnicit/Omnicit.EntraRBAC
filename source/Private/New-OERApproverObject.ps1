@@ -49,5 +49,9 @@ function New-OERApproverObject {
     if ($Spec.ContainsKey('ExternalSponsor')) {
         return @{ '@odata.type' = '#microsoft.graph.externalSponsors' }
     }
-    throw "Unrecognized approver spec. Use one of: User, Group, Manager, InternalSponsor, ExternalSponsor. Got keys: $($Spec.Keys -join ', ')."
+    throw [System.Management.Automation.ErrorRecord]::new(
+        [System.Exception]::new("Unrecognized approver spec. Use one of: User, Group, Manager, InternalSponsor, ExternalSponsor. Got keys: $($Spec.Keys -join ', ')."),
+        'UnknownApproverSpec',
+        [System.Management.Automation.ErrorCategory]::InvalidArgument,
+        $Spec)
 }

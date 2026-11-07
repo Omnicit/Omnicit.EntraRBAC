@@ -67,3 +67,18 @@ Describe 'Get-OERRoleAssignableState' {
         }
     }
 }
+
+Describe 'Get-OERRoleAssignableState typed error records' {
+    It 'throws InvalidPrincipalId as a typed record: Get-OERRoleAssignableState -PrincipalId not-a-guid' {
+        $Caught = InModuleScope 'Omnicit.EntraRBAC' {
+            $Result = $null
+            try { Get-OERRoleAssignableState -PrincipalId 'not-a-guid' } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'InvalidPrincipalId'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject | Should -BeExactly 'not-a-guid'
+        $Caught.Exception.Message | Should -BeExactly '''not-a-guid'' is not an object id (GUID).'
+    }
+}

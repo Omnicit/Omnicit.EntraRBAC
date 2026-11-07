@@ -52,10 +52,18 @@ function Resolve-OERPrincipal {
     if ($Group) { $Supplied += '-Group' }
     if ($ServicePrincipal) { $Supplied += '-ServicePrincipal' }
     if ($Supplied.Count -eq 0) {
-        throw 'Resolve-OERPrincipal requires one of -User, -Group or -ServicePrincipal.'
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new('Resolve-OERPrincipal requires one of -User, -Group or -ServicePrincipal.'),
+            'ResolverInputMissing',
+            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+            $null)
     }
     if ($Supplied.Count -gt 1) {
-        throw "Supply only one of -User, -Group or -ServicePrincipal (got: $($Supplied -join ', '))."
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new("Supply only one of -User, -Group or -ServicePrincipal (got: $($Supplied -join ', '))."),
+            'MutuallyExclusiveParameter',
+            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+            $null)
     }
 
     # A value that matches nothing is a typed record, never a bare string: a bare string could not be

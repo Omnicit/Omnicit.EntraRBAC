@@ -45,7 +45,11 @@ function Resolve-OERApplicationId {
     )
     if ($Id) { return $Id }
     if (-not $DisplayName) {
-        throw 'Resolve-OERApplicationId requires either -Id or -DisplayName.'
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new('Resolve-OERApplicationId requires either -Id or -DisplayName.'),
+            'ResolverInputMissing',
+            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+            $null)
     }
     $Escaped = ConvertTo-OERODataFilterValue -Value $DisplayName
     $Uri = "v1.0/servicePrincipals?`$filter=displayName eq '$Escaped'&`$select=id,displayName"

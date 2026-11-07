@@ -51,13 +51,21 @@ function Resolve-OERDurationInput {
 
     $Trimmed = "$Value".Trim()
     if ([string]::IsNullOrEmpty($Trimmed)) {
-        throw 'A duration value is required. Supply a whole number of days (e.g. 365) or an ISO 8601 duration (e.g. ''P365D'').'
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new('A duration value is required. Supply a whole number of days (e.g. 365) or an ISO 8601 duration (e.g. ''P365D'').'),
+            'DurationInputInvalid',
+            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+            $Value)
     }
 
     if ($Trimmed -match '^\d+$') {
         $Count = [int]$Trimmed
         if ($Count -lt 1 -or $Count -gt $Maximum) {
-            throw "Duration '$Trimmed' is out of range: a whole number of $($Unit.ToLowerInvariant()) must be between 1 and $Maximum."
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new("Duration '$Trimmed' is out of range: a whole number of $($Unit.ToLowerInvariant()) must be between 1 and $Maximum."),
+                'DurationInputInvalid',
+                [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                $Value)
         }
         if ($Unit -eq 'Hours') { return ConvertTo-OERDuration -Hours $Count }
         return ConvertTo-OERDuration -Days $Count
@@ -70,5 +78,9 @@ function Resolve-OERDurationInput {
         return $Upper
     }
 
-    throw "Duration '$Trimmed' is not a valid duration. Supply a whole number of $($Unit.ToLowerInvariant()) (e.g. 365) or an ISO 8601 duration (e.g. 'P365D' or 'PT8H')."
+    throw [System.Management.Automation.ErrorRecord]::new(
+        [System.Exception]::new("Duration '$Trimmed' is not a valid duration. Supply a whole number of $($Unit.ToLowerInvariant()) (e.g. 365) or an ISO 8601 duration (e.g. 'P365D' or 'PT8H')."),
+        'DurationInputInvalid',
+        [System.Management.Automation.ErrorCategory]::InvalidArgument,
+        $Value)
 }

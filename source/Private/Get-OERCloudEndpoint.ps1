@@ -132,7 +132,11 @@ function Get-OERCloudEndpoint {
             # today, not merely defensive: Get-OERCloudEndpoint -Environment 'Germany' throws this.
             # Never fall back to the public-cloud row -- that would route a sovereign-tenant
             # credential and request at the wrong cloud boundary.
-            throw "Get-OERCloudEndpoint: no endpoint table entry for cloud environment '$Environment'. Add a case to the switch in source/Private/Get-OERCloudEndpoint.ps1 before adding it to the -Environment ValidateSet on Connect-OER or Initialize-OERAuth."
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new("Get-OERCloudEndpoint: no endpoint table entry for cloud environment '$Environment'. Add a case to the switch in source/Private/Get-OERCloudEndpoint.ps1 before adding it to the -Environment ValidateSet on Connect-OER or Initialize-OERAuth."),
+                'UnknownCloudEnvironment',
+                [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                $Environment)
         }
     }
 

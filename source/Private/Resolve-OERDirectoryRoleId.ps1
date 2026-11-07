@@ -40,7 +40,11 @@ function Resolve-OERDirectoryRoleId {
     )
     if ($RoleId) { return $RoleId }
     if (-not $RoleName) {
-        throw 'Resolve-OERDirectoryRoleId requires either -RoleId or -RoleName.'
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new('Resolve-OERDirectoryRoleId requires either -RoleId or -RoleName.'),
+            'ResolverInputMissing',
+            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+            $null)
     }
 
     $Active = Invoke-OERGraphRequest -Uri 'v1.0/directoryRoles' -All

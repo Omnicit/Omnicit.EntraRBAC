@@ -66,15 +66,27 @@ function Resolve-OERName {
     $Result = [regex]::Replace($Template, '\{(?<token>[^}]+)\}', $Substitute)
 
     if ($Unresolved.Count -gt 0) {
-        throw "Naming template '$Template' has unresolved token(s): $($Unresolved -join ', '). Supply a value for each token."
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new("Naming template '$Template' has unresolved token(s): $($Unresolved -join ', '). Supply a value for each token."),
+            'NameTemplateUnresolved',
+            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+            $Template)
     }
 
     if ($Result.Length -gt $MaxLength) {
-        throw "Resolved name '$Result' exceeds the maximum length of $MaxLength characters."
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new("Resolved name '$Result' exceeds the maximum length of $MaxLength characters."),
+            'NameTooLong',
+            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+            $Result)
     }
 
     if ($Strict -and $Result -match '[\\/\[\]:;|=,+*?<>@"]') {
-        throw "Resolved name '$Result' contains a disallowed character for an Entra ID object name."
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new("Resolved name '$Result' contains a disallowed character for an Entra ID object name."),
+            'NameCharacterDisallowed',
+            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+            $Result)
     }
 
     $Result

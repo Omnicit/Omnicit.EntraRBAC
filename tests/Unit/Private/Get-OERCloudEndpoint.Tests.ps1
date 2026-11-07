@@ -244,3 +244,18 @@ function Test-OERFixture {
         }
     }
 }
+
+Describe 'Get-OERCloudEndpoint typed error records' {
+    It 'throws UnknownCloudEnvironment as a typed record: Get-OERCloudEndpoint -Environment Germany' {
+        $Caught = InModuleScope 'Omnicit.EntraRBAC' {
+            $Result = $null
+            try { Get-OERCloudEndpoint -Environment 'Germany' } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'UnknownCloudEnvironment'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject | Should -BeExactly 'Germany'
+        $Caught.Exception.Message | Should -BeExactly 'Get-OERCloudEndpoint: no endpoint table entry for cloud environment ''Germany''. Add a case to the switch in source/Private/Get-OERCloudEndpoint.ps1 before adding it to the -Environment ValidateSet on Connect-OER or Initialize-OERAuth.'
+    }
+}

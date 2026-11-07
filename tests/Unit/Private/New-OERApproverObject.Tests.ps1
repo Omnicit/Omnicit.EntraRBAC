@@ -49,3 +49,19 @@ Describe 'New-OERApproverObject' {
         }
     }
 }
+
+Describe 'New-OERApproverObject typed error records' {
+    It 'throws UnknownApproverSpec as a typed record: New-OERApproverObject -Spec @{ Bogus = 1 }' {
+        $Caught = InModuleScope 'Omnicit.EntraRBAC' {
+            $Result = $null
+            try { New-OERApproverObject -Spec @{ Bogus = 1 } } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'UnknownApproverSpec'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject | Should -BeOfType [hashtable]
+        $Caught.TargetObject.ContainsKey('Bogus') | Should -BeTrue
+        $Caught.Exception.Message | Should -BeExactly 'Unrecognized approver spec. Use one of: User, Group, Manager, InternalSponsor, ExternalSponsor. Got keys: Bogus.'
+    }
+}

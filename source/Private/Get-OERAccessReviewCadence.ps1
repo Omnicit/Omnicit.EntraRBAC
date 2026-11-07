@@ -84,7 +84,11 @@ function Get-OERAccessReviewCadence {
             if ($Row.Cadence -ieq $Cadence) { $Match = $Row; $Exact = $true; break }
         }
         if ($null -eq $Match) {
-            throw "Get-OERAccessReviewCadence: '$Cadence' is not an access review cadence."
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new("Get-OERAccessReviewCadence: '$Cadence' is not an access review cadence."),
+                'UnknownAccessReviewCadence',
+                [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                $Cadence)
         }
     }
     else {

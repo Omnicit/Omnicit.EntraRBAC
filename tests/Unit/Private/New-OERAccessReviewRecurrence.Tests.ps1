@@ -103,3 +103,31 @@ Describe 'New-OERAccessReviewRecurrence' {
         }
     }
 }
+
+Describe 'New-OERAccessReviewRecurrence typed error records' {
+    It 'throws MutuallyExclusiveParameter as a typed record: New-OERAccessReviewRecurrence -Recurrence Weekly -StartDate [datetime]2026-01-01 -EndDate ([datetime]2026-12-01) -Occurrences 3' {
+        $Caught = InModuleScope 'Omnicit.EntraRBAC' {
+            $Result = $null
+            try { New-OERAccessReviewRecurrence -Recurrence Weekly -StartDate ([datetime]'2026-01-01') -EndDate ([datetime]'2026-12-01') -Occurrences 3 } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'MutuallyExclusiveParameter'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject | Should -BeNullOrEmpty
+        $Caught.Exception.Message | Should -BeExactly 'New-OERAccessReviewRecurrence: -EndDate and -Occurrences are mutually exclusive.'
+    }
+
+    It 'throws IncompleteRecurrence as a typed record: New-OERAccessReviewRecurrence -Recurrence OneTime -StartDate [datetime]2026-01-01' {
+        $Caught = InModuleScope 'Omnicit.EntraRBAC' {
+            $Result = $null
+            try { New-OERAccessReviewRecurrence -Recurrence OneTime -StartDate ([datetime]'2026-01-01') } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'IncompleteRecurrence'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject | Should -BeNullOrEmpty
+        $Caught.Exception.Message | Should -BeExactly 'New-OERAccessReviewRecurrence: -DurationInDays is required for OneTime.'
+    }
+}

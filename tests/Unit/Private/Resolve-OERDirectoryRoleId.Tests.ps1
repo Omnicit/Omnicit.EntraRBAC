@@ -124,3 +124,18 @@ Describe 'Resolve-OERDirectoryRoleId' {
         }
     }
 }
+
+Describe 'Resolve-OERDirectoryRoleId typed error records' {
+    It 'throws ResolverInputMissing as a typed record: Resolve-OERDirectoryRoleId' {
+        $Caught = InModuleScope 'Omnicit.EntraRBAC' {
+            $Result = $null
+            try { Resolve-OERDirectoryRoleId } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'ResolverInputMissing'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject | Should -BeNullOrEmpty
+        $Caught.Exception.Message | Should -BeExactly 'Resolve-OERDirectoryRoleId requires either -RoleId or -RoleName.'
+    }
+}

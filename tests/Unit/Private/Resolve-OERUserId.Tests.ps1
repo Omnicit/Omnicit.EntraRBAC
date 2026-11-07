@@ -77,3 +77,18 @@ Describe 'Resolve-OERUserId' {
         }
     }
 }
+
+Describe 'Resolve-OERUserId typed error records' {
+    It 'throws ResolverInputMissing as a typed record: Resolve-OERUserId' {
+        $Caught = InModuleScope 'Omnicit.EntraRBAC' {
+            $Result = $null
+            try { Resolve-OERUserId } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'ResolverInputMissing'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject | Should -BeNullOrEmpty
+        $Caught.Exception.Message | Should -BeExactly 'Resolve-OERUserId requires either -Id or -UserPrincipalName.'
+    }
+}

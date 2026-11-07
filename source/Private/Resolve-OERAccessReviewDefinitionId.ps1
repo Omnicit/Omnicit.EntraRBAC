@@ -39,7 +39,11 @@ function Resolve-OERAccessReviewDefinitionId {
     )
     if ($Id) { return $Id }
     if (-not $DisplayName) {
-        throw 'Resolve-OERAccessReviewDefinitionId requires either -Id or -DisplayName.'
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new('Resolve-OERAccessReviewDefinitionId requires either -Id or -DisplayName.'),
+            'ResolverInputMissing',
+            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+            $null)
     }
     if (Test-OERGuid -Value $DisplayName) {
         return $DisplayName

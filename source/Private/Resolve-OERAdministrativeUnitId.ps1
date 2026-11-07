@@ -36,7 +36,11 @@ function Resolve-OERAdministrativeUnitId {
     )
     if ($Id) { return $Id }
     if (-not $DisplayName) {
-        throw 'Resolve-OERAdministrativeUnitId requires either -Id or -DisplayName.'
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new('Resolve-OERAdministrativeUnitId requires either -Id or -DisplayName.'),
+            'ResolverInputMissing',
+            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+            $null)
     }
     $Escaped = ConvertTo-OERODataFilterValue -Value $DisplayName
     $Uri = "v1.0/directory/administrativeUnits?`$filter=displayName eq '$Escaped'&`$select=id,displayName"

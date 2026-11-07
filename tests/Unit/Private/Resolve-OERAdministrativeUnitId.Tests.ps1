@@ -106,3 +106,18 @@ Describe 'Resolve-OERAdministrativeUnitId' {
         }
     }
 }
+
+Describe 'Resolve-OERAdministrativeUnitId typed error records' {
+    It 'throws ResolverInputMissing as a typed record: Resolve-OERAdministrativeUnitId' {
+        $Caught = InModuleScope 'Omnicit.EntraRBAC' {
+            $Result = $null
+            try { Resolve-OERAdministrativeUnitId } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'ResolverInputMissing'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject | Should -BeNullOrEmpty
+        $Caught.Exception.Message | Should -BeExactly 'Resolve-OERAdministrativeUnitId requires either -Id or -DisplayName.'
+    }
+}
