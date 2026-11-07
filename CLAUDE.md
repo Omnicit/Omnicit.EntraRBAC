@@ -1228,7 +1228,9 @@ hyphens) for em-dash contexts in comments and help text, and straight quotes `'`
   (id, category, target), never a bare string: a string throw's id is its message text. The two named
   exceptions are the no-match `throw $NotFoundMessage` of `Resolve-OERRoleDefinitionId` and
   `Get-OERRoleManagementPolicyId`; gate 11 of `tests/QA/sourcehygiene.tests.ps1` holds it, and an
-  exception needs a ruling first. `Why: docs/development/rationale.md#error-handling`
+  exception needs a ruling first. Gate 11 checks string throws only; a `throw` of a bare
+  `[System.*Exception]` object has the same defect (seven remain, not yet converted), and a new one is
+  not added. `Why: docs/development/rationale.md#error-handling`
 - **Every Graph or ARM `catch` block** must call `Remove-OERErrorRecord -Record $PSItem` as its
   **first** statement. The older `$null = $Error.Remove($PSItem)` idiom looks equivalent but is
   **inert** -- it never removed anything. `Why: docs/development/rationale.md#bearer-scrub`

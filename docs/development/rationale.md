@@ -1165,8 +1165,8 @@ string side, or a variable assigned from such an expression in the same innermos
 rethrow, `throw $PSItem`, a record variable, a typed `ErrorRecord` and a `throw (Command ...)` are not
 flagged; known answers hold each shape. Two named exceptions (E1 and E2, under `#error-handling`) are
 keyed by file name and operand text, never by line, and each must match exactly one throw, so a stale
-entry fails. Non-vacuity: no parse failure, more than 145 throw statements and more than 80 typed
-throws (measured 155 and 88 on 2026-11-07).
+entry fails. Non-vacuity: no parse failure, more than 190 parsed files, more than 145 throw statements
+and more than 80 typed throws (measured 155 and 88 on 2026-11-07).
 
 ### CLAUDE.md text for static-source-gates
 
@@ -15460,13 +15460,12 @@ What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule
 A string throw makes a record whose `FullyQualifiedErrorId` is the message text, whose category is
 `OperationStopped`, whose target is the message and whose exception is a `RuntimeException`. A caller
 that publishes the record as itself, or lets it propagate, therefore showed the operator the message
-as the id. Every private string throw (55 with a string operand, plus the two string-variable throws)
-became a typed `[System.Management.Automation.ErrorRecord]::new(...)` with an id, a category and a
+as the id. Every private throw with a string operand (55) became a typed `[System.Management.Automation.ErrorRecord]::new(...)` with an id, a category and a
 target of its own; the message text is unchanged character for character, so a caller that builds a new
 record from `$PSItem.Exception.Message` publishes what it did before. Where the throw sits in a
 `catch`, the caught exception is the inner exception.
 
-Two throws stay strings, by ruling, and the gate names them:
+The two string-variable throws (E1 and E2) stay strings, by ruling, and the gate names them:
 
 - **E1, `Resolve-OERRoleDefinitionId.ps1`, `throw $NotFoundMessage`.** Its published id through
   `Invoke-OERStructure` is the message text today; `#role-lookup-unresolved` keeps it a string on
@@ -15479,6 +15478,10 @@ Two throws stay strings, by ruling, and the gate names them:
 
 Gate 11 of `tests/QA/sourcehygiene.tests.ps1` holds it, keyed by file name and operand text, never by
 line. A new exception needs a ruling recorded here first.
+
+Gate 11 checks string throws only. A `throw` of a bare `[System.*Exception]` object has the same defect
+(its message is the id): seven remain (`Get-OERDirectoryRoleNameMap` x2, `Resolve-OERStructureRename` x3,
+`Resolve-OERTenantDomain` x2), are not yet converted, and no new one is added.
 
 ## arm-requests
 

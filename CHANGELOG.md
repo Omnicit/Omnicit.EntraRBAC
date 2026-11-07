@@ -34,10 +34,10 @@ writes such a review and skips, counting them, role reviews of only eligible or 
 assignments or in another form; a live review of another role or form under the entry's name is
 refused with `AccessReviewScopeMismatch`.
 
-Errors the module raises internally, such as an unreadable structure document or naming standard,
-an invalid duration, name or schedule, or an incomplete Microsoft Graph answer, carry their own
-error id and category instead of their message as the id wherever such a record reaches you; the
-messages are unchanged.
+Most errors the module raises internally, such as an unreadable structure document or naming
+standard, an invalid duration, name or schedule, or an incomplete Microsoft Graph answer, now carry
+their own error id and category instead of their message as the id wherever such a record reaches
+you; the messages are unchanged.
 
 ## [1.4.0] - 2026-11-06
 

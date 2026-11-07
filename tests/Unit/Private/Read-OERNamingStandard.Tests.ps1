@@ -470,7 +470,7 @@ Describe 'Read-OERNamingStandard typed error records' {
     BeforeAll {
         # Reads a naming standard path and returns the thrown record, or $null.
         function Get-NamingRecord {
-            param([string]$Path, [switch]$FailRead)
+            param([string]$Path)
             InModuleScope $script:moduleName -Parameters @{ Path = $Path } {
                 param($Path)
                 $Record = $null
