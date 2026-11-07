@@ -110,15 +110,15 @@ function Resolve-OERAccessReviewRoleScope {
             ([string]::IsNullOrEmpty([string]$Scope.QueryType) -or
                 ([string]$Scope.QueryType).Equals('MicrosoftGraph', [System.StringComparison]::OrdinalIgnoreCase))
     }
-    $ResourcePattern = '^' + $VersionPrefix + '/roleManagement/directory/roleDefinitions/([^/?#]+)'
+    $ResourcePattern = '^' + $VersionPrefix + '/roleManagement/directory/roleDefinitions/([^/?#\s]+)'
 
     # All
     if (-not [string]::IsNullOrEmpty($ScopeType) -and
         $ScopeType.Equals($MembershipsType, [System.StringComparison]::OrdinalIgnoreCase) -and
         [string]::IsNullOrEmpty($Text) -and $Principals.Count -eq 1 -and $Resources.Count -eq 1 -and
         (& $IsPlainInner $Principals[0]) -and (& $IsPlainInner $Resources[0]) -and
-        ([string]$Principals[0].Query) -match ('^' + $VersionPrefix + '/users$') -and
-        ([string]$Resources[0].Query) -match ($ResourcePattern + '$') -and (Test-OERGuid -Value $Matches[1])) {
+        ([string]$Principals[0].Query) -match ('^' + $VersionPrefix + '/users\z') -and
+        ([string]$Resources[0].Query) -match ($ResourcePattern + '\z') -and (Test-OERGuid -Value $Matches[1])) {
         $Kind = 'All'
         $RoleId = $Matches[1]
     }
@@ -130,7 +130,7 @@ function Resolve-OERAccessReviewRoleScope {
             Active   = @("/roleManagement/directory/roleAssignmentScheduleInstances?`$expand=principal&`$filter=(assignmentType eq 'Assigned' and isof(principal,'microsoft.graph.user') and roleDefinitionId eq '", "')")
         }
         foreach ($Name in $Forms.Keys) {
-            $Pattern = '^' + $VersionPrefix + [regex]::Escape($Forms[$Name][0]) + "([^']+)" + [regex]::Escape($Forms[$Name][1]) + '$'
+            $Pattern = '^' + $VersionPrefix + [regex]::Escape($Forms[$Name][0]) + "([^']+)" + [regex]::Escape($Forms[$Name][1]) + '\z'
             if ($Text -match $Pattern -and (Test-OERGuid -Value $Matches[1])) {
                 $Kind = $Name
                 $RoleId = $Matches[1]
@@ -150,7 +150,7 @@ function Resolve-OERAccessReviewRoleScope {
         }
     }
     if ($Kind -eq 'NotRole' -and $Text -match ('^' + $VersionPrefix + '/roleManagement/directory/')) {
-        if (($Text -match "roleDefinitionId eq '([^']+)'" -or $Text -match 'roleDefinitions/([^/?#]+)$') -and
+        if (($Text -match "roleDefinitionId eq '([^']+)'" -or $Text -match 'roleDefinitions/([^/?#\s]+)\z') -and
             (Test-OERGuid -Value $Matches[1])) {
             $Kind = 'OtherForm'
             $RoleId = $Matches[1]

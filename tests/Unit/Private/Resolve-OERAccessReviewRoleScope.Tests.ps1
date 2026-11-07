@@ -185,6 +185,69 @@ Describe 'Resolve-OERAccessReviewRoleScope' {
             $Out.RoleDefinitionId | Should -BeNullOrEmpty
         }
 
+        It 'reads the measured <Name> text with an id that is no GUID as NotRole' -ForEach @(
+            @{ Name = 'eligible'; Var = 'Elig' }
+            @{ Name = 'active'; Var = 'Act' }
+        ) {
+            $Text = (Get-Variable -Scope Script -Name $Var).Value -f 'not-a-guid'
+            $Out = InModuleScope Omnicit.EntraRBAC -Parameters @{ Q = $Text } {
+                param($Q)
+                Resolve-OERAccessReviewRoleScope -Query $Q -ScopeType '#microsoft.graph.accessReviewQueryScope'
+            }
+            $Out.Kind | Should -Be 'NotRole'
+            $Out.RoleDefinitionId | Should -BeNullOrEmpty
+        }
+
+        It 'reads a top-level role query naming a non-GUID id as NotRole' {
+            $Out = InModuleScope Omnicit.EntraRBAC {
+                Resolve-OERAccessReviewRoleScope -Query "/roleManagement/directory/roleDefinitions/not-a-guid"
+            }
+            $Out.Kind | Should -Be 'NotRole'
+            $Out.RoleDefinitionId | Should -BeNullOrEmpty
+        }
+
+        It 'reads a top-level filter naming a non-GUID id as NotRole' {
+            $Out = InModuleScope Omnicit.EntraRBAC {
+                Resolve-OERAccessReviewRoleScope -Query "/roleManagement/directory/roleAssignmentSchedules?`$filter=roleDefinitionId eq 'not-a-guid'"
+            }
+            $Out.Kind | Should -Be 'NotRole'
+            $Out.RoleDefinitionId | Should -BeNullOrEmpty
+        }
+
+        It 'lower-cases an upper-case id in the measured <Name> text' -ForEach @(
+            @{ Name = 'eligible'; Var = 'Elig'; Kind = 'Eligible' }
+            @{ Name = 'active'; Var = 'Act'; Kind = 'Active' }
+        ) {
+            $Text = (Get-Variable -Scope Script -Name $Var).Value -f 'AAAAAAAA-0000-0000-0000-00000000000B'
+            $Out = InModuleScope Omnicit.EntraRBAC -Parameters @{ Q = $Text } {
+                param($Q)
+                Resolve-OERAccessReviewRoleScope -Query $Q
+            }
+            $Out.Kind | Should -Be $Kind
+            $Out.RoleDefinitionId | Should -BeExactly 'aaaaaaaa-0000-0000-0000-00000000000b'
+        }
+
+        It 'never reads a query or scope with a final line feed as the exact form (<Case>)' -ForEach @(
+            @{ Case = 'principal'; Mode = 'principal' }
+            @{ Case = 'resource'; Mode = 'resource' }
+            @{ Case = 'eligible'; Mode = 'eligible' }
+            @{ Case = 'active'; Mode = 'active' }
+        ) {
+            $Q = $null; $T = $script:Mem
+            $P = @(New-Inner '/v1.0/users'); $R = @(New-Inner "/beta/roleManagement/directory/roleDefinitions/$script:Id")
+            switch ($Mode) {
+                'principal' { $P = @(New-Inner "/users`n") }
+                'resource' { $R = @(New-Inner "/roleManagement/directory/roleDefinitions/$script:Id`n") }
+                'eligible' { $Q = ($script:Elig -f $script:Id) + "`n"; $T = $null; $P = @(); $R = @() }
+                'active' { $Q = ($script:Act -f $script:Id) + "`n"; $T = $null; $P = @(); $R = @() }
+            }
+            $Out = InModuleScope Omnicit.EntraRBAC -Parameters @{ P = $P; R = $R; T = $T; Q = $Q } {
+                param($P, $R, $T, $Q)
+                Resolve-OERAccessReviewRoleScope -Query $Q -ScopeType $T -PrincipalScope $P -ResourceScope $R
+            }
+            $Out.Kind | Should -BeIn @('OtherForm', 'NotRole')
+        }
+
         It 'accepts all-null input' {
             $Out = InModuleScope Omnicit.EntraRBAC {
                 Resolve-OERAccessReviewRoleScope -Query $null -ScopeType $null -PrincipalScope $null -ResourceScope $null
