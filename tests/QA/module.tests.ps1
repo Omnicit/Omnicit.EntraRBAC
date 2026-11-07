@@ -439,6 +439,62 @@ Describe 'Release version cap' -Tags 'Changelog' {
     }
 }
 
+Describe 'PowerShell version floor' -Tags 'FunctionalQuality' {
+    # BL-166: the module is PowerShell 7.6+ only, in the manifest and in the Azure pipeline.
+    It 'Should declare PowerShell 7.6 or later in the source manifest' {
+        $sourceManifest = Import-PowerShellDataFile -Path (Join-Path $projectPath 'source/Omnicit.EntraRBAC.psd1')
+
+        # A null version would satisfy -BeGreaterOrEqual below, so guard the guard.
+        $sourceManifest.PowerShellVersion | Should -Not -BeNullOrEmpty -Because 'a missing PowerShellVersion would declare no floor at all'
+        $declared = $null
+        $parsed = [version]::TryParse([string]$sourceManifest.PowerShellVersion, [ref]$declared)
+        $parsed | Should -BeTrue -Because 'PowerShellVersion must parse as a version'
+        $declared | Should -BeGreaterOrEqual ([version]'7.6') -Because (
+            "the source manifest declares '$($sourceManifest.PowerShellVersion)'. 7.6 is the floor " +
+            '(BL-166); do not lower it to make a build pass.'
+        )
+    }
+
+    It 'Should build a module that declares PowerShell 7.6 or later' {
+        $script:moduleUnderTest | Should -Not -BeNullOrEmpty -Because 'the module must resolve from PSModulePath; run ./build.ps1 -Tasks build first'
+        $script:moduleUnderTest.PowerShellVersion | Should -Not -BeNullOrEmpty -Because 'a null version would satisfy the comparison below and make this gate inert'
+        $script:moduleUnderTest.PowerShellVersion | Should -BeOfType [System.Version]
+        $script:moduleUnderTest.PowerShellVersion | Should -BeGreaterOrEqual ([version]'7.6') -Because (
+            "the built module declares $($script:moduleUnderTest.PowerShellVersion); 7.6 is the floor (BL-166)."
+        )
+    }
+
+    It 'Should check the PowerShell version as the first step of every Azure pipeline job' {
+        $pipelineLines = Get-Content -Path (Join-Path $projectPath 'azure-pipelines.yml')
+        $jobIndexes = @(0..($pipelineLines.Count - 1) | Where-Object { $pipelineLines[$_] -match '^\s*- job:\s*(\S+)' })
+
+        $jobIndexes.Count | Should -Be 5 -Because (
+            'azure-pipelines.yml holds five jobs: Package_Module, test_linux, test_windows_core, ' +
+            'test_macos and Code_Coverage. A new job must get the version check as its first step ' +
+            'and this count must be updated with it.'
+        )
+
+        foreach ($jobIndex in $jobIndexes) {
+            $jobName = ($pipelineLines[$jobIndex] -replace '^\s*- job:\s*', '').Trim()
+            $stepsIndex = $jobIndex + 1
+            while ($stepsIndex -lt $pipelineLines.Count -and $pipelineLines[$stepsIndex] -notmatch '^\s*steps:\s*$') { $stepsIndex++ }
+            $stepsIndex | Should -BeLessThan $pipelineLines.Count -Because "job '$jobName' must have a steps: list"
+
+            # The first step is the first '- ' entry after steps:; its displayName is the first displayName line before the next '- ' step at the same indent.
+            $firstStepIndex = $stepsIndex + 1
+            while ($firstStepIndex -lt $pipelineLines.Count -and $pipelineLines[$firstStepIndex] -notmatch '^\s*- \S') { $firstStepIndex++ }
+            $stepIndent = ([regex]::Match($pipelineLines[$firstStepIndex], '^\s*')).Value.Length
+            $displayName = $null
+            for ($lineIndex = $firstStepIndex + 1; $lineIndex -lt $pipelineLines.Count; $lineIndex++) {
+                $line = $pipelineLines[$lineIndex]
+                if ($line -match '^\s*- ' -and ([regex]::Match($line, '^\s*')).Value.Length -le $stepIndent) { break }
+                if ($line -match '^\s+displayName:\s*(.+?)\s*$') { $displayName = $Matches[1].Trim("'", '"'); break }
+            }
+            $displayName | Should -Be 'Check PowerShell version' -Because "the first step of job '$jobName' must be the PowerShell version check"
+        }
+    }
+}
+
 Describe 'General module control' -Tags 'FunctionalQuality' {
     It 'Should import without errors' {
         { Import-Module -Name $script:moduleName -Force -ErrorAction Stop } | Should -Not -Throw
