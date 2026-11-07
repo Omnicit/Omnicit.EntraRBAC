@@ -586,6 +586,20 @@ function Resolve-OERAccessReviewChange {
         }
     }
 
+    # A review of a directory role: the same rule for the role id the live scope names. Only a GUID
+    # declared role is compared offline; a role name was checked by the target check.
+    if (Test-DeclHas $Declared 'directoryRole') {
+        $DeclaredRoleScope = [string]$Declared.directoryRole
+        if (Test-OERGuid -Value $DeclaredRoleScope) {
+            $LiveRoleId = [string](Resolve-OERAccessReviewRoleScope -Query ([string]$Current.Scope) -ScopeType ([string]$Current.ScopeType) `
+                    -PrincipalScope $Current.PrincipalScopes -ResourceScope $Current.ResourceScopes).RoleDefinitionId
+            if ($DeclaredRoleScope -ine $LiveRoleId) {
+                $LiveRoleText = if ($LiveRoleId) { $LiveRoleId } else { 'none' }
+                $NotApplied.Add("directoryRole '$DeclaredRoleScope' differs from the live scope '$LiveRoleText'; the review scope is immutable and was not changed")
+            }
+        }
+    }
+
     $Out = [PSCustomObject]@{
         Changed    = ($SetParams.Keys.Count -gt 0)
         SetParams  = $SetParams

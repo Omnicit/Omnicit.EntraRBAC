@@ -1460,3 +1460,89 @@ Describe 'Resolve-OERAccessReviewChange group scope' {
         }
     }
 }
+
+# Sprint 13 step 4: the immutable scope of a directory role review.
+Describe 'Resolve-OERAccessReviewChange directory role scope' {
+    BeforeEach {
+        $Inner = { param($Query) [PSCustomObject]@{ Query = $Query; QueryType = 'MicrosoftGraph'; QueryRoot = $null; ScopeType = '#microsoft.graph.accessReviewQueryScope' } }
+        $script:RlLive = [PSCustomObject]@{
+            Id                      = 'ar-1'
+            DisplayName             = 'Reports Reader review'
+            DescriptionForAdmins    = 'admin text'
+            DescriptionForReviewers = 'reviewer text'
+            Scope                   = ''
+            ScopeType               = '#microsoft.graph.principalResourceMembershipsScope'
+            PrincipalScopes         = @(& $Inner '/v1.0/users')
+            ResourceScopes          = @(& $Inner '/beta/roleManagement/directory/roleDefinitions/00000000-0000-0000-0000-000000000041')
+            AccessPackageId         = $null
+            AssignmentPolicyId      = $null
+            Reviewers               = @(@{ query = '/users/usr-1' })
+            FallbackReviewers       = @()
+            DurationInDays          = 14
+            Recurrence              = @{ pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }; range = @{ type = 'noEnd'; startDate = '2026-07-01' } }
+            Settings                = @{ instanceDurationInDays = 14 }
+        }
+    }
+
+    It 'reports no change for a declared role GUID equal to the live role (<Case>)' -ForEach @(
+        @{ Case = 'same case'; Declared = '00000000-0000-0000-0000-000000000041' }
+        @{ Case = 'other letter case'; Declared = '0000000A-0000-0000-0000-000000000041' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Live = $script:RlLive; Role = $Declared; Case = $Case } {
+            param($Live, $Role, $Case)
+            if ($Case -eq 'other letter case') {
+                $Live.ResourceScopes[0].Query = '/beta/roleManagement/directory/roleDefinitions/0000000a-0000-0000-0000-000000000041'
+            }
+            $Change = Resolve-OERAccessReviewChange -Declared ([PSCustomObject]@{ displayName = 'Reports Reader review'; directoryRole = $Role }) -Current $Live
+            $Change.Changed | Should -Be $false
+            @($Change.NotApplied) | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'leaves a declared role name alone: it is not compared offline' {
+        InModuleScope $script:moduleName -Parameters @{ Live = $script:RlLive } {
+            param($Live)
+            $Change = Resolve-OERAccessReviewChange -Declared ([PSCustomObject]@{ displayName = 'Reports Reader review'; directoryRole = 'Reports Reader' }) -Current $Live
+            @($Change.NotApplied) | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'reports a declared role GUID that differs from the live role as not applied, writing nothing' {
+        InModuleScope $script:moduleName -Parameters @{ Live = $script:RlLive } {
+            param($Live)
+            $Change = Resolve-OERAccessReviewChange -Declared ([PSCustomObject]@{ displayName = 'Reports Reader review'; directoryRole = '00000000-0000-0000-0000-000000000042' }) -Current $Live
+            $Change.Changed | Should -Be $false
+            @($Change.NotApplied).Count | Should -Be 1
+            $Change.NotApplied[0] | Should -BeExactly "directoryRole '00000000-0000-0000-0000-000000000042' differs from the live scope '00000000-0000-0000-0000-000000000041'; the review scope is immutable and was not changed"
+        }
+    }
+
+    It 'names the live scope as none when it is no role scope' {
+        InModuleScope $script:moduleName -Parameters @{ Live = $script:RlLive } {
+            param($Live)
+            $Live.ScopeType = $null
+            $Live.PrincipalScopes = @()
+            $Live.ResourceScopes = @()
+            $Live.Scope = '/identityGovernance/entitlementManagement/assignments?$filter=x'
+            $Change = Resolve-OERAccessReviewChange -Declared ([PSCustomObject]@{ displayName = 'Reports Reader review'; directoryRole = '00000000-0000-0000-0000-000000000042' }) -Current $Live
+            $Change.NotApplied[0] | Should -BeLike "*differs from the live scope 'none'*"
+        }
+    }
+
+    It 'still diffs a setting of a role entry as before, with no scope note' {
+        InModuleScope $script:moduleName -Parameters @{ Live = $script:RlLive } {
+            param($Live)
+            $Change = Resolve-OERAccessReviewChange -Declared ([PSCustomObject]@{ displayName = 'Reports Reader review'; directoryRole = '00000000-0000-0000-0000-000000000041'; durationInDays = 21 }) -Current $Live
+            @($Change.NotApplied) | Should -BeNullOrEmpty
+            $Change.Changed | Should -Be $true
+        }
+    }
+
+    It 'does not look at the role when the entry declares none' {
+        InModuleScope $script:moduleName -Parameters @{ Live = $script:RlLive } {
+            param($Live)
+            $Change = Resolve-OERAccessReviewChange -Declared ([PSCustomObject]@{ displayName = 'Reports Reader review'; directoryRole = $null }) -Current $Live
+            @($Change.NotApplied) | Should -BeNullOrEmpty
+        }
+    }
+}
