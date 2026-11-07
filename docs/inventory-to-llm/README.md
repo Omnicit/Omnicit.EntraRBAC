@@ -817,15 +817,21 @@ write a scoped role, so a proposal may keep it, leave it out, or add it for a ne
 ## Access reviews are matched by name
 
 An `accessReviews[]` entry is matched to a live review by `displayName`, looked up in the whole
-tenant, and access review display names are not unique. An entry declares ONE of two forms: `group`
-(a display name or an object id), a review of all members of that group, or `accessPackage` together
-with `assignmentPolicy`, a review of an access package assignment policy. The review found is
+tenant, and access review display names are not unique. An entry declares ONE of three forms: `group`
+(a display name or an object id), a review of all members of that group, `directoryRole` (a role name
+or id), a review of every user with an active or eligible assignment of that directory role, or
+`accessPackage` together with `assignmentPolicy`, a review of an access package assignment policy. The
+review found is
 therefore updated only when it reviews exactly what the entry declares:
 
 - A `group` entry: the review found must review all transitive members of that group. A review of
   the same group's guest users only, its direct members only, its inactive users or its owners, and a
   review of another group, are not that review. The group is looked up the way creation looks it up
   (an id as written, a name through the tenant).
+- A `directoryRole` entry: the review found must review all active and eligible assignments of that
+  role. A review of only eligible or only active assignments, of guest users only, or of another
+  role, is not that review. The role is looked up the way creation looks it up (an id as written, a
+  name through the tenant).
 - An `accessPackage` and `assignmentPolicy` entry: a GUID is compared as written, and a name is
   resolved the way `New-OERAccessReviewDefinition` resolves it when it creates a review.
 
@@ -846,12 +852,14 @@ The scope of a review cannot be changed on an existing one.
 - The check runs before the reviewer lookups and before any confirmation, so a `-WhatIf` plan and a
   real run report the same `Failed` row.
 
-The export captures only single-stage reviews of an access package or of all members of one group,
-and only reviews whose reviewers it can write back, so a name missing from `accessReviews.json` may
-still be in use by a review the bundle leaves out. The export skips, and counts by kind in one
-warning, a review of a group in a form it cannot write back (guest users only, direct members only,
-inactive users, another query), a review of an application, a directory role or another scope, and a
-review whose reviewers it cannot write back (for example the owners of a group, which the document
+The export captures only single-stage reviews of an access package, of all members of one group or of
+all assignments of one directory role (written with a `directoryRole` key), and only reviews whose
+reviewers it can write back, so a name missing from `accessReviews.json` may still be in use by a
+review the bundle leaves out. The export skips, and counts by kind in one warning, a review of a group
+in a form it cannot write back (guest users only, direct members only, inactive users, another
+query), a review of a directory role in a form it cannot write back (eligible assignments only,
+active assignments only, guest users only, another query), a review of an application or another
+scope, and a review whose reviewers it cannot write back (for example the owners of a group, which the document
 has no way to name). Give a new review a display name no other review in the tenant uses.
 
 ## Access package assignment policy schema

@@ -27,6 +27,13 @@ PIM policy value that could not be read is never taken as `false`. A policy's fi
 read and exported as an ISO 8601 UTC string. A catalog named like an object id is exported by id,
 and the validator warns on such a name.
 
+An `accessReviews` entry can declare `directoryRole` (a role name or id) for a review of every user
+with an active or eligible assignment of one Microsoft Entra directory role, and
+`New-OERAccessReviewDefinition` takes `-DirectoryRole`. `Get-OERInventory` and `Export-OERInventory`
+write such a review and skip, counting them, role reviews of only eligible or only active assignments
+or in another form; a live review of another role or form under the entry's name is refused with
+`AccessReviewScopeMismatch`.
+
 ## [1.4.0] - 2026-11-06
 
 Omnicit.EntraRBAC now requires PowerShell 7.6 or later. PowerShell 7.4 and 7.5 reach end of support

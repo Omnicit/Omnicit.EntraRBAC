@@ -891,6 +891,11 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Members` is exported as `group`; a guest-only or direct-member review is never widened by an
   apply.
   `Why: docs/development/rationale.md#access-review-group-scope`
+- **`Resolve-OERAccessReviewRoleScope` is the single owner of which review scope is a review of a
+  directory role's assignments the module can write back** (`All`, `Eligible`, `Active`, `OtherForm`,
+  `NotRole`). Only `All` is exported as `directoryRole`; never re-implement the role scope regex
+  inline.
+  `Why: docs/development/rationale.md#access-review-role-scope`
 - **`Test-OERGuid` is the single GUID predicate:** never re-implement the canonical GUID regex
   inline. Deliberate exceptions: the wider `-as [guid]` cast in `Get-OERInventory` and `New-OERGroup`
   (do not migrate those two), and the places that read a group's `administrativeUnit` the way

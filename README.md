@@ -665,7 +665,7 @@ be included in access packages:
 
 ### Access Reviews (10)
 
-Access review definitions and instances for access packages and for the members of a group.
+Access review definitions and instances for access packages, for the members of a group and for the assignments of a directory role.
 
 - `New-OERAccessReviewDefinition`, `Get-OERAccessReviewDefinition`,
   `Set-OERAccessReviewDefinition`, `Remove-OERAccessReviewDefinition`
@@ -948,9 +948,12 @@ An existing access review is matched by display name, and display names are not 
 `Invoke-OERStructure` updates the review it finds only when that review reviews the access package
 and assignment policy the entry declares (a GUID compared as written, a name resolved as
 `New-OERAccessReviewDefinition` resolves it). An entry declares either `group` (a name or an id) for a review
-of all members of a group, or `accessPackage` with `assignmentPolicy`, never both; the export writes both
-forms and skips a guest-only, direct-member or other group review, so it is never widened. A review of
-another group, a role, another access package or another policy is reported `Failed` with `AccessReviewScopeMismatch`, and nothing is written to it,
+of all members of a group, `directoryRole` (a role name or id) for a review of every user with an active or
+eligible assignment of that Microsoft Entra directory role, or `accessPackage` with `assignmentPolicy`, never
+two of them; the export writes all three forms and skips a guest-only, direct-member or other group review, and
+a role review that covers only eligible or only active assignments or is in another form, counting them, so it
+is never widened. A review of another group, another role or another form of the same role, another access
+package or another policy is reported `Failed` with `AccessReviewScopeMismatch`, and nothing is written to it,
 the same in a `-WhatIf` plan; a name that matches nothing is reported `Failed` with
 `AccessPackageNotFound` or `AssignmentPolicyNotFound`. An access package name is not unique in the
 tenant, nor an assignment policy name in its access package: when such a name is shared, the entry
