@@ -154,13 +154,18 @@ function Get-OERInventory {
     Invoke-OERStructure identifies such a resource by the object id its name resolves to. A display
     name that has the form of an object id is written as the object id instead, since the apply
     engine reads such a name as an id.
-    Only single-stage review definitions of an access package or of all members of one group are
-    captured; a review of all members of one group is written with a group key (the group's name when
+    Only single-stage review definitions of an access package, of all members of one group or of all
+    assignments of one directory role are captured; a review of all members of one group is written
+    with a group key (the group's name when
     the tenant's group name index was read and exactly this group carries it, else its object id;
     a group, a reviewer or a fallback reviewer whose display name has the form of an object id is
-    written as the object id as well) and no accessPackage or assignmentPolicy. A review of guest
-    users only, of direct members only
-    or of inactive users, an application, a directory-role, another scope or a multi-stage review is
+    written as the object id as well) and no accessPackage or assignmentPolicy. A review of all
+    assignments of one directory role is written with a directoryRole key (the role's display name when
+    the module's own role resolver finds exactly this role by it, else the role definition id; a name
+    with the form of an object id is written as the id) and no group, accessPackage or assignmentPolicy.
+    A review of guest users only, of direct members only
+    or of inactive users, an application, a directory role in a form other than all assignments (eligible
+    only, active only, guest users only or another query), another scope or a multi-stage review is
     skipped, and so is a review (of either form) with a reviewer scope the document cannot express
     (for example the owners of a group): exporting it would drop that reviewer, and applying the
     export would rewrite the live review. The skips are named in one aggregate warning, counted by
@@ -421,9 +426,11 @@ function Get-OERInventory {
     .PARAMETER Include
     The building-block sections to read. Defaults to Groups, AdministrativeUnits, Catalogs and
     AccessPackages. AccessReviews captures only single-stage review
-    definitions of an access package or of all members of one group (optionally narrowed by
+    definitions of an access package, of all members of one group or of all assignments of one directory
+    role (optionally narrowed by
     -AccessReviewFilter); a review of guest users only, of direct members only or of inactive users, an
-    application, a directory-role, another scope, a multi-stage review, or a review with a reviewer
+    application, a directory role in another form (eligible only, active only, guest users only), another
+    scope, a multi-stage review, or a review with a reviewer
     scope the document cannot express (a group's owners, for example) is skipped with a warning,
     counted by kind; a skipped review still makes its namesake a shared name, so the exported one is
     left out and counted. DirectoryRoleManagementPolicies and
@@ -1091,6 +1098,53 @@ function Get-OERInventory {
             }
             $Found = @(& $MatchOf $Lookup.Answer $Name)
             if ($Found.Count -eq 1 -and [string]$Found[0].id -ieq $Id) { return $Name }
+            return $Id
+        }
+
+        # Sprint 13 step 4 (R-6): the directory role a review of all assignments of one role reviews, named
+        # for the document. The name is read by id (Get-AccessReviewReferenceName, a deleted role is written
+        # by id and reported nowhere, a failed read by id and as the unread collection
+        # accessReviews/<review>/directoryRole). A name is kept only when the engine's own resolver,
+        # Resolve-OERDirectoryRoleDefinitionId, called here ITSELF and not copied (so this adds no second
+        # named deviation), answers with this id: another id or none, or an ambiguous name, writes the id,
+        # which the engine takes verbatim. A name with the form of an object id is written as the id with
+        # no lookup. Each answer is cached for the invocation under the lower-cased name -Cache (the
+        # failure too, as Get-AccessReviewUniqueReference does): a failed check writes the id and is
+        # reported like a failed uniqueness check. Known limit: an ambiguous name can leave a record in a
+        # caller's -ErrorVariable, since the resolver throws it.
+        function Get-AccessReviewDirectoryRoleReference {
+            param(
+                [string]$Id,
+                [string]$ReviewName,
+                [hashtable]$Cache
+            )
+            $Name = Get-AccessReviewReferenceName `
+                -Uri ('v1.0/roleManagement/directory/roleDefinitions/{0}?$select=id,displayName' -f $Id) `
+                -NotFoundCode 'Request_ResourceNotFound', 'ResourceNotFound' `
+                -Id $Id -ReviewName $ReviewName -Part 'directoryRole' -Label 'directory role'
+            if ([string]$Name -ieq $Id) { return $Id }
+            if (Test-OERGuid -Value ([string]$Name)) { return $Id }
+            $RoleKey = ([string]$Name).ToLowerInvariant()
+            if (-not $Cache.ContainsKey($RoleKey)) {
+                try {
+                    $Cache[$RoleKey] = [PSCustomObject]@{ ResolvedId = (Resolve-OERDirectoryRoleDefinitionId -Role ([string]$Name)); Failure = $null }
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $Cache[$RoleKey] = [PSCustomObject]@{
+                        ResolvedId = $null
+                        Failure    = if (Test-OERAmbiguousNameError -Record $PSItem) { $null } else { [string]$PSItem.Exception.Message }
+                    }
+                }
+            }
+            $RoleLookup = $Cache[$RoleKey]
+            if ($null -ne $RoleLookup.Failure) {
+                $RoleCause = "Could not check whether an access review's directory role name is unique: $($RoleLookup.Failure)"
+                Write-Verbose "Get-OERInventory: $RoleCause"
+                Add-UnreadCause -Cause $RoleCause -Target $Id
+                $UnreadCollections.Add("accessReviews/$ReviewName/directoryRole")
+                return $Id
+            }
+            if ($null -ne $RoleLookup.ResolvedId -and [string]$RoleLookup.ResolvedId -ieq $Id) { return [string]$Name }
             return $Id
         }
 
@@ -2194,6 +2248,7 @@ function Get-OERInventory {
             $ArItems = @()
             $SkippedReviewCount = 0
             $SkippedGroupFormCount = 0
+            $SkippedRoleFormCount = 0
             $SkippedReviewerCount = 0
             # -ErrorAction SilentlyContinue + a LOCAL -ErrorVariable, not -ErrorAction Stop -- the
             # same fix, for the same mechanism, as the existence probe in
@@ -2272,6 +2327,7 @@ function Get-OERInventory {
             # lower-cased as well so that stays true if the cache ever becomes an ordinal dictionary.
             $ArPackageNameLookup = @{}
             $ArPolicyListLookup = @{}
+            $ArRoleNameLookup = @{}
             # BL-171d (R-4): the apply engine looks a review up by name over the whole tenant, so a
             # namesake the loop below skips still makes the name ambiguous. Filled before the skips.
             $AccessReviewExternalIds = [System.Collections.Generic.Dictionary[string, System.Collections.Generic.List[string]]]::new([System.StringComparer]::OrdinalIgnoreCase)
@@ -2283,16 +2339,31 @@ function Get-OERInventory {
                 $AccessReviewExternalIds[$ArNameKey].Add([string]$Ar.Id)
             }
             foreach ($Ar in $ArItems) {
-                # Two review forms round-trip: an access package review (the apply schema requires both
-                # accessPackage and assignmentPolicy) and a review of ALL members of one group (group;
+                # Three review forms round-trip: an access package review (the apply schema requires both
+                # accessPackage and assignmentPolicy), a review of ALL assignments of one directory role
+                # (directoryRole) and a review of ALL members of one group (group;
                 # Resolve-OERAccessReviewGroupScope owns which query that is). A review of a group in a
                 # form the module cannot write back (guest users only, direct members only, another
                 # query) is NEVER exported as group: on apply it would widen to all transitive members.
-                # Anything else (a directory role, an application, another scope) cannot be applied and
+                # Anything else (an application, another scope) cannot be applied and
                 # would make the inventory fail apply-schema validation, so it is skipped and counted.
                 $IsPackageReview = [bool]($Ar.AccessPackageId -and $Ar.AssignmentPolicyId)
                 $GroupScope = $null
+                $RoleScope = $null
                 if (-not $IsPackageReview) {
+                    # Sprint 13 step 4: a review of ALL assignments of one directory role is exported as
+                    # directoryRole (Resolve-OERAccessReviewRoleScope owns which scope that is, asked FIRST).
+                    # The eligible-only, active-only and other role forms cannot be written back and are
+                    # skipped and counted; anything that is no role review goes on to the group check.
+                    $RoleScope = Resolve-OERAccessReviewRoleScope -Query ([string]$Ar.Scope) -ScopeType ([string]$Ar.ScopeType) `
+                        -PrincipalScope @($Ar.PrincipalScopes) -ResourceScope @($Ar.ResourceScopes)
+                    if ($RoleScope.Kind -in 'Eligible', 'Active', 'OtherForm') {
+                        Write-Verbose "Skipping access review '$($Ar.DisplayName)': a directory role review in a form the module cannot write back (does not round-trip)."
+                        $SkippedRoleFormCount++
+                        continue
+                    }
+                }
+                if (-not $IsPackageReview -and $RoleScope.Kind -ne 'All') {
                     $GroupScope = Resolve-OERAccessReviewGroupScope -Query ([string]$Ar.Scope) -ScopeType ([string]$Ar.ScopeType)
                     if ($GroupScope.Kind -ne 'Members') {
                         if ($GroupScope.Kind -eq 'OtherForm') {
@@ -2347,7 +2418,13 @@ function Get-OERInventory {
                 }
 
                 $Proj = [ordered]@{ displayName = $Ar.DisplayName }
-                if (-not $IsPackageReview) {
+                if (-not $IsPackageReview -and $RoleScope.Kind -eq 'All') {
+                    # directoryRole: the role whose assignments the review covers (see
+                    # Get-AccessReviewDirectoryRoleReference for the name rule).
+                    $Proj.directoryRole = Get-AccessReviewDirectoryRoleReference -Id ([string]$RoleScope.RoleDefinitionId) `
+                        -ReviewName ([string]$Ar.DisplayName) -Cache $ArRoleNameLookup
+                }
+                elseif (-not $IsPackageReview) {
                     # group: the name of the group whose members the review covers, written under the
                     # BL-131 rule (Get-GroupPrincipalReference): the name only when the tenant's group
                     # name index was read and exactly this group carries it, else the id, which the
@@ -2553,19 +2630,22 @@ function Get-OERInventory {
                 if ($IncludeId) { $Proj.id = $Ar.Id }
                 $AccessReviews.Add([PSCustomObject]$Proj)
             }
-            $SkippedAllCount = $SkippedGroupFormCount + $SkippedReviewCount + $SkippedReviewerCount
+            $SkippedAllCount = $SkippedGroupFormCount + $SkippedRoleFormCount + $SkippedReviewCount + $SkippedReviewerCount
             if ($SkippedAllCount -gt 0) {
                 $SkippedParts = [System.Collections.Generic.List[string]]::new()
                 if ($SkippedGroupFormCount -gt 0) {
                     $SkippedParts.Add("$SkippedGroupFormCount review(s) of a group in a form the module cannot write back (guest users only, direct members only, or another query)")
                 }
+                if ($SkippedRoleFormCount -gt 0) {
+                    $SkippedParts.Add("$SkippedRoleFormCount review(s) of a directory role in a form the module cannot write back (eligible assignments only, active assignments only, guest users only, or another query)")
+                }
                 if ($SkippedReviewCount -gt 0) {
-                    $SkippedParts.Add("$SkippedReviewCount review(s) of an application, a directory role or another scope")
+                    $SkippedParts.Add("$SkippedReviewCount review(s) of an application or another scope")
                 }
                 if ($SkippedReviewerCount -gt 0) {
                     $SkippedParts.Add("$SkippedReviewerCount review(s) whose reviewers the module cannot write back (for example a group's owners)")
                 }
-                Write-Warning "Get-OERInventory: skipped $SkippedAllCount access review definition(s) the apply document cannot declare: $($SkippedParts -join ', '). Access package reviews and reviews of all members of one group round-trip through Invoke-OERStructure."
+                Write-Warning "Get-OERInventory: skipped $SkippedAllCount access review definition(s) the apply document cannot declare: $($SkippedParts -join ', '). Access package reviews, reviews of all members of one group and reviews of all assignments of one directory role round-trip through Invoke-OERStructure."
             }
         }
 

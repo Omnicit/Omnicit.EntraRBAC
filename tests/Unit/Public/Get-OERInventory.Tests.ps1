@@ -2098,7 +2098,7 @@ Describe 'Get-OERInventory' {
             @($ArReviewerWarning).Count | Should -Be 1
             [string]$ArReviewerWarning[0] | Should -BeExactly ('Get-OERInventory: skipped 1 access review definition(s) the apply document cannot declare: ' +
                 '1 review(s) whose reviewers the module cannot write back (for example a group''s owners). ' +
-                'Access package reviews and reviews of all members of one group round-trip through Invoke-OERStructure.')
+                'Access package reviews, reviews of all members of one group and reviews of all assignments of one directory role round-trip through Invoke-OERStructure.')
         }
         It 'warns once with a count when access reviews were skipped as not access-package-scoped' {
             Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
@@ -2239,8 +2239,8 @@ Describe 'Get-OERInventory' {
             @($Warned).Count | Should -Be 1
             [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 3 access review definition(s) the apply document cannot declare: ' +
                 '2 review(s) of a group in a form the module cannot write back (guest users only, direct members only, or another query), ' +
-                '1 review(s) of an application, a directory role or another scope. ' +
-                'Access package reviews and reviews of all members of one group round-trip through Invoke-OERStructure.')
+                '1 review(s) of an application or another scope. ' +
+                'Access package reviews, reviews of all members of one group and reviews of all assignments of one directory role round-trip through Invoke-OERStructure.')
         }
 
         It 'words the skip warning for the group-form kind alone' {
@@ -2248,15 +2248,15 @@ Describe 'Get-OERInventory' {
             $null = Get-OERInventory -Include AccessReviews -WarningVariable Warned -WarningAction SilentlyContinue
             [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 1 access review definition(s) the apply document cannot declare: ' +
                 '1 review(s) of a group in a form the module cannot write back (guest users only, direct members only, or another query). ' +
-                'Access package reviews and reviews of all members of one group round-trip through Invoke-OERStructure.')
+                'Access package reviews, reviews of all members of one group and reviews of all assignments of one directory role round-trip through Invoke-OERStructure.')
         }
 
         It 'words the skip warning for the other-scope kind alone' {
             $script:GrLive = @(& $script:NewGrLive -Name 'Role' -Scope '/v1.0/roleManagement/directory/roleDefinitions/abc')
             $null = Get-OERInventory -Include AccessReviews -WarningVariable Warned -WarningAction SilentlyContinue
             [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 1 access review definition(s) the apply document cannot declare: ' +
-                '1 review(s) of an application, a directory role or another scope. ' +
-                'Access package reviews and reviews of all members of one group round-trip through Invoke-OERStructure.')
+                '1 review(s) of an application or another scope. ' +
+                'Access package reviews, reviews of all members of one group and reviews of all assignments of one directory role round-trip through Invoke-OERStructure.')
         }
 
         It 'skips a group review whose only reviewer is the group''s owners, and exports no entry for it' {
@@ -2268,7 +2268,7 @@ Describe 'Get-OERInventory' {
             @($Warned).Count | Should -Be 1
             [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 1 access review definition(s) the apply document cannot declare: ' +
                 '1 review(s) whose reviewers the module cannot write back (for example a group''s owners). ' +
-                'Access package reviews and reviews of all members of one group round-trip through Invoke-OERStructure.')
+                'Access package reviews, reviews of all members of one group and reviews of all assignments of one directory role round-trip through Invoke-OERStructure.')
         }
 
         It 'skips a group review with a user reviewer beside an owners scope' {
@@ -2298,9 +2298,9 @@ Describe 'Get-OERInventory' {
             $null = Get-OERInventory -Include AccessReviews -WarningVariable Warned -WarningAction SilentlyContinue
             [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 3 access review definition(s) the apply document cannot declare: ' +
                 '1 review(s) of a group in a form the module cannot write back (guest users only, direct members only, or another query), ' +
-                '1 review(s) of an application, a directory role or another scope, ' +
+                '1 review(s) of an application or another scope, ' +
                 '1 review(s) whose reviewers the module cannot write back (for example a group''s owners). ' +
-                'Access package reviews and reviews of all members of one group round-trip through Invoke-OERStructure.')
+                'Access package reviews, reviews of all members of one group and reviews of all assignments of one directory role round-trip through Invoke-OERStructure.')
         }
 
         It 'sends no name lookup for a review it skips for its reviewers' {
@@ -2316,7 +2316,7 @@ Describe 'Get-OERInventory' {
             @($Inv.AccessReviews).Count | Should -Be 0
             [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 1 access review definition(s) the apply document cannot declare: ' +
                 '1 review(s) of a group in a form the module cannot write back (guest users only, direct members only, or another query). ' +
-                'Access package reviews and reviews of all members of one group round-trip through Invoke-OERStructure.')
+                'Access package reviews, reviews of all members of one group and reviews of all assignments of one directory role round-trip through Invoke-OERStructure.')
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
         }
 
@@ -12987,5 +12987,275 @@ Describe 'Get-OERInventory counts a shared access review name over every review 
         @($Inv.AccessReviews | ForEach-Object { $_.displayName }) | Should -Be @('Quarterly')
         @($InvErr | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
         @($Info | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' }).Count | Should -Be 0
+    }
+}
+
+Describe 'Get-OERInventory exports a review of all assignments of a directory role as directoryRole (Sprint 13 step 4, Task 6, R-1, R-6)' {
+    BeforeAll {
+        $script:RlRoleId = '00000000-0000-0000-0000-000000000031'
+        $script:RlOtherRoleId = '00000000-0000-0000-0000-000000000032'
+        $script:RlRoleUri = 'v1.0/roleManagement/directory/roleDefinitions/00000000-0000-0000-0000-000000000031?$select=id,displayName'
+        $script:RlGroupId = '00000000-0000-0000-0000-000000000033'
+        $script:RlGroupUri = 'v1.0/groups/00000000-0000-0000-0000-000000000033?$select=id,displayName'
+        $script:NewRlFailure = {
+            param([string]$Message, [string]$Id)
+            [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new($Message), $Id,
+                [System.Management.Automation.ErrorCategory]::NotSpecified, $null)
+        }
+        # One live review in the measured forms: All, Eligible, Active, Guest (all of the role).
+        $script:NewRlLive = {
+            param(
+                [string]$Name = 'Role review',
+                [ValidateSet('All', 'Eligible', 'Active', 'Guest')][string]$Form = 'All',
+                [string]$RoleId = '00000000-0000-0000-0000-000000000031'
+            )
+            $Inner = '#microsoft.graph.accessReviewQueryScope'
+            $Scope = $null
+            $ScopeType = '#microsoft.graph.principalResourceMembershipsScope'
+            $Principals = @([PSCustomObject]@{ Query = '/v1.0/users'; QueryType = 'MicrosoftGraph'; QueryRoot = $null; ScopeType = $Inner })
+            $Resources = @([PSCustomObject]@{ Query = "/beta/roleManagement/directory/roleDefinitions/$RoleId"; QueryType = 'MicrosoftGraph'; QueryRoot = $null; ScopeType = $Inner })
+            if ($Form -eq 'Guest') {
+                $Principals = @([PSCustomObject]@{ Query = "/v1.0/users?`$filter=(userType eq 'Guest')"; QueryType = 'MicrosoftGraph'; QueryRoot = $null; ScopeType = $Inner })
+            }
+            if ($Form -eq 'Eligible') {
+                $ScopeType = $Inner; $Principals = @(); $Resources = @()
+                $Scope = "/beta/roleManagement/directory/roleEligibilityScheduleInstances?`$expand=principal&`$filter=(isof(principal,'microsoft.graph.user') and roleDefinitionId eq '$RoleId')"
+            }
+            if ($Form -eq 'Active') {
+                $ScopeType = $Inner; $Principals = @(); $Resources = @()
+                $Scope = "/beta/roleManagement/directory/roleAssignmentScheduleInstances?`$expand=principal&`$filter=(assignmentType eq 'Assigned' and isof(principal,'microsoft.graph.user') and roleDefinitionId eq '$RoleId')"
+            }
+            [PSCustomObject]@{
+                Id = "ar-$Name"; DisplayName = $Name; Scope = $Scope; ScopeType = $ScopeType
+                PrincipalScopes = $Principals; ResourceScopes = $Resources
+                AccessPackageId = $null; AssignmentPolicyId = $null
+                Reviewers = @(@{ query = '/users/usr-1' }); FallbackReviewers = @()
+                StageCount = 0; DurationInDays = 14
+                MailNotificationsEnabled = $false; ReminderNotificationsEnabled = $false
+                JustificationRequired = $false; RecommendationsEnabled = $false
+                AutoApplyDecisionsEnabled = $false
+                Settings = @{
+                    instanceDurationInDays = 14; mailNotificationsEnabled = $false; reminderNotificationsEnabled = $false
+                    justificationRequiredOnApproval = $false; recommendationsEnabled = $false; autoApplyDecisionsEnabled = $false
+                }
+                Recurrence = [PSCustomObject]@{
+                    pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 3 }
+                    range   = [PSCustomObject]@{ type = 'noEnd'; startDate = '2026-07-01' }
+                }
+            }
+        }
+        $script:NewRlGroupLive = {
+            $Live = & $script:NewRlLive -Name 'Group review'
+            $Live.Scope = "/v1.0/groups/$($script:RlGroupId)/transitiveMembers/microsoft.graph.user"
+            $Live.ScopeType = $null; $Live.PrincipalScopes = @(); $Live.ResourceScopes = @()
+            $Live
+        }
+        $script:NewRlPackageLive = {
+            $Live = & $script:NewRlLive -Name 'Package review'
+            $Live.Scope = $null; $Live.ScopeType = $null; $Live.PrincipalScopes = @(); $Live.ResourceScopes = @()
+            $Live.AccessPackageId = 'ap-1'; $Live.AssignmentPolicyId = 'pol-1'
+            $Live
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        $script:RlLive = @(& $script:NewRlLive)
+        $script:RlResolver = { param($Role) $script:RlRoleId }
+        $script:RlAnswers = @{
+            $script:RlRoleUri  = @{ id = $script:RlRoleId; displayName = 'Reports Reader' }
+            $script:RlGroupUri = @{ id = $script:RlGroupId; displayName = 'Sales' }
+            'v1.0/identityGovernance/entitlementManagement/accessPackages/ap-1?$expand=catalog' = @{ id = 'ap-1'; displayName = 'Pkg' }
+            "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'Pkg'&`$select=id,displayName" = @{ value = @(@{ id = 'ap-1'; displayName = 'Pkg' }) }
+            'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/pol-1?$expand=accessPackage' = @{ id = 'pol-1'; displayName = 'Pol' }
+            "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq 'ap-1'" = @{ value = @(@{ id = 'pol-1'; displayName = 'Pol' }) }
+        }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition { $script:RlLive }
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{ 'usr-1' = 'person1@example.com' } }
+        Mock -ModuleName $script:moduleName Get-OERGroupNameIndex { & $script:NewGroupNameIndexOf @{ '00000000-0000-0000-0000-000000000033' = 'Sales' } }
+        Mock -ModuleName $script:moduleName Resolve-OERDirectoryRoleDefinitionId { & $script:RlResolver $Role }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            $Key = [string]$Uri
+            if (-not $script:RlAnswers.ContainsKey($Key)) { throw "unexpected transport call: $Uri" }
+            $Answer = $script:RlAnswers[$Key]
+            if ($Answer -is [scriptblock]) { & $Answer } else { $Answer }
+        }
+    }
+
+    It 'exports an All review as directoryRole by the role name, with no group, package or policy key' {
+        $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+        $Ar = @($Inv.AccessReviews)
+        $Ar.Count | Should -Be 1
+        $Ar[0].displayName | Should -Be 'Role review'
+        $Ar[0].directoryRole | Should -BeExactly 'Reports Reader'
+        $Ar[0].PSObject.Properties.Name | Should -Not -Contain 'group'
+        $Ar[0].PSObject.Properties.Name | Should -Not -Contain 'accessPackage'
+        $Ar[0].PSObject.Properties.Name | Should -Not -Contain 'assignmentPolicy'
+        @($Ar[0].reviewers) | Should -Be @('person1@example.com')
+        $Ar[0].recurrence | Should -Be 'Quarterly'
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERDirectoryRoleDefinitionId -Times 1 -Exactly -ParameterFilter { $Role -ceq 'Reports Reader' }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Uri -eq $script:RlRoleUri -and (@($ExpectedErrorCode) -join ',') -eq 'Request_ResourceNotFound,ResourceNotFound'
+        }
+        @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+    }
+
+    It 'writes the id when the resolver answers another id' {
+        $script:RlResolver = { param($Role) $script:RlOtherRoleId }
+        $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+        @($Inv.AccessReviews)[0].directoryRole | Should -BeExactly $script:RlRoleId
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERDirectoryRoleDefinitionId -Times 1 -Exactly
+        @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+    }
+
+    It 'writes the id when the resolver finds no role by the name' {
+        $script:RlResolver = { param($Role) $null }
+        $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue
+        @($Inv.AccessReviews)[0].directoryRole | Should -BeExactly $script:RlRoleId
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERDirectoryRoleDefinitionId -Times 1 -Exactly
+    }
+
+    It 'keeps the name when the resolver answers this id in another letter case' {
+        $script:RlResolver = { param($Role) $script:RlRoleId.ToUpperInvariant() }
+        $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue
+        @($Inv.AccessReviews)[0].directoryRole | Should -BeExactly 'Reports Reader'
+    }
+
+    It 'writes the id and reports nothing when the resolver refuses the name as ambiguous' {
+        $script:RlResolver = { param($Role) throw (& $script:NewRlFailure "Directory role name '$Role' matches 2 role definitions." 'AmbiguousName') }
+        $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+        @($Inv.AccessReviews)[0].directoryRole | Should -BeExactly $script:RlRoleId
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERDirectoryRoleDefinitionId -Times 1 -Exactly
+        @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+    }
+
+    It 'writes the id and names accessReviews/<name>/directoryRole as unread when the resolver fails' {
+        Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+        $script:RlResolver = { param($Role) throw (& $script:NewRlFailure 'Insufficient privileges to complete the operation (role).' 'Authorization_RequestDenied') }
+        $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+        @($Inv.AccessReviews)[0].directoryRole | Should -BeExactly $script:RlRoleId
+        $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+        $Partial.Count | Should -Be 1
+        [string]$Partial[0].TargetObject | Should -Be 'accessReviews/Role review/directoryRole'
+        [string]$Partial[0].Exception.Message | Should -Match ([regex]::Escape("Could not check whether an access review's directory role name is unique: Insufficient privileges"))
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
+    }
+
+    It 'checks a role name once for the reviews of the same role' {
+        $script:RlLive = @((& $script:NewRlLive -Name 'First'), (& $script:NewRlLive -Name 'Second'))
+        $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue
+        @($Inv.AccessReviews | ForEach-Object { $_.directoryRole }) | Should -Be @('Reports Reader', 'Reports Reader')
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERDirectoryRoleDefinitionId -Times 1 -Exactly
+    }
+
+    It 'writes the id, with no lookup of the name, when the role display name has the form of an object id' {
+        $script:RlAnswers[$script:RlRoleUri] = @{ id = $script:RlRoleId; displayName = '00000000-0000-0000-0000-000000000034' }
+        $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+        @($Inv.AccessReviews)[0].directoryRole | Should -BeExactly $script:RlRoleId
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERDirectoryRoleDefinitionId -Times 0 -Exactly
+        @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+    }
+
+    It 'writes the id and reports nothing when the role read answers not found' {
+        $Marker = [PSCustomObject]@{ ExpectedErrorCode = 'Request_ResourceNotFound'; StatusCode = 404; Message = 'Request_ResourceNotFound: not found'; Uri = 'x' }
+        $Marker.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GraphExpectedError')
+        $script:RlAnswers[$script:RlRoleUri] = $Marker
+        $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+        @($Inv.AccessReviews)[0].directoryRole | Should -BeExactly $script:RlRoleId
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERDirectoryRoleDefinitionId -Times 0 -Exactly
+        @($InvErr).Count | Should -Be 0 -Because 'a deleted role is a fact about the review, not a failed read'
+    }
+
+    It 'writes the id and names the collection unread when the role read fails' {
+        Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+        $script:RlAnswers[$script:RlRoleUri] = { throw (& $script:NewRlFailure 'Insufficient privileges to complete the operation (role read).' 'Authorization_RequestDenied') }
+        $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+        @($Inv.AccessReviews)[0].directoryRole | Should -BeExactly $script:RlRoleId
+        $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+        $Partial.Count | Should -Be 1
+        [string]$Partial[0].TargetObject | Should -Be 'accessReviews/Role review/directoryRole'
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERDirectoryRoleDefinitionId -Times 0 -Exactly
+    }
+
+    It 'skips an eligible-only, an active-only and a guest-only review of the role, counting each, and exports no entry' {
+        $script:RlLive = @(
+            (& $script:NewRlLive -Name 'Eligible' -Form Eligible),
+            (& $script:NewRlLive -Name 'Active' -Form Active),
+            (& $script:NewRlLive -Name 'Guests' -Form Guest)
+        )
+        $Inv = Get-OERInventory -Include AccessReviews -WarningVariable Warned -WarningAction SilentlyContinue
+        @($Inv.AccessReviews).Count | Should -Be 0
+        @($Warned).Count | Should -Be 1
+        [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 3 access review definition(s) the apply document cannot declare: ' +
+            '3 review(s) of a directory role in a form the module cannot write back (eligible assignments only, active assignments only, guest users only, or another query). ' +
+            'Access package reviews, reviews of all members of one group and reviews of all assignments of one directory role round-trip through Invoke-OERStructure.')
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly
+    }
+
+    It 'counts two skipped role reviews as 2 review(s) of a directory role' {
+        $script:RlLive = @((& $script:NewRlLive -Name 'Eligible' -Form Eligible), (& $script:NewRlLive -Name 'Active' -Form Active), (& $script:NewRlLive -Name 'Exported'))
+        $Inv = Get-OERInventory -Include AccessReviews -WarningVariable Warned -WarningAction SilentlyContinue
+        @($Inv.AccessReviews | ForEach-Object { $_.displayName }) | Should -Be @('Exported')
+        [string]$Warned[0] | Should -Match ([regex]::Escape('skipped 2 access review definition(s) the apply document cannot declare: 2 review(s) of a directory role in a form'))
+    }
+
+    It 'counts a review of an application under the reworded other-scope part' {
+        $App = & $script:NewRlLive -Name 'App review'
+        $App.ResourceScopes = @([PSCustomObject]@{ Query = '/beta/servicePrincipals/00000000-0000-0000-0000-000000000035'; QueryType = 'MicrosoftGraph'; QueryRoot = $null; ScopeType = '#microsoft.graph.accessReviewQueryScope' })
+        $script:RlLive = @($App)
+        $Inv = Get-OERInventory -Include AccessReviews -WarningVariable Warned -WarningAction SilentlyContinue
+        @($Inv.AccessReviews).Count | Should -Be 0
+        [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 1 access review definition(s) the apply document cannot declare: ' +
+            '1 review(s) of an application or another scope. ' +
+            'Access package reviews, reviews of all members of one group and reviews of all assignments of one directory role round-trip through Invoke-OERStructure.')
+    }
+
+    It 'exports a package review and a group review in the same read exactly as before' {
+        $script:RlLive = @((& $script:NewRlPackageLive), (& $script:NewRlGroupLive), (& $script:NewRlLive))
+        $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr -WarningAction SilentlyContinue
+        $Ar = @($Inv.AccessReviews)
+        $Ar.Count | Should -Be 3
+        $Package = @($Ar | Where-Object { $_.displayName -eq 'Package review' })[0]
+        $Group = @($Ar | Where-Object { $_.displayName -eq 'Group review' })[0]
+        $Role = @($Ar | Where-Object { $_.displayName -eq 'Role review' })[0]
+        $Common = @('reviewers', 'recurrence', 'durationInDays', 'startDate', 'mailNotification', 'reminderNotification', 'requireJustification', 'recommendationsEnabled', 'autoApplyDecisions')
+        @($Package.PSObject.Properties.Name) | Should -Be (@('displayName', 'accessPackage', 'assignmentPolicy') + $Common)
+        @($Group.PSObject.Properties.Name) | Should -Be (@('displayName', 'group') + $Common)
+        @($Role.PSObject.Properties.Name) | Should -Be (@('displayName', 'directoryRole') + $Common)
+        $Package.accessPackage | Should -BeExactly 'Pkg'
+        $Package.assignmentPolicy | Should -BeExactly 'Pol'
+        $Group.group | Should -BeExactly 'Sales'
+        @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+    }
+
+    It 'round-trips: the entry passes the schema and the engine reports it Unchanged with no write' {
+        $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue
+        $Entry = @($Inv.AccessReviews)[0]
+        $Entry.directoryRole | Should -BeExactly 'Reports Reader'
+        $Doc = [PSCustomObject]@{ version = '1.0'; accessReviews = @($Entry) }
+        $V = InModuleScope $script:moduleName -Parameters @{ D = $Doc } { param($D) Test-OERStructureSchema -Document $D }
+        @($V.Errors | ForEach-Object { "$($_.Severity): $($_.Path): $($_.Message)" }) | Should -Be @()
+        Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal { 'usr-1' }
+        Mock -ModuleName $script:moduleName Resolve-OERDirectoryRoleInput { [PSCustomObject]@{ ErrorId = $null; RoleDefinitionId = $script:RlRoleId } }
+        Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId { throw 'Unexpected access package lookup.' }
+        Mock -ModuleName $script:moduleName Resolve-OERAssignmentPolicyId { throw 'Unexpected assignment policy lookup.' }
+        Mock -ModuleName $script:moduleName Get-OERStructureRenameTarget { throw 'Unexpected rename map read.' }
+        Mock -ModuleName $script:moduleName New-OERAccessReviewDefinition { }
+        Mock -ModuleName $script:moduleName Set-OERAccessReviewDefinition { }
+        $Rows = @(InModuleScope $script:moduleName -Parameters @{ Item = $Entry } {
+                param($Item)
+                function Invoke-RoundTripSync {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet
+                }
+                Invoke-RoundTripSync -Item $Item -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
+            })
+        $Rows.Count | Should -Be 1
+        $Rows[0].Action | Should -Be 'Unchanged' -Because ([string]$Rows[0].Detail)
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessReviewDefinition -Times 0 -Exactly
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessReviewDefinition -Times 0 -Exactly
     }
 }
