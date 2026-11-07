@@ -789,3 +789,17 @@ Add-Content -LiteralPath '#LOG#' -WhatIf:$false -Value ('IDS:' + (@($DocErr | Wh
         $Lines | Should -Not -Contain 'Initialize-OERAuth'
     }
 }
+
+Describe 'Test-OERStructure empty structure document (Sprint 13 step 5)' {
+    It 'gives one InvalidStructureDocument record and one inner StructureDocumentNotValid record for an empty document' {
+        $Stream = @(Test-OERStructure -Json '   ' -ErrorVariable EV -ErrorAction Continue 2>&1)
+        $Own = @($Stream | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+        $Own.Count | Should -Be 1
+        $Own[0].FullyQualifiedErrorId | Should -BeExactly 'InvalidStructureDocument,Test-OERStructure'
+        $Own[0].Exception.Message | Should -BeExactly 'Could not read the structure document: The structure document is empty.'
+        $Inner = @($EV | Where-Object { [string]$_.FullyQualifiedErrorId -like 'StructureDocumentNotValid*' })
+        $Inner.Count | Should -BeGreaterOrEqual 1
+        $Inner[0].CategoryInfo.Category | Should -Be 'InvalidData'
+        $Inner[0].Exception.Message | Should -BeExactly 'The structure document is empty.'
+    }
+}

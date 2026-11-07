@@ -152,7 +152,13 @@ function Get-OERInventoryLighthouseDelegation {
                         $GroupScope = [string]$Group.id
                         # A resource group listed without its id cannot be read, and its delegations
                         # cannot be told from none: the subscription is unread, not silently short.
-                        if ([string]::IsNullOrWhiteSpace($GroupScope)) { throw "A resource group of the subscription '$($State.Id)' was listed without an id, so its Azure Lighthouse delegations could not be read." }
+                        if ([string]::IsNullOrWhiteSpace($GroupScope)) {
+                            throw [System.Management.Automation.ErrorRecord]::new(
+                                [System.Exception]::new("A resource group of the subscription '$($State.Id)' was listed without an id, so its Azure Lighthouse delegations could not be read."),
+                                'LighthouseResourceGroupIdMissing',
+                                [System.Management.Automation.ErrorCategory]::InvalidResult,
+                                $State.Id)
+                        }
                         $GroupRead = Invoke-OERArmRequest -Path "$GroupScope$AssignmentsPath" -All
                         $Reads.Add([PSCustomObject]@{ ReadAt = $GroupScope; Assignments = @(@($GroupRead.value) | Where-Object { $null -ne $_ }) })
                     }
@@ -178,7 +184,11 @@ function Get-OERInventoryLighthouseDelegation {
                         if (-not [string]::IsNullOrWhiteSpace($NamedId) -and $DefinitionById.ContainsKey($NamedId)) { $AssignmentDefinition = $DefinitionById[$NamedId] }
                     }
                     if ($null -eq $AssignmentDefinition) {
-                        throw "The registration definition of the registration assignment '$([string]$Assignment.id)' could not be read."
+                        throw [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new("The registration definition of the registration assignment '$([string]$Assignment.id)' could not be read."),
+                            'RegistrationDefinitionUnread',
+                            [System.Management.Automation.ErrorCategory]::ReadError,
+                            [string]$Assignment.id)
                     }
                     $Row = ConvertTo-OERLighthouseDelegation -Assignment $Assignment -Definition $AssignmentDefinition -ReadAt $Read.ReadAt
                     $Key = if (-not [string]::IsNullOrWhiteSpace([string]$Row.registrationAssignmentId)) {

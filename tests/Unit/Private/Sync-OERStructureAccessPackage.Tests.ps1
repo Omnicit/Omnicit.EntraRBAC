@@ -8057,3 +8057,45 @@ $Entry = $Map['accesspackages|ap']
         }
     }
 }
+
+Describe 'Sync-OERStructureAccessPackage publishes the typed builder refusal of ConvertTo-OERPolicyBody (Sprint 13 step 5)' {
+    It 'writes a PolicyBuilderObjectRequired record and carries it in the Failed row with the unchanged Detail' {
+        InModuleScope $script:moduleName {
+            function Invoke-SyncApViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+            }
+            Mock Initialize-OERAuth { }
+            Mock Resolve-OERStructureDefault { $null }
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP'; Description = $null; IsHidden = $false } }
+            Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+            Mock Set-OERAccessPackageAssignmentPolicy { }
+
+            # A live policy to diff against, built by the real converters.
+            $Scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'Standard' -AccessPackageId 'ap-1' -RequestorScope $Scope -DurationInDays 30
+            $CurrentProj = ConvertTo-OERAssignmentPolicy -InputObject $Body -AccessPackageId 'ap-1'
+            $CurrentProj | Add-Member -NotePropertyName Id -NotePropertyValue 'pol-1' -Force
+            Mock Get-OERAccessPackageAssignmentPolicy { $CurrentProj }
+
+            # The requestor scope builder answers with an object that is no builder object: the REAL
+            # ConvertTo-OERPolicyBody then refuses it.
+            Mock New-OERAccessPackageRequestorScope { [PSCustomObject]@{ NotABuilder = $true } }
+
+            $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "displayName": "Standard", "durationInDays": 30 } ] }' | ConvertFrom-Json
+            $Records = @(Invoke-SyncApViaCaller -Item $Item -ErrorVariable EV -ErrorAction SilentlyContinue)
+
+            $Failed = @($Records | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -like "failed to diff assignmentPolicy*" })
+            $Failed.Count | Should -Be 1
+            $Failed[0].Detail | Should -BeExactly "failed to diff assignmentPolicy 'Standard': -RequestorScope must be an object from New-OERAccessPackageRequestorScope."
+            $Failed[0].Error.FullyQualifiedErrorId | Should -BeLike 'PolicyBuilderObjectRequired*'
+            $Written = @($EV | Where-Object { $_.FullyQualifiedErrorId -like 'PolicyBuilderObjectRequired*' })
+            $Written.Count | Should -BeGreaterOrEqual 1
+            $Written[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Written[0].Exception.Message | Should -BeExactly '-RequestorScope must be an object from New-OERAccessPackageRequestorScope.'
+            Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 0 -Exactly
+        }
+    }
+}

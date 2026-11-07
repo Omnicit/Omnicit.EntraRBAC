@@ -894,3 +894,109 @@ Describe 'ConvertTo-OERPolicyBody carries every value the read has (BL-169a)' {
         }
     }
 }
+
+Describe 'ConvertTo-OERPolicyBody typed error records' {
+    It 'throws PolicyBuilderObjectRequired for a -RequestorScope that is not a builder object' {
+        $Caught = InModuleScope $script:moduleName {
+            $Scope = [pscustomobject]@{ x = 1 }
+            $R = $null
+            try { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -RequestorScope $Scope } catch { $R = $PSItem }
+            [pscustomobject]@{ Record = $R; Scope = $Scope }
+        }
+        $Caught.Record | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $Caught.Record.FullyQualifiedErrorId | Should -BeExactly 'PolicyBuilderObjectRequired'
+        $Caught.Record.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.Record.TargetObject.x | Should -Be 1
+        $Caught.Record.Exception.Message | Should -BeExactly '-RequestorScope must be an object from New-OERAccessPackageRequestorScope.'
+    }
+
+    It 'throws RequestorScopeRequired with no -RequestorScope and no -Existing' {
+        $R = InModuleScope $script:moduleName {
+            $R = $null
+            try { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' } catch { $R = $PSItem }
+            $R
+        }
+        $R | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $R.FullyQualifiedErrorId | Should -BeExactly 'RequestorScopeRequired'
+        $R.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $R.TargetObject | Should -BeNullOrEmpty
+        $R.Exception.Message | Should -BeExactly '-RequestorScope is required when no -Existing policy is supplied.'
+    }
+
+    It 'throws PolicyBuilderObjectRequired for a -RequestorSettings that is not a builder object' {
+        $Caught = InModuleScope $script:moduleName {
+            $Settings = [pscustomobject]@{ x = 2 }
+            $Scope = [pscustomobject]@{ x = 1 }
+            $Scope.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.RequestorScope')
+            $R = $null
+            try { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -RequestorScope $Scope -RequestorSettings $Settings } catch { $R = $PSItem }
+            $R
+        }
+        $Caught | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'PolicyBuilderObjectRequired'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject.x | Should -Be 2
+        $Caught.Exception.Message | Should -BeExactly '-RequestorSettings must be an object from New-OERAccessPackageRequestorSettings.'
+    }
+
+    It 'throws PolicyBuilderObjectRequired for an -ApprovalStage entry that is not a builder object' {
+        $Caught = InModuleScope $script:moduleName {
+            $Stage = [pscustomobject]@{ x = 3 }
+            $R = $null
+            try { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing (Add-OERTestPolicyDefaults @{ id = 'pol-1' }) -ApprovalStage $Stage } catch { $R = $PSItem }
+            $R
+        }
+        $Caught | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'PolicyBuilderObjectRequired'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject.x | Should -Be 3
+        $Caught.Exception.Message | Should -BeExactly '-ApprovalStage entries must be objects from New-OERAccessPackageApprovalStage.'
+    }
+
+    It 'throws AssignmentPolicyValueUnknown naming the policy id when <Missing> is absent' -ForEach @(
+        @{ Missing = 'expiration'; Message = 'The existing policy has no expiration and no -DurationInDays, -DurationInHours or -ExpirationDateTime was given; writing the default would replace it.' }
+        @{ Missing = 'requestApprovalSettings'; Message = 'The existing policy has no requestApprovalSettings and -ApprovalStage, -RequireRequestorJustification and -RequireApprovalForUpdate were not all given; writing the default would replace it.' }
+        @{ Missing = 'requestorSettings'; Message = 'The existing policy has no requestorSettings and no -RequestorSettings was given; writing the default would replace it.' }
+        @{ Missing = 'notificationSettings'; Message = 'The existing policy has no notificationSettings and no -DisableAssignmentNotifications was given; writing the default would replace it.' }
+    ) {
+        $R = InModuleScope $script:moduleName -Parameters @{ Missing = $Missing } {
+            param($Missing)
+            $Existing = Add-OERTestPolicyDefaults @{ id = 'pol-1'; allowedTargetScope = 'allMemberUsers' }
+            $Existing.Remove($Missing)
+            $R = $null
+            try { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing } catch { $R = $PSItem }
+            $R
+        }
+        $R | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $R.FullyQualifiedErrorId | Should -BeExactly 'AssignmentPolicyValueUnknown'
+        $R.CategoryInfo.Category | Should -Be 'InvalidData'
+        $R.TargetObject | Should -BeExactly 'pol-1'
+        $R.Exception.Message | Should -BeExactly $Message
+    }
+
+    It 'throws AssignmentPolicyValueUnknown with a null target when the existing policy has no id' {
+        $R = InModuleScope $script:moduleName {
+            $Existing = Add-OERTestPolicyDefaults @{ allowedTargetScope = 'allMemberUsers' }
+            $Existing.Remove('expiration')
+            $R = $null
+            try { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing } catch { $R = $PSItem }
+            $R
+        }
+        $R.FullyQualifiedErrorId | Should -BeExactly 'AssignmentPolicyValueUnknown'
+        $R.TargetObject | Should -BeNullOrEmpty
+    }
+
+    It 'throws CustomExtensionStageUnread naming the stage' {
+        $R = InModuleScope $script:moduleName {
+            $Existing = Add-OERTestPolicyDefaults @{ allowedTargetScope = 'allMemberUsers'; customExtensionStageSettings = @(@{ stage = 'assignmentRequestCreated' }) }
+            $R = $null
+            try { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing } catch { $R = $PSItem }
+            $R
+        }
+        $R | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $R.FullyQualifiedErrorId | Should -BeExactly 'CustomExtensionStageUnread'
+        $R.CategoryInfo.Category | Should -Be 'InvalidData'
+        $R.TargetObject | Should -BeExactly 'assignmentRequestCreated'
+        $R.Exception.Message | Should -BeExactly "The existing policy has a custom extension stage 'assignmentRequestCreated' whose custom extension id was not read, so it cannot be carried forward and the update would remove it. No update was sent; read the policy with its custom extension stages (or remove the stage) before updating it."
+    }
+}

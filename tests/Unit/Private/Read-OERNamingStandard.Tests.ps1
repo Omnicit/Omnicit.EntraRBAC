@@ -465,3 +465,62 @@ Describe 'Read-OERNamingStandard' {
         }
     }
 }
+
+Describe 'Read-OERNamingStandard typed error records' {
+    BeforeAll {
+        # Reads a naming standard path and returns the thrown record, or $null.
+        function Get-NamingRecord {
+            param([string]$Path, [switch]$FailRead)
+            InModuleScope $script:moduleName -Parameters @{ Path = $Path } {
+                param($Path)
+                $Record = $null
+                try { $null = Read-OERNamingStandard -Path $Path -ErrorAction Continue } catch { $Record = $PSItem }
+                $Record
+            }
+        }
+        function Write-NamingFile {
+            param([string]$Text, [string]$Name)
+            $File = Join-Path -Path $TestDrive -ChildPath $Name
+            [System.IO.File]::WriteAllText($File, $Text, [System.Text.UTF8Encoding]::new($false))
+            $File
+        }
+    }
+
+    It 'throws NamingStandardNotFound for a path that is not a file: Read-OERNamingStandard -Path missing.json' {
+        $Missing = Join-Path -Path $TestDrive -ChildPath 'typed-missing.json'
+        $R = Get-NamingRecord -Path $Missing
+        $R | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $R.FullyQualifiedErrorId | Should -BeExactly 'NamingStandardNotFound'
+        $R.CategoryInfo.Category | Should -Be 'ObjectNotFound'
+        $R.TargetObject | Should -BeExactly $Missing
+        $R.Exception.Message | Should -BeExactly "The naming standard was not found at path '$Missing'."
+    }
+
+    It 'throws NamingStandardUnreadable with the caught exception inside when Get-Content throws' {
+        Mock -ModuleName $script:moduleName Get-Content { throw [System.IO.IOException]::new('read refused') }
+        $File = Write-NamingFile -Text '{}' -Name 'typed-locked.json'
+        $R = Get-NamingRecord -Path $File
+        $R | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $R.FullyQualifiedErrorId | Should -BeExactly 'NamingStandardUnreadable'
+        $R.CategoryInfo.Category | Should -Be 'ReadError'
+        $R.TargetObject | Should -BeExactly $File
+        $R.Exception.Message | Should -BeExactly "The naming standard at '$File' could not be read: read refused"
+        $R.Exception.InnerException.Message | Should -BeExactly 'read refused'
+    }
+
+    It 'throws NamingStandardNotValid for <Name>' -ForEach @(
+        @{ Name = 'an empty file'; Text = ' '; File = 'typed-empty.json'; Message = "is empty." ; Inner = $false }
+        @{ Name = 'text that is not JSON'; Text = '{ nope'; File = 'typed-badjson.json'; Message = 'is not valid JSON: *'; Inner = $true }
+        @{ Name = 'a root that is not an object'; Text = '[ 1 ]'; File = 'typed-array.json'; Message = 'must be a single JSON object.'; Inner = $false }
+        @{ Name = 'a standard with a problem'; Text = '{ "version": "2.0" }'; File = 'typed-problem.json'; Message = 'is not valid: *'; Inner = $false }
+    ) {
+        $Path = Write-NamingFile -Text $Text -Name $File
+        $R = Get-NamingRecord -Path $Path
+        $R | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+        $R.FullyQualifiedErrorId | Should -BeExactly 'NamingStandardNotValid'
+        $R.CategoryInfo.Category | Should -Be 'InvalidData'
+        $R.TargetObject | Should -BeExactly $Path
+        $R.Exception.Message | Should -BeLike "The naming standard at '$Path' $Message"
+        if ($Inner) { $R.Exception.InnerException | Should -Not -BeNullOrEmpty }
+    }
+}

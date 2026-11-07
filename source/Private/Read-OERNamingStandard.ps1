@@ -52,7 +52,11 @@ function Read-OERNamingStandard {
     )
 
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        throw "The naming standard was not found at path '$Path'."
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new("The naming standard was not found at path '$Path'."),
+            'NamingStandardNotFound',
+            [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+            $Path)
     }
     try {
         # -ErrorAction Stop: for a file it cannot open (a lock, no read permission) Get-Content writes a
@@ -61,10 +65,18 @@ function Read-OERNamingStandard {
         $Json = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
     } catch {
         Remove-OERErrorRecord -Record $PSItem
-        throw "The naming standard at '$Path' could not be read: $($PSItem.Exception.Message)"
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new("The naming standard at '$Path' could not be read: $($PSItem.Exception.Message)", $PSItem.Exception),
+            'NamingStandardUnreadable',
+            [System.Management.Automation.ErrorCategory]::ReadError,
+            $Path)
     }
     if ([string]::IsNullOrWhiteSpace($Json)) {
-        throw "The naming standard at '$Path' is empty."
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new("The naming standard at '$Path' is empty."),
+            'NamingStandardNotValid',
+            [System.Management.Automation.ErrorCategory]::InvalidData,
+            $Path)
     }
     try {
         # -NoEnumerate keeps a root array one value, so '[ { } ]' is refused below instead of being
@@ -72,12 +84,20 @@ function Read-OERNamingStandard {
         $Doc = $Json | ConvertFrom-Json -Depth 32 -NoEnumerate -ErrorAction Stop
     } catch {
         Remove-OERErrorRecord -Record $PSItem
-        throw "The naming standard at '$Path' is not valid JSON: $($PSItem.Exception.Message)"
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new("The naming standard at '$Path' is not valid JSON: $($PSItem.Exception.Message)", $PSItem.Exception),
+            'NamingStandardNotValid',
+            [System.Management.Automation.ErrorCategory]::InvalidData,
+            $Path)
     }
     # [PSCustomObject] is the PSObject accelerator in a type test, which every value satisfies: the real
     # class is what tells a parsed JSON object from a string, a number or an array.
     if ($Doc -isnot [System.Management.Automation.PSCustomObject]) {
-        throw "The naming standard at '$Path' must be a single JSON object."
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new("The naming standard at '$Path' must be a single JSON object."),
+            'NamingStandardNotValid',
+            [System.Management.Automation.ErrorCategory]::InvalidData,
+            $Path)
     }
 
     $Problems = [System.Collections.Generic.List[string]]::new()
@@ -341,7 +361,11 @@ function Read-OERNamingStandard {
     }
 
     if ($Problems.Count -gt 0) {
-        throw "The naming standard at '$Path' is not valid: $($Problems -join ' ')"
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new("The naming standard at '$Path' is not valid: $($Problems -join ' ')"),
+            'NamingStandardNotValid',
+            [System.Management.Automation.ErrorCategory]::InvalidData,
+            $Path)
     }
 
     [PSCustomObject]@{
