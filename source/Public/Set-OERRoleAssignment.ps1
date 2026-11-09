@@ -40,7 +40,8 @@ function Set-OERRoleAssignment {
     {scope}/providers/Microsoft.Authorization/roleAssignments/{guid}. This is the Id / RoleAssignmentId
     property emitted by Get-OERRoleAssignment, and it is bound from the pipeline by property name
     through the RoleAssignmentId alias, so Get-OERRoleAssignment pipes straight in. The id already
-    contains the scope, so no scope parameter is needed.
+    contains the scope, so no scope parameter is needed. The value begins with '/'; anything else is
+    refused with InvalidRoleAssignmentId and no request is sent.
 
     .PARAMETER Description
     New free-text description for the role assignment. Omitting this parameter preserves the live
@@ -86,7 +87,7 @@ function Set-OERRoleAssignment {
         Initialize-OERAuth @AuthParams -IncludeARM
     }
     process {
-        if ($Id -notmatch '(?i)/providers/Microsoft\.Authorization/roleAssignments/[^/]+$') {
+        if ($Id -notmatch '(?i)^/(?:.*/)?providers/Microsoft\.Authorization/roleAssignments/[^/]+$') {
             Write-CmdletError `
                 -Message ([System.Exception]::new("'$Id' is not an Azure role assignment resource id ({scope}/providers/Microsoft.Authorization/roleAssignments/{guid}).")) `
                 -ErrorId 'InvalidRoleAssignmentId' -Category InvalidArgument -TargetObject $Id -Cmdlet $PSCmdlet

@@ -229,3 +229,70 @@ Describe 'Get-OERRoleDefinition: the example in the RoleDefinitionNotFound messa
         $Read.Value | Should -BeExactly $Scope
     }
 }
+
+Describe 'Get-OERRoleDefinition: a role id that names another host sends nothing, outside any try (BL-177, A9)' {
+    # -Role holding '/providers/Microsoft.Authorization/roleDefinitions/' is used as the request path, so a
+    # value that begins with a host suffix would address another host. The wrapper refuses it. The cmdlet
+    # runs in a runspace with no try; Initialize-OERAuth and Invoke-WebRequest are stubs in the module's
+    # scope, checked to be the stubs before the call.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+    }
+
+    It 'sends no request, writes one ArmRequestOutsideCloudHost record and no output object' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $Text = @'
+Import-Module Omnicit.EntraRBAC
+$global:OERRdGuardArmCalls = 0
+& (Get-Module Omnicit.EntraRBAC) {
+    $script:_OERAuthState = @{
+        TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'
+        ClientId = ''; Environment = 'Global'
+        ArmToken = ConvertTo-SecureString 'NOT-A-REAL-TOKEN-arm' -AsPlainText -Force
+        ArmTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+        ArmResourceUrl = 'https://management.azure.com/'
+    }
+    function script:Initialize-OERAuth {
+        [CmdletBinding()]
+        param($TenantId, $AuthMethod, $ClientId, [switch]$IncludeARM, [switch]$ForceRefresh)
+        # OER-GUARD-AUTH-STUB
+    }
+    function script:Invoke-WebRequest {
+        [CmdletBinding()]
+        param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
+        # OER-GUARD-WEB-STUB
+        $global:OERRdGuardArmCalls++
+        if ($global:OERRdGuardArmCalls -gt 5) { exit }
+        [pscustomobject]@{ StatusCode = 200; Content = '{"value":[]}'; Headers = @{} }
+    }
+}
+$StubsInPlace = & (Get-Module Omnicit.EntraRBAC) {
+    (Get-Command -Name Initialize-OERAuth -CommandType Function).ScriptBlock.ToString().Contains('OER-GUARD-AUTH-STUB') -and
+    (Get-Command -Name Invoke-WebRequest -CommandType Function).ScriptBlock.ToString().Contains('OER-GUARD-WEB-STUB')
+}
+$Error.Clear()
+$Output = @(Get-OERRoleDefinition -Role '.contoso.invalid/x/providers/Microsoft.Authorization/roleDefinitions/y' -ErrorAction SilentlyContinue -ErrorVariable OerProbeErrors)
+$Own = @($OerProbeErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Get-OERRoleDefinition' })
+# Unqualified, from the module scope: removes the nearest definition, which is the stub.
+& (Get-Module Omnicit.EntraRBAC) { Remove-Item -Path function:Invoke-WebRequest; Remove-Item -Path function:Initialize-OERAuth }
+$Resolved = & (Get-Module Omnicit.EntraRBAC) { Get-Command -Name Invoke-WebRequest -CommandType Function -ErrorAction Ignore }
+'TRIPWIRE RESTORED: {0}' -f ([bool]$Resolved -and $Resolved.ScriptBlock.ToString().Contains('OER-TRANSPORT-TRIPWIRE'))
+'STUBS IN PLACE: {0}' -f $StubsInPlace
+'OUTPUT COUNT: {0}' -f $Output.Count
+'ARM CALLS: {0}' -f $global:OERRdGuardArmCalls
+'OWN RECORDS: {0}' -f $Own.Count
+foreach ($Record in $Own) { 'OWN ID: {0}' -f ([string]$Record.FullyQualifiedErrorId -split ',')[0] }
+'END OF SCRIPT REACHED'
+'@
+        $R = Invoke-OERWithConfirmAnswer -Answer '&No' -Script ([scriptblock]::Create($Text))
+
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'STUBS IN PLACE: True'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'ARM CALLS: 0'
+        $R.Output | Should -Contain 'OUTPUT COUNT: 0'
+        $R.Output | Should -Contain 'OWN RECORDS: 1'
+        $R.Output | Should -Contain 'OWN ID: ArmRequestOutsideCloudHost'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+}

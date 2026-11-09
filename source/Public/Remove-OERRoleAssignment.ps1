@@ -18,7 +18,8 @@ function Remove-OERRoleAssignment {
     .PARAMETER Id
     The full ARM role assignment resource id in the form
     {scope}/providers/Microsoft.Authorization/roleAssignments/{guid}. Bound from the pipeline by
-    property name (RoleAssignmentId alias).
+    property name (RoleAssignmentId alias). The value begins with '/'; anything else is refused with
+    InvalidRoleAssignmentId and no request is sent.
 
     .PARAMETER PassThru
     Return the deleted role assignment object (ARM echoes it on a 200 response).
@@ -51,7 +52,7 @@ function Remove-OERRoleAssignment {
         Initialize-OERAuth @AuthParams -IncludeARM
     }
     process {
-        if ($Id -notmatch '(?i)/providers/Microsoft\.Authorization/roleAssignments/[^/]+$') {
+        if ($Id -notmatch '(?i)^/(?:.*/)?providers/Microsoft\.Authorization/roleAssignments/[^/]+$') {
             Write-CmdletError `
                 -Message ([System.Exception]::new("'$Id' is not an Azure role assignment resource id ({scope}/providers/Microsoft.Authorization/roleAssignments/{guid}).")) `
                 -ErrorId 'InvalidRoleAssignmentId' -Category InvalidArgument -TargetObject $Id -Cmdlet $PSCmdlet
