@@ -209,7 +209,8 @@ Describe 'Get-OERGroupPimPolicy' {
             ) }
         } -ParameterFilter { $Uri -match 'roleManagementPolicies/pol-1/rules' }
         $R = Get-OERGroupPimPolicy -Id 'gid-1'
-        @($R.ActivationEnabledRules).Count      | Should -Be 0
+        $null -eq $R.ActivationEnabledRules     | Should -BeTrue
+        $null -eq $R.ActiveEnabledRules         | Should -BeTrue
         @($R.Notifications.EligibleAlert).Count | Should -Be 0
     }
 

@@ -1702,15 +1702,30 @@ function Sync-OERStructureGroup {
                     # The remedy depends on the kind of text (ruling R-8): the approval text starts with
                     # 'requireApproval is declared' and is no pair, so "declare both values" does not fit it.
                     $UnknownApproval = @(@($Change.UnknownLiveValues) | Where-Object { ([string]$_).StartsWith('requireApproval is declared', [System.StringComparison]::Ordinal) })
-                    $UnknownPair = @(@($Change.UnknownLiveValues) | Where-Object { -not ([string]$_).StartsWith('requireApproval is declared', [System.StringComparison]::Ordinal) })
+                    # BL-174c: a text for a rule the read did not return (authentication context, activation
+                    # or active enablement) is no pair either; it has its own remedy.
+                    $UnknownRule = @(@($Change.UnknownLiveValues) | Where-Object {
+                            $RuleText = [string]$_
+                            $RuleText.StartsWith('authenticationContextId is declared', [System.StringComparison]::Ordinal) -or
+                            $RuleText.StartsWith('activationEnablement is declared', [System.StringComparison]::Ordinal) -or
+                            $RuleText.StartsWith('activeEnablement is declared', [System.StringComparison]::Ordinal) })
+                    $UnknownPair = @(@($Change.UnknownLiveValues) | Where-Object {
+                            $RuleText = [string]$_
+                            -not $RuleText.StartsWith('requireApproval is declared', [System.StringComparison]::Ordinal) -and
+                            -not $RuleText.StartsWith('authenticationContextId is declared', [System.StringComparison]::Ordinal) -and
+                            -not $RuleText.StartsWith('activationEnablement is declared', [System.StringComparison]::Ordinal) -and
+                            -not $RuleText.StartsWith('activeEnablement is declared', [System.StringComparison]::Ordinal) })
                     $ApprovalRemedy = 'Read the policy with Get-OERGroupPimPolicy; the approval rule could not be read, so nothing was sent.'
+                    $RuleRemedy = 'Read the policy with Get-OERGroupPimPolicy; the rule is not in the policy the read returned, so nothing was sent.'
                     $UnknownRemedy = @(
                         if ($UnknownPair.Count -gt 0) { "A value the document leaves out is taken from the live policy, never from a default, so nothing was changed for '$AccessType'. Declare both values of the pair in the document." }
                         if ($UnknownApproval.Count -gt 0) { $ApprovalRemedy }
+                        if ($UnknownRule.Count -gt 0) { $RuleRemedy }
                     ) -join ' '
                     $UnknownDetailRemedy = @(
                         if ($UnknownPair.Count -gt 0) { 'Declare both values of the pair in the document.' }
                         if ($UnknownApproval.Count -gt 0) { $ApprovalRemedy }
+                        if ($UnknownRule.Count -gt 0) { $RuleRemedy }
                     ) -join ' '
                     $ErrRec = [System.Management.Automation.ErrorRecord]::new(
                         [System.Exception]::new("pimPolicy ($AccessType) of group '$Name' was not applied: $UnknownText. $UnknownRemedy"),

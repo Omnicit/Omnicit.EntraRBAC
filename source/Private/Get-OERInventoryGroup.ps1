@@ -495,18 +495,15 @@ function Get-OERInventoryGroup {
             $Block = [ordered]@{}
             if ($null -ne $Policy.ActivationMaxHours) { $Block.activationMaxHours = $Policy.ActivationMaxHours }
             if ($Policy.AuthenticationContextId) { $Block.authenticationContextId = $Policy.AuthenticationContextId }
-            # ConvertTo-OERGroupPimPolicy wraps ActivationEnabledRules/ActiveEnabledRules with a
-            # null-filter (its own comment at ConvertTo-OERGroupPimPolicy.ps1:67-73), so a rule
-            # the tenant never configured and a rule that is genuinely empty BOTH read back as
-            # @() here -- $null -ne cannot tell "unread" from "read and empty" on these two
-            # properties, and neither can Count -gt 0 alone. Fall back to the raw rule set
-            # carried on Rules: when the canonical rule id IS present the policy was actually
-            # read and the list is genuinely empty, so emit an explicit [] (security-relevant:
-            # no MFA, justification or ticket is required on activation). When the rule id is
-            # absent too, the policy never carried it -- omit, same as before.
+            # ConvertTo-OERGroupPimPolicy gives ActivationEnabledRules/ActiveEnabledRules $null
+            # when the answer carries no such rule (BL-174c) and @() when it carries the rule with
+            # an empty list. A $null list is omitted: @($null).Count is 1, so the guard below tests
+            # $null first or the document would hold [null]. A list that is empty while the
+            # canonical rule id IS present on Rules is genuinely empty, so emit an explicit []
+            # (security-relevant: no MFA, justification or ticket is required on activation).
             $HasActivationRule = @($Policy.Rules |
                 Where-Object { $_.id -eq 'Enablement_EndUser_Assignment' }).Count -gt 0
-            if (@($Policy.ActivationEnabledRules).Count -gt 0 -or $HasActivationRule) {
+            if ($null -ne $Policy.ActivationEnabledRules -and (@($Policy.ActivationEnabledRules).Count -gt 0 -or $HasActivationRule)) {
                 $Block.activationEnablement = @($Policy.ActivationEnabledRules)
             }
             if ($null -ne $Policy.AllowPermanentEligibility) { $Block.allowPermanentEligibility = [bool]$Policy.AllowPermanentEligibility }
@@ -515,7 +512,7 @@ function Get-OERInventoryGroup {
             if ($Policy.ActiveDurationDays) { $Block.activeDurationDays = [int]$Policy.ActiveDurationDays }
             $HasActiveRule = @($Policy.Rules |
                 Where-Object { $_.id -eq 'Enablement_Admin_Assignment' }).Count -gt 0
-            if (@($Policy.ActiveEnabledRules).Count -gt 0 -or $HasActiveRule) {
+            if ($null -ne $Policy.ActiveEnabledRules -and (@($Policy.ActiveEnabledRules).Count -gt 0 -or $HasActiveRule)) {
                 $Block.activeEnablement = @($Policy.ActiveEnabledRules)
             }
             if ($null -ne $Policy.RequireApproval) { $Block.requireApproval = [bool]$Policy.RequireApproval }

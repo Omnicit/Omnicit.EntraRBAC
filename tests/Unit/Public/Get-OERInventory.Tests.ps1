@@ -6379,6 +6379,64 @@ Describe 'Get-OERInventory' {
                 Should -Not -Contain 'activationEnablement'
         }
 
+        It 'writes no key, and never [null], for an enablement list the converter gave as $null (BL-174c)' {
+            Mock -ModuleName $script:moduleName Get-OERGroupPimPolicy {
+                param($AccessType)
+                if ($AccessType -eq 'member') {
+                    [PSCustomObject]@{
+                        ActivationMaxHours        = 8
+                        AuthenticationContextId   = $null
+                        ActivationEnabledRules    = $null
+                        AllowPermanentEligibility = $null
+                        EligibleDurationDays      = $null
+                        AllowPermanentActive      = $null
+                        ActiveDurationDays        = 30
+                        ActiveEnabledRules        = $null
+                        Notifications             = [PSCustomObject]@{
+                            EligibleAlert = @(); ActiveAlert = @(); ActivationAlert = @()
+                        }
+                        Rules = @(
+                            [PSCustomObject]@{ id = 'Expiration_EndUser_Assignment' }
+                        )
+                    }
+                } else { $null }
+            }
+            $Inv = Get-OERInventory -Include Groups
+            $Member = $Inv.Groups[0].pimPolicy.member
+            $Member.PSObject.Properties.Name | Should -Contain 'activationMaxHours'
+            $Member.PSObject.Properties.Name | Should -Not -Contain 'activationEnablement'
+            $Member.PSObject.Properties.Name | Should -Not -Contain 'activeEnablement'
+        }
+
+        It 'writes no key for a $null enablement list even when its rule id stands in Rules' {
+            Mock -ModuleName $script:moduleName Get-OERGroupPimPolicy {
+                param($AccessType)
+                if ($AccessType -eq 'member') {
+                    [PSCustomObject]@{
+                        ActivationMaxHours        = 8
+                        AuthenticationContextId   = $null
+                        ActivationEnabledRules    = $null
+                        AllowPermanentEligibility = $null
+                        EligibleDurationDays      = $null
+                        AllowPermanentActive      = $null
+                        ActiveDurationDays        = $null
+                        ActiveEnabledRules        = $null
+                        Notifications             = [PSCustomObject]@{
+                            EligibleAlert = @(); ActiveAlert = @(); ActivationAlert = @()
+                        }
+                        Rules = @(
+                            [PSCustomObject]@{ id = 'Enablement_EndUser_Assignment'; enabledRules = @() }
+                            [PSCustomObject]@{ id = 'Enablement_Admin_Assignment'; enabledRules = @() }
+                        )
+                    }
+                } else { $null }
+            }
+            $Inv = Get-OERInventory -Include Groups
+            $Member = $Inv.Groups[0].pimPolicy.member
+            $Member.PSObject.Properties.Name | Should -Not -Contain 'activationEnablement'
+            $Member.PSObject.Properties.Name | Should -Not -Contain 'activeEnablement'
+        }
+
         It 'still omits pimPolicy entirely when an all-empty policy carries no rule at all' {
             Mock -ModuleName $script:moduleName Get-OERGroupPimPolicy {
                 [PSCustomObject]@{

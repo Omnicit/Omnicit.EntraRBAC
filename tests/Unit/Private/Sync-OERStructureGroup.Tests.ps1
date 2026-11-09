@@ -4241,6 +4241,75 @@ $Item = '{ "displayName": "grp-luo", "owners": [ "person2@example.com" ] }' | Co
             Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 0 -Exactly
         }
 
+        It 'a declared <Name> over a rule the read did not return is refused with the rule remedy, not the pair or approval one, and nothing is sent (BL-174c)' -ForEach @(
+            @{ Name = 'activeEnablement'; Declared = '"activeEnablement": [ "Justification" ]'
+                Entry = 'activeEnablement is declared, and the live active assignment requirements (Enablement_Admin_Assignment enabledRules) are unknown: the read returned no such rule' }
+            @{ Name = 'empty activeEnablement'; Declared = '"activeEnablement": []'
+                Entry = 'activeEnablement is declared, and the live active assignment requirements (Enablement_Admin_Assignment enabledRules) are unknown: the read returned no such rule' }
+            @{ Name = 'authenticationContextId'; Declared = '"authenticationContextId": "c1"'
+                Entry = 'authenticationContextId is declared, and whether the live policy has an authentication context on activation (AuthenticationContext_EndUser_Assignment) is unknown: the read returned no such rule' }
+        ) {
+            $Result = InModuleScope $script:moduleName -Parameters @{ Declared = $Declared } {
+                param($Declared)
+                # 'Absent': the live member policy carries an activation rule only, so the active
+                # assignment and authentication context rules are not in the answer.
+                $script:PuRules = 'Absent'
+                $Item = ('{ "displayName": "role_sec_x", "pimPolicy": { "member": { ' + $Declared + ' } } }') | ConvertFrom-Json
+                $Rows = @(Invoke-SyncPuViaCaller -Item $Item -Confirm:$false -ErrorVariable Err -WarningAction SilentlyContinue 2>$null)
+                [PSCustomObject]@{ Rows = $Rows; Err = @($Err) }
+            }
+            $Remedy = 'Read the policy with Get-OERGroupPimPolicy; the rule is not in the policy the read returned, so nothing was sent.'
+            $Own = @($Result.Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncPuViaCaller' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -BeExactly 'PimRuleValueUnknown,Invoke-SyncPuViaCaller'
+            $Own[0].Exception.Message | Should -BeExactly "pimPolicy (member) of group 'role_sec_x' was not applied: $Entry. $Remedy"
+            $Member = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy (member)*' })
+            $Member.Count | Should -Be 1
+            $Member[0].Action | Should -BeExactly 'Failed'
+            $Member[0].Detail | Should -BeExactly "pimPolicy (member) not applied: a value the document leaves to the live policy is unknown (PimRuleValueUnknown): $Entry; nothing was changed for 'member'. $Remedy"
+            $Member[0].Detail | Should -Not -BeLike '*Declare both values of the pair*'
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 0 -Exactly
+        }
+
+        It 'the refusal of an absent rule reaches the caller''s -ErrorVariable in a runspace with no try, and the row is Failed (BL-174c)' {
+            # Invoke-OERStructure in a second runspace through Invoke-OERWithConfirmAnswer, so no try
+            # stands above it. The stubs live in THAT runspace's copy of the module scope and are checked
+            # before the call: a stub that is not what will run stops the script before any request.
+            $Scenario = [scriptblock]::Create(@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    $script:NoTrySets = 0
+    Set-Item -Path function:script:Initialize-OERAuth -Value { 'STUB-AUTH' }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { 'g-1' }
+    Set-Item -Path function:script:Get-OERGroup -Value { [pscustomobject]@{ Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null; Members = @(); PimEligibility = @() } }
+    Set-Item -Path function:script:Get-OERGroupPimPolicy -Value {
+        'STUB-READ'
+        ConvertTo-OERGroupPimPolicy -Rules @(@{ id = 'Enablement_EndUser_Assignment'; enabledRules = @('Justification') }) -GroupId 'g-1' -PolicyId 'pol-member' -AccessType 'member'
+    }
+    Set-Item -Path function:script:Set-OERGroupPimPolicy -Value { $script:NoTrySets++; [pscustomobject]@{ Applied = $true; FailedRules = @() } }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value { throw 'STUB-GRAPH: no request may be sent' }
+    foreach ($Name in 'Initialize-OERAuth', 'Resolve-OERGroupId', 'Get-OERGroup', 'Get-OERGroupPimPolicy', 'Set-OERGroupPimPolicy', 'Invoke-OERGraphRequest') {
+        $Body = (Get-Command $Name).ScriptBlock.ToString()
+        if ($Body -notmatch 'STUB|NoTrySets|pol-member|g-1') { throw "stub not installed for $Name" }
+        if ((Get-Command $Name).CommandType -ne 'Function' -or $null -eq (Get-Command $Name).ScriptBlock) { throw "not a function stub: $Name" }
+    }
+}
+$Json = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_x", "members": null, "pimPolicy": { "member": { "activeEnablement": [ "Justification" ] } } } ] }'
+$Rows = @(Invoke-OERStructure -Json $Json -Confirm:$false -ErrorVariable Ev -ErrorAction SilentlyContinue 3>$null)
+foreach ($Row in $Rows) { "ROW:$($Row.Action)" }
+foreach ($E in @($Ev)) { "ERR:$($E.FullyQualifiedErrorId)" }
+"SETS:$(& $Module { $script:NoTrySets })"
+'END'
+'@)
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Contain 'ROW:Failed'
+            @($Run.Output | Where-Object { $_ -like 'ERR:PimRuleValueUnknown,*' }).Count | Should -BeGreaterThan 0
+            @($Run.Output | Where-Object { $_ -like 'ROW:Updated' }).Count | Should -Be 0
+            $Run.Output | Should -Contain 'SETS:0'
+        }
+
         It 'refuses before the PIM-in-use question and the gate, and names both pairs in one record when both leave out an unknown half' -ForEach @(
             @{ Entries = "$PuEligPerm; $PuActNone" }
         ) {
@@ -11057,7 +11126,7 @@ Describe 'Sync-OERStructureGroup: the plan shows the warning a real run gives (B
                 # BL-40: this test used to make the read throw, and the handler carried on with no policy.
                 # A failed read now ends that access type before the diff (see the Context in the first
                 # Describe), so the fallback text is reached only by a policy object without an id.
-                Mock Get-OERGroupPimPolicy { [PSCustomObject]@{ ActivationMaxHours = 8 } }
+                Mock Get-OERGroupPimPolicy { [PSCustomObject]@{ ActivationMaxHours = 8; ActivationEnabledRules = @(); Rules = @(@{ id = 'AuthenticationContext_EndUser_Assignment' }) } }
                 Mock Set-OERGroupPimPolicy {}
                 # Both sides declared and a live policy that says nothing about either: the diff keeps the context and clears MFA.
                 $Json = '{ "displayName": "role_sec_pim", "members": null, "pimPolicy": { "member": { "authenticationContextId": "c1", "activationEnablement": [ "MultiFactorAuthentication", "Justification" ] } } }'

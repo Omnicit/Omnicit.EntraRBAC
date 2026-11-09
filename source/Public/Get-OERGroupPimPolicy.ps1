@@ -12,7 +12,10 @@ function Get-OERGroupPimPolicy {
     AllowPermanentActive, ActiveDuration, ActiveDurationDays, ActiveEnabledRules, RequireApproval
     (whether activation requires approval, or $null when the policy has no approval rule at all),
     Approvers (the first approval stage's primary approvers, each an Id/UserType/DisplayName object --
-    a genuinely empty array when there is no approval rule), and a Notifications object carrying
+    a genuinely empty array when there is no approval rule), ActivationEnabledRules and
+    ActiveEnabledRules ($null when the policy carries no such rule, an empty array when it carries the
+    rule with an empty list; AuthenticationContextId is $null both for a rule that is off and for one
+    that is absent, and Rules shows which), and a Notifications object carrying
     EligibleAlert, ActiveAlert, and ActivationAlert recipient lists -- alongside the raw Rules array. A
     group whose policy assignment for the requested access type Microsoft Graph does not list -- in
     practice a group created moments ago (replication delay) -- produces a non-terminating
