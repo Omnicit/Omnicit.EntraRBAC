@@ -3078,8 +3078,10 @@ Describe 'Invoke-OERArmRequest sends the token only to the cloud''s own host (BL
     BeforeEach {
         $global:OERArmGuardTokenReads = 0
         $global:OERArmGuardUris = [System.Collections.Generic.List[object]]::new()
+        $global:OERArmGuardKeptAuth = $false
         Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest {
             $global:OERArmGuardUris.Add($Uri)
+            if ($PesterBoundParameters.ContainsKey('PreserveAuthorizationOnRedirect')) { $global:OERArmGuardKeptAuth = $true }
             [PSCustomObject]@{ StatusCode = 200; Content = '{}' }
         }
         Mock -ModuleName Omnicit.EntraRBAC Start-Sleep { }
@@ -3090,7 +3092,7 @@ Describe 'Invoke-OERArmRequest sends the token only to the cloud''s own host (BL
             $script:_OERAuthState = $null
             Remove-Variable -Scope Script -Name _OERSignInIdentity -ErrorAction Ignore
         }
-        Remove-Variable -Scope Global -Name OERArmGuardTokenReads, OERArmGuardUris, OERArmGuardPage -ErrorAction Ignore
+        Remove-Variable -Scope Global -Name OERArmGuardTokenReads, OERArmGuardUris, OERArmGuardPage, OERArmGuardKeptAuth -ErrorAction Ignore
     }
 
     It 'refuses <Name> (<Path>) with ArmRequestOutsideCloudHost, sending nothing and never reading the token' -ForEach @(
@@ -3173,7 +3175,7 @@ Describe 'Invoke-OERArmRequest sends the token only to the cloud''s own host (BL
         $global:OERArmGuardTokenReads | Should -Be 0
     }
 
-    It 'sends <Path> once to management.azure.com as a System.Uri and reads the token once' -ForEach @(
+    It 'sends <Path> once to management.azure.com and reads the token once' -ForEach @(
         @{ Path = '/subscriptions?api-version=2022-12-01' }
         @{ Path = '/providers/Microsoft.Management/managementGroups?api-version=2021-04-01' }
         @{ Path = '/subscriptions/00000000-0000-0000-0000-000000000000/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&$filter=atScope()' }
@@ -3182,9 +3184,13 @@ Describe 'Invoke-OERArmRequest sends the token only to the cloud''s own host (BL
 
         $R.Error | Should -BeNullOrEmpty
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 1 -Exactly
+        # The mock's typed -Uri coerces a string, so the kill for a string address is probe H2's 'URI TYPE'.
         $global:OERArmGuardUris[0] | Should -BeOfType ([System.Uri])
         $global:OERArmGuardUris[0].Host | Should -BeExactly 'management.azure.com'
         $global:OERArmGuardTokenReads | Should -Be 1
+        # A redirect drops the Authorization header only while the wrapper does not ask to keep it.
+        # The positive control is the single send asserted above.
+        $global:OERArmGuardKeptAuth | Should -BeFalse
     }
 
     It 'sends a path that names the default port of the own host, since host and port are the same' {

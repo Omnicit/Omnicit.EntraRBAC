@@ -1636,20 +1636,31 @@ Behaviour that follows from this design:
   latch and supersession gates and before the `$Plain = ...` materialization, so a refused call
   never reads the token, and a latched or superseded command still reads `SignInRefused` or
   `SignInSuperseded`. The `return` after the `throw` is load-bearing, as after each gate.
-  **Why the transport and not each cmdlet:** several callers lead the path with a caller-supplied
-  value (`-Id` of `Remove-`/`Set-OERRoleAssignment`, `-PolicyId` of the two role management policy
-  cmdlets, `$RoleDefId` in `Get-OERRoleAssignment`, `$TargetScope` in the scope-based cmdlets), and
-  a per-cmdlet check is one more place to forget; the one send path is the one place that sees every
-  address. **The parsed object is the object judged:** `[System.Uri]::TryCreate` builds `$SendUri`
+  **Why the transport and not each cmdlet:** several call sites put a value first in the path; the
+  two that reached the old defect are `-Id` of `Remove-`/`Set-OERRoleAssignment` and `-Role` of
+  `Get-OERRoleDefinition`; `-PolicyId` and `-Scope` already refuse a value that does not begin with
+  `/`, and `$RoleDefId` comes from ARM's response. That is why the check belongs in the transport: a
+  per-cmdlet check is one more place to forget, and the one send path is the one place that sees
+  every address. **The parsed object is the object judged:** `[System.Uri]::TryCreate` builds `$SendUri`
   once, the guard reads its `Scheme`, `UserInfo`, `Port` and `IdnHost`, and the same object is
   passed as `Uri` to `Invoke-WebRequest`; re-parsing a string, or sending the string, would judge
   one thing and send another. `IdnHost` is compared (ordinal, ignoring case) since it is the name
-  the HTTP client connects to. **User information is refused outright:** an address of the form
-  user at the cloud's host followed by a path names the cloud in text but connects to the other
-  host, and no ARM call needs user information. A session whose own ARM address is http is refused
-  too. A parse failure leaves `$SendUri` null, so the guard refuses without a separate term.
-  **Graph is not changed by this step:** the Graph transport is left as it is; what was read about
-  it is in the step report.
+  the HTTP client connects to (read, not measured: the .NET connection code, recalled, not run
+  here). **User information is refused outright:** an address that carries the cloud's name as user
+  information at ANOTHER host reads as the cloud's address but connects to the other host, and no ARM
+  call needs user information; the refusal also refuses the harmless same-host form, on purpose,
+  since no legitimate path has it. A session whose own ARM address is http is refused too. A parse
+  failure leaves `$SendUri` null, so the guard refuses without a separate term. **A redirect is not
+  followed with the token:** `Invoke-WebRequest` drops the Authorization header on a redirect unless
+  asked to keep it (documented default, not measured here), the wrapper never asks, and the unit
+  test holds that `PreserveAuthorizationOnRedirect` is not bound.
+  The Graph transport is left as it is by this step. Read, not measured
+  (Microsoft.Graph.Authentication 2.40.0, its IL, and every `Invoke-OERGraphRequest -Uri` under
+  `source/` by parse tree): no caller's value can stand first in a Graph address, since each one
+  starts with a literal `v1.0/` or `beta/` or with `Get-OERPimGroupsGraphPath`; only
+  `@odata.nextLink` from a Graph response reaches the SDK as an absolute address, and the SDK's
+  token provider is built with no allowed-hosts list, so the SDK itself does not limit which https
+  host gets the token.
   Companion rule: `Remove-OERRoleAssignment` and `Set-OERRoleAssignment` anchor their `-Id` check
   at the start (`^/`), so an id with no leading slash is refused with the existing
   `InvalidRoleAssignmentId` before any request. Every id the module itself produces
@@ -1667,7 +1678,7 @@ Behaviour that follows from this design:
   deleting the whole guard turned 22 tests of the ARM file and the cmdlet runspace test red;
   deleting only the `return` turned probe H1 red and nothing else (the cmdlet's own `try` hides it,
   as for the token gate); dropping the Scheme, UserInfo or Port term turned one named test red each;
-  dropping the IdnHost term turned 14 red; moving the guard above the supersession gate turned the
+  dropping the IdnHost term turned the refused host cases red (only those that reach a different host; a backslash form is a parse failure and stays refused); moving the guard above the supersession gate turned the
   supersession order test red; sending `"$BaseUrl$CallPath"` as a string instead of the parsed
   object turned probe H2 red, and only that: a Pester mock coerces its `-Uri` to `System.Uri`, so a
   type assertion on a mock's parameter proves nothing. One mutation is equivalent and stays: forcing

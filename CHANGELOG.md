@@ -14,7 +14,7 @@ A refused call now says what is wrong. `Get-OERActiveRoleAssignment`, `Get-OEREl
 and name the directory role cmdlets to use. The causes in an `InventoryPartial` message no longer end in
 two full stops, and the `-AccessReviewFilter` help says which names Microsoft Graph matches itself.
 
-A request to Azure now goes only to the Azure Resource Manager address of the session's cloud: any other
+An Azure access token now goes only to the Azure Resource Manager address of the session's cloud: any other
 address is refused with `ArmRequestOutsideCloudHost` before the token is read, so a path that does not
 begin with `/` can no longer carry the token to another host. `Remove-OERRoleAssignment` and
 `Set-OERRoleAssignment` refuse an `-Id` that does not begin with `/`.

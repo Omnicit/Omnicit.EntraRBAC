@@ -86,7 +86,7 @@ function Invoke-OERArmRequest {
 
     .PARAMETER Path
     ARM path including the api-version query parameter, e.g. '/subscriptions?api-version=2022-12-01'.
-    Never includes the hostname. A path that does not begin with '/' addresses another host and is refused.
+    Never includes the hostname. A path that does not begin with '/' may address another host; anything not on the cloud's host and port is refused.
 
     .PARAMETER Body
     Optional request body hashtable, serialized with ConvertTo-Json -Depth 100 into the request body
@@ -709,7 +709,7 @@ function Invoke-OERArmRequest {
     # stale $Response in a caller's scope is never read. The F3 case S13 holds the result.)
     #
     # No response object at all means a nested function already raised and returned: the latch gate,
-    # the supersession gate, the missing-token refusal or the transport failure in Invoke-ArmCall, or
+    # the supersession gate, the host refusal, the missing-token refusal or the transport failure in Invoke-ArmCall, or
     # the app-only refusal in Invoke-ArmCallWithRefresh.
     # Its record is the call's answer. Converting the missing response would add a parameter-binding
     # record of its own, since Convert-ArmHttpException requires one.
