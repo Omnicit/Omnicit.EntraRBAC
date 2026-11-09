@@ -10479,6 +10479,39 @@ Describe 'Get-OERInventory administrative unit scoped roles, driven with the rea
         $Msg | Should -Match 'injected map failure'
     }
 
+    It 'names the unread name map once in the InventoryPartial causes, under the published id only, not again as a bare cause of its own' {
+        # A caller's -ErrorVariable also collects the records a nested helper throws and its caller
+        # catches. The map's throw carries an internal id, so the inventory's filter on the published
+        # id keeps only the republished record and the cause is listed once.
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            if ($Uri -eq 'v1.0/directoryRoles') { throw 'TooManyRequests (injected map failure)' }
+            if ($Uri -like '*/scopedRoleMembers') {
+                return [PSCustomObject]@{ value = @([PSCustomObject]@{
+                            id = 'srm-1'; administrativeUnitId = '11111111-1111-1111-1111-111111111111'; roleId = 'dirrole-1'
+                            roleMemberInfo = [PSCustomObject]@{ id = 'p-1'; displayName = 'Person One' }
+                        }) }
+            }
+            if ($Uri -like '*/members') { return [PSCustomObject]@{ value = @() } }
+            if ($Uri -eq 'v1.0/directory/administrativeUnits') {
+                return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'AU-One' }) }
+            }
+            throw "unexpected Graph call $Uri"
+        }
+
+        $Inv = Get-OERInventory -Include AdministrativeUnits -ErrorVariable InvErr -ErrorAction SilentlyContinue
+
+        $Inv | Should -Not -BeNullOrEmpty
+        $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+        $Partial.Count | Should -Be 1
+        $Msg = [string]$Partial[0].Exception.Message
+        $Msg | Should -Match 'Causes: '
+        $Causes = ($Msg -split 'Causes: ', 2)[1]
+        ([regex]::Matches($Causes, [regex]::Escape('Could not read scoped roles for administrative unit'))).Count |
+            Should -Be 1 -Because 'the published scoped-role cause is listed once'
+        ([regex]::Matches($Causes, [regex]::Escape("Could not read the directory roles ('v1.0/directoryRoles')"))).Count |
+            Should -Be 1 -Because 'the map text appears only inside the published cause, not as a cause of its own'
+    }
+
     It 'control: exports the scoped role under its name, and no InventoryPartial, when the name map is readable' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
             if ($Uri -eq 'v1.0/directoryRoles') {

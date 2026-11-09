@@ -5135,7 +5135,7 @@ Describe 'Private error record hygiene' -Tags 'SourceHygiene' {
     It 'parses the tree and scans a meaningful number of throw statements' {
         <#
             Non-vacuity guard. Measured on 2026-11-09 over source/Private and source/Public after
-            Sprint 14 step 3 task 1: 317 files, 156 throw statements, 96 of them typed ErrorRecord
+            Sprint 14 step 3 task 1: 317 files, 157 throw statements (156 before the final review of the step), 96 of them typed ErrorRecord
             throws (89 before the seven exception throws became typed records).
         #>
         $script:TypedErrorParseFailures | Should -BeNullOrEmpty -Because (
@@ -5143,7 +5143,7 @@ Describe 'Private error record hygiene' -Tags 'SourceHygiene' {
         $script:TypedErrorFileCount | Should -BeGreaterThan 190 -Because (
             'source/Private and source/Public held more than 190 parseable files when this gate was written; below that the scan has lost a directory')
         $script:TypedErrorThrowCount | Should -BeGreaterThan 145 -Because (
-            'the tree held 156 throw statements when this gate was last measured; below 145 the AST walk has broken, not found less code')
+            'the tree held 157 throw statements when this gate was last measured; below 145 the AST walk has broken, not found less code')
         $script:TypedErrorTypedCount | Should -BeGreaterThan 88 -Because (
             'the tree held 96 typed ErrorRecord throws when this gate was last measured; below 88 the typed-throw recognition has broken')
     }

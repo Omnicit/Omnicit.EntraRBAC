@@ -175,7 +175,7 @@ Describe 'Resolve-OERTenantDomain' {
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-RestMethod -Times 2 -Exactly
     }
 
-    It 'throws a typed TenantResolutionFailed record for a failed request: category, target, message and inner exception' {
+    It 'throws a typed TenantDomainUnresolved record for a failed request: category, target, message and inner exception' {
         Mock -ModuleName Omnicit.EntraRBAC Invoke-RestMethod {
             throw [System.Exception]::new('Response status code does not indicate success: 400 (Bad Request).')
         }
@@ -185,7 +185,7 @@ Describe 'Resolve-OERTenantDomain' {
         }
 
         $Caught | Should -Not -BeNullOrEmpty
-        $Caught.FullyQualifiedErrorId | Should -BeExactly 'TenantResolutionFailed'
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'TenantDomainUnresolved'
         $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
         $Caught.TargetObject | Should -BeExactly 'contoso.onmicrosoft.com'
         $Caught.Exception | Should -BeOfType ([System.InvalidOperationException])
@@ -194,7 +194,7 @@ Describe 'Resolve-OERTenantDomain' {
         $Caught.Exception.InnerException.Message | Should -BeExactly 'Response status code does not indicate success: 400 (Bad Request).'
     }
 
-    It 'throws a typed TenantResolutionFailed record for a document with no tenant in its issuer: category, target and message' {
+    It 'throws a typed TenantDomainUnresolved record for a document with no tenant in its issuer: category, target and message' {
         Mock -ModuleName Omnicit.EntraRBAC Invoke-RestMethod {
             [pscustomobject]@{ issuer = 'https://login.microsoftonline.com/{tenantid}/v2.0' }
         }
@@ -204,7 +204,7 @@ Describe 'Resolve-OERTenantDomain' {
         }
 
         $Caught | Should -Not -BeNullOrEmpty
-        $Caught.FullyQualifiedErrorId | Should -BeExactly 'TenantResolutionFailed'
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'TenantDomainUnresolved'
         $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
         $Caught.TargetObject | Should -BeExactly 'common'
         $Caught.Exception | Should -BeOfType ([System.InvalidOperationException])

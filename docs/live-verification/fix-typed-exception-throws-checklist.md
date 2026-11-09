@@ -8,7 +8,7 @@ not leave it blank and do not tick it. A check that could not run for a stated r
 
 **What this file writes to the tenant.** Nothing. No object is created, changed or removed, and no
 object of the prefix `oer-s143-` exists before or after the run. Every check that signs in runs
-with a request fence in the module's scope that refuses every request other than a read, and with a
+with a request fence in the module's scope that refuses every Microsoft Graph request other than a read, and with a
 token fence that refuses every token request after the sign-in. Check 2.1 also sends the module's one
 unauthenticated request, the OpenID discovery lookup of the tenant domain, to the public authority:
 no token and nothing written.
@@ -135,8 +135,8 @@ Write-OerLiveStep "Worktree: branch $(git -C $Cfg.Repo branch --show-current); H
 $Psd1 = Get-ChildItem -Path (Join-Path $Cfg.Repo 'output\module\Omnicit.EntraRBAC\*\Omnicit.EntraRBAC.psd1') | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 $Psm1 = Get-Content -LiteralPath (Join-Path $Psd1.DirectoryName 'Omnicit.EntraRBAC.psm1') -Raw
 Write-OerLiveStep "The build carries A: $($Psm1.Contains("does not address the Microsoft Graph host of the session's cloud"))"
-$TenantMarker = $Psm1 -match '\$RequestError\.Exception\),\s+''TenantResolutionFailed'''
-$MapMarker = $Psm1 -match '\$PSItem\.Exception\),\s+''AdministrativeUnitScopedRoleReadFailed'''
+$TenantMarker = $Psm1.Contains("'TenantDomainUnresolved'")
+$MapMarker = $Psm1 -match '''DirectoryRoleNameMapUnread'',\s+\[System\.Management\.Automation\.ErrorCategory\]::ReadError,\s+''v1\.0/directoryRoles'''
 Write-OerLiveStep "The build carries B (tenant lookup): $TenantMarker"
 Write-OerLiveStep "The build carries B (role name map): $MapMarker"
 Write-OerLiveStep "The build carries B (rename registration): $($Psm1.Contains("'RenameRegistrationInvalid'"))"
@@ -250,14 +250,14 @@ Write-OerLiveStep "Requests: $(@(& $script:S143Module { $script:S143Pages }).Cou
 ```
 
 **Expect:** a non-empty map, every entry a name; reads only.
-**Failure looks like:** an `AdministrativeUnitScopedRoleReadFailed` record (the read failed), or an
+**Failure looks like:** a `DirectoryRoleNameMapUnread` record (the read failed), or an
 empty map.
 
 Result:
 
 ### 3.2. A refused read is the typed record, as oer-live-cc-noperm
 
-- [ ] **3.2** As `oer-live-cc-noperm` the same read is refused and the helper throws `AdministrativeUnitScopedRoleReadFailed` (ReadError, target the read) whose message names the read and whose inner exception is the refusal. #type/subtask
+- [ ] **3.2** As `oer-live-cc-noperm` the same read is refused and the helper throws the internal `DirectoryRoleNameMapUnread` (ReadError, target the read) whose message names the read and whose inner exception is the refusal. #type/subtask
 
 ```powershell
 Connect-S143 -NoPerm
@@ -270,7 +270,7 @@ Write-OerLiveStep "The inner refusal names an authorization failure: $(([string]
 Write-OerLiveStep "Writes $(& $script:S143Module { $script:S143Writes }); token requests $global:S143TokenRequests"
 ```
 
-**Expect:** refused; `AdministrativeUnitScopedRoleReadFailed`, `ReadError`, target
+**Expect:** refused; `DirectoryRoleNameMapUnread`, `ReadError`, target
 `v1.0/directoryRoles`; the message names the read; `System.Exception` with the refusal inside; 0
 writes and 0 token requests. If noperm CAN read the directory roles, the check records that and
 the refusal stays class B (unit tests).

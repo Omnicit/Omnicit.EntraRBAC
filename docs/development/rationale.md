@@ -1170,7 +1170,11 @@ variable, a typed `ErrorRecord` and a `throw (Command ...)` are not flagged; kno
 shape. Two named exceptions (E1 and E2, under `#error-handling`) are keyed by file name and operand
 text, never by line, and each must match exactly one throw, so a stale entry fails. Non-vacuity: no
 parse failure, more than 190 parsed files, more than 145 throw statements and more than 88 typed
-throws (measured 156 and 96 on 2026-11-09).
+throws (measured 157 and 96 on 2026-11-09). Gate 11 still does not see: a type-constrained assignment
+(`[string]$Msg = ...`), a switch, ternary or try assignment, `[string]::Join` or `Concat`, `-f` with a
+non-literal left side, member access (`throw $X.Message`), a conversion (`[System.Exception]'m'`) and a
+variable bound by a parameter default or a foreach; none stands in `source/` today (a scan of all 157
+throws by the final review of Sprint 14 step 3).
 
 ### CLAUDE.md text for static-source-gates
 
@@ -1438,8 +1442,8 @@ same `IdnHost` for the foreign-host shapes (suffix host, `host@other`, `:443`, u
 judged is what is requested. There is one send path (gate 10).
 
 **Proofs** (`tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1`): the Describe "sends a next link
-only to the session's Graph host (BL-179, A10)" drives eleven refused links (suffix host, `@`, user
-info, http, port 8443, another host, relative, UNC-shaped, a Global link in a USGov session and the
+only to the session's Graph host (BL-179, A10)" drives twelve refused links (suffix host, `@`, user
+info, http, http on the https port, port 8443, another host, relative, UNC-shaped, a Global link in a USGov session and the
 reverse, a USGov link with no state), each with one request, page 2, `PartialValue` of page 1 and a
 message free of the link; ten followed links (v1.0, beta, host case, `:443`, escaped skiptoken, USGov,
 USGovDoD, China, no state, a state without `Environment`) compared byte for byte; and the order of
@@ -15655,18 +15659,26 @@ message and inner exception kept, so a caller reading `.Exception.Message` or th
 
 | Function | Throws | Id | Category | Target | Exception |
 |---|---|---|---|---|---|
-| `Get-OERDirectoryRoleNameMap` | 2 | `AdministrativeUnitScopedRoleReadFailed` | `ReadError` | `v1.0/directoryRoles` | `System.Exception` (first keeps the read's exception as inner) |
+| `Get-OERDirectoryRoleNameMap` | 2 | `DirectoryRoleNameMapUnread` | `ReadError` | `v1.0/directoryRoles` | `System.Exception` (first keeps the read's exception as inner) |
 | `Resolve-OERStructureRename` | 3 | `RenameRegistrationInvalid` | `InvalidArgument` | `$Section`, `$Name`, `$Name` | `System.ArgumentException` (paramName `Section`, `Id`, `AccessPackage`) |
-| `Resolve-OERTenantDomain` | 2 | `TenantResolutionFailed` | `AuthenticationError` | `$Domain` | `System.InvalidOperationException` (first keeps the request's exception as inner) |
+| `Resolve-OERTenantDomain` | 2 | `TenantDomainUnresolved` | `AuthenticationError` | `$Domain` | `System.InvalidOperationException` (first keeps the request's exception as inner) |
 
 Rulings, each with the cost if wrong:
 
-- **The map's id is the id both callers already publish for this failure.** Cost: an internal record
-  named like the published one; the callers republish unchanged.
+- **The map's id is internal, `DirectoryRoleNameMapUnread`, and is published by none.** A caller's
+  `-ErrorVariable` also holds the records a nested helper throws and its caller catches, so an internal
+  record must never carry a published id. The first draft gave the map the id `AdministrativeUnitScopedRoleReadFailed`
+  that `Get-OERAdministrativeUnit` publishes; `Get-OERInventory` keeps the records of that id from its
+  `-ErrorVariable`, so its `InventoryPartial` message listed the map's bare cause as an extra cause beside the
+  published one (measured by the final review). The callers republish the cause under their own ids,
+  untouched. A consumer that counts its own record tells it by the `,<Command>` suffix of
+  `FullyQualifiedErrorId`. Cost if wrong: a duplicated cause in a message, or a count that is one too high.
 - **`RenameRegistrationInvalid` is new and internal** (BL-22 precedent for private caller errors).
   Cost: the rename of an id a correct caller never sees.
-- **The tenant record carries its one caller's published id and category.** Cost: none for the
-  published record.
+- **The tenant record is internal too, `TenantDomainUnresolved`; `Initialize-OERAuth` republishes it as
+  `TenantResolutionFailed`.** Same mechanism: a caller's `-ErrorVariable` held an inner copy under the
+  published id, so a count of `TenantResolutionFailed` records read two. The category (`AuthenticationError`),
+  target and exception are unchanged. Cost if wrong: a duplicate record under the published id.
 
 Gate 11 now also refuses these. It reports a `Kind` on each row (`String` or `Exception`), flags the
 extra string shapes (a `[string]` cast, an if-expression assignment, `-join`, `-replace`, a

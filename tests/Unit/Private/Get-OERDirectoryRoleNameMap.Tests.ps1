@@ -134,7 +134,7 @@ Describe 'Get-OERDirectoryRoleNameMap' {
                 $Caught = $null
                 try { $null = Get-OERDirectoryRoleNameMap -ThrowOnFailure } catch { $Caught = $PSItem }
                 $Caught | Should -Not -BeNullOrEmpty
-                $Caught.FullyQualifiedErrorId | Should -BeExactly 'AdministrativeUnitScopedRoleReadFailed'
+                $Caught.FullyQualifiedErrorId | Should -BeExactly 'DirectoryRoleNameMapUnread'
                 $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ReadError)
                 $Caught.TargetObject | Should -BeExactly 'v1.0/directoryRoles'
                 $Caught.Exception | Should -BeOfType ([System.Exception])
@@ -150,7 +150,7 @@ Describe 'Get-OERDirectoryRoleNameMap' {
                 $Caught = $null
                 try { $null = Get-OERDirectoryRoleNameMap -ThrowOnFailure } catch { $Caught = $PSItem }
                 $Caught | Should -Not -BeNullOrEmpty
-                $Caught.FullyQualifiedErrorId | Should -BeExactly 'AdministrativeUnitScopedRoleReadFailed'
+                $Caught.FullyQualifiedErrorId | Should -BeExactly 'DirectoryRoleNameMapUnread'
                 $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ReadError)
                 $Caught.TargetObject | Should -BeExactly 'v1.0/directoryRoles'
                 $Caught.Exception | Should -BeOfType ([System.Exception])

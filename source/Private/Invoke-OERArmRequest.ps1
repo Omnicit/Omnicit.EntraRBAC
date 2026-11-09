@@ -590,12 +590,13 @@ function Invoke-OERArmRequest {
     # -- Helper: the ONE record for a -All walk that cannot be completed (BL-71, P0 family) --
     # Mirror of Invoke-OERGraphRequest's Get-GraphPagingIncompleteRecord (which has one more cause of
     # its own, a next link off the session's Graph host: it re-sends the link whole, whereas this
-    # wrapper keeps only PathAndQuery, so its token cannot leave the host through a next link). Six causes, one record: a
-    # later page with an empty body, a later page whose body is JSON null, a later page with no value
-    # member, a next link that is not an absolute URI, a next link naming a path already requested in
-    # this walk, and a walk past the page limit. The helper only BUILDS the record; each throw stands
-    # in the loop with its own return (see the rule above the first-response checks). The facts ride
-    # on the EXCEPTION, never on the ErrorRecord (F1, docs/development/rationale.md#graph-wrapper).
+    # wrapper keeps only PathAndQuery, so its token cannot leave the host through a next link).
+    # Six causes, one record: a later page with an empty body, a later page whose body is JSON null,
+    # a later page with no value member, a next link that is not an absolute URI, a next link naming a
+    # path already requested in this walk, and a walk past the page limit. The helper only BUILDS the
+    # record; each throw stands in the loop with its own return (see the rule above the first-response
+    # checks). The facts ride on the EXCEPTION, never on the ErrorRecord (F1,
+    # docs/development/rationale.md#graph-wrapper).
     function Get-ArmPagingIncompleteRecord ([string]$Cause, [int]$AtPage, [string]$AtLink, [object[]]$Aggregated, [switch]$SingleRequest) {
         $Count = @($Aggregated).Count
         # -SingleRequest (a first-answer refusal of a request that is not a -All walk) changes ONLY the
@@ -775,8 +776,9 @@ function Invoke-OERArmRequest {
     # A -ALL WALK THAT CANNOT BE COMPLETED FAILS; IT NEVER HANDS BACK WHAT IT HAS (BL-71, P0 family).
     # Mirror of Invoke-OERGraphRequest's loop, except the host check: the Graph wrapper re-sends a next
     # link whole and so checks its host (BL-179); this wrapper converts the link to a path below.
-    # Read ONCE per call, before the loop: Get-OERPageWalkLimit owns the number. $RequestedPaths holds every path this walk has requested, the first request's
-    # -Path included. Ordinal: a skiptoken is case-sensitive.
+    # Read ONCE per call, before the loop: Get-OERPageWalkLimit owns the number. $RequestedPaths holds
+    # every path this walk has requested, the first request's -Path included. Ordinal: a skiptoken is
+    # case-sensitive.
     [int]$PageLimit = Get-OERPageWalkLimit
     $RequestedPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     $null = $RequestedPaths.Add($Path)
