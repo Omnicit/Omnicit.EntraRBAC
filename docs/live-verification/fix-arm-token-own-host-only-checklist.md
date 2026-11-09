@@ -56,7 +56,7 @@ the redactor: a `What if:` line of a child goes past stream redirection.
 
 ### H.1. The helpers every check uses
 
-- [ ] **H.1** The helpers load; nothing is printed and nothing is sent. #type/subtask
+- [x] **H.1** The helpers load; nothing is printed and nothing is sent. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -108,7 +108,7 @@ function Show-S1412 {
 
 ## 1. An ordinary read works as before
 
-- [ ] **1.1** A single read of the subscription and a role assignment read go to the cloud's own host. #type/subtask
+- [x] **1.1** A single read of the subscription and a role assignment read go to the cloud's own host. #type/subtask
 
 ```powershell
 Connect-S1412
@@ -126,9 +126,9 @@ Disconnect-OerLive
 
 **Expect:** `single read: own records 0`, `sends 1`, `every send to the cloud host True`, and the answer names the subscription. `role assignment read: own records 0`, `sends` at least 1, `every send to the cloud host True`, at least one assignment, every Id begins with `/`.
 **Failure looks like:** `ArmRequestOutsideCloudHost` on a real path; a send to another host; a subscription mismatch.
-**Result:**
+**Result (2026-11-09, as oer-live-cc, the module the worktree built, 1.5.1):** PASS. The identity check printed True for app, service principal and tenant. `single read: own records 0, id none, category none, output 1, arm calls 1, sends 1, every send to the cloud host True`; the answer names the subscription: True. `role assignment read: own records 0, id none, category none, output 14, arm calls 1, sends 1, every send to the cloud host True`; assignments read: True; every Id begins with `/`: True.
 
-- [ ] **1.2** A read that really follows a next link: every page goes to the cloud's own host and the walk returns more than one page. #type/subtask
+- [x] **1.2** A read that really follows a next link: every page goes to the cloud's own host and the walk returns more than one page. #type/subtask
 
 ```powershell
 Connect-S1412
@@ -143,11 +143,11 @@ Disconnect-OerLive
 
 **Expect:** `paged read: own records 0, arm calls 1`, `every send to the cloud host True`, more than one send, `more than one page: True`.
 **Failure looks like:** a refusal, a single page with many items reported as the walk (no paging exercised), or a send to another host.
-**Result:**
+**Result (2026-11-09, as oer-live-cc, the module the worktree built, 1.5.1):** PASS. `paged read: own records 0, id none, category none, output 1, arm calls 1, sends 6, every send to the cloud host True`; `Items: 6; sends match items: True; more than one page: True`.
 
 ## 2. Remove- and Set-OERRoleAssignment refuse an -Id that does not begin with /
 
-- [ ] **2.1** A value that begins with a host suffix, `@host` or `:port@host`, or an absolute address, is refused by both cmdlets with no request. #type/subtask
+- [x] **2.1** A value that begins with a host suffix, `@host` or `:port@host`, or an absolute address, is refused by both cmdlets with no request. #type/subtask
 
 ```powershell
 Connect-S1412
@@ -168,9 +168,9 @@ Disconnect-OerLive
 
 **Expect:** for every row `own records 1, id InvalidRoleAssignmentId, category InvalidArgument, output 0, arm calls 0, sends 0`.
 **Failure looks like:** a request, any other id, or `ArmRequestOutsideCloudHost` (the check in the cmdlet did not catch it first).
-**Result:**
+**Result (2026-11-09, as oer-live-cc, the module the worktree built, 1.5.1):** PASS. For the four prefixes (host suffix, at-host, port at host, absolute address) both cmdlets: `own records 1, id InvalidRoleAssignmentId, category InvalidArgument, output 0, arm calls 0, sends 0`.
 
-- [ ] **2.2** A correctly shaped id still reaches the request: `Remove -WhatIf` passes the check and sends nothing, `Set` reads the id and gets the service's own answer for an assignment that does not exist. #type/subtask
+- [x] **2.2** A correctly shaped id still reaches the request: `Remove -WhatIf` passes the check and sends nothing, `Set` reads the id and gets the service's own answer for an assignment that does not exist. #type/subtask
 
 ```powershell
 Connect-S1412
@@ -189,11 +189,11 @@ Disconnect-OerLive
 
 **Expect:** `Remove -WhatIf`: `own records 0, arm calls 0, sends 0` (a `What if:` line is printed). `Set -WhatIf`: `arm calls 1, sends 1`, `every send to the cloud host True`, and the read's own refusal (`RoleAssignmentNotFound` or the service's error), never `InvalidRoleAssignmentId`.
 **Failure looks like:** `InvalidRoleAssignmentId` on a well-shaped id.
-**Result:**
+**Result (2026-11-09, as oer-live-cc, the module the worktree built, 1.5.1):** PASS. `Remove -WhatIf: own records 0, id none, category none, output 0, arm calls 0, sends 0`, a What if line printed for the absent id. `Set -WhatIf: own records 1, id RoleAssignmentNotFound, category OperationStopped, output 0, arm calls 1, sends 1, every send to the cloud host True`.
 
 ## 3. The transport refuses an address on another host
 
-- [ ] **3.1** A path that begins with a host suffix, `@host`, `:port@host` or an absolute address is refused by the transport with no send, and no token appears in the record. #type/subtask
+- [x] **3.1** A path that begins with a host suffix, `@host`, `:port@host` or an absolute address is refused by the transport with no send, and no token appears in the record. #type/subtask
 
 ```powershell
 Connect-S1412
@@ -210,9 +210,9 @@ Disconnect-OerLive
 
 **Expect:** for each row `id ArmRequestOutsideCloudHost, category InvalidArgument, arm calls 1, sends 0`, `names a bearer: False`, `JWT shape: False`.
 **Failure looks like:** `sends 1`, any other id, or any token shape.
-**Result:**
+**Result (2026-11-09, as oer-live-cc, the module the worktree built, 1.5.1):** PASS. All four forms: `id ArmRequestOutsideCloudHost, category InvalidArgument, arm calls 1, sends 0`, `names a bearer: False, JWT shape: False`.
 
-- [ ] **3.2** A public cmdlet whose value stands first in the address reaches a caller's `-ErrorVariable` with the refusal. #type/subtask
+- [x] **3.2** A public cmdlet whose value stands first in the address reaches a caller's `-ErrorVariable` with the refusal. #type/subtask
 
 ```powershell
 Connect-S1412
@@ -225,14 +225,14 @@ Disconnect-OerLive
 
 **Expect:** `own records 1, id ArmRequestOutsideCloudHost, category InvalidArgument, output 0, arm calls 1, sends 0`.
 **Failure looks like:** `sends 1`, or no record reaches `-ErrorVariable`.
-**Result:**
+**Result (2026-11-09, as oer-live-cc, the module the worktree built, 1.5.1):** PASS. `Get-OERRoleDefinition: own records 1, id ArmRequestOutsideCloudHost, category InvalidArgument, output 0, arm calls 1, sends 0`.
 
 ## Teardown
 
 Nothing was created; there is nothing to remove. A sweep for the prefix still runs once and must
 list nothing.
 
-- [ ] **T.1** The sweep finds nothing with the prefix `oer-s1412-`. #type/subtask
+- [x] **T.1** The sweep finds nothing with the prefix `oer-s1412-`. #type/subtask
 
 ```powershell
 Connect-S1412
@@ -243,4 +243,4 @@ Disconnect-OerLive
 
 **Expect:** `Objects with the prefix: 0`.
 **Failure looks like:** anything else: stop, nothing here created an object.
-**Result:**
+**Result (2026-11-09, as oer-live-cc, the module the worktree built, 1.5.1):** PASS. `Objects with the prefix: 0`; the sweep named every kind as clear.
