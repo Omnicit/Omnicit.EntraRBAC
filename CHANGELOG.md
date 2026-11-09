@@ -7,8 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No changes to the module since 1.5.0. A preview published from this point differs from 1.5.0 only
-in documentation, tests or the build.
+A refused call now says what is wrong. `Get-OERActiveRoleAssignment`, `Get-OEREligibleRoleAssignment` and
+`Get-OERRoleAssignment` report two of `-User`, `-Group` and `-ServicePrincipal` as
+`MutuallyExclusiveParameter`, not `PrincipalNotFound`. `Get-`/`Set-OERRoleManagementPolicy` refuse a
+`-PolicyId` that is not an Azure Resource Manager path with `InvalidPolicyId`, reading and writing nothing,
+and name the directory role cmdlets to use. The causes in an `InventoryPartial` message no longer end in
+two full stops, and the `-AccessReviewFilter` help says which names Microsoft Graph matches itself.
 
 ## [1.5.0] - 2026-11-07
 

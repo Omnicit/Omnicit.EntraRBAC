@@ -456,11 +456,12 @@ function Get-OERInventory {
     A catalog id or display name that narrows the Catalogs and AccessPackages sections to one catalog.
 
     .PARAMETER AccessReviewFilter
-    An optional display-name pattern (wildcards supported, e.g. 'AR*') narrowing which access review
-    definitions to capture. Matching is performed CLIENT-SIDE over the full (paged) list, because the
-    accessReviews endpoint does not reliably support server-side name filtering. When omitted, every
-    definition is captured. This endpoint is heavily throttled, so a full capture may hit a 429 --
-    the section then warns and is skipped without failing the rest of the run.
+    An optional display name or wildcard pattern narrowing which access review definitions to capture. A
+    value with no wildcard character (* ? [ ]) is sent to Microsoft Graph as displayName eq '...', and when
+    the server returns nothing the full (paged) list is read and matched client-side, as for a pattern. A
+    value with a wildcard (for example 'AR*') is matched client-side over the full (paged) list. When
+    omitted, every definition is captured. This endpoint is heavily throttled, so a full capture may hit a
+    429 -- the section then warns and is skipped without failing the rest of the run.
 
     .PARAMETER Scope
     A raw ARM scope for the Azure sections (e.g. '/subscriptions/{id}'). A scope in a subscription of
@@ -2272,9 +2273,10 @@ function Get-OERInventory {
             # SilentlyContinue here means "captured", not "ignored": the records are inspected below.
             $ArReadErrors = $null
             $ArParams = if ($AccessReviewFilter) {
-                # -AccessReviewFilter is a display-name pattern (wildcards supported), matched
-                # client-side -- the accessReviews endpoint does not reliably support server-side
-                # name filtering.
+                # -AccessReviewFilter goes to Get-OERAccessReviewDefinition -DisplayName: a value with no
+                # wildcard character is sent to Microsoft Graph as displayName eq '...' (a server answer of
+                # nothing falls back to the paged read), and a value with a wildcard is matched client-side
+                # over the paged list.
                 @{ DisplayName = $AccessReviewFilter }
             }
             else {
