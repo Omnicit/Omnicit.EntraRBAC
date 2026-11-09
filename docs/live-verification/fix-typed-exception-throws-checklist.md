@@ -9,7 +9,9 @@ not leave it blank and do not tick it. A check that could not run for a stated r
 **What this file writes to the tenant.** Nothing. No object is created, changed or removed, and no
 object of the prefix `oer-s143-` exists before or after the run. Every check that signs in runs
 with a request fence in the module's scope that refuses every request other than a read, and with a
-token fence that refuses every token request after the sign-in.
+token fence that refuses every token request after the sign-in. Check 2.1 also sends the module's one
+unauthenticated request, the OpenID discovery lookup of the tenant domain, to the public authority:
+no token and nothing written.
 
 ## What changed and why this needs a live tenant
 
@@ -80,7 +82,8 @@ function Install-S143Fence {
             & $script:S143RealGraph @PSBoundParameters
         }
         # Records, for every request the transport sends, whether its address is absolute and on the
-        # session's Graph host -- never the address itself.
+        # session's Graph host -- never the address itself. It declares only what a read without
+        # -ExpectedErrorCode passes (the checks below use none).
         function script:Invoke-MgGraphRequest {
             [CmdletBinding()]
             param([string]$Method = 'GET', [uri]$Uri, $Body)
