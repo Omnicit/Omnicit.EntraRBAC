@@ -2,6 +2,7 @@ BeforeAll {
     Import-Module Omnicit.EntraRBAC -Force
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
+    . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
 }
 
 AfterAll {
@@ -311,5 +312,120 @@ Describe 'Get-OERRoleAssignment with an ambiguous service principal display name
         @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERRoleAssignment' }).Count | Should -Be 1
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like 'v1.0/servicePrincipals?*' }
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0
+    }
+}
+
+Describe 'Get-OERRoleAssignment principal combination' {
+  Context 'two principal parameters (Sprint 14 step 1, BL-176b)' {
+    # The real Resolve-OERPrincipal decides: only the auth, scope and transport boundaries are mocked.
+    BeforeAll {
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERScope { '/subscriptions/s1' }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { [PSCustomObject]@{ value = @() } }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { @{ value = @() } }
+    }
+    BeforeEach { InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null } }
+
+    It 'refuses <Shape> as MutuallyExclusiveParameter, once, and sends no request' -ForEach @(
+        @{ Shape = '-User and -Group'; Params = @{ User = 'a'; Group = 'b' }; Target = 'a'; Got = '-User, -Group' }
+        @{ Shape = '-User and -ServicePrincipal'; Params = @{ User = 'a'; ServicePrincipal = 'c' }; Target = 'a'; Got = '-User, -ServicePrincipal' }
+        @{ Shape = '-Group and -ServicePrincipal'; Params = @{ Group = 'b'; ServicePrincipal = 'c' }; Target = 'b'; Got = '-Group, -ServicePrincipal' }
+        @{ Shape = 'all three'; Params = @{ User = 'a'; Group = 'b'; ServicePrincipal = 'c' }; Target = 'a'; Got = '-User, -Group, -ServicePrincipal' }
+    ) {
+        $Err = $null
+        $null = Get-OERRoleAssignment -Scope '/subscriptions/s1' @Params -ErrorAction SilentlyContinue -ErrorVariable Err
+        $Own = @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERRoleAssignment' })
+        $Own.Count | Should -Be 1
+        $Own[0].FullyQualifiedErrorId | Should -Be 'MutuallyExclusiveParameter,Get-OERRoleAssignment'
+        $Own[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Own[0].Exception.Message | Should -BeLike ('*Supply only one of -User, -Group or -ServicePrincipal (got: ' + $Got + ')*')
+        $Own[0].TargetObject | Should -Be $Target
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'PrincipalNotFound*' }).Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -Exactly
+    }
+
+    It 'still reports PrincipalNotFound for a failed lookup that is not the combination' {
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal {
+            throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Forbidden (403)'), 'AuthorizationFailed', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'a')
+        }
+        $Err = $null
+        $null = Get-OERRoleAssignment -Scope '/subscriptions/s1' -User 'a' -ErrorAction SilentlyContinue -ErrorVariable Err
+        $Own = @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERRoleAssignment' })
+        $Own.Count | Should -Be 1
+        $Own[0].FullyQualifiedErrorId | Should -Be 'PrincipalNotFound,Get-OERRoleAssignment'
+        $Own[0].CategoryInfo.Category | Should -Be 'ObjectNotFound'
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'MutuallyExclusiveParameter*' }).Count | Should -Be 0
+    }
+  }
+}
+
+Describe 'Get-OERRoleAssignment two principal parameters in a script with no try (Sprint 14 step 1, BL-176b)' {
+    # A refused call writes a NON-terminating error and the script goes on. The script stands in no try,
+    # prints a sentinel at its end, and the stubs (in the module's scope, checked before the call) append
+    # every request to a log file. The control runs a call that does send a request in the same script.
+    BeforeAll {
+        $script:NewNoTryScenario = {
+            param([string]$Log, [string]$Calls)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value {
+        # STUB
+    }
+    Set-Item -Path function:script:Resolve-OERScope -Value {
+        # STUB
+        '/subscriptions/s1'
+    }
+    Set-Item -Path function:script:Invoke-OERArmRequest -Value {
+        # STUB
+        param([string]$Method = 'GET', [string]$Path)
+        Add-Content -LiteralPath '#LOG#' -Value 'Invoke-OERArmRequest'
+        [pscustomobject]@{ value = @() }
+    }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        # STUB
+        param([string]$Method = 'GET', [string]$Uri)
+        Add-Content -LiteralPath '#LOG#' -Value 'Invoke-OERGraphRequest'
+        @{ value = @() }
+    }
+}
+"STUBBED:$(& $Module { [bool]((Get-Command Initialize-OERAuth).ScriptBlock.ToString() -match '# STUB') })"
+#CALLS#
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#CALLS#', $Calls))
+        }
+        $script:RefusedCalls = @'
+$E = $null
+$null = Get-OERRoleAssignment -Scope '/subscriptions/s1' -User 'a' -Group 'b' -ErrorVariable E -ErrorAction SilentlyContinue
+# -ErrorVariable also holds the inner layer's records: count the cmdlet's own by its ,Get-OERRoleAssignment suffix.
+$Own = @($E | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERRoleAssignment' })
+"FQID:$($Own[0].FullyQualifiedErrorId)"
+"COUNT:$($Own.Count)"
+'@
+        $script:ControlCalls = @'
+$E = $null
+$null = Get-OERRoleAssignment -Scope '/subscriptions/s1' -AtScope -ErrorVariable E -ErrorAction SilentlyContinue
+$Own = @($E | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERRoleAssignment' })
+"COUNT:$($Own.Count)"
+'@
+    }
+
+    It 'reaches the end of the script, writes MutuallyExclusiveParameter once and sends nothing' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = & $script:NewNoTryScenario -Log $Log -Calls $script:RefusedCalls
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        @($Run.Output)[0] | Should -Be 'STUBBED:True'
+        ($Run.Output -join '|') | Should -Be 'STUBBED:True|FQID:MutuallyExclusiveParameter,Get-OERRoleAssignment|COUNT:1|END'
+        Test-Path -LiteralPath $Log | Should -BeFalse
+    }
+
+    It 'the control: a call that sends a request logs it in the same script' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = & $script:NewNoTryScenario -Log $Log -Calls $script:ControlCalls
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        ($Run.Output -join '|') | Should -Be 'STUBBED:True|COUNT:0|END'
+        @(Get-Content -LiteralPath $Log) | Should -Be @('Invoke-OERArmRequest')
     }
 }

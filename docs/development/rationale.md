@@ -11084,7 +11084,10 @@ What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule
   `Ambiguous*`, never as `*NotFound` -- a COHORT check holds that, not a helper.** The principal
   and Azure role definition lookups are the decided exception, still publishing a failed read as
   `PrincipalNotFound` or `RoleDefinitionNotFound` -- never "fix" one of them into a changed
-  published ErrorId. The PIM approver lookups follow the rule: an ambiguous approver name is
+  published ErrorId. The one change there is the combination of two of `-User`, `-Group` and
+  `-ServicePrincipal` on the three Azure role assignment readers (Sprint 14, A3): a caller error that
+  was never a lookup, so `MutuallyExclusiveParameter` replaced `PrincipalNotFound` for that alone.
+  The PIM approver lookups follow the rule: an ambiguous approver name is
   `AmbiguousApproverName`, a failed lookup is published as itself, and `ApproverNotFound` means only
   an approver that matches nothing, in the three policy cmdlets and the three apply handlers alike.
   They tell the three apart by the internal ids `PrincipalUnresolved` and `ApproverUnresolved`,

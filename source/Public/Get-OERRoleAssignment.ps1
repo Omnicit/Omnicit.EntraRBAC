@@ -11,7 +11,9 @@ function Get-OERRoleAssignment {
     A principal filter (-User, -Group, or -ServicePrincipal; resolved through Microsoft Graph)
     applies $filter=principalId eq '<objectId>', which returns assignments at, above, and below the
     scope for that principal. -AtScope applies $filter=atScope() (assignments at or above the scope,
-    excluding children) and cannot be combined with a principal filter. Output objects are tagged
+    excluding children) and cannot be combined with a principal filter. Naming more than one of
+    -User, -Group and -ServicePrincipal is refused with a non-terminating MutuallyExclusiveParameter
+    error before any request. Output objects are tagged
     Omnicit.EntraRBAC.RoleAssignment and expose RoleAssignmentId so they pipe into
     Set-OERRoleAssignment (an in-place description/condition edit) and Remove-OERRoleAssignment.
     Requires an ARM token; authentication is ensured at entry via Initialize-OERAuth -IncludeARM.
@@ -157,6 +159,14 @@ function Get-OERRoleAssignment {
                     Write-CmdletError `
                         -Message ([System.Exception]::new($PSItem.Exception.Message)) `
                         -ErrorId 'AmbiguousPrincipalName' -Category InvalidArgument -TargetObject $PrincipalTarget -Cmdlet $PSCmdlet
+                    return
+                }
+                # Two of -User, -Group and -ServicePrincipal are a mistake in the call, not a principal that was not found:
+                # published as the resolver's own id, before PrincipalNotFound. Nothing has been requested at this point.
+                if (([string]$PSItem.FullyQualifiedErrorId).StartsWith('MutuallyExclusiveParameter', [System.StringComparison]::Ordinal)) {
+                    Write-CmdletError `
+                        -Message ([System.Exception]::new($PSItem.Exception.Message)) `
+                        -ErrorId 'MutuallyExclusiveParameter' -Category InvalidArgument -TargetObject $PrincipalTarget -Cmdlet $PSCmdlet
                     return
                 }
                 Write-CmdletError `
