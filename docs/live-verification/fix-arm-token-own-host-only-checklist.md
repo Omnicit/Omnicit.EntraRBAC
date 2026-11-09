@@ -133,7 +133,7 @@ Disconnect-OerLive
 ```powershell
 Connect-S1412
 Reset-S1412Count
-$Out = & $script:S1412Module { param($P) Invoke-OERArmRequest -Path $P -All } "$SubScope/resourcegroups?api-version=2025-04-01&`$top=1"
+$Out = & $script:S1412Module { param($P) Invoke-OERArmRequest -Path $P -All } "$SubScope/resources?api-version=2025-04-01&`$top=1"
 $Count = @($Out.value).Count
 Show-S1412 -Label 'paged read' -Own @() -Out @($Count)
 $Sends = & $script:S1412Module { $script:S1412Sent.Count }
