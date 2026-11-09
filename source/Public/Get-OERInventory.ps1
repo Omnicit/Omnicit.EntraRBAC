@@ -945,9 +945,9 @@ function Get-OERInventory {
             if ($Undecided.Count -gt 0) {
                 foreach ($One in $Undecided) {
                     # The reason of a failed read ends in that read's own message, which may end with a period,
-                    # and the causes clause and the verbose line drop a closing full stop of their own too: trimmed
-                    # here the same way. The owner's Reason itself is left as it is. A Home verdict has no Reason, so the
-                    # id-less case says what is missing instead.
+                    # and the verbose line below adds one of its own: trimmed here so it does not double. The causes
+                    # clause drops a cause's closing full stop as well (Format-OERUnreadCauseClause). The owner's Reason
+                    # itself is left as it is. A Home verdict has no Reason, so the id-less case says what is missing instead.
                     $UndecidedCause = if ([string]$One.Verdict.Verdict -in @('Home', 'NoSubscription')) {
                         "the subscription check gave no subscription id for '$($One.Given)', so the subscription cannot be read by its id"
                     } else {
