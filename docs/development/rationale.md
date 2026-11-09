@@ -1627,6 +1627,53 @@ Behaviour that follows from this design:
   condition of the `elseif` changes nothing, since no state reads `Global`, whose ARM host is the same
   string as the `else` literal; the literal stays all the same, as the documented fallback and
   gate 7's exemption by shape.
+- **The ARM bearer token goes only to the cloud's own host (BL-177; decision A9).** The wrapper
+  built the address as `"$BaseUrl$CallPath"` and sent it, so a path that did not begin with `/`
+  (`.invalid/x` after `https://management.azure.com` reads as a host suffix) moved the request, and
+  the token with it, to another host. `Invoke-ArmCall` now refuses, with the new
+  `ArmRequestOutsideCloudHost` (category `InvalidArgument`), every address that is not https, has
+  user information, or differs from the session's ARM address in host or port. It stands after the
+  latch and supersession gates and before the `$Plain = ...` materialization, so a refused call
+  never reads the token, and a latched or superseded command still reads `SignInRefused` or
+  `SignInSuperseded`. The `return` after the `throw` is load-bearing, as after each gate.
+  **Why the transport and not each cmdlet:** several callers lead the path with a caller-supplied
+  value (`-Id` of `Remove-`/`Set-OERRoleAssignment`, `-PolicyId` of the two role management policy
+  cmdlets, `$RoleDefId` in `Get-OERRoleAssignment`, `$TargetScope` in the scope-based cmdlets), and
+  a per-cmdlet check is one more place to forget; the one send path is the one place that sees every
+  address. **The parsed object is the object judged:** `[System.Uri]::TryCreate` builds `$SendUri`
+  once, the guard reads its `Scheme`, `UserInfo`, `Port` and `IdnHost`, and the same object is
+  passed as `Uri` to `Invoke-WebRequest`; re-parsing a string, or sending the string, would judge
+  one thing and send another. `IdnHost` is compared (ordinal, ignoring case) since it is the name
+  the HTTP client connects to. **User information is refused outright:** an address of the form
+  user at the cloud's host followed by a path names the cloud in text but connects to the other
+  host, and no ARM call needs user information. A session whose own ARM address is http is refused
+  too. A parse failure leaves `$SendUri` null, so the guard refuses without a separate term.
+  **Graph is not changed by this step:** the Graph transport is left as it is; what was read about
+  it is in the step report.
+  Companion rule: `Remove-OERRoleAssignment` and `Set-OERRoleAssignment` anchor their `-Id` check
+  at the start (`^/`), so an id with no leading slash is refused with the existing
+  `InvalidRoleAssignmentId` before any request. Every id the module itself produces
+  (`ConvertTo-OERRoleAssignment`, from ARM's `id`) begins with `/`, and the five shapes (root,
+  subscription, resource group, management group, resource) pass.
+  **Proofs** (`tests/Unit/Private/Invoke-OERArmRequest.Tests.ps1`): the Describe "sends the token
+  only to the cloud's own host (BL-177, A9)" drives ten refused addresses, http, the sovereign
+  clouds, accepted Global addresses and `:443`, paged and retried calls, no state, no token and both
+  order tests, counting token reads (zero on every refusal); "... refuses another host and stops,
+  outside any try (BL-177, A9)" runs a runspace with no `try` (probe H1: no request; H2: an ordinary
+  path in the same runspace is sent once, as a `System.Uri`), and
+  `tests/Unit/Public/Get-OERRoleDefinition.Tests.ps1` holds a no-`try` runspace test through a
+  cmdlet. The two role assignment test files drive five refused ids, a positive control, the five
+  issued id shapes and a no-`try` probe. **Mutations**, each on a saved copy of the built module:
+  deleting the whole guard turned 22 tests of the ARM file and the cmdlet runspace test red;
+  deleting only the `return` turned probe H1 red and nothing else (the cmdlet's own `try` hides it,
+  as for the token gate); dropping the Scheme, UserInfo or Port term turned one named test red each;
+  dropping the IdnHost term turned 14 red; moving the guard above the supersession gate turned the
+  supersession order test red; sending `"$BaseUrl$CallPath"` as a string instead of the parsed
+  object turned probe H2 red, and only that: a Pester mock coerces its `-Uri` to `System.Uri`, so a
+  type assertion on a mock's parameter proves nothing. One mutation is equivalent and stays: forcing
+  the first `TryCreate` term true changes nothing, since a failed parse leaves `$SendUri` null and
+  the other terms refuse. For the `-Id` check, unanchoring the pattern, `^/?`, and `^/.*/providers`
+  each turned red the tests of their own cmdlet only (5, 6 and 2 respectively).
 
 Verified 2026-10-15 by grepping the whole tree (`git grep -no 'api-version=[0-9-]*' -- source/`, 48 hits):
 managementGroups 5 real call sites, Entities - List (getEntities) 1, the Azure PIM surface 13,

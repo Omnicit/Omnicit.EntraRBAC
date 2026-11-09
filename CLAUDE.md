@@ -1287,8 +1287,11 @@ request boundary and clearing it in a `finally`. The ARM host is read from the s
 (`Get-OERCloudEndpoint`'s `ArmResource` field via `-Environment`), never hardcoded to public-cloud
 ARM. `Invoke-OERArmRequest` keeps `https://management.azure.com` as a documented fallback for a call
 made before any auth state exists -- do not delete it. The wrapper never sends a request without an
-ARM token: it refuses it with the existing `ArmTokenAcquisitionFailed`. The token is materialized
-only after the wrapper's last gate. `Why: docs/development/rationale.md#arm-requests`
+ARM token: it refuses it with the existing `ArmTokenAcquisitionFailed`. The wrapper refuses, with
+`ArmRequestOutsideCloudHost`, every address that is not https on exactly the host and port of the
+session's ARM address, in `Invoke-ArmCall` after the two gates and before the token is read, judging
+the parsed `[System.Uri]` it hands to `Invoke-WebRequest`; never send a string that was not that
+object. The token is materialized only after the wrapper's last gate. `Why: docs/development/rationale.md#arm-requests`
 
 The throttle retries (a 429, and a 503 carrying `Retry-After`; the constants and their values are
 under the Why link) are bounded at the decision to wait, never by stopping a paging loop part-way --
