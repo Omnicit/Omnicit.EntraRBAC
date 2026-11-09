@@ -5747,6 +5747,8 @@ Describe 'Sync-OERStructureAccessReview reaches an access package or assignment 
             @{ Mode = 'a plan under -WhatIf'; PlanOnly = $true; Action = 'Skipped'; Sets = 0 }
         ) {
             $Map = New-MpMap
+            # A default mock of the rename map read, so the test observes whether the handler calls it.
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERStructureRenameTarget { $null }
             $Run = Invoke-MpSync -Item (New-MpEntry -AccessPackage $script:MpPkgId) -RenameMap $Map -WhatIf:$PlanOnly
 
             $Run.Rows.Count | Should -Be 1
@@ -5756,6 +5758,8 @@ Describe 'Sync-OERStructureAccessReview reaches an access package or assignment 
             @($Run.Errors | Where-Object { ([string]$_.FullyQualifiedErrorId) -like 'StructureReferenceUnidentified*' }).Count | Should -Be 0
             # The map was empty and stays empty: nothing registered for the package.
             $Map.Count | Should -Be 0
+            # And the map was never read for it (a read proves more than an unwritten map).
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERStructureRenameTarget -Times 0 -ParameterFilter { $Section -eq 'accessPackages' }
             # The package is the id as written: no name lookup, and the policy is looked up within it.
             Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 0
             Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times 1 -Exactly -ParameterFilter {

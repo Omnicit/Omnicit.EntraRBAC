@@ -13522,7 +13522,9 @@ What Microsoft Graph answers for these objects is recorded in
 verbatim, never as a name. A review that referenced a package or an assignment policy by a GUID-shaped
 display name would therefore be applied against whatever object carries that id, or none. The review
 reference check in `Get-OERInventory` returns this object's own id for such a name, with no lookup and no
-request, as the directory role reference does.
+request, as the directory role reference does. An assignment policy's OWN entry inside an ordinary package
+keeps a GUID-shaped name as it is: `Sync-OERStructureAccessPackage` matches `assignmentPolicies[]` by name
+within the entry, so only the review references go through a resolver.
 
 **Why a package is left out and never pruned (BL-174b).** An access package whose own display name has
 the form of an object id cannot be declared by its name, for the reason above, so `Get-OERInventory` leaves

@@ -4336,6 +4336,26 @@ Describe 'Get-OERInventory' {
             $Partial[0].Exception.Message | Should -Match ('Unread: accessPackages/' + $script:GpName + '\. ')
         }
 
+        It 'keeps an assignment policy named like an object id under its name inside an ordinary package, with no unread entry' {
+            # Sync-OERStructureAccessPackage matches assignmentPolicies[] by name within the entry; only the
+            # review references go through a resolver. So the policy's own entry keeps its name.
+            $PolName = 'dddd4444-0000-0000-0000-000000000081'
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy {
+                [PSCustomObject]@{
+                    Id = 'pol-g1'; DisplayName = 'dddd4444-0000-0000-0000-000000000081'; Description = $null; RequestorScope = $null; RequestorSettings = $null
+                    RequireApproval = $false; RequireRequestorJustification = $false; RequireApprovalForUpdate = $false
+                    ApprovalStages = @(); DurationInDays = 30; DurationInHours = $null; ExpirationDateTime = $null
+                    NotificationsDisabled = $false
+                }
+            }
+            $script:GpAccessPackages = @{ 'cat-1' = @(New-GpPackage -Id 'ap-1' -Name 'Sales') }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.accessPackages).Count | Should -Be 1
+            @($Inv.accessPackages[0].assignmentPolicies).Count | Should -Be 1
+            $Inv.accessPackages[0].assignmentPolicies[0].displayName | Should -BeExactly $PolName
+            Get-GpPartial -Record @($InvErr) | Should -BeNullOrEmpty
+        }
+
         It 'writes a catalog cause unchanged (control, BL-173a)' {
             $script:GpCatalogs = @([PSCustomObject]@{ Id = 'cat-g1'; DisplayName = $script:GpName; Description = 'd' })
             $Inv = Get-OERInventory -Include Catalogs -ErrorAction SilentlyContinue -ErrorVariable InvErr
