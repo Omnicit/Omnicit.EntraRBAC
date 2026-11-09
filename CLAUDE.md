@@ -996,7 +996,9 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   decides a written value: the put-back read of the pair's first half (a failure only loses the
   put-back; it warns before any PATCH and writes no default) and the authentication context
   validation read (a failure skips the validation). In the apply engine `Sync-OERStructureGroup`
-  refuses an access type whose expiration pair or declared `requireApproval`
+  refuses an access type whose expiration pair, declared `requireApproval`, declared
+  `authenticationContextId` or declared `activationEnablement` / `activeEnablement` (the last three
+  only over a rule the read did not return)
   `Resolve-OERGroupPimPolicyChange` names in `UnknownLiveValues` with `PimRuleValueUnknown`, before `ShouldProcess` -- never a default.
   `Set-OERAccessPackageAssignmentPolicy` refuses a successful read lacking `expiration`,
   `requestApprovalSettings`, `requestorSettings` or `notificationSettings` with

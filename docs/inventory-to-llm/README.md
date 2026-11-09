@@ -848,7 +848,8 @@ The scope of a review cannot be changed on an existing one.
 - An access package name is not unique in the tenant, nor an assignment policy name in its access
   package: when such a name is shared, the entry is reported `Failed` with `AmbiguousName` until it
   gives the package or the policy by id. The export writes either by id whenever that lookup would
-  not find that package or policy alone, so an exported entry applies.
+  not find that package or policy alone, and also when the name has the form of an object id, so an
+  exported entry applies.
 - The check runs before the reviewer lookups and before any confirmation, so a `-WhatIf` plan and a
   real run report the same `Failed` row.
 

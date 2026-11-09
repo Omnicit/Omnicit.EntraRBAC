@@ -4161,6 +4161,7 @@ $Item = '{ "displayName": "grp-luo", "owners": [ "person2@example.com" ] }' | Co
                     $Rules = switch ($RuleId) {
                         'Empty' { @() }
                         'Absent' { @(@{ id = 'Enablement_EndUser_Assignment'; enabledRules = @('Justification') }) }
+                        'NoActivation' { @(@{ id = 'Expiration_Admin_Eligibility'; isExpirationRequired = $true; maximumDuration = 'P90D' }) }
                         default {
                             if ($Shape -eq 'PT36H') { @(@{ id = $RuleId; isExpirationRequired = $true; maximumDuration = 'PT36H' }) }
                             else { @(@{ id = $RuleId; maximumDuration = 'P90D' }) }
@@ -4248,17 +4249,20 @@ $Item = '{ "displayName": "grp-luo", "owners": [ "person2@example.com" ] }' | Co
                 Entry = 'activeEnablement is declared, and the live active assignment requirements (Enablement_Admin_Assignment enabledRules) are unknown: the read returned no such rule' }
             @{ Name = 'authenticationContextId'; Declared = '"authenticationContextId": "c1"'
                 Entry = 'authenticationContextId is declared, and whether the live policy has an authentication context on activation (AuthenticationContext_EndUser_Assignment) is unknown: the read returned no such rule' }
+            @{ Name = 'activationEnablement'; Declared = '"activationEnablement": [ "Justification" ]'; Rules = 'NoActivation'
+                Entry = 'activationEnablement is declared, and the live activation requirements (Enablement_EndUser_Assignment enabledRules) are unknown: the read returned no such rule' }
         ) {
-            $Result = InModuleScope $script:moduleName -Parameters @{ Declared = $Declared } {
-                param($Declared)
+            $Result = InModuleScope $script:moduleName -Parameters @{ Declared = $Declared; Rules = $(if ($Rules) { $Rules } else { 'Absent' }) } {
+                param($Declared, $Rules)
                 # 'Absent': the live member policy carries an activation rule only, so the active
-                # assignment and authentication context rules are not in the answer.
-                $script:PuRules = 'Absent'
+                # assignment and authentication context rules are not in the answer. 'NoActivation'
+                # carries neither the activation rule, so a declared activationEnablement is unknown.
+                $script:PuRules = $Rules
                 $Item = ('{ "displayName": "role_sec_x", "pimPolicy": { "member": { ' + $Declared + ' } } }') | ConvertFrom-Json
                 $Rows = @(Invoke-SyncPuViaCaller -Item $Item -Confirm:$false -ErrorVariable Err -WarningAction SilentlyContinue 2>$null)
                 [PSCustomObject]@{ Rows = $Rows; Err = @($Err) }
             }
-            $Remedy = 'Read the policy with Get-OERGroupPimPolicy; the rule is not in the policy the read returned, so nothing was sent.'
+            $Remedy = 'Read the policy with Get-OERGroupPimPolicy; the rule is not in the policy the read returned, so nothing was sent. Remove the key from the document, or restore the rule on the policy.'
             $Own = @($Result.Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncPuViaCaller' })
             $Own.Count | Should -Be 1
             $Own[0].FullyQualifiedErrorId | Should -BeExactly 'PimRuleValueUnknown,Invoke-SyncPuViaCaller'
@@ -4266,7 +4270,7 @@ $Item = '{ "displayName": "grp-luo", "owners": [ "person2@example.com" ] }' | Co
             $Member = @($Result.Rows | Where-Object { $_.Detail -like '*pimPolicy (member)*' })
             $Member.Count | Should -Be 1
             $Member[0].Action | Should -BeExactly 'Failed'
-            $Member[0].Detail | Should -BeExactly "pimPolicy (member) not applied: a value the document leaves to the live policy is unknown (PimRuleValueUnknown): $Entry; nothing was changed for 'member'. $Remedy"
+            $Member[0].Detail | Should -BeExactly "pimPolicy (member) not applied: a rule the document declares a value for is not in the policy the read returned (PimRuleValueUnknown): $Entry; nothing was changed for 'member'. $Remedy"
             $Member[0].Detail | Should -Not -BeLike '*Declare both values of the pair*'
             Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 0 -Exactly
         }

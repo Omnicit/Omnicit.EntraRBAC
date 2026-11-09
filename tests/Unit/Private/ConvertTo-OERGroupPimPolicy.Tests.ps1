@@ -51,7 +51,7 @@ Describe 'ConvertTo-OERGroupPimPolicy' {
         }
     }
 
-    It 'returns genuinely empty arrays when a canonical rule id is missing from the policy' {
+    It 'returns $null for the enablement list and an empty alert list when a canonical rule id is missing from the policy' {
         InModuleScope Omnicit.EntraRBAC {
             $Out = ConvertTo-OERGroupPimPolicy -Rules @(@{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT2H' }) `
                 -GroupId 'g1' -PolicyId 'p1' -AccessType 'member'

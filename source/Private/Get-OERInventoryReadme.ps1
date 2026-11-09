@@ -633,7 +633,7 @@ group's own entry is left out of `groups` and named as unread. A catalog whose d
 form of an object id is treated the same way: its own entry is left out of `catalogs` and named as
 unread, and an access package in such a catalog names the catalog by its object id. An access package
 whose display name has the form of an object id is left out of `accessPackages` and named as unread the
-same way, and an access review of it names it by its object id. Leaving them out
+same way, and an access review of it names the package or policy by its object id. Leaving them out
 of the export changes nothing in the tenant.
 '@
     $SharedNameSection = if ($SharedBullets.Count -gt 0) {

@@ -165,7 +165,9 @@ function Invoke-OERStructure {
     days. That access type is then reported Failed with PimRuleValueUnknown, also under -WhatIf,
     and nothing is written for it, unless the declared half already matches its live value (then
     nothing is sent): no default is sent in place of the unknown half. Declare both halves to set
-    them. A group's pimPolicy change that sends only one half of the multi-factor authentication /
+    them. The same applies to a group's pimPolicy that declares authenticationContextId,
+    activationEnablement or activeEnablement over a rule the policy read did not return: Failed with
+    PimRuleValueUnknown, nothing sent. A group's pimPolicy change that sends only one half of the multi-factor authentication /
     authentication context pair -- an authentication context to enable, or an activationEnablement
     that holds MultiFactorAuthentication -- makes Set-OERGroupPimPolicy read the other half itself;
     when that read fails or returns no rule, the access type is reported Failed with the read's error

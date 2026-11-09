@@ -1050,7 +1050,9 @@ group's `pimPolicy` access type that declares one half of an expiration pair alo
 (`allowPermanentEligibility` or `eligibleDurationDays`, `allowPermanentActive` or
 `activeDurationDays`) is `Failed` the same way, with `PimRuleValueUnknown`, when the live policy
 gives no value for the other half, or a duration that is not a positive whole number of days, and the
-declared half does not already match; declare both halves. A PIM policy change that empties an
+declared half does not already match; declare both halves. A group's `pimPolicy` access type that
+declares `authenticationContextId`, `activationEnablement` or `activeEnablement` over a rule the read did not
+return is `Failed` the same way, with `PimRuleValueUnknown`, and nothing is sent. A PIM policy change that empties an
 approver side while no other approver remains is `Failed` with `ApproverRequired` in a `-WhatIf`
 plan, as in a run, and so, for a directory role or a group policy, is `requireApproval` true over a
 live approval stage that names nobody. `-Prune` never removes a group's last remaining owner, nor its
@@ -1198,7 +1200,8 @@ reads such a name as an object id. `Test-OERStructure` warns on a hand-written `
 or `accessPackages` `displayName` of that form. The export warns once, and its `README.md` lists each
 name, with how many objects carry it, under "Names two or more objects share". An access package's `catalog`, an access review's `accessPackage` or `assignmentPolicy`, and
 a group named as the principal of a role assignment or a directory role assignment (with
-`principalType` `Group`) are written by object id when their name is shared. `Test-OERStructure`
+`principalType` `Group`) are written by object id when their name is shared, and an access review's
+`accessPackage` or `assignmentPolicy` also when its name has the form of an object id. `Test-OERStructure`
 refuses two assignment policies of one name in one access package.
 
 With `RoleManagementPolicies` in `-Include`, `Export-OERInventory` keeps a role's Azure PIM policy at
