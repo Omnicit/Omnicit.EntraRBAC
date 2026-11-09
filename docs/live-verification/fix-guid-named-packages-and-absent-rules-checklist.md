@@ -58,7 +58,7 @@ helpers block H.1** (the runner prepends H.1 to every block).
 
 ### H.1. The helpers every check uses
 
-- [ ] **H.1** The helpers load; nothing is printed and nothing is sent. #type/subtask
+- [x] **H.1** The helpers load; nothing is printed and nothing is sent. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -116,11 +116,18 @@ function Test-S142RenamedStill {
 **Expect:** nothing printed.
 **Failure looks like:** a parse error -- fix the block before any check runs.
 
-Result:
+Result: 2026-11-09 20:19 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The helpers parse and load in every check (the runner prepends them); nothing is printed by them and nothing is sent.
+
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+```
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the prerequisite objects are recorded. #type/subtask
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the prerequisite objects are recorded. #type/subtask
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -141,13 +148,26 @@ Write-OerLiveStep ('Recorded: cat {0}, ap {1}, pol {2}, rv {3}, gap {4} (GUID na
 **Expect:** every line `True`; the HEAD is this branch's tip; 0 tracked changes.
 **Failure looks like:** `False` on a marker (rebuild the worktree), or the main clone named.
 
-Result:
+Result: 2026-11-09 20:19 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The module loads from the step worktree's build at the branch tip; the three markers are present and every prerequisite is recorded; 0 tracked changes.
+
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s142] The module loads from a worktree that is not the main clone: True
+[oer-s142] Worktree: branch fix/guid-named-packages-and-absent-rules; HEAD 8cee4b2 test: pin the GUID-named policy entry and the unread rename map in the final review round; tracked changes: 0
+[oer-s142] The build carries A: True
+[oer-s142] The build carries B: True
+[oer-s142] The build carries C: True
+[oer-s142] Recorded: cat True, ap True, pol True, rv True, gap True (GUID name True), gpol True (GUID name True), rvg True, pim True
+```
 
 ## 1. An access review and an access package with a GUID-shaped name (A, B)
 
 ### 1.1. The export names the review's targets by id and leaves the package out, named unread
 
-- [ ] **1.1** `Get-OERInventory` writes the review of the renamed package and policy with their ids, the control with its names, no `accessPackages` entry for the renamed package and no GUID-shaped name anywhere; the package is named unread and the cause is the shared text. #type/subtask
+- [x] **1.1** `Get-OERInventory` writes the review of the renamed package and policy with their ids, the control with its names, no `accessPackages` entry for the renamed package and no GUID-shaped name anywhere; the package is named unread and the cause is the shared text. #type/subtask
 
 ```powershell
 Connect-S142
@@ -176,11 +196,41 @@ one package entry (the control), the renamed one not written; neither GUID name 
 document; `InventoryPartial` names the package with the shared cause; 0 writes.
 **Failure looks like:** a GUID name in the document, or the review naming a GUID.
 
-Result:
+Result: 2026-11-09 20:19 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The review of the renamed package and policy carries the two recorded ids, the control its names; one accessPackages entry (the control); neither GUID name is in the document; InventoryPartial names the package with the shared cause; 0 writes.
+
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s142] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg2\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s142] The module is the worktree's build: True
+[oer-s142] Token fence in place: True
+[oer-s142] Request fence in place: True
+[oer-s142] Reviews written: rv-guid True, rv True
+[oer-s142] The review's accessPackage is the recorded package id: True
+[oer-s142] The review's assignmentPolicy is the recorded policy id: True
+[oer-s142] The control names its package and policy: True
+[oer-s142] Access package entries: 1; the control is one: True; the renamed one is written: False
+[oer-s142] The GUID names appear in the document: package False, policy False
+[oer-s142] InventoryPartial reported: True
+[oer-s142] The package is named unread: True
+[oer-s142] The cause is the shared text: True
+[oer-s142] Export: 16 read(s), 0 write(s)
+```
 
 ### 1.2. The same document applies back with only Unchanged, twice (G8)
 
-- [ ] **1.2** The export of 1.1 applied through `Invoke-OERStructure` gives only `Unchanged` rows, twice, with no write, and the renamed objects are untouched. #type/subtask
+- [x] **1.2** The export of 1.1 applied through `Invoke-OERStructure` gives only `Unchanged` rows, twice, with no write, and the renamed objects are untouched. #type/subtask
 
 ```powershell
 Connect-S142
@@ -196,11 +246,43 @@ Test-S142RenamedStill
 **Expect:** both runs only `Unchanged`, 0 writes; every renamed-object line `True`.
 **Failure looks like:** any `Updated`, `Created` or `Failed` row, or a fence refusal.
 
-Result:
+Result: 2026-11-09 20:19 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Both runs give only Unchanged (5 rows each), 0 writes behind a fence that refuses every write; the renamed objects are unchanged (G8).
+
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s142] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg2\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s142] The module is the worktree's build: True
+[oer-s142] Token fence in place: True
+[oer-s142] Request fence in place: True
+[oer-s142] row: catalogs | oer-s142-cat | Unchanged | record: none
+[oer-s142] row: accessPackages | oer-s142-ap | Unchanged | record: none
+[oer-s142] row: accessPackages | oer-s142-ap | Unchanged | record: none
+[oer-s142] row: accessReviews | oer-s142-rv-guid | Unchanged | record: none
+[oer-s142] row: accessReviews | oer-s142-rv | Unchanged | record: none
+[oer-s142] Run 1 only Unchanged: True; rows 5; 12 read(s), 0 write(s)
+[oer-s142] Run 2 only Unchanged: True; rows 5; 24 read(s), 0 write(s)
+[oer-s142] The package still carries its GUID name: True
+[oer-s142] The package keeps the prefix in its description: True
+[oer-s142] The policy still carries its GUID name: True
+[oer-s142] The package still has exactly one policy: True
+[oer-s142] The review of the two still exists: True
+```
 
 ### 1.3. -Prune does not touch the package left out
 
-- [ ] **1.3** The same document with `-Prune` gives only `Unchanged` rows and no write; the package left out and its policy and review are untouched. #type/subtask
+- [x] **1.3** The same document with `-Prune` gives only `Unchanged` rows and no write; the package left out and its policy and review are untouched. #type/subtask
 
 ```powershell
 Connect-S142
@@ -214,13 +296,44 @@ Test-S142RenamedStill
 **Expect:** only `Unchanged`, 0 writes; every renamed-object line `True`.
 **Failure looks like:** a row for the renamed package, any write, or the package changed.
 
-Result:
+Result: 2026-11-09 20:19 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. With -Prune only Unchanged (5 rows), 0 writes; the package left out, its policy and its review are unchanged.
+
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s142] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg2\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s142] The module is the worktree's build: True
+[oer-s142] Token fence in place: True
+[oer-s142] Request fence in place: True
+[oer-s142] row: catalogs | oer-s142-cat | Unchanged | record: none
+[oer-s142] row: accessPackages | oer-s142-ap | Unchanged | record: none
+[oer-s142] row: accessPackages | oer-s142-ap | Unchanged | record: none
+[oer-s142] row: accessReviews | oer-s142-rv-guid | Unchanged | record: none
+[oer-s142] row: accessReviews | oer-s142-rv | Unchanged | record: none
+[oer-s142] With -Prune only Unchanged: True; rows 5; 12 read(s), 0 write(s)
+[oer-s142] The package still carries its GUID name: True
+[oer-s142] The package keeps the prefix in its description: True
+[oer-s142] The policy still carries its GUID name: True
+[oer-s142] The package still has exactly one policy: True
+[oer-s142] The review of the two still exists: True
+```
 
 ## 2. The PIM rule read (C)
 
 ### 2.1. Which rules Microsoft Graph returns for an onboarded group
 
-- [ ] **2.1** The first policy write onboards `oer-s142-pim`; for member and owner, each of the rules the module reads is reported present or missing, and the module's lists and authentication context are read back. #type/subtask
+- [x] **2.1** The first policy write onboards `oer-s142-pim`; for member and owner, each of the rules the module reads is reported present or missing, and the module's lists and authentication context are read back. #type/subtask
 
 ```powershell
 Connect-S142
@@ -252,11 +365,65 @@ missing ones listed; the two lists are not null where the rule is present; the a
 is null with the rule present and off. A rule reported absent is the live form of BL-174c.
 **Failure looks like:** a refused or failed write, or no policy listed.
 
-Result:
+Result: 2026-11-09 20:19 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The one rule write onboards the group (1 write). Microsoft Graph returns 17 rules for member and for owner, and all ten rules the module reads are present for both, so no rule was absent: the refusal for an absent rule stays class B, held by the unit tests with this recorded answer beside them. The two lists are not null (count 1 each); the authentication context is null with its rule present and off, the case the diff tells from an absent rule through Rules.
+
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s142] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg2\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s142] The module is the worktree's build: True
+[oer-s142] Token fence in place: True
+[oer-s142] Request fence in place: True
+[oer-s142] the group has a listed policy: converged after 1 read(s), 1.4 s.
+[oer-s142] The group's policy is listed before the write: True
+[oer-s142] After the onboarding write: 3 read(s), 1 write(s)
+[oer-s142] member rules in the answer: 17
+[oer-s142] member rule Expiration_EndUser_Assignment: present True
+[oer-s142] member rule Enablement_EndUser_Assignment: present True
+[oer-s142] member rule AuthenticationContext_EndUser_Assignment: present True
+[oer-s142] member rule Approval_EndUser_Assignment: present True
+[oer-s142] member rule Expiration_Admin_Eligibility: present True
+[oer-s142] member rule Expiration_Admin_Assignment: present True
+[oer-s142] member rule Enablement_Admin_Assignment: present True
+[oer-s142] member rule Notification_Admin_Admin_Eligibility: present True
+[oer-s142] member rule Notification_Admin_Admin_Assignment: present True
+[oer-s142] member rule Notification_Admin_EndUser_Assignment: present True
+[oer-s142] member ActivationEnabledRules is null: False; count 1
+[oer-s142] member ActiveEnabledRules is null: False; count 1
+[oer-s142] member AuthenticationContextId is null: True
+[oer-s142] member authentication context rule isEnabled: False
+[oer-s142] owner rules in the answer: 17
+[oer-s142] owner rule Expiration_EndUser_Assignment: present True
+[oer-s142] owner rule Enablement_EndUser_Assignment: present True
+[oer-s142] owner rule AuthenticationContext_EndUser_Assignment: present True
+[oer-s142] owner rule Approval_EndUser_Assignment: present True
+[oer-s142] owner rule Expiration_Admin_Eligibility: present True
+[oer-s142] owner rule Expiration_Admin_Assignment: present True
+[oer-s142] owner rule Enablement_Admin_Assignment: present True
+[oer-s142] owner rule Notification_Admin_Admin_Eligibility: present True
+[oer-s142] owner rule Notification_Admin_Admin_Assignment: present True
+[oer-s142] owner rule Notification_Admin_EndUser_Assignment: present True
+[oer-s142] owner ActivationEnabledRules is null: False; count 1
+[oer-s142] owner ActiveEnabledRules is null: False; count 1
+[oer-s142] owner AuthenticationContextId is null: True
+[oer-s142] owner authentication context rule isEnabled: False
+[oer-s142] After the reads: 7 read(s), 1 write(s)
+```
 
 ### 2.2. A declared empty form over a rule the read returns stays Unchanged (G8)
 
-- [ ] **2.2** A document declaring `authenticationContextId: ""` and the two lists as the live values gives `Unchanged` twice with no write, so the rule read is not mistaken for an absent one. #type/subtask
+- [x] **2.2** A document declaring `authenticationContextId: ""` and the two lists as the live values gives `Unchanged` twice with no write, so the rule read is not mistaken for an absent one. #type/subtask
 
 ```powershell
 Connect-S142
@@ -274,13 +441,38 @@ Write-OerLiveStep "No PimRuleValueUnknown in either run: $(@($Run1 + $Run2 | Whe
 **Expect:** both runs only `Unchanged`, 0 writes, no `PimRuleValueUnknown`.
 **Failure looks like:** a refusal (the diff read a returned rule as absent), or `Updated`.
 
-Result:
+Result: 2026-11-09 20:19 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. A document declaring authenticationContextId as empty and the two lists as the live values gives only Unchanged twice, 0 writes, no PimRuleValueUnknown: a rule the read returns is not mistaken for an absent one (G8).
+
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s142] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg2\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s142] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s142] The module is the worktree's build: True
+[oer-s142] Token fence in place: True
+[oer-s142] Request fence in place: True
+[oer-s142] row: groups | oer-s142-pim | Unchanged | record: none
+[oer-s142] row: groups | oer-s142-pim | Unchanged | record: none
+[oer-s142] Run 1 only Unchanged: True; 8 read(s), 0 write(s)
+[oer-s142] Run 2 only Unchanged: True; 14 read(s), 0 write(s)
+[oer-s142] No PimRuleValueUnknown in either run: True
+```
 
 ## Teardown
 
 ### T.1. The renamed objects get their names back and the prefix is swept
 
-- [ ] **T.1** `Initialize-OerS142Prereq.ps1 -Teardown -Unattended` renames both objects back, removes everything of the prefix, and the sweep is 0; the local `raw` folder of the step is deleted after the read-back. #type/subtask
+- [x] **T.1** `Initialize-OerS142Prereq.ps1 -Teardown -Unattended` renames both objects back, removes everything of the prefix, and the sweep is 0; the local `raw` folder of the step is deleted after the read-back. #type/subtask
 
 ```powershell
 pwsh -NoProfile -NonInteractive -File (Join-Path $VaultDir 'Initialize-OerS142Prereq.ps1') -Teardown -Unattended 2>&1 | Where-Object { $_ -match 'Renamed back|Teardown|Sweep|Left:' }
@@ -289,4 +481,28 @@ pwsh -NoProfile -NonInteractive -File (Join-Path $VaultDir 'Initialize-OerS142Pr
 **Expect:** two `Renamed back` lines, `Teardown complete: the sweep is 0.`, no `Left:` line.
 **Failure looks like:** a rename stop, `Teardown NOT complete`, or a `Left:` line.
 
-Result:
+Result: 2026-11-09 20:19 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Both objects got their prefixed names back before removal; removed 8, residue 0, unreadable 0; the sweep is 0.
+
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s142] Transcript (redacted): raw\s142\prereq-teardown-20261109-201816Z.log; OerLive 1.1.0.
+[oer-s142] Renamed back: oer-s142-pol-guid.
+[oer-s142] Renamed back: oer-s142-ap-guid.
+[oer-s142] Teardown: Remove-OerLiveTestObjects for the prefix with the recorded ids (access review definitions first).
+[oer-s142] Teardown of 'oer-s142-': users 0, groups 1, access packages 2, access review definitions 2, catalogs 1; administrative units 0 and app registrations 0 are reported only.
+[oer-s142] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s142] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s142] Teardown 3/6: access review definitions, access package resource roles, access packages, catalog resources, catalogs.
+[oer-s142] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s142] Teardown 5/6: the prefixed groups.
+[oer-s142] Teardown 6/6: the prefixed users.
+[oer-s142] Teardown of 'oer-s142-': removed 8, residue 0, unreadable 0, already gone 0, skipped 0.
+[oer-s142] Teardown summary: Removed 8, Residue 0, Unreadable 0, Unread 0, AlreadyGone 0, Skipped 0
+[oer-s142] Sweep: 1 object(s) with the prefix, 0 unread kind(s).
+[oer-s142] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s142-' is left.
+[oer-s142] Sweep: 0 object(s) with the prefix, 0 unread kind(s).
+[oer-s142] Teardown complete: the sweep is 0.
+```
