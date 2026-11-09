@@ -128,6 +128,37 @@ Describe 'Get-OERDirectoryRoleNameMap' {
             }
         }
 
+        It 'throws a typed record for a failed read: id, category, target, message and inner exception' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw 'graph down (injected strict failure)' }
+            InModuleScope $script:moduleName {
+                $Caught = $null
+                try { $null = Get-OERDirectoryRoleNameMap -ThrowOnFailure } catch { $Caught = $PSItem }
+                $Caught | Should -Not -BeNullOrEmpty
+                $Caught.FullyQualifiedErrorId | Should -BeExactly 'AdministrativeUnitScopedRoleReadFailed'
+                $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ReadError)
+                $Caught.TargetObject | Should -BeExactly 'v1.0/directoryRoles'
+                $Caught.Exception | Should -BeOfType ([System.Exception])
+                $Caught.Exception.Message | Should -BeExactly "Could not read the directory roles ('v1.0/directoryRoles') that name the roles: graph down (injected strict failure)"
+                $Caught.Exception.InnerException | Should -Not -BeNullOrEmpty
+                $Caught.Exception.InnerException.Message | Should -BeExactly 'graph down (injected strict failure)'
+            }
+        }
+
+        It 'throws a typed record for an empty listing: id, category, target and message' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } }
+            InModuleScope $script:moduleName {
+                $Caught = $null
+                try { $null = Get-OERDirectoryRoleNameMap -ThrowOnFailure } catch { $Caught = $PSItem }
+                $Caught | Should -Not -BeNullOrEmpty
+                $Caught.FullyQualifiedErrorId | Should -BeExactly 'AdministrativeUnitScopedRoleReadFailed'
+                $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ReadError)
+                $Caught.TargetObject | Should -BeExactly 'v1.0/directoryRoles'
+                $Caught.Exception | Should -BeOfType ([System.Exception])
+                $Caught.Exception.Message | Should -BeExactly ("Could not read the directory roles ('v1.0/directoryRoles') that name the roles: the listing came back empty, " +
+                    'although a unit with scoped roles is expected to have at least one directory role activated, so it is treated as unread.')
+            }
+        }
+
         It 'scrubs the failed read exactly once before it throws' {
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw 'graph down (injected strict failure)' }
             Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }

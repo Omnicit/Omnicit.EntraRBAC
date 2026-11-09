@@ -868,6 +868,32 @@ Describe 'Resolve-OERStructureRename' {
                 $Map.Count | Should -Be 0
             }
         }
+        It 'throws a RenameRegistrationInvalid record for a registration outside accessPackages (target the section)' {
+            InModuleScope $script:moduleName {
+                $Caught = $null
+                try { Resolve-OERStructureRename -Section 'catalogs' -Name 'N' -Unidentified -Reason 'r' } catch { $Caught = $PSItem }
+                $Caught | Should -Not -BeNullOrEmpty
+                $Caught.FullyQualifiedErrorId | Should -BeExactly 'RenameRegistrationInvalid'
+                $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidArgument)
+                $Caught.TargetObject | Should -BeExactly 'catalogs'
+                $Caught.Exception | Should -BeOfType ([System.ArgumentException])
+                $Caught.Exception.ParamName | Should -BeExactly 'Section'
+                $Caught.Exception.Message | Should -BeLike 'An entry that renames nothing (-Identified, -Unidentified) is registered for the accessPackages section only, not for catalogs.*'
+            }
+        }
+        It 'throws a RenameRegistrationInvalid record for -Identified without an id (target the name)' {
+            InModuleScope $script:moduleName {
+                $Caught = $null
+                try { Resolve-OERStructureRename -Section 'accessPackages' -Name 'AP-Main' -Identified -Id '' } catch { $Caught = $PSItem }
+                $Caught | Should -Not -BeNullOrEmpty
+                $Caught.FullyQualifiedErrorId | Should -BeExactly 'RenameRegistrationInvalid'
+                $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidArgument)
+                $Caught.TargetObject | Should -BeExactly 'AP-Main'
+                $Caught.Exception | Should -BeOfType ([System.ArgumentException])
+                $Caught.Exception.ParamName | Should -BeExactly 'Id'
+                $Caught.Exception.Message | Should -BeLike '-Identified requires the id of the access package the entry found or created.*'
+            }
+        }
         It 'refuses an empty reason for -Unidentified' {
             InModuleScope $script:moduleName {
                 $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
@@ -950,6 +976,19 @@ Describe 'Resolve-OERStructureRename' {
                 { Resolve-OERStructureRename -Section 'assignmentPolicies' -Name 'N' -PreviousName 'O' -Undecided -Reason 'r' @Bound -RenameMap $Map } |
                     Should -Throw -ExceptionType ([System.ArgumentException]) -ExpectedMessage '*-AccessPackage is required*'
                 $Map.Count | Should -Be 0
+            }
+        }
+        It 'throws a RenameRegistrationInvalid record for a policy without its package (target the name)' {
+            InModuleScope $script:moduleName {
+                $Caught = $null
+                try { Resolve-OERStructureRename -Section 'assignmentPolicies' -Name 'Policy-1' -PreviousName 'O' -Id $null -PreviousId 'p' } catch { $Caught = $PSItem }
+                $Caught | Should -Not -BeNullOrEmpty
+                $Caught.FullyQualifiedErrorId | Should -BeExactly 'RenameRegistrationInvalid'
+                $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidArgument)
+                $Caught.TargetObject | Should -BeExactly 'Policy-1'
+                $Caught.Exception | Should -BeOfType ([System.ArgumentException])
+                $Caught.Exception.ParamName | Should -BeExactly 'AccessPackage'
+                $Caught.Exception.Message | Should -BeLike '-AccessPackage is required for the assignmentPolicies section: an assignment policy is matched within its access package.*'
             }
         }
         It 'does not require -AccessPackage for any other section' -ForEach @(

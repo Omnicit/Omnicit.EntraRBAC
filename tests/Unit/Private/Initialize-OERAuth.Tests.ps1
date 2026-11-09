@@ -5485,6 +5485,33 @@ Describe 'Initialize-OERAuth tenant named by domain (BL-12)' {
             }
         }
 
+        It 'republishes a typed TenantResolutionFailed record from the resolver with the same message, category, target and inner exception' {
+            # BL-176a: the resolver throws an ErrorRecord now (its exception unchanged); the sign-in
+            # reads only .Exception.Message and .Exception from it.
+            Mock -ModuleName $script:moduleName Resolve-OERTenantDomain {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.InvalidOperationException]::new('did not resolve', [System.Exception]::new('inner cause')),
+                    'TenantResolutionFailed',
+                    [System.Management.Automation.ErrorCategory]::AuthenticationError,
+                    $Domain)
+            }
+
+            $R = Invoke-DomainProbe -Parameters @{ TenantId = 'contoso.onmicrosoft.com'; AuthMethod = 'Interactive' }
+
+            $R.Caught | Should -Not -BeNullOrEmpty
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'TenantResolutionFailed,Initialize-OERAuth'
+            $R.Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
+            $R.Caught.TargetObject | Should -BeExactly 'contoso.onmicrosoft.com'
+            $R.Caught.Exception.Message | Should -BeExactly ("Could not resolve tenant 'contoso.onmicrosoft.com' to its tenant ID: did not resolve Omnicit.EntraRBAC checks the tenant every token " +
+                'is issued for, and a tenant named by domain is checked through its tenant ID, so no token ' +
+                'was requested. Check the domain and the cloud (-Environment), or name the tenant by its ' +
+                'tenant ID (a GUID).')
+            $R.Caught.Exception.InnerException | Should -BeOfType ([System.InvalidOperationException])
+            $R.Caught.Exception.InnerException.Message | Should -BeExactly 'did not resolve'
+            $R.Caught.Exception.InnerException.InnerException.Message | Should -BeExactly 'inner cause'
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 0
+        }
+
         It 'leaves the authority tracker on the commercial authority when a sovereign-cloud lookup fails' {
             # Not vacuous: the sovereign authority differs from the one the entry seeds.
             InModuleScope $script:moduleName {

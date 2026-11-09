@@ -302,6 +302,13 @@ Describe 'Get-OERAdministrativeUnit' {
                 $Published.Exception.Message | Should -Match 'v1\.0/directoryRoles'
                 $Published.Exception.Message | Should -Match 'injected map failure'
                 $Published.Exception.Message | Should -Match 'ScopedRoles property is omitted rather than reported as empty'
+                # BL-176a: the helper throws a typed record now; the republished record is byte-identical.
+                $Published.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ReadError)
+                [string]$Published.TargetObject | Should -BeExactly 'cccccccc-1111-1111-1111-111111111111'
+                $Published.Exception.Message | Should -BeExactly "Could not read scoped roles for administrative unit cccccccc-1111-1111-1111-111111111111: Could not read the directory roles ('v1.0/directoryRoles') that name the roles: TooManyRequests (injected map failure). The ScopedRoles property is omitted rather than reported as empty."
+                $Published.Exception.InnerException | Should -BeOfType ([System.Exception])
+                $Published.Exception.InnerException.Message | Should -BeExactly "Could not read the directory roles ('v1.0/directoryRoles') that name the roles: TooManyRequests (injected map failure)"
+                $Published.Exception.InnerException.InnerException.Message | Should -BeExactly 'TooManyRequests (injected map failure)'
             }
 
             It 'scrubs the unreadable name map and the scoped-role read it ends, once each' {

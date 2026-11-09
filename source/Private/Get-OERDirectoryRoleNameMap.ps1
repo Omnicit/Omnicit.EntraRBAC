@@ -30,7 +30,8 @@ function Get-OERDirectoryRoleNameMap {
 
     .PARAMETER ThrowOnFailure
     When set, a failed read of the directory roles throws (after the error record is scrubbed) instead of
-    returning an empty map. The exception names the read ('v1.0/directoryRoles'), carries the cause in its
+    returning an empty map. It throws a record with id AdministrativeUnitScopedRoleReadFailed (ReadError,
+    target 'v1.0/directoryRoles') whose exception names the read, carries the cause in its
     message and keeps the original exception as its InnerException. Without it the function stays
     best-effort, which is what the two callers that do not set it rely on:
     Get-OERAdministrativeUnitScopedRole, a read that only enriches its listing, and
@@ -67,9 +68,13 @@ function Get-OERDirectoryRoleNameMap {
     } catch {
         Remove-OERErrorRecord -Record $PSItem
         if ($ThrowOnFailure) {
-            throw [System.Exception]::new(
-                "Could not read the directory roles ('v1.0/directoryRoles') that name the roles: $($PSItem.Exception.Message)",
-                $PSItem.Exception)
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new(
+                    "Could not read the directory roles ('v1.0/directoryRoles') that name the roles: $($PSItem.Exception.Message)",
+                    $PSItem.Exception),
+                'AdministrativeUnitScopedRoleReadFailed',
+                [System.Management.Automation.ErrorCategory]::ReadError,
+                'v1.0/directoryRoles')
         }
         return $Map
     }
@@ -80,9 +85,13 @@ function Get-OERDirectoryRoleNameMap {
         # a genuine empty list, and this caller reads an empty map as roles nobody declared. Thrown
         # outside the try above: it is not a transport error. (That a NON-empty listing names every
         # membership's role id is not checked either -- see the .DESCRIPTION.)
-        throw [System.Exception]::new(
-            "Could not read the directory roles ('v1.0/directoryRoles') that name the roles: the listing came back empty, " +
-            'although a unit with scoped roles is expected to have at least one directory role activated, so it is treated as unread.')
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new(
+                "Could not read the directory roles ('v1.0/directoryRoles') that name the roles: the listing came back empty, " +
+                'although a unit with scoped roles is expected to have at least one directory role activated, so it is treated as unread.'),
+            'AdministrativeUnitScopedRoleReadFailed',
+            [System.Management.Automation.ErrorCategory]::ReadError,
+            'v1.0/directoryRoles')
     }
     foreach ($Role in $RoleList) {
         if ($Role.id)             { $Map[[string]$Role.id] = [string]$Role.displayName }

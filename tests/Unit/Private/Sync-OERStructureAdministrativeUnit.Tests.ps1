@@ -2353,6 +2353,12 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
                     [string]$Published[0].TargetObject | Should -BeExactly $script:AuId
                     $Published[0].Exception.Message | Should -BeLike "Could not read scoped roles for administrative unit $($script:AuId): *injected map failure*. No scopedRole change was made."
                     $Published[0].Exception.InnerException.Message | Should -BeLike "Could not read the directory roles ('v1.0/directoryRoles')*injected map failure*"
+                    # BL-176a: the helper now throws a typed record; the republished record must be the
+                    # same bytes as before, with the helper's exception as its inner exception.
+                    $Published[0].Exception.Message | Should -BeExactly "Could not read scoped roles for administrative unit $($script:AuId): Could not read the directory roles ('v1.0/directoryRoles') that name the roles: TooManyRequests (injected map failure). No scopedRole change was made."
+                    $Published[0].Exception.InnerException | Should -BeOfType ([System.Exception])
+                    $Published[0].Exception.InnerException.Message | Should -BeExactly "Could not read the directory roles ('v1.0/directoryRoles') that name the roles: TooManyRequests (injected map failure)"
+                    $Published[0].Exception.InnerException.InnerException.Message | Should -BeExactly 'TooManyRequests (injected map failure)'
                     # The caught record was scrubbed before the handler published its own.
                     Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
                         $Record.Exception.Message -like "Could not read the directory roles ('v1.0/directoryRoles')*injected map failure*"
