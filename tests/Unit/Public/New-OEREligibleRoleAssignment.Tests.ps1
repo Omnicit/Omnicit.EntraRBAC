@@ -9,10 +9,10 @@ BeforeAll {
     # what the rollback READ and asks for a confirming read, since read-after-write consistency of the
     # policy is not measured and that read may not reflect the open yet. Both commands sit inside ONE
     # single-quoted PowerShell string literal each, so the policy id's quotes are doubled; this is
-    # built with the policy id 'pol-1' the Contexts below use.
+    # built with the policy id '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' the Contexts below use.
     $script:NoChangeRollbackText = "The rollback read it as already disallowing permanent assignments and changed nothing, but that read may not reflect the open yet. " +
-        "Confirm with 'Get-OERRoleManagementPolicy -PolicyId ''pol-1''' and, if AllowPermanentEligibility is True, " +
-        "run 'Set-OERRoleManagementPolicy -PolicyId ''pol-1'' -AllowPermanentEligibility `$false' to close it."
+        "Confirm with 'Get-OERRoleManagementPolicy -PolicyId ''/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1''' and, if AllowPermanentEligibility is True, " +
+        "run 'Set-OERRoleManagementPolicy -PolicyId ''/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'' -AllowPermanentEligibility `$false' to close it."
 }
 
 AfterAll {
@@ -29,7 +29,7 @@ Describe 'New-OEREligibleRoleAssignment' {
             Mock -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal { [PSCustomObject]@{ PrincipalId = 'p1'; PrincipalType = 'User' } }
             Mock -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' }
             Mock -ModuleName Omnicit.EntraRBAC Get-OERPermanentPolicyState { [PSCustomObject]@{ PolicyId = '/pol1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $true } }
-            Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy { [PSCustomObject]@{ PolicyId = 'pol-1' } }
+            Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy { [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' } }
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest {
                 [PSCustomObject]@{ id = 'req1'; name = 'req1'; properties = [PSCustomObject]@{
                     scope='/subscriptions/s1'; roleDefinitionId='rd1'; principalId='p1'; principalType='User'
@@ -106,7 +106,7 @@ Describe 'New-OEREligibleRoleAssignment' {
         BeforeAll {
             Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
             Mock -ModuleName Omnicit.EntraRBAC Get-OERPermanentPolicyState { [PSCustomObject]@{ PolicyId = '/pol1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $true } }
-            Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy { [PSCustomObject]@{ PolicyId = 'pol-1' } }
+            Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy { [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' } }
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { }
         }
         It 'errors when no principal supplied' {
@@ -156,7 +156,7 @@ Describe 'New-OEREligibleRoleAssignment' {
             Mock -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal { [PSCustomObject]@{ PrincipalId = 'p1'; PrincipalType = 'User' } }
             Mock -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId { '/subscriptions/00000000-0000-0000-0000-000000000060/providers/Microsoft.Authorization/roleDefinitions/rd1' }
             Mock -ModuleName Omnicit.EntraRBAC Get-OERPermanentPolicyState { [PSCustomObject]@{ PolicyId = '/pol1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $true } }
-            Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy { [PSCustomObject]@{ PolicyId = 'pol-1' } }
+            Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy { [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' } }
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest {
                 [PSCustomObject]@{ id = 'req1'; name = 'req1'; properties = [PSCustomObject]@{
                     scope = '/subscriptions/00000000-0000-0000-0000-000000000060'; roleDefinitionId = 'rd1'
@@ -199,7 +199,7 @@ Describe 'New-OEREligibleRoleAssignment' {
         }
         It 'opens the policy then grants when permanent is forbidden' {
             Mock -ModuleName Omnicit.EntraRBAC Get-OERPermanentPolicyState { [PSCustomObject]@{ PolicyId = '/pol1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $false } }
-            Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy { [PSCustomObject]@{ PolicyId = 'pol-1' } }
+            Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy { [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' } }
             New-OEREligibleRoleAssignment -Role 'Reader' -User 'a' -Subscription 'Prod' -Permanent -Confirm:$false
             Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter {
                 $PolicyId -eq '/pol1' -and $AllowPermanentEligibility -eq $true
@@ -208,7 +208,7 @@ Describe 'New-OEREligibleRoleAssignment' {
         }
         It 'does NOT open the policy when permanent is already allowed' {
             Mock -ModuleName Omnicit.EntraRBAC Get-OERPermanentPolicyState { [PSCustomObject]@{ PolicyId = '/pol1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $true } }
-            Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy { [PSCustomObject]@{ PolicyId = 'pol-1' } }
+            Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy { [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' } }
             New-OEREligibleRoleAssignment -Role 'Reader' -User 'a' -Subscription 'Prod' -Permanent -Confirm:$false
             Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy -Times 0
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly
@@ -228,7 +228,7 @@ Describe 'New-OEREligibleRoleAssignment' {
         }
         It 'degrades and still grants when the pre-check read fails' {
             Mock -ModuleName Omnicit.EntraRBAC Get-OERPermanentPolicyState { throw 'read failed' }
-            Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy { [PSCustomObject]@{ PolicyId = 'pol-1' } }
+            Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy { [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' } }
             New-OEREligibleRoleAssignment -Role 'Reader' -User 'a' -Subscription 'Prod' -Permanent -Confirm:$false
             Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy -Times 0
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly
@@ -242,9 +242,9 @@ Describe 'New-OEREligibleRoleAssignment' {
             Mock -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal { [PSCustomObject]@{ PrincipalId = 'p1'; PrincipalType = 'User' } }
             Mock -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' }
             Mock -ModuleName Omnicit.EntraRBAC Get-OERPermanentPolicyState {
-                [PSCustomObject]@{ PolicyId = 'pol-1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $false }
+                [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $false }
             }
-            Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy { [PSCustomObject]@{ PolicyId = 'pol-1' } }
+            Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy { [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' } }
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest {
                 [PSCustomObject]@{ id = 'req1'; name = 'req1'; properties = [PSCustomObject]@{
                         scope = '/subscriptions/s1'; roleDefinitionId = 'rd1'; principalId = 'p1'; principalType = 'User'
@@ -269,8 +269,8 @@ Describe 'New-OEREligibleRoleAssignment' {
                     Set-Item -Path function:script:Resolve-OERScope -Value { '/subscriptions/s1' }
                     Set-Item -Path function:script:Resolve-OERPrincipal -Value { [PSCustomObject]@{ PrincipalId = 'p1'; PrincipalType = 'User' } }
                     Set-Item -Path function:script:Resolve-OERRoleDefinitionId -Value { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' }
-                    Set-Item -Path function:script:Get-OERPermanentPolicyState -Value { [PSCustomObject]@{ PolicyId = 'pol-1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $false } }
-                    Set-Item -Path function:script:Set-OERRoleManagementPolicy -Value { $script:OERTestCalls.Add('open'); [PSCustomObject]@{ PolicyId = 'pol-1' } }
+                    Set-Item -Path function:script:Get-OERPermanentPolicyState -Value { [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $false } }
+                    Set-Item -Path function:script:Set-OERRoleManagementPolicy -Value { $script:OERTestCalls.Add('open'); [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' } }
                     Set-Item -Path function:script:Invoke-OERArmRequest -Value { $script:OERTestCalls.Add('grant') }
                     Set-Item -Path function:script:ConvertTo-OERRoleScheduleRequest -Value { }
                 }
@@ -325,7 +325,7 @@ Describe 'New-OEREligibleRoleAssignment' {
 
         It 'warns about the blast radius BEFORE the operator is asked, and opens before granting' {
             $Order = [System.Collections.Generic.List[string]]::new()
-            Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy { $Order.Add('open'); [PSCustomObject]@{ PolicyId = 'pol-1' } }
+            Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy { $Order.Add('open'); [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' } }
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { $Order.Add('grant'); [PSCustomObject]@{ id = 'req-1'; properties = [PSCustomObject]@{ status = 'Provisioned' } } }
             $Warnings = New-OEREligibleRoleAssignment -Role 'Reader' -Subscription 'Prod' -User 'anna@contoso.com' -Permanent -Confirm:$false 3>&1 |
                 Where-Object { $_ -is [System.Management.Automation.WarningRecord] }
@@ -349,13 +349,13 @@ Describe 'New-OEREligibleRoleAssignment' {
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { $Order.Add('grant'); throw 'ARM rejected the request' }
             Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy {
                 if ($AllowPermanentEligibility) { $Order.Add('open') } else { $Order.Add('rollback') }
-                [PSCustomObject]@{ PolicyId = 'pol-1' }
+                [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' }
             }
             New-OEREligibleRoleAssignment -Role 'Reader' -Subscription 'Prod' -User 'anna@contoso.com' -Permanent -Confirm:$false `
                 -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err
             $Order -join ',' | Should -Be 'open,grant,rollback'
             Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter {
-                $PolicyId -eq 'pol-1' -and $AllowPermanentEligibility -eq $false
+                $PolicyId -eq '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' -and $AllowPermanentEligibility -eq $false
             }
             # -ErrorVariable also collects every record the mock layers raise as the refused PUT
             # unwinds; the cmdlet's OWN records are the ones that carry its name, in the order written.
@@ -363,8 +363,8 @@ Describe 'New-OEREligibleRoleAssignment' {
             $Own.Count | Should -Be 2
             $Own[0].FullyQualifiedErrorId | Should -BeExactly 'PolicyOpenedButGrantFailed,New-OEREligibleRoleAssignment'
             $Own[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidOperation)
-            $Own[0].TargetObject | Should -BeExactly 'pol-1'
-            $Own[0].Exception.Message | Should -BeExactly ("The eligible role assignment failed after role management policy 'pol-1' had " +
+            $Own[0].TargetObject | Should -BeExactly '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'
+            $Own[0].Exception.Message | Should -BeExactly ("The eligible role assignment failed after role management policy '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' had " +
                 'been opened to allow permanent assignments. It was rolled back to disallow permanent assignments. The request ' +
                 'failed with: ARM rejected the request')
             # The grant's own record, re-published unchanged.
@@ -377,7 +377,7 @@ Describe 'New-OEREligibleRoleAssignment' {
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { $Order.Add('grant'); throw 'ARM rejected the request' }
             Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy {
                 if ($AllowPermanentEligibility) { $Order.Add('open') } else { $Order.Add('rollback') }
-                [PSCustomObject]@{ PolicyId = 'pol-1' }
+                [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' }
             }
             $Thrown = $null
             try {
@@ -389,7 +389,7 @@ Describe 'New-OEREligibleRoleAssignment' {
             }
             $Order -join ',' | Should -Be 'open,grant,rollback,error'
             $Thrown.FullyQualifiedErrorId | Should -BeExactly 'PolicyOpenedButGrantFailed,New-OEREligibleRoleAssignment'
-            $Thrown.Exception.Message | Should -BeExactly ("The eligible role assignment failed after role management policy 'pol-1' had " +
+            $Thrown.Exception.Message | Should -BeExactly ("The eligible role assignment failed after role management policy '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' had " +
                 'been opened to allow permanent assignments. It was rolled back to disallow permanent assignments. The request ' +
                 'failed with: ARM rejected the request')
         }
@@ -405,9 +405,9 @@ Describe 'New-OEREligibleRoleAssignment' {
             $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,New-OEREligibleRoleAssignment' })
             $Own.Count | Should -Be 2
             $Own[0].FullyQualifiedErrorId | Should -BeExactly 'PolicyOpenedButGrantFailed,New-OEREligibleRoleAssignment'
-            $Own[0].Exception.Message | Should -BeExactly ("The eligible role assignment failed after role management policy 'pol-1' had " +
+            $Own[0].Exception.Message | Should -BeExactly ("The eligible role assignment failed after role management policy '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' had " +
                 "been opened to allow permanent assignments. The rollback ALSO failed, so the policy is still open. Run " +
-                "'Set-OERRoleManagementPolicy -PolicyId ''pol-1'' -AllowPermanentEligibility `$false' to close it. The request " +
+                "'Set-OERRoleManagementPolicy -PolicyId ''/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'' -AllowPermanentEligibility `$false' to close it. The request " +
                 'failed with: ARM rejected the request')
             $Own[1].FullyQualifiedErrorId | Should -BeExactly 'ARM rejected the request,New-OEREligibleRoleAssignment'
             # The refused grant's record and the failed rollback's record.
@@ -451,14 +451,14 @@ Describe 'New-OEREligibleRoleAssignment' {
                 $script:Order = [System.Collections.Generic.List[string]]::new()
                 $script:RollbackErrorId = 'NoChange'
                 $script:RollbackMessage = 'No applicable policy rule changed.'
-                $script:OpenedText = "The eligible role assignment failed after role management policy 'pol-1' had been opened to allow permanent assignments."
+                $script:OpenedText = "The eligible role assignment failed after role management policy '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' had been opened to allow permanent assignments."
                 $script:RefusedText = ' The request failed with: ARM rejected the request'
                 $script:Grant = @{ Role = 'Reader'; Subscription = 'Prod'; User = 'anna@contoso.com'; Permanent = $true; Confirm = $false; WarningAction = 'SilentlyContinue' }
                 Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { $script:Order.Add('grant'); throw 'ARM rejected the request' }
                 Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy {
                     [CmdletBinding(SupportsShouldProcess)]
                     param([string]$PolicyId, [bool]$AllowPermanentEligibility, [bool]$AllowPermanentActiveAssignment)
-                    if ($AllowPermanentEligibility) { $script:Order.Add('open'); return [PSCustomObject]@{ PolicyId = 'pol-1' } }
+                    if ($AllowPermanentEligibility) { $script:Order.Add('open'); return [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' } }
                     $script:Order.Add('rollback')
                     $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
                             [System.Exception]::new($script:RollbackMessage), $script:RollbackErrorId,
@@ -475,7 +475,7 @@ Describe 'New-OEREligibleRoleAssignment' {
                 $Own.Count | Should -Be 2
                 $Own[0].FullyQualifiedErrorId | Should -BeExactly 'PolicyOpenedButGrantFailed,New-OEREligibleRoleAssignment'
                 $Own[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidOperation)
-                $Own[0].TargetObject | Should -BeExactly 'pol-1'
+                $Own[0].TargetObject | Should -BeExactly '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'
                 $Own[0].Exception.Message | Should -BeExactly ($script:OpenedText + ' ' + $script:NoChangeRollbackText + $script:RefusedText)
                 $Own[1].FullyQualifiedErrorId | Should -BeExactly 'ARM rejected the request,New-OEREligibleRoleAssignment'
                 # The refused grant's record and the rollback's record: NoChange is scrubbed like any failure.
@@ -512,7 +512,7 @@ Describe 'New-OEREligibleRoleAssignment' {
                 $RevertText = if ($NoChange) {
                     $script:NoChangeRollbackText
                 } else {
-                    "The rollback ALSO failed, so the policy is still open. Run 'Set-OERRoleManagementPolicy -PolicyId ''pol-1'' " +
+                    "The rollback ALSO failed, so the policy is still open. Run 'Set-OERRoleManagementPolicy -PolicyId ''/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'' " +
                     "-AllowPermanentEligibility `$false' to close it."
                 }
                 $Own[0].Exception.Message | Should -BeExactly ($script:OpenedText + ' ' + $RevertText + $script:RefusedText)
@@ -535,11 +535,11 @@ Describe 'New-OEREligibleRoleAssignment' {
             Mock -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal { [PSCustomObject]@{ PrincipalId = 'p1'; PrincipalType = 'User' } }
             Mock -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' }
             Mock -ModuleName Omnicit.EntraRBAC Get-OERPermanentPolicyState {
-                [PSCustomObject]@{ PolicyId = 'pol-1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $false }
+                [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $false }
             }
             Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy {
                 if ($AllowPermanentEligibility) { $script:Order.Add('open') } else { $script:Order.Add('rollback') }
-                [PSCustomObject]@{ PolicyId = 'pol-1' }
+                [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' }
             }
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest {
                 $script:Order.Add('grant')
@@ -556,7 +556,7 @@ Describe 'New-OEREligibleRoleAssignment' {
             $script:FailedMessage = "Azure Resource Manager accepted the eligible role assignment request 'req-f1' (AdminAssign) of role " +
                 "'/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' for principal 'p1' at scope '/subscriptions/s1' " +
                 'but answered status Failed, so nothing was granted.'
-            $script:OpenedText = " Role management policy 'pol-1' had been opened to allow permanent assignments before the request was sent."
+            $script:OpenedText = " Role management policy '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' had been opened to allow permanent assignments before the request was sent."
             $script:Grant = @{ Role = 'Reader'; Subscription = 'Prod'; User = 'anna@contoso.com'; Confirm = $false; WarningAction = 'SilentlyContinue' }
         }
 
@@ -617,7 +617,7 @@ Describe 'New-OEREligibleRoleAssignment' {
             # stops the pipeline can skip it.
             $script:Order -join ',' | Should -Be 'open,grant,rollback,emit:Failed'
             Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter {
-                $PolicyId -eq 'pol-1' -and $AllowPermanentEligibility -eq $false
+                $PolicyId -eq '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' -and $AllowPermanentEligibility -eq $false
             }
             # One record, EligibilityRequestFailed: the request was accepted, not refused, so this is
             # not PolicyOpenedButGrantFailed, but it carries the same rollback text.
@@ -631,7 +631,7 @@ Describe 'New-OEREligibleRoleAssignment' {
         It 'names the policy left open, and how to close it, when the rollback after a Failed answer ALSO fails' {
             Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
             Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy {
-                if ($AllowPermanentEligibility) { $script:Order.Add('open'); return [PSCustomObject]@{ PolicyId = 'pol-1' } }
+                if ($AllowPermanentEligibility) { $script:Order.Add('open'); return [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' } }
                 $script:Order.Add('rollback')
                 throw 'rollback forbidden'
             }
@@ -643,7 +643,7 @@ Describe 'New-OEREligibleRoleAssignment' {
             $Reported.Count | Should -Be 1
             $Reported[0].FullyQualifiedErrorId | Should -BeExactly 'EligibilityRequestFailed,New-OEREligibleRoleAssignment'
             $Reported[0].Exception.Message | Should -BeExactly ($script:FailedMessage + $script:OpenedText +
-                " The rollback ALSO failed, so the policy is still open. Run 'Set-OERRoleManagementPolicy -PolicyId ''pol-1'' " +
+                " The rollback ALSO failed, so the policy is still open. Run 'Set-OERRoleManagementPolicy -PolicyId ''/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'' " +
                 "-AllowPermanentEligibility `$false' to close it.")
             # The failed rollback's record is scrubbed, as on the refused-grant path.
             Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
@@ -701,7 +701,7 @@ Describe 'New-OEREligibleRoleAssignment' {
                 Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy {
                     [CmdletBinding(SupportsShouldProcess)]
                     param([string]$PolicyId, [bool]$AllowPermanentEligibility, [bool]$AllowPermanentActiveAssignment)
-                    if ($AllowPermanentEligibility) { $script:Order.Add('open'); return [PSCustomObject]@{ PolicyId = 'pol-1' } }
+                    if ($AllowPermanentEligibility) { $script:Order.Add('open'); return [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' } }
                     $script:Order.Add('rollback')
                     $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
                             [System.Exception]::new('No applicable policy rule changed.'), 'NoChange',
@@ -755,7 +755,7 @@ Describe 'New-OEREligibleRoleAssignment' {
             Mock -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal { [PSCustomObject]@{ PrincipalId = 'p1'; PrincipalType = 'User' } }
             Mock -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' }
             Mock -ModuleName Omnicit.EntraRBAC Get-OERPermanentPolicyState {
-                [PSCustomObject]@{ PolicyId = 'pol-1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $false }
+                [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $false }
             }
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest {
                 switch ($Method) {
@@ -792,7 +792,7 @@ Describe 'New-OEREligibleRoleAssignment' {
         It 'writes NoChange, composed as NoChange,Set-OERRoleManagementPolicy, when it reads the policy as already disallowing the permanent kind it is asked to disallow' {
             $Thrown = $null
             try {
-                Set-OERRoleManagementPolicy -PolicyId 'pol-1' -AllowPermanentEligibility $false -Confirm:$false -ErrorAction Stop | Out-Null
+                Set-OERRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' -AllowPermanentEligibility $false -Confirm:$false -ErrorAction Stop | Out-Null
             } catch {
                 $Thrown = $PSItem
             }
@@ -808,7 +808,7 @@ Describe 'New-OEREligibleRoleAssignment' {
             $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,New-OEREligibleRoleAssignment' })
             $Own.Count | Should -Be 2
             $Own[0].FullyQualifiedErrorId | Should -BeExactly 'PolicyOpenedButGrantFailed,New-OEREligibleRoleAssignment'
-            $Own[0].Exception.Message | Should -BeExactly ("The eligible role assignment failed after role management policy 'pol-1' had been opened to allow permanent assignments. " +
+            $Own[0].Exception.Message | Should -BeExactly ("The eligible role assignment failed after role management policy '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' had been opened to allow permanent assignments. " +
                 $script:NoChangeRollbackText + ' The request failed with: ARM rejected the request')
         }
 
@@ -822,7 +822,7 @@ Describe 'New-OEREligibleRoleAssignment' {
             $Own[0].FullyQualifiedErrorId | Should -BeExactly 'EligibilityRequestFailed,New-OEREligibleRoleAssignment'
             $Own[0].Exception.Message | Should -BeExactly ("Azure Resource Manager accepted the eligible role assignment request 'req-f1' (AdminAssign) of role " +
                 "'/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' for principal 'p1' at scope '/subscriptions/s1' " +
-                'but answered status Failed, so nothing was granted. Role management policy ''pol-1'' had been opened to allow permanent assignments before the request was sent. ' +
+                'but answered status Failed, so nothing was granted. Role management policy ''/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'' had been opened to allow permanent assignments before the request was sent. ' +
                 $script:NoChangeRollbackText)
         }
     }
@@ -880,7 +880,7 @@ Describe 'New-OEREligibleRoleAssignment' {
             Mock -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal { [PSCustomObject]@{ PrincipalId = 'p1'; PrincipalType = 'User' } }
             Mock -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' }
             Mock -ModuleName Omnicit.EntraRBAC Get-OERPermanentPolicyState {
-                [PSCustomObject]@{ PolicyId = 'pol-1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $false }
+                [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $false }
             }
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest {
                 switch ($Method) {
@@ -941,7 +941,7 @@ Describe 'New-OEREligibleRoleAssignment' {
             $Property = Get-TestMessageSegment -Message $Message -After ' and, if ' -Before ' is True, run '
             $Property | Should -BeExactly 'AllowPermanentEligibility'
             $Command = Get-TestLiteralValue -Literal (Get-TestMessageSegment -Message $Message -After 'Confirm with ' -Before ' and, if ')
-            $Command | Should -BeExactly 'Get-OERRoleManagementPolicy -PolicyId ''pol-1'''
+            $Command | Should -BeExactly 'Get-OERRoleManagementPolicy -PolicyId ''/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'''
             # The policy the open left behind: its expiration rule no longer requires an expiration.
             $script:Order.Clear()
             $script:ExpirationRequired = $false
@@ -949,7 +949,7 @@ Describe 'New-OEREligibleRoleAssignment' {
             $script:Order -join ',' | Should -Be 'get'
             $Open.Count | Should -Be 1
             $Open[0].PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.RoleManagementPolicy'
-            $Open[0].PolicyId | Should -BeExactly 'pol-1'
+            $Open[0].PolicyId | Should -BeExactly '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'
             $Open[0].PSObject.Properties.Name | Should -Contain $Property
             $Open[0].$Property | Should -BeOfType [bool]
             $Open[0].$Property | Should -BeTrue
@@ -969,7 +969,7 @@ Describe 'New-OEREligibleRoleAssignment' {
             $Message = Get-TestRollbackMessage -Grant $script:Grant -ErrorId $ErrorId
             $script:Order -join ',' | Should -Be 'get,patch,put,get'
             $Command = Get-TestLiteralValue -Literal (Get-TestMessageSegment -Message $Message -After ' is True, run ' -Before ' to close it.')
-            $Command | Should -BeExactly 'Set-OERRoleManagementPolicy -PolicyId ''pol-1'' -AllowPermanentEligibility $false'
+            $Command | Should -BeExactly 'Set-OERRoleManagementPolicy -PolicyId ''/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'' -AllowPermanentEligibility $false'
             # The policy the open left behind, read by the command; nothing was PATCHed since the open.
             $script:Order.Clear()
             $script:Patches.Clear()
@@ -1242,7 +1242,7 @@ $Module = Get-Module Omnicit.EntraRBAC
     Set-Item -Path function:script:Resolve-OERPrincipal -Value { [pscustomobject]@{ PrincipalId = 'p1'; PrincipalType = 'User' } }
     Set-Item -Path function:script:Resolve-OERRoleDefinitionId -Value { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' }
     Set-Item -Path function:script:Get-OERPermanentPolicyState -Value {
-        [pscustomobject]@{ PolicyId = 'pol-1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $false }
+        [pscustomobject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $false }
     }
     Set-Item -Path function:script:Set-OERRoleManagementPolicy -Value {
         # SupportsShouldProcess so the rollback's -Confirm:$false binds; the fake never asks.
@@ -1262,7 +1262,7 @@ $Result = New-OEREligibleRoleAssignment -Role 'Reader' -Subscription 'Prod' -Use
 'END'
 '@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#STOP#', $Stop))
         }
-        $script:PolicyOpenedButGrantFailedText = "The eligible role assignment failed after role management policy 'pol-1' had been opened " +
+        $script:PolicyOpenedButGrantFailedText = "The eligible role assignment failed after role management policy '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' had been opened " +
             'to allow permanent assignments. It was rolled back to disallow permanent assignments. The request failed with: ARM rejected the request'
         function Get-TestLoggedLine ([string]$Log) {
             if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
@@ -1314,7 +1314,7 @@ Describe 'New-OEREligibleRoleAssignment: the rollback is not asked again under a
             Path     = 'a refused grant'
             Grant    = "throw 'ARM rejected the request'"
             Expected = @(
-                ("PolicyOpenedButGrantFailed,New-OEREligibleRoleAssignment|The eligible role assignment failed after role management policy 'pol-1' " +
+                ("PolicyOpenedButGrantFailed,New-OEREligibleRoleAssignment|The eligible role assignment failed after role management policy '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' " +
                     'had been opened to allow permanent assignments. It was rolled back to disallow permanent assignments. The request failed ' +
                     'with: ARM rejected the request')
                 'ARM rejected the request,New-OEREligibleRoleAssignment|ARM rejected the request'
@@ -1326,7 +1326,7 @@ Describe 'New-OEREligibleRoleAssignment: the rollback is not asked again under a
             Expected = @(
                 ("EligibilityRequestFailed,New-OEREligibleRoleAssignment|Azure Resource Manager accepted the eligible role assignment request 'req-f1' " +
                     "(AdminAssign) of role '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' for principal 'p1' at scope " +
-                    "'/subscriptions/s1' but answered status Failed, so nothing was granted. Role management policy 'pol-1' had been opened to " +
+                    "'/subscriptions/s1' but answered status Failed, so nothing was granted. Role management policy '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' had been opened to " +
                     'allow permanent assignments before the request was sent. It was rolled back to disallow permanent assignments.')
             )
         }
@@ -1344,7 +1344,7 @@ $Module = Get-Module Omnicit.EntraRBAC
     Set-Item -Path function:script:Resolve-OERPrincipal -Value { [pscustomobject]@{ PrincipalId = 'p1'; PrincipalType = 'User' } }
     Set-Item -Path function:script:Resolve-OERRoleDefinitionId -Value { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' }
     Set-Item -Path function:script:Get-OERPermanentPolicyState -Value {
-        [pscustomobject]@{ PolicyId = 'pol-1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $false }
+        [pscustomobject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $false }
     }
     Set-Item -Path function:script:Set-OERRoleManagementPolicy -Value {
         [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
@@ -1376,7 +1376,7 @@ New-OEREligibleRoleAssignment -Role 'Reader' -Subscription 'Prod' -User 'anna@co
         # Two prompts, the assignment's and the open's; the rollback asks none.
         @($Run.Prompts).Count | Should -Be 2
         $Run.Prompts[0] | Should -BeLike "*eligible role 'Reader' for User 'anna@contoso.com' at scope '/subscriptions/s1'*"
-        $Run.Prompts[1] | Should -BeLike "*Set AllowPermanentEligibility True*role management policy 'pol-1'*"
+        $Run.Prompts[1] | Should -BeLike "*Set AllowPermanentEligibility True*role management policy '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'*"
         # The rollback was really written, so the record's "It was rolled back" is true.
         @(Get-TestLoggedLine -Log $Log) | Should -Be @('open', 'grant PUT', 'rollback')
         @($Run.Output) | Should -Be (@($Expected) + 'END')
@@ -1463,7 +1463,7 @@ Describe 'New-OEREligibleRoleAssignment: the commands shown in messages (BL-113)
         @{ Label = 'a straight apostrophe (U+0027)'; Name = "Reader's role" }
         @{ Label = 'a right single quotation mark (U+2019)'; Name = ('Reader' + [char]0x2019 + 's role') }
     ) {
-        $script:BL113PolicyId = 'pol-1'
+        $script:BL113PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'
         $script:BL113OpenThrows = $true
         $Err = $null
         $null = New-OEREligibleRoleAssignment -Role $Name -User 'anna@contoso.com' -Subscription 'Prod' -Permanent -Confirm:$false `

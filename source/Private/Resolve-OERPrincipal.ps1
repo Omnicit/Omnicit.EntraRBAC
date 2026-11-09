@@ -24,7 +24,9 @@ function Resolve-OERPrincipal {
     AmbiguousName ErrorRecord, which lists the candidate ids, propagates unchanged, so a caller can
     tell it apart with Test-OERAmbiguousNameError. A lookup that fails -- a 403, an exhausted 429, a
     5xx -- propagates unchanged as well; it is never a principal that matches nothing. Supplying none
-    or more than one of the three parameters is a caller error and throws a plain message.
+    of the three parameters throws an ErrorRecord with ErrorId ResolverInputMissing, and more than
+    one throws an ErrorRecord with ErrorId MutuallyExclusiveParameter, both category
+    InvalidArgument: a caller error, which is never a principal that matches nothing.
 
     .PARAMETER User
     A user principal name or user object id (GUID).

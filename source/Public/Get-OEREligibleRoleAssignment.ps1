@@ -12,8 +12,10 @@ function Get-OEREligibleRoleAssignment {
     Microsoft Graph) applies $filter=assignedTo('<objectId>') so eligibilities inherited via group membership
     are included. -AtScope applies $filter=atScope()
     (eligibilities at or above the scope). -AsTarget applies $filter=asTarget() (the caller's own
-    eligibilities). A principal filter, -AtScope, and -AsTarget are mutually exclusive. Output objects
-    are tagged Omnicit.EntraRBAC.EligibleRoleAssignment and expose RoleEligibilityScheduleId,
+    eligibilities). A principal filter, -AtScope, and -AsTarget are mutually exclusive. Naming more
+    than one of -User, -Group and -ServicePrincipal is refused with a non-terminating
+    MutuallyExclusiveParameter error before any principal lookup or role assignment read. Output
+    objects are tagged Omnicit.EntraRBAC.EligibleRoleAssignment and expose RoleEligibilityScheduleId,
     PrincipalId, RoleDefinitionId, and Scope so they pipe into Remove-OEREligibleRoleAssignment and
     Enable-OEREligibleRoleAssignment. Friendly RoleName/PrincipalDisplayName are returned directly
     from the API. Requires an ARM token; authentication is ensured via Initialize-OERAuth -IncludeARM.
@@ -120,6 +122,13 @@ function Get-OEREligibleRoleAssignment {
                 $PrincipalTarget = @($User, $Group, $ServicePrincipal) | Where-Object { $_ } | Select-Object -First 1
                 if (Test-OERAmbiguousNameError -Record $PSItem) {
                     Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'AmbiguousPrincipalName' -Category InvalidArgument -TargetObject $PrincipalTarget -Cmdlet $PSCmdlet
+                    return
+                }
+                # Two of -User, -Group and -ServicePrincipal are a mistake in the call, not a principal that was not found:
+                # published as the resolver's own id, before PrincipalNotFound. No principal has been looked up and no role assignment
+                # read at this point.
+                if (([string]$PSItem.FullyQualifiedErrorId).StartsWith('MutuallyExclusiveParameter', [System.StringComparison]::Ordinal)) {
+                    Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'MutuallyExclusiveParameter' -Category InvalidArgument -TargetObject $PrincipalTarget -Cmdlet $PSCmdlet
                     return
                 }
                 Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'PrincipalNotFound' -Category ObjectNotFound -TargetObject $PrincipalTarget -Cmdlet $PSCmdlet

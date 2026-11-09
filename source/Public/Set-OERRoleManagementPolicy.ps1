@@ -58,7 +58,11 @@ function Set-OERRoleManagementPolicy {
     use the management group name.
 
     .PARAMETER PolicyId
-    The full ARM id of the policy to update directly (binds from the pipeline by property name).
+    The full ARM id of the policy to update directly (binds from the pipeline by property name):
+    a path that starts with '/'. Any other value -- a Microsoft Graph directory role policy id,
+    for example -- is refused with a non-terminating InvalidPolicyId error before any approver
+    lookup, any Azure Resource Manager or Microsoft Graph request and any -WhatIf or -Confirm;
+    use Set-OERDirectoryRoleManagementPolicy for a directory role policy.
 
     .PARAMETER ActivationMaxHours
     Maximum end-user activation window in hours (1-24); sets the Expiration_EndUser_Assignment rule.
@@ -266,6 +270,28 @@ function Set-OERRoleManagementPolicy {
             }
         }
 
+        # A call that binds no setting at all is refused here, ahead of the policy id and of any approver lookup, in the
+        # order of Set-OERDirectoryRoleManagementPolicy. A call that binds an approver parameter is not refused here:
+        # approvers named are a setting, and an approver list naming nobody was refused as ApproverRequired above.
+        if ($Setting.Count -eq 0 -and -not ($PSBoundParameters.ContainsKey('ApproverUser') -or $PSBoundParameters.ContainsKey('ApproverGroup'))) {
+            $NothingToUpdateTarget = if ($PSCmdlet.ParameterSetName -eq 'ByPolicyId') { $PolicyId } else { $Role }
+            Write-CmdletError -Message ([System.Exception]::new('No policy change was supplied. Specify at least one setting parameter.')) -ErrorId 'NothingToUpdate' -Category InvalidArgument -TargetObject $NothingToUpdateTarget -Cmdlet $PSCmdlet
+            return
+        }
+
+        # Only an Azure Resource Manager path can go to Azure Resource Manager: a Microsoft Graph directory role
+        # policy id (piped from Get-OERDirectoryRoleManagementPolicy, which has the same output type) or a PIM for Groups
+        # policy id is refused here, before the approver lookups, any request and ShouldProcess. The test is the leading
+        # '/' alone: an Azure resource name can legally hold a space, so no other character is refused.
+        if ($PSCmdlet.ParameterSetName -eq 'ByPolicyId' -and -not $PolicyId.StartsWith('/', [System.StringComparison]::Ordinal)) {
+            Write-CmdletError -Message ([System.Exception]::new(
+                    "The policy id '$PolicyId' is not an Azure Resource Manager role management policy id (a path " +
+                    "that starts with '/'). Use Set-OERDirectoryRoleManagementPolicy to update a Microsoft Entra " +
+                    'directory role policy by its Microsoft Graph id.')) `
+                -ErrorId 'InvalidPolicyId' -Category InvalidArgument -TargetObject $PolicyId -Cmdlet $PSCmdlet
+            return
+        }
+
         # Approvers are resolved before the scope, the role and the policy, all or nothing. This cmdlet
         # calls Resolve-OERPrincipal itself (its approver body and blank-value rule differ from
         # Resolve-OERApproverInput's), so a value that matches nothing reaches this catch as the
@@ -305,12 +331,6 @@ function Set-OERRoleManagementPolicy {
                 return
             }
             $Setting.PrimaryApprovers = $Approvers.ToArray()
-        }
-
-        if ($Setting.Count -eq 0) {
-            $NothingToUpdateTarget = if ($PSCmdlet.ParameterSetName -eq 'ByPolicyId') { $PolicyId } else { $Role }
-            Write-CmdletError -Message ([System.Exception]::new('No policy change was supplied. Specify at least one setting parameter.')) -ErrorId 'NothingToUpdate' -Category InvalidArgument -TargetObject $NothingToUpdateTarget -Cmdlet $PSCmdlet
-            return
         }
 
         $RoleName = $null

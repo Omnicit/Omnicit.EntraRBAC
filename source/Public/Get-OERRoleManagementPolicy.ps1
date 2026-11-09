@@ -52,7 +52,11 @@ function Get-OERRoleManagementPolicy {
     use the management group name.
 
     .PARAMETER PolicyId
-    The full ARM id of the role management policy to read directly.
+    The full ARM id of the role management policy to read directly: a path that starts with
+    '/', which is what this cmdlet's own output carries. Any other value -- a Microsoft Graph
+    directory role policy id, for example -- is refused with a non-terminating InvalidPolicyId
+    error before any Azure Resource Manager or Microsoft Graph request; use
+    Get-OERDirectoryRoleManagementPolicy for a directory role policy.
 
     .PARAMETER TenantId
     Optional tenant id or domain forwarded to Initialize-OERAuth.
@@ -123,6 +127,18 @@ function Get-OERRoleManagementPolicy {
     }
     process {
         if ($PSCmdlet.ParameterSetName -eq 'ByPolicyId') {
+            # Only an Azure Resource Manager path can go to Azure Resource Manager: a Microsoft Graph directory role
+            # policy id (piped from Get-OERDirectoryRoleManagementPolicy, which has the same output type) or a PIM for Groups
+            # policy id is refused here, before any request. The test is the leading '/' alone: an Azure resource name can
+            # legally hold a space, so no other character is refused.
+            if (-not $PolicyId.StartsWith('/', [System.StringComparison]::Ordinal)) {
+                Write-CmdletError -Message ([System.Exception]::new(
+                        "The policy id '$PolicyId' is not an Azure Resource Manager role management policy id (a path " +
+                        "that starts with '/'). Use Get-OERDirectoryRoleManagementPolicy to read a Microsoft Entra " +
+                        'directory role policy by its Microsoft Graph id.')) `
+                    -ErrorId 'InvalidPolicyId' -Category InvalidArgument -TargetObject $PolicyId -Cmdlet $PSCmdlet
+                return
+            }
             try {
                 $Policy = Invoke-OERArmRequest -Path "$PolicyId`?api-version=2020-10-01"
             } catch {

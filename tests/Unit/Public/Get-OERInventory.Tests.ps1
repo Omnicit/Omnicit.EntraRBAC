@@ -5213,6 +5213,29 @@ Describe 'Get-OERInventory' {
             $Notice[0].MessageData.Names[0].Count | Should -Be 2
         }
 
+        It 'ends the Causes clause in exactly one full stop whether a shared-name cause stands last or is followed by another cause (BL-173a)' {
+            # Two shared names: the first cause is followed by the second, the second stands last.
+            $script:NiGroups = @(
+                New-NiGroup -Name 'Admins' -Id $script:NiSec1
+                New-NiGroup -Name 'Ops' -Id $script:NiSec2
+            )
+            $script:NiIndex = New-NiIndex -IdsByName @{ 'Admins' = @($script:NiSec1, $script:NiM365a); 'Ops' = @($script:NiSec2, $script:NiM365b) }
+            $null = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info
+            $Partial = Get-NiPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            $Message = $Partial[0].Exception.Message
+            $Causes = $Message.Substring($Message.IndexOf('Causes: '))
+            $Causes | Should -Match 'share the name groups/Admins .*; 2 live objects share the name groups/Ops ' -Because 'one of the two shared-name causes is followed by the other'
+            $Causes | Should -Not -Match '\.\.' -Because 'a cause''s own full stop and the clause''s must not both be written'
+            $Causes | Should -Not -Match '\.;' -Because 'a cause in the middle is followed by a semicolon alone'
+            $Causes | Should -Match '[^.]\.$' -Because 'the clause ends in exactly one full stop'
+            $Message | Should -Not -Match '\.\.'
+            $Message | Should -Not -Match '\.;'
+            $Message | Should -Match '[^.]\.$'
+            # Reach proof: both names were left out.
+            (Get-NiNotice -Record @($Info))[0].MessageData.Names.Count | Should -Be 2
+        }
+
         It 'counts the larger of the listed groups and the index, so an index that lags behind the listing never lowers the count' {
             # Two listed groups of one name, and an index read before the second was created.
             $script:NiGroups = @(
@@ -6793,7 +6816,7 @@ Describe 'Get-OERInventory' {
             $Partial.Count | Should -Be 1
             [string]$Partial[0].TargetObject | Should -Be 'administrativeUnits/AU-Dynamic/scopedRoles'
             $Causes = ($Partial[0].Exception.Message -split 'Causes: ')[1]
-            $Causes | Should -Match ([regex]::Escape('Could not read scoped roles for administrative unit au-dyn: Forbidden (403).'))
+            $Causes | Should -Match ([regex]::Escape('Could not read scoped roles for administrative unit au-dyn: Forbidden (403); '))
             $Causes | Should -Match ([regex]::Escape('Could not read members for a unit with no target: Bad gateway (502).'))
             $Causes | Should -Not -Match '429' -Because 'the dynamic unit''s members read is no gap'
         }
@@ -13257,5 +13280,13 @@ Describe 'Get-OERInventory exports a review of all assignments of a directory ro
         $Rows[0].Action | Should -Be 'Unchanged' -Because ([string]$Rows[0].Detail)
         Should -Invoke -ModuleName $script:moduleName Set-OERAccessReviewDefinition -Times 0 -Exactly
         Should -Invoke -ModuleName $script:moduleName New-OERAccessReviewDefinition -Times 0 -Exactly
+    }
+}
+
+Describe 'Get-OERInventory -AccessReviewFilter help (BL-173d)' {
+    It 'says which names Microsoft Graph matches itself, not that everything is matched client-side' {
+        $Text = (Get-Help Get-OERInventory -Parameter AccessReviewFilter).Description.Text -join ' '
+        $Text | Should -BeLike '*displayName eq*'
+        $Text | Should -Not -BeLike '*CLIENT-SIDE over the full (paged) list, because*'
     }
 }

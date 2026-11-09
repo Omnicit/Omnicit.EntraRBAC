@@ -456,11 +456,12 @@ function Get-OERInventory {
     A catalog id or display name that narrows the Catalogs and AccessPackages sections to one catalog.
 
     .PARAMETER AccessReviewFilter
-    An optional display-name pattern (wildcards supported, e.g. 'AR*') narrowing which access review
-    definitions to capture. Matching is performed CLIENT-SIDE over the full (paged) list, because the
-    accessReviews endpoint does not reliably support server-side name filtering. When omitted, every
-    definition is captured. This endpoint is heavily throttled, so a full capture may hit a 429 --
-    the section then warns and is skipped without failing the rest of the run.
+    An optional display name or wildcard pattern narrowing which access review definitions to capture. A
+    value with no wildcard character (* ? [ ]) is sent to Microsoft Graph as displayName eq '...', and when
+    the server returns nothing the full (paged) list is read and matched client-side, as for a pattern. A
+    value with a wildcard (for example 'AR*') is matched client-side over the full (paged) list. When
+    omitted, every definition is captured. This endpoint is heavily throttled, so a full capture may hit a
+    429 -- the section then warns and is skipped without failing the rest of the run.
 
     .PARAMETER Scope
     A raw ARM scope for the Azure sections (e.g. '/subscriptions/{id}'). A scope in a subscription of
@@ -944,9 +945,9 @@ function Get-OERInventory {
             if ($Undecided.Count -gt 0) {
                 foreach ($One in $Undecided) {
                     # The reason of a failed read ends in that read's own message, which may end with a period,
-                    # and the causes clause and the verbose line add their own: trimmed here, so neither ends in
-                    # '..'. The owner's Reason itself is left as it is. A Home verdict has no Reason, so the
-                    # id-less case says what is missing instead.
+                    # and the verbose line below adds one of its own: trimmed here so it does not double. The causes
+                    # clause drops a cause's closing full stop as well (Format-OERUnreadCauseClause). The owner's Reason
+                    # itself is left as it is. A Home verdict has no Reason, so the id-less case says what is missing instead.
                     $UndecidedCause = if ([string]$One.Verdict.Verdict -in @('Home', 'NoSubscription')) {
                         "the subscription check gave no subscription id for '$($One.Given)', so the subscription cannot be read by its id"
                     } else {
@@ -1916,9 +1917,8 @@ function Get-OERInventory {
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
                     $RaItems = @()
-                    # The reader's message is trimmed of trailing white space and then of trailing full stops: the
-                    # causes clause adds its own, and a message that ends in one (the role and policy lookups'
-                    # do) would show '..'. The same trim as the Undecided cause above (R-18).
+                    # The reader's message is trimmed of trailing white space and then of trailing full stops, the same trim
+                    # as the Undecided cause above (R-18). Format-OERUnreadCauseClause drops a cause's own closing full stop too.
                     Add-UnreadSection -Key 'roleAssignments' -Cause "Could not read role assignments: $(([string]$PSItem.Exception.Message).TrimEnd().TrimEnd('.'))"
                 }
 
@@ -2272,9 +2272,10 @@ function Get-OERInventory {
             # SilentlyContinue here means "captured", not "ignored": the records are inspected below.
             $ArReadErrors = $null
             $ArParams = if ($AccessReviewFilter) {
-                # -AccessReviewFilter is a display-name pattern (wildcards supported), matched
-                # client-side -- the accessReviews endpoint does not reliably support server-side
-                # name filtering.
+                # -AccessReviewFilter goes to Get-OERAccessReviewDefinition -DisplayName: a value with no
+                # wildcard character is sent to Microsoft Graph as displayName eq '...' (a server answer of
+                # nothing falls back to the paged read), and a value with a wildcard is matched client-side
+                # over the paged list.
                 @{ DisplayName = $AccessReviewFilter }
             }
             else {

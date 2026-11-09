@@ -550,3 +550,130 @@ Describe 'Get-OERRoleManagementPolicy through the real lookup helpers (Sprint 12
         @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'RoleDefinitionNotFound*' }).Count | Should -Be 0
     }
 }
+
+BeforeDiscovery {
+    $script:Task2GraphIds = @(
+        @{ Id = 'DirectoryRole_00000000-0000-0000-0000-000000000064_00000000-0000-0000-0000-000000000065' }
+        @{ Id = 'Group_00000000-0000-0000-0000-000000000064_member' }
+        @{ Id = '00000000-0000-0000-0000-000000000064' }
+        @{ Id = 'pol-1' }
+        @{ Id = ' /subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol1' }
+    )
+    $script:Task2ArmIds = @(
+        @{ Id = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol1' }
+        @{ Id = '/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Authorization/roleManagementPolicies/pol1' }
+        @{ Id = '/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Web/sites/my site/providers/Microsoft.Authorization/roleManagementPolicies/pol1' }
+        @{ Id = '/providers/Microsoft.Management/managementGroups/mg1/providers/Microsoft.Authorization/roleManagementPolicies/pol1' }
+    )
+}
+
+Describe 'Get-OERRoleManagementPolicy: a policy id that is not an ARM path (Sprint 14 step 1, BL-19)' {
+    BeforeEach { InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null } }
+
+    Context '-PolicyId that is not an ARM path (Sprint 14 step 1, BL-19)' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest {
+                [PSCustomObject]@{ properties = [PSCustomObject]@{ scope = '/subscriptions/s1'; rules = @() } }
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERScope { '/subscriptions/s1' }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' }
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERRoleManagementPolicyId {
+                [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol1'; RoleName = 'Reader'; Scope = '/subscriptions/s1'; EffectiveRules = @() }
+            }
+            $script:Own = {
+                param($Err, [string]$Id)
+                @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -eq "$Id,Get-OERRoleManagementPolicy" })
+            }
+        }
+
+        It 'refuses <Id> with one InvalidPolicyId record and sends nothing' -ForEach $script:Task2GraphIds {
+            Get-OERRoleManagementPolicy -PolicyId $Id -ErrorVariable Err -ErrorAction SilentlyContinue
+            $Hit = & $script:Own $Err 'InvalidPolicyId'
+            $Hit.Count | Should -Be 1
+            $Hit[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Hit[0].TargetObject | Should -Be $Id
+            $Hit[0].Exception.Message | Should -BeLike '*Get-OERDirectoryRoleManagementPolicy*'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -Exactly
+        }
+
+        It 'accepts the ARM path <Id> and reads it once' -ForEach $script:Task2ArmIds {
+            Get-OERRoleManagementPolicy -PolicyId $Id -ErrorVariable Err -ErrorAction SilentlyContinue
+            (& $script:Own $Err 'InvalidPolicyId').Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+                $Path -eq "$Id`?api-version=2020-10-01"
+            }
+        }
+
+        It 'refuses the Graph id in a pipeline and processes the ARM id' {
+            $Arm = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol1'
+            [PSCustomObject]@{ PolicyId = 'DirectoryRole_00000000-0000-0000-0000-000000000064_00000000-0000-0000-0000-000000000065' },
+            [PSCustomObject]@{ PolicyId = $Arm } |
+                Get-OERRoleManagementPolicy -ErrorVariable Err -ErrorAction SilentlyContinue
+            (& $script:Own $Err 'InvalidPolicyId').Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+                $Path -eq "$Arm`?api-version=2020-10-01"
+            }
+        }
+
+        It 'passes the cmdlet''s own output back in (round trip)' {
+            $Read = Get-OERRoleManagementPolicy -Role 'Reader' -Subscription 'Prod'
+            $Read.PolicyId | Should -BeLike '/*'
+            $Again = $Read | Get-OERRoleManagementPolicy -ErrorVariable Err -ErrorAction SilentlyContinue
+            (& $script:Own $Err 'InvalidPolicyId').Count | Should -Be 0
+            $Again.PolicyId | Should -Be $Read.PolicyId
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+                $Path -eq "$($Read.PolicyId)`?api-version=2020-10-01"
+            }
+        }
+    }
+}
+
+Describe 'Get-OERRoleManagementPolicy: the policy id refusal in a script with no try (Sprint 14 step 1, BL-19)' {
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        $script:Task2Scenario = {
+            param([string]$Log)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value {
+        # STUB
+    }
+    Set-Item -Path function:script:Remove-OERErrorRecord -Value { }
+    Set-Item -Path function:script:Resolve-OERPrincipal -Value {
+        param([string]$User, [string]$Group)
+        Add-Content -LiteralPath '#LOG#' -Value 'Resolve-OERPrincipal'
+        [pscustomobject]@{ PrincipalId = '11111111-1111-1111-1111-111111111111'; PrincipalType = 'User' }
+    }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        Add-Content -LiteralPath '#LOG#' -Value "Invoke-OERGraphRequest $Method"
+        @{}
+    }
+    Set-Item -Path function:script:Invoke-OERArmRequest -Value {
+        param([string]$Method = 'GET', [string]$Path, [hashtable]$Body)
+        Add-Content -LiteralPath '#LOG#' -Value "Invoke-OERArmRequest $Method"
+        [pscustomobject]@{ properties = [pscustomobject]@{ scope = '/subscriptions/s1'; rules = @() } }
+    }
+}
+"STUBBED:$(& $Module { [bool]((Get-Command Initialize-OERAuth).ScriptBlock.ToString() -match '# STUB') })"
+$null = Get-OERRoleManagementPolicy -PolicyId 'DirectoryRole_00000000-0000-0000-0000-000000000064_00000000-0000-0000-0000-000000000065' -ErrorVariable E -ErrorAction SilentlyContinue
+$Own = @($E | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERRoleManagementPolicy' })
+"FQID:$($Own[0].FullyQualifiedErrorId)"
+"COUNT:$($Own.Count)"
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")))
+        }
+    }
+
+    It 'reaches the end, writes InvalidPolicyId once and sends nothing' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (& $script:Task2Scenario -Log $Log)
+        ($Run.Output -join '|') | Should -Be 'STUBBED:True|FQID:InvalidPolicyId,Get-OERRoleManagementPolicy|COUNT:1|END'
+        (Test-Path -LiteralPath $Log) | Should -BeFalse
+    }
+}

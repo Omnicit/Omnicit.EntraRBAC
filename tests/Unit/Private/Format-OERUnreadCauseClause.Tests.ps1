@@ -71,6 +71,52 @@ Describe 'Format-OERUnreadCauseClause' {
         }
     }
 
+    Context 'a cause never ends with its own full stop (BL-173a)' {
+        BeforeDiscovery {
+            # Three kinds of cause text, each tried in the middle and last of a three-cause list.
+            $script:StopKinds = @('shared-name', 'graph-stop', 'no-stop')
+            $script:StopCases = foreach ($Kind in $script:StopKinds) {
+                foreach ($Position in 'middle', 'last') { @{ Kind = $Kind; Position = $Position } }
+            }
+        }
+
+        It 'ends in exactly one full stop with the <Kind> cause <Position>' -ForEach $script:StopCases {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Kind = $Kind; Position = $Position } {
+                param($Kind, $Position)
+                $Own = switch ($Kind) {
+                    'shared-name' { Get-OERSharedNameCause -Path 'groups/Admins' -Count 2 }
+                    'graph-stop' { 'Could not read members for group (429).' }
+                    'no-stop' { 'Could not read owners for group' }
+                }
+                $Own | Should -Not -BeNullOrEmpty
+                $Others = @('first other failure.', 'second other failure')
+                $Texts = if ($Position -eq 'middle') { @($Others[0], $Own, $Others[1]) } else { @($Others[0], $Others[1], $Own) }
+                $Cause = foreach ($T in $Texts) { [PSCustomObject]@{ Cause = $T; Target = '' } }
+                $Clause = Format-OERUnreadCauseClause -Cause $Cause
+                $Stripped = foreach ($T in $Texts) { $T.TrimEnd().TrimEnd('.') }
+                $Clause | Should -BeExactly " Causes: $($Stripped -join '; ')."
+                $Clause | Should -Match '[^.]\.$'
+                $Clause | Should -Not -Match '\.\.'
+                $Clause | Should -Not -Match '\.;'
+                $Clause | Should -Not -Match '\.,'
+                foreach ($S in $Stripped) { $Clause.Contains($S) | Should -BeTrue }
+            }
+        }
+
+        It 'leaves no full stop before the comma of the cap clause when a dropped cause follows a last shown cause ending in one' {
+            InModuleScope Omnicit.EntraRBAC {
+                $Cause = @(foreach ($N in 1..22) { [PSCustomObject]@{ Cause = "failure shape $N"; Target = '' } })
+                $Cause += [PSCustomObject]@{ Cause = 'last shown failure (429).'; Target = '' }
+                $Cause += [PSCustomObject]@{ Cause = 'dropped failure.'; Target = '' }
+                $Clause = Format-OERUnreadCauseClause -Cause $Cause
+                $Clause | Should -BeLike '*last shown failure (429), plus 1 more distinct cause(s) not shown*'
+                $Clause | Should -Not -Match '\.,'
+                $Clause | Should -Not -Match 'dropped failure'
+                $Clause | Should -Match '[^.]\.$'
+            }
+        }
+    }
+
     Context 'deduplication' {
         It 'shows one cause, the first message, for causes that differ only by their target id' {
             InModuleScope Omnicit.EntraRBAC {
@@ -79,9 +125,9 @@ Describe 'Format-OERUnreadCauseClause' {
                     [PSCustomObject]@{ Cause = "Could not read members for group 'g-2': Too many requests (429)."; Target = 'g-2' },
                     [PSCustomObject]@{ Cause = "Could not read members for group 'g-3': Too many requests (429)."; Target = 'g-3' }
                 )
-                # The clause adds its own full stop after the message's, as it always has.
+                # The message's own closing full stop is dropped; the clause supplies the one full stop.
                 Format-OERUnreadCauseClause -Cause $Cause |
-                    Should -BeExactly " Causes: Could not read members for group 'g-1': Too many requests (429).."
+                    Should -BeExactly " Causes: Could not read members for group 'g-1': Too many requests (429)."
             }
         }
 
@@ -92,7 +138,7 @@ Describe 'Format-OERUnreadCauseClause' {
                     [PSCustomObject]@{ Cause = "Could not read members for group 'g-2': Insufficient privileges."; Target = 'g-2' }
                 )
                 Format-OERUnreadCauseClause -Cause $Cause |
-                    Should -BeExactly " Causes: Could not read members for group 'g-1': Too many requests (429).; Could not read members for group 'g-2': Insufficient privileges.."
+                    Should -BeExactly " Causes: Could not read members for group 'g-1': Too many requests (429); Could not read members for group 'g-2': Insufficient privileges."
             }
         }
 

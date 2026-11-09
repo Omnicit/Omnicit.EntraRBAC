@@ -251,7 +251,7 @@ Describe 'Set-OERRoleManagementPolicy' {
         }
 
         It 'accepts the historical bare day count on -EligibleDuration' {
-            Set-OERRoleManagementPolicy -PolicyId 'pol-1' -EligibleDuration 365 -Confirm:$false | Out-Null
+            Set-OERRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' -EligibleDuration 365 -Confirm:$false | Out-Null
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -ParameterFilter {
                 $Method -eq 'PATCH' -and
                 (($Body.properties.rules | Where-Object { $_.id -eq 'Expiration_Admin_Eligibility' }).maximumDuration -eq 'P365D')
@@ -259,7 +259,7 @@ Describe 'Set-OERRoleManagementPolicy' {
         }
 
         It 'accepts the ISO string that Get-OERRoleManagementPolicy emits on -EligibleDuration' {
-            Set-OERRoleManagementPolicy -PolicyId 'pol-1' -EligibleDuration 'P365D' -Confirm:$false | Out-Null
+            Set-OERRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' -EligibleDuration 'P365D' -Confirm:$false | Out-Null
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -ParameterFilter {
                 $Method -eq 'PATCH' -and
                 (($Body.properties.rules | Where-Object { $_.id -eq 'Expiration_Admin_Eligibility' }).maximumDuration -eq 'P365D')
@@ -272,7 +272,7 @@ Describe 'Set-OERRoleManagementPolicy' {
             # no-op under the Task 12 value-aware comparison and never reach PATCH at all (that was
             # the original value here, asserting a touched-but-unchanged id). Use a value that
             # actually differs from the GET mock's baseline so this stays a real change.
-            Set-OERRoleManagementPolicy -PolicyId 'pol-1' -EligibleDurationDays 120 -Confirm:$false | Out-Null
+            Set-OERRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' -EligibleDurationDays 120 -Confirm:$false | Out-Null
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -ParameterFilter {
                 $Method -eq 'PATCH' -and
                 (($Body.properties.rules | Where-Object { $_.id -eq 'Expiration_Admin_Eligibility' }).maximumDuration -eq 'P120D')
@@ -280,7 +280,7 @@ Describe 'Set-OERRoleManagementPolicy' {
         }
 
         It 'binds the -ActiveDurationDays alias' {
-            Set-OERRoleManagementPolicy -PolicyId 'pol-1' -ActiveDurationDays 30 -Confirm:$false | Out-Null
+            Set-OERRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' -ActiveDurationDays 30 -Confirm:$false | Out-Null
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -ParameterFilter {
                 $Method -eq 'PATCH' -and
                 (($Body.properties.rules | Where-Object { $_.id -eq 'Expiration_Admin_Assignment' }).maximumDuration -eq 'P30D')
@@ -288,7 +288,7 @@ Describe 'Set-OERRoleManagementPolicy' {
         }
 
         It 'round-trips a policy object read by Get-OERRoleManagementPolicy' {
-            $Read = [PSCustomObject]@{ PolicyId = 'pol-1'; EligibleDuration = 'P180D'; ActiveDuration = 'P30D' }
+            $Read = [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'; EligibleDuration = 'P180D'; ActiveDuration = 'P30D' }
             Set-OERRoleManagementPolicy -PolicyId $Read.PolicyId -EligibleDuration $Read.EligibleDuration `
                 -ActiveDuration $Read.ActiveDuration -Confirm:$false | Out-Null
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -ParameterFilter {
@@ -306,7 +306,7 @@ Describe 'Set-OERRoleManagementPolicy' {
             # leaks a preceding entry ahead of the InvalidDuration error this cmdlet writes -- this
             # reproduces even for a bare `throw` inside a plain (non-CmdletBinding) helper function,
             # so it is a PowerShell quirk, not a bug in this cmdlet. Assert presence, not position.
-            Set-OERRoleManagementPolicy -PolicyId 'pol-1' -EligibleDuration 'banana' -Confirm:$false `
+            Set-OERRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' -EligibleDuration 'banana' -Confirm:$false `
                 -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
             $Err | Should -Not -BeNullOrEmpty
             $Err | Where-Object { $_.FullyQualifiedErrorId -like 'InvalidDuration*' } | Should -Not -BeNullOrEmpty
@@ -325,7 +325,7 @@ Describe 'Set-OERRoleManagementPolicy' {
             # name; EligibleDuration/ActiveDuration deliberately do not) and confirm the untouched
             # maximumDuration from the GET response ('P90D') survives into the PATCH body instead
             # of being silently overwritten by the piped EligibleDuration/ActiveDuration values.
-            $Read = [PSCustomObject]@{ PolicyId = 'pol-1'; EligibleDuration = 'P999D'; ActiveDuration = 'P999D' }
+            $Read = [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'; EligibleDuration = 'P999D'; ActiveDuration = 'P999D' }
             $Read | Set-OERRoleManagementPolicy -AllowPermanentEligibility $true -Confirm:$false | Out-Null
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -ParameterFilter {
                 $Method -eq 'PATCH' -and
@@ -376,7 +376,7 @@ Describe 'Set-OERRoleManagementPolicy' {
         }
 
         It 'resolves user and group approvers to object ids and sends them as the primary approvers' {
-            $Result = Set-OERRoleManagementPolicy -PolicyId 'pol-1' -ApproverUser 'person1@example.com' -ApproverGroup 'pim-approvers' -Confirm:$false
+            $Result = Set-OERRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' -ApproverUser 'person1@example.com' -ApproverGroup 'pim-approvers' -Confirm:$false
             $Result.ChangedRuleIds | Should -Be 'Approval_EndUser_Assignment'
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
                 $Method -eq 'PATCH' -and
@@ -386,7 +386,7 @@ Describe 'Set-OERRoleManagementPolicy' {
         }
 
         It 'reports an approver that matches nothing as ApproverNotFound, with the message, category and target it always had' {
-            Set-OERRoleManagementPolicy -PolicyId 'pol-1' -ApproverUser 'person1@example.com' -ApproverGroup 'missing-approvers' -Confirm:$false `
+            Set-OERRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' -ApproverUser 'person1@example.com' -ApproverGroup 'missing-approvers' -Confirm:$false `
                 -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
             $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Set-OERRoleManagementPolicy' })
             $Own.Count | Should -Be 1
@@ -398,7 +398,7 @@ Describe 'Set-OERRoleManagementPolicy' {
         }
 
         It 'reports an ambiguous approver name as AmbiguousApproverName naming the candidates, never as ApproverNotFound' {
-            Set-OERRoleManagementPolicy -PolicyId 'pol-1' -ApproverGroup 'dup-approvers' -Confirm:$false `
+            Set-OERRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' -ApproverGroup 'dup-approvers' -Confirm:$false `
                 -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
             $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Set-OERRoleManagementPolicy' })
             $Own.Count | Should -Be 1
@@ -412,7 +412,7 @@ Describe 'Set-OERRoleManagementPolicy' {
         }
 
         It 'reports a failed approver lookup as itself, once, never as ApproverNotFound' {
-            Set-OERRoleManagementPolicy -PolicyId 'pol-1' -ApproverUser 'person9@example.com' -Confirm:$false `
+            Set-OERRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' -ApproverUser 'person9@example.com' -Confirm:$false `
                 -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
             $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Set-OERRoleManagementPolicy' })
             $Own.Count | Should -Be 1
@@ -430,7 +430,7 @@ Describe 'Set-OERRoleManagementPolicy' {
                     'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'person9@example.com')
             }
             Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
-            Set-OERRoleManagementPolicy -PolicyId 'pol-1' -ApproverUser 'person9@example.com' -Confirm:$false `
+            Set-OERRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' -ApproverUser 'person9@example.com' -Confirm:$false `
                 -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
             # Reached: the catch published the record as itself.
             @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,Set-OERRoleManagementPolicy' }).Count | Should -Be 1
@@ -526,7 +526,7 @@ Describe 'Set-OERRoleManagementPolicy' {
 
         It 'does not refuse -RequireApproval $true beside approvers: the lookup is reached and the policy is patched' {
             $Err = $null
-            $Result = Set-OERRoleManagementPolicy -PolicyId 'pol-1' -RequireApproval $true -ApproverUser 'person1@example.com' -Confirm:$false `
+            $Result = Set-OERRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' -RequireApproval $true -ApproverUser 'person1@example.com' -Confirm:$false `
                 -ErrorAction SilentlyContinue -ErrorVariable Err
             @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'MutuallyExclusiveParameter*' }).Count | Should -Be 0
             $Result.ChangedRuleIds | Should -Be 'Approval_EndUser_Assignment'
@@ -539,7 +539,7 @@ Describe 'Set-OERRoleManagementPolicy' {
             @{ Parameter = 'ApproverGroup'; Value = @('pim-approvers') }
         ) {
             $Err = $null
-            $Splat = @{ PolicyId = 'pol-1'; Confirm = $false; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Err' }
+            $Splat = @{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'; Confirm = $false; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Err' }
             $Splat[$Parameter] = $Value
             $null = Set-OERRoleManagementPolicy @Splat
             @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'MutuallyExclusiveParameter*' }).Count | Should -Be 0
@@ -549,7 +549,7 @@ Describe 'Set-OERRoleManagementPolicy' {
 
         It 'does not refuse -RequireApproval $false bound alone: no approver is looked up and approval is turned off' {
             $Err = $null
-            $Result = Set-OERRoleManagementPolicy -PolicyId 'pol-1' -RequireApproval $false -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
+            $Result = Set-OERRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' -RequireApproval $false -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
             @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'MutuallyExclusiveParameter*' }).Count | Should -Be 0
             $Result.ChangedRuleIds | Should -Be 'Approval_EndUser_Assignment'
             Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal -Times 0 -Exactly
@@ -646,7 +646,7 @@ Describe 'Set-OERRoleManagementPolicy' {
 
         It 'does not refuse a blank value beside a real one: only the real approver is looked up' {
             $Err = $null
-            $Result = Set-OERRoleManagementPolicy -PolicyId 'pol-1' -ApproverUser @('', 'person1@example.com') -ApproverGroup @() `
+            $Result = Set-OERRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' -ApproverUser @('', 'person1@example.com') -ApproverGroup @() `
                 -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
             @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'ApproverRequired*' }).Count | Should -Be 0
             $Result.ChangedRuleIds | Should -Be 'Approval_EndUser_Assignment'
@@ -658,7 +658,7 @@ Describe 'Set-OERRoleManagementPolicy' {
             # The blank rule is the loop's own, "if (-not $Value)", under which ' ' is a value. The
             # refusal must not call it blank, or it would refuse what the loop would have looked up.
             $Err = $null
-            $null = Set-OERRoleManagementPolicy -PolicyId 'pol-1' -ApproverUser ' ' -Confirm:$false `
+            $null = Set-OERRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' -ApproverUser ' ' -Confirm:$false `
                 -ErrorAction SilentlyContinue -ErrorVariable Err
             @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'ApproverRequired*' }).Count | Should -Be 0
             Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal -Times 1 -Exactly -ParameterFilter { $User -eq ' ' }
@@ -666,7 +666,7 @@ Describe 'Set-OERRoleManagementPolicy' {
 
         It 'does not refuse a call that binds no approver parameter: the policy is patched and no approver is looked up' {
             $Err = $null
-            $Result = Set-OERRoleManagementPolicy -PolicyId 'pol-1' -RequireApproval $true -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
+            $Result = Set-OERRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' -RequireApproval $true -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
             @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'ApproverRequired*' }).Count | Should -Be 0
             $Result.ChangedRuleIds | Should -Be 'Approval_EndUser_Assignment'
             Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal -Times 0 -Exactly
@@ -750,7 +750,7 @@ $Module = Get-Module Omnicit.EntraRBAC
         $script:RefusedCalls = @'
 $Results = @(
     Set-OERRoleManagementPolicy -Role 'Reader' -Subscription 'Prod' -RequireApproval $false -ApproverUser 'person1@example.com' -Confirm:$false
-    Set-OERRoleManagementPolicy -PolicyId 'pol-1' -RequireApproval $false -ApproverGroup 'pim-approvers' -Confirm:$false
+    Set-OERRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' -RequireApproval $false -ApproverGroup 'pim-approvers' -Confirm:$false
     Set-OERRoleManagementPolicy -Role 'Reader' -Subscription 'Prod' -RequireApproval $false -ApproverUser @() -Confirm:$false
 )
 "REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
@@ -758,14 +758,14 @@ $Results = @(
         $script:ZeroApproverCalls = @'
 $Results = @(
     Set-OERRoleManagementPolicy -Role 'Reader' -Subscription 'Prod' -ApproverUser @() -Confirm:$false
-    Set-OERRoleManagementPolicy -PolicyId 'pol-1' -ApproverGroup @() -Confirm:$false
+    Set-OERRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' -ApproverGroup @() -Confirm:$false
     Set-OERRoleManagementPolicy -Role 'Reader' -Subscription 'Prod' -ApproverUser @('') -ApproverGroup @() -Confirm:$false
 )
 "REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
 '@
         $script:AllowedCalls = @'
 $Results = @(
-    Set-OERRoleManagementPolicy -PolicyId 'pol-1' -RequireApproval $true -ApproverUser 'person1@example.com' -Confirm:$false
+    Set-OERRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1' -RequireApproval $true -ApproverUser 'person1@example.com' -Confirm:$false
 )
 "REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
 '@
@@ -1050,5 +1050,151 @@ Describe 'Set-OERRoleManagementPolicy through the real lookup helpers (Sprint 12
         Set-OERRoleManagementPolicy -Role '00000000-0000-0000-0000-000000000001' -Subscription 'Prod' -AllowPermanentEligibility $true -Confirm:$false -ErrorVariable Err -ErrorAction SilentlyContinue
         (& $script:RealPublished $Err 'AuthorizationFailed').Count | Should -Be 1
         @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'PolicyNotFound*' }).Count | Should -Be 0
+    }
+}
+
+BeforeDiscovery {
+    $script:Task2GraphIds = @(
+        @{ Id = 'DirectoryRole_00000000-0000-0000-0000-000000000064_00000000-0000-0000-0000-000000000065' }
+        @{ Id = 'Group_00000000-0000-0000-0000-000000000064_member' }
+        @{ Id = '00000000-0000-0000-0000-000000000064' }
+        @{ Id = 'pol-1' }
+        @{ Id = ' /subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol1' }
+    )
+    $script:Task2ArmIds = @(
+        @{ Id = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol1' }
+        @{ Id = '/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Authorization/roleManagementPolicies/pol1' }
+        @{ Id = '/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Web/sites/my site/providers/Microsoft.Authorization/roleManagementPolicies/pol1' }
+        @{ Id = '/providers/Microsoft.Management/managementGroups/mg1/providers/Microsoft.Authorization/roleManagementPolicies/pol1' }
+    )
+}
+
+Describe 'Set-OERRoleManagementPolicy: a policy id that is not an ARM path (Sprint 14 step 1, BL-19)' {
+    BeforeEach { InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null } }
+
+    Context '-PolicyId that is not an ARM path (Sprint 14 step 1, BL-19)' {
+        BeforeAll {
+            Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest {
+                [PSCustomObject]@{ properties = [PSCustomObject]@{ scope = '/subscriptions/s1'; rules = @() } }
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal {
+                [PSCustomObject]@{ PrincipalId = '00000000-0000-0000-0000-000000000064'; PrincipalType = 'User' }
+            }
+            $script:Own = {
+                param($Err, [string]$Id)
+                @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -eq "$Id,Set-OERRoleManagementPolicy" })
+            }
+        }
+
+        It 'refuses <Id> with one InvalidPolicyId record and sends nothing' -ForEach $script:Task2GraphIds {
+            Set-OERRoleManagementPolicy -PolicyId $Id -ActivationMaxHours 4 -Confirm:$false -ErrorVariable Err -ErrorAction SilentlyContinue
+            $Hit = & $script:Own $Err 'InvalidPolicyId'
+            $Hit.Count | Should -Be 1
+            $Hit[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Hit[0].TargetObject | Should -Be $Id
+            $Hit[0].Exception.Message | Should -BeLike '*Set-OERDirectoryRoleManagementPolicy*'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -Exactly
+        }
+
+        It 'accepts the ARM path <Id> and reads it once' -ForEach $script:Task2ArmIds {
+            Set-OERRoleManagementPolicy -PolicyId $Id -ActivationMaxHours 4 -WhatIf -ErrorVariable Err -ErrorAction SilentlyContinue
+            (& $script:Own $Err 'InvalidPolicyId').Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+                $Path -eq "$Id`?api-version=2020-10-01"
+            }
+        }
+
+        It 'refuses the Graph id in a pipeline and processes the ARM id' {
+            $Arm = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol1'
+            [PSCustomObject]@{ PolicyId = 'DirectoryRole_00000000-0000-0000-0000-000000000064_00000000-0000-0000-0000-000000000065' },
+            [PSCustomObject]@{ PolicyId = $Arm } |
+                Set-OERRoleManagementPolicy -ActivationMaxHours 4 -WhatIf -ErrorVariable Err -ErrorAction SilentlyContinue
+            (& $script:Own $Err 'InvalidPolicyId').Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+                $Path -eq "$Arm`?api-version=2020-10-01"
+            }
+        }
+
+        It 'refuses under -WhatIf before any request' {
+            Set-OERRoleManagementPolicy -PolicyId 'Group_00000000-0000-0000-0000-000000000064_member' -ActivationMaxHours 4 -WhatIf -ErrorVariable Err -ErrorAction SilentlyContinue
+            (& $script:Own $Err 'InvalidPolicyId').Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -Exactly
+        }
+
+        It 'refuses before the approver lookup' {
+            Set-OERRoleManagementPolicy -PolicyId 'Group_00000000-0000-0000-0000-000000000064_member' -ApproverUser 'person1@example.com' -Confirm:$false -ErrorVariable Err -ErrorAction SilentlyContinue
+            (& $script:Own $Err 'InvalidPolicyId').Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal -Times 0 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0 -Exactly
+        }
+
+        It 'keeps the earlier offline refusals first with a Graph id' {
+            $Graph = 'Group_00000000-0000-0000-0000-000000000064_member'
+            Set-OERRoleManagementPolicy -PolicyId $Graph -Confirm:$false -ErrorVariable E1 -ErrorAction SilentlyContinue
+            (& $script:Own $E1 'NothingToUpdate').Count | Should -Be 1
+            (& $script:Own $E1 'InvalidPolicyId').Count | Should -Be 0
+
+            Set-OERRoleManagementPolicy -PolicyId $Graph -EligibleDuration 'banana' -Confirm:$false -ErrorVariable E2 -ErrorAction SilentlyContinue
+            (& $script:Own $E2 'InvalidDuration').Count | Should -Be 1
+            (& $script:Own $E2 'InvalidPolicyId').Count | Should -Be 0
+
+            Set-OERRoleManagementPolicy -PolicyId $Graph -RequireApproval $false -ApproverGroup 'x' -Confirm:$false -ErrorVariable E3 -ErrorAction SilentlyContinue
+            (& $script:Own $E3 'MutuallyExclusiveParameter').Count | Should -Be 1
+            (& $script:Own $E3 'InvalidPolicyId').Count | Should -Be 0
+
+            Set-OERRoleManagementPolicy -PolicyId $Graph -ApproverUser @() -Confirm:$false -ErrorVariable E4 -ErrorAction SilentlyContinue
+            (& $script:Own $E4 'ApproverRequired').Count | Should -Be 1
+            (& $script:Own $E4 'InvalidPolicyId').Count | Should -Be 0
+        }
+    }
+}
+
+Describe 'Set-OERRoleManagementPolicy: the policy id refusal in a script with no try (Sprint 14 step 1, BL-19)' {
+    BeforeAll {
+        $script:Task2Scenario = {
+            param([string]$Log)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value {
+        # STUB
+    }
+    Set-Item -Path function:script:Remove-OERErrorRecord -Value { }
+    Set-Item -Path function:script:Resolve-OERPrincipal -Value {
+        param([string]$User, [string]$Group)
+        Add-Content -LiteralPath '#LOG#' -Value 'Resolve-OERPrincipal'
+        [pscustomobject]@{ PrincipalId = '11111111-1111-1111-1111-111111111111'; PrincipalType = 'User' }
+    }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        Add-Content -LiteralPath '#LOG#' -Value "Invoke-OERGraphRequest $Method"
+        @{}
+    }
+    Set-Item -Path function:script:Invoke-OERArmRequest -Value {
+        param([string]$Method = 'GET', [string]$Path, [hashtable]$Body)
+        Add-Content -LiteralPath '#LOG#' -Value "Invoke-OERArmRequest $Method"
+        [pscustomobject]@{ properties = [pscustomobject]@{ scope = '/subscriptions/s1'; rules = @() } }
+    }
+}
+"STUBBED:$(& $Module { [bool]((Get-Command Initialize-OERAuth).ScriptBlock.ToString() -match '# STUB') })"
+$null = Set-OERRoleManagementPolicy -PolicyId 'DirectoryRole_00000000-0000-0000-0000-000000000064_00000000-0000-0000-0000-000000000065' -ActivationMaxHours 4 -Confirm:$false -ErrorVariable E -ErrorAction SilentlyContinue
+$Own = @($E | Where-Object { $_.FullyQualifiedErrorId -like '*,Set-OERRoleManagementPolicy' })
+"FQID:$($Own[0].FullyQualifiedErrorId)"
+"COUNT:$($Own.Count)"
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")))
+        }
+    }
+
+    It 'reaches the end, writes InvalidPolicyId once and sends nothing' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (& $script:Task2Scenario -Log $Log)
+        ($Run.Output -join '|') | Should -Be 'STUBBED:True|FQID:InvalidPolicyId,Set-OERRoleManagementPolicy|COUNT:1|END'
+        (Test-Path -LiteralPath $Log) | Should -BeFalse
     }
 }
