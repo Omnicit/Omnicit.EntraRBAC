@@ -1192,7 +1192,8 @@ ones read (with `Get-OERInventory -Catalog`, only the catalogs it reads; an acce
 review definition the read returned, the ones the export skips included). A group whose display name
 has the form of an object id is written by its object id wherever the document references it (an
 access package's catalog reference included), and its own `groups` entry is left out and named as
-unread, as is the own `catalogs` entry of a catalog with such a name, since `Invoke-OERStructure`
+unread, as is the own `catalogs` entry of a catalog and the own `accessPackages` entry of an access
+package with such a name, since `Invoke-OERStructure`
 reads such a name as an object id. `Test-OERStructure` warns on a hand-written `groups`, `catalogs`
 or `accessPackages` `displayName` of that form. The export warns once, and its `README.md` lists each
 name, with how many objects carry it, under "Names two or more objects share". An access package's `catalog`, an access review's `accessPackage` or `assignmentPolicy`, and

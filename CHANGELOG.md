@@ -19,6 +19,12 @@ address is refused with `ArmRequestOutsideCloudHost` before the token is read, s
 begin with `/` can no longer carry the token to another host. `Remove-OERRoleAssignment` and
 `Set-OERRoleAssignment` refuse an `-Id` that does not begin with `/`.
 
+`Get-OERInventory` and `Export-OERInventory` no longer write the name of an access package or assignment
+policy that has the form of an object id: an access review references it by id, and such a package's own
+entry is left out and named unread, as a catalog's is. `Invoke-OERStructure` refuses a declared
+`authenticationContextId`, `activationEnablement` or `activeEnablement` over a rule the policy read lacks
+(`PimRuleValueUnknown`), and `Get-OERGroupPimPolicy` gives `$null` for such a list.
+
 ## [1.5.0] - 2026-11-07
 
 The seven cmdlets that create, remove, activate or deactivate Azure role assignments report a

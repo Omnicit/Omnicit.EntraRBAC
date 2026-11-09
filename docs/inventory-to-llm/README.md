@@ -1058,7 +1058,8 @@ access review among the ones read (with `Get-OERInventory -Catalog`, only the ca
 access review among every review definition the read returned, the ones the export skips included).
 A group whose display name has the form of an object id is written by its object id wherever the
 document references it (an access package's catalog reference included), and its own `groups` entry
-is left out and named as unread, as is the own `catalogs` entry of a catalog with such a name.
+is left out and named as unread, as is the own `catalogs` entry of a catalog and the own
+`accessPackages` entry of an access package with such a name.
 `Test-OERStructure` warns on a hand-written `groups`, `catalogs` or `accessPackages` `displayName` of
 that form. Leaving an object out changes nothing in the tenant: `-Prune` acts on child collections
 only, and the apply engine never removes an assignment policy.
