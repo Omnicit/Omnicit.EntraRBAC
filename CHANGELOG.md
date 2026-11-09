@@ -25,6 +25,10 @@ group's `pimPolicy`, `Invoke-OERStructure` refuses a declared `authenticationCon
 `activationEnablement` or `activeEnablement` over a rule the policy read lacks (`PimRuleValueUnknown`),
 and `Get-OERGroupPimPolicy` gives `$null` for such a list.
 
+A Microsoft Graph page link (`@odata.nextLink`) that does not address the Microsoft Graph host of the session's
+cloud is now refused with `GraphPagingIncomplete` before it is requested, so the access token is never sent
+with it. Links on that address are followed as before, in every cloud.
+
 ## [1.5.0] - 2026-11-07
 
 The seven cmdlets that create, remove, activate or deactivate Azure role assignments report a
