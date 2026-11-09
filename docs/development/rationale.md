@@ -1158,15 +1158,19 @@ token counts, region-content checks) so a detection bug fails loudly instead of 
 empty collection.
 
 **11. Typed error records** (Sprint 13 step 5, BL-22). No file under `source/Private` or
-`source/Public` throws a bare string. The gate parses both directories itself, in its own
-`BeforeAll`, and a detector (`Get-OERStringThrow`) flags every `throw` whose operand, after
+`source/Public` throws a bare string or an exception object. The gate parses both directories itself, in
+its own `BeforeAll`, and a detector (`Get-OERStringThrow`) flags every `throw` whose operand, after
 unwrapping parentheses, is a string constant, an expandable string, a `+` or `-f` expression with a
-string side, or a variable assigned from such an expression in the same innermost function. A bare
-rethrow, `throw $PSItem`, a record variable, a typed `ErrorRecord` and a `throw (Command ...)` are not
-flagged; known answers hold each shape. Two named exceptions (E1 and E2, under `#error-handling`) are
-keyed by file name and operand text, never by line, and each must match exactly one throw, so a stale
-entry fails. Non-vacuity: no parse failure, more than 190 parsed files, more than 145 throw statements
-and more than 80 typed throws (measured 155 and 88 on 2026-11-07).
+string side, a `-join`, `-replace` or `[string]` cast, a `[string]::Format` call, a subexpression
+yielding one of those, or a variable assigned from such an expression (an if-expression counts when
+any branch yields one) in the same innermost function (row `Kind` = `String`); and every `throw` of
+`[<Exception type>]::new(...)` or `New-Object <Exception type>`, directly or through such a variable
+(`Kind` = `Exception`; `Test-OERExceptionObjectExpression`). A bare rethrow, `throw $PSItem`, a record
+variable, a typed `ErrorRecord` and a `throw (Command ...)` are not flagged; known answers hold each
+shape. Two named exceptions (E1 and E2, under `#error-handling`) are keyed by file name and operand
+text, never by line, and each must match exactly one throw, so a stale entry fails. Non-vacuity: no
+parse failure, more than 190 parsed files, more than 145 throw statements and more than 88 typed
+throws (measured 156 and 96 on 2026-11-09).
 
 ### CLAUDE.md text for static-source-gates
 
@@ -15595,9 +15599,32 @@ The two string-variable throws (E1 and E2) stay strings, by ruling, and the gate
 Gate 11 of `tests/QA/sourcehygiene.tests.ps1` holds it, keyed by file name and operand text, never by
 line. A new exception needs a ruling recorded here first.
 
-Gate 11 checks string throws only. A `throw` of a bare `[System.*Exception]` object has the same defect
-(its message is the id): seven remain (`Get-OERDirectoryRoleNameMap` x2, `Resolve-OERStructureRename` x3,
-`Resolve-OERTenantDomain` x2), are not yet converted, and no new one is added.
+### Sprint 14 step 3: the seven exception throws and the wider gate (BL-176, A5)
+
+A `throw` of a bare `[System.*Exception]` object has the same defect as a string throw (its message is
+the id). Seven remained after Sprint 13; they became typed records with each exception's type,
+message and inner exception kept, so a caller reading `.Exception.Message` or the type is unchanged:
+
+| Function | Throws | Id | Category | Target | Exception |
+|---|---|---|---|---|---|
+| `Get-OERDirectoryRoleNameMap` | 2 | `AdministrativeUnitScopedRoleReadFailed` | `ReadError` | `v1.0/directoryRoles` | `System.Exception` (first keeps the read's exception as inner) |
+| `Resolve-OERStructureRename` | 3 | `RenameRegistrationInvalid` | `InvalidArgument` | `$Section`, `$Name`, `$Name` | `System.ArgumentException` (paramName `Section`, `Id`, `AccessPackage`) |
+| `Resolve-OERTenantDomain` | 2 | `TenantResolutionFailed` | `AuthenticationError` | `$Domain` | `System.InvalidOperationException` (first keeps the request's exception as inner) |
+
+Rulings, each with the cost if wrong:
+
+- **The map's id is the id both callers already publish for this failure.** Cost: an internal record
+  named like the published one; the callers republish unchanged.
+- **`RenameRegistrationInvalid` is new and internal** (BL-22 precedent for private caller errors).
+  Cost: the rename of an id a correct caller never sees.
+- **The tenant record carries its one caller's published id and category.** Cost: none for the
+  published record.
+
+Gate 11 now also refuses these. It reports a `Kind` on each row (`String` or `Exception`), flags the
+extra string shapes (a `[string]` cast, an if-expression assignment, `-join`, `-replace`, a
+subexpression, `[string]::Format`) and every `throw` of an exception object, `::new` or `New-Object`,
+directly or through a variable. A typed record built in an if-expression stays clean. The widened gate
+found nothing new in `source/` once the seven were converted.
 
 ## arm-requests
 
