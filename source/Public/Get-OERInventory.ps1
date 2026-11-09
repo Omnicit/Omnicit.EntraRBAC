@@ -186,7 +186,8 @@ function Get-OERInventory {
     with the lookup's AmbiguousName error. So the projection writes a name only when that same lookup
     finds this access package or assignment policy and no other; an access package name another
     access package in the tenant carries, or an assignment policy name another policy of the same
-    access package carries, is written by id instead, so the entry applies. The check costs one
+    access package carries, is written by id instead, so the entry applies. A name with the form of an
+    object id is written as this object's id with no lookup, since the engine reads such a name as an id. The check costs one
     request per access package name and one per access package, however many reviews share them.
     A multi-stage review (StageCount greater than zero) is skipped
     with a warning instead of being exported, because its reviewers live in stageSettings -- which
@@ -1066,6 +1067,9 @@ function Get-OERInventory {
         # (named deviation)" in tests/Unit/Public/Get-OERInventory.Tests.ps1 holds the URIs and the
         # decisions in step with the resolvers.
         #
+        # A name that has the form of an object id (Test-OERGuid) is never looked up: both resolvers return
+        # such a value as the id, so the id of this object is written with no request (BL-174a).
+        #
         # -MatchOf picks the candidates the lookup's answer holds for the name, exactly as the resolver
         # does. Each answer is cached for the invocation under -CacheKey in -Cache, so the reviews of one
         # access package cost one lookup of each kind however many there are. A lookup that fails is
@@ -1084,6 +1088,10 @@ function Get-OERInventory {
                 [string]$Part,
                 [string]$Label
             )
+            # Sprint 14 step 2 (BL-174a): Resolve-OERAccessPackageId and Resolve-OERAssignmentPolicyId read
+            # a name that Test-OERGuid accepts as an object id, so such a name can never reach this object
+            # by a lookup: the id is written with no lookup, as the directory role reference does.
+            if (Test-OERGuid -Value $Name) { return $Id }
             if (-not $Cache.ContainsKey($CacheKey)) {
                 try {
                     $Answer = Invoke-OERGraphRequest -Uri $Uri

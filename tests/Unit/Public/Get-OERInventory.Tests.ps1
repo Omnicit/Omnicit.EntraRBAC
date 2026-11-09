@@ -3053,6 +3053,7 @@ Describe 'Get-OERInventory' {
         It 'states the rule in the help' {
             $Help = (Get-Help Get-OERInventory -Full | Out-String) -replace '\s+', ' '
             $Help | Should -Match ([regex]::Escape('So the projection writes a name only when that same lookup finds this access package or assignment policy and no other'))
+            $Help | Should -Match ([regex]::Escape('A name with the form of an object id is written as this object''s id with no lookup'))
             $Help | Should -Match ([regex]::Escape('a name whose uniqueness could not be checked, because the lookup above failed'))
             $Help | Should -Not -Match ([regex]::Escape('until the entry names it by id'))
         }
@@ -3182,6 +3183,61 @@ Describe 'Get-OERInventory' {
             $Ar.accessPackage | Should -BeExactly $(if ($ApOutcome -eq 'This') { $script:AgApName } else { $script:AgApId })
             $Ar.assignmentPolicy | Should -BeExactly $(if ($PolOutcome -eq 'This') { $script:AgPolName } else { $script:AgPolId })
             @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+        }
+
+        # BL-174a: a name with the form of an object id is read by both resolvers as that id, with no
+        # listing, so the export writes this object's id and sends no listing request either. No id
+        # below is version-4 shaped.
+        It 'writes the id and sends no listing for <Case>' -ForEach @(
+            @{ Case = 'a package and a policy named like object ids'; ApName = 'cccc3333-0000-0000-0000-000000000071'; PolName = 'dddd4444-0000-0000-0000-000000000071'; ApListed = $false; PolListed = $false }
+            @{ Case = 'a package named like an object id and a plain policy name'; ApName = 'cccc3333-0000-0000-0000-000000000072'; PolName = 'Default'; ApListed = $false; PolListed = $true }
+            @{ Case = 'a plain package name and a policy named like an object id'; ApName = 'AP Sales'; PolName = 'dddd4444-0000-0000-0000-000000000073'; ApListed = $true; PolListed = $false }
+            @{ Case = 'upper case object id forms'; ApName = 'CCCC3333-0000-0000-0000-000000000074'; PolName = 'DDDD4444-0000-0000-0000-000000000074'; ApListed = $false; PolListed = $false }
+        ) {
+            $SavedApName = $script:AgApName
+            $SavedPolName = $script:AgPolName
+            try {
+                $script:AgApName = $ApName
+                $script:AgPolName = $PolName
+                $script:AgPackages = @(@{ id = $script:AgApId; displayName = $ApName })
+                $script:AgPolicies = @(@{ id = $script:AgPolId; displayName = $PolName })
+                $Base = 'v1.0/identityGovernance/entitlementManagement/'
+
+                # The resolvers: a GUID-shaped name is returned as it is, which is not this object's id,
+                # and no listing is sent for it.
+                $script:AgCalls.Clear()
+                $ApResolved = InModuleScope $script:moduleName -Parameters @{ Name = $ApName } {
+                    param($Name)
+                    Resolve-OERAccessPackageId -DisplayName $Name
+                }
+                $PolResolved = InModuleScope $script:moduleName -Parameters @{ PackageId = $script:AgApId; Name = $PolName } {
+                    param($PackageId, $Name)
+                    Resolve-OERAssignmentPolicyId -AccessPackageId $PackageId -AssignmentPolicy $Name
+                }
+                if (-not $ApListed) {
+                    $ApResolved | Should -BeExactly $ApName
+                    $ApResolved | Should -Not -BeExactly $script:AgApId
+                }
+                if (-not $PolListed) {
+                    $PolResolved | Should -BeExactly $PolName
+                    $PolResolved | Should -Not -BeExactly $script:AgPolId
+                }
+
+                # The export, under the same transport mock.
+                $script:AgCalls.Clear()
+                $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+                $Ar = @($Inv.AccessReviews)[0]
+                $Ar.accessPackage | Should -BeExactly $(if ($ApListed) { $ApName } else { $script:AgApId })
+                $Ar.assignmentPolicy | Should -BeExactly $(if ($PolListed) { $PolName } else { $script:AgPolId })
+                @($script:AgCalls | Where-Object { $_.StartsWith($Base + 'accessPackages?') }).Count | Should -Be $(if ($ApListed) { 1 } else { 0 })
+                @($script:AgCalls | Where-Object { $_.StartsWith($Base + 'assignmentPolicies?') }).Count | Should -Be $(if ($PolListed) { 1 } else { 0 })
+                # An id-shaped name is no fault: no InventoryPartial and no unread collection.
+                @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+                @(@($InvErr) | Where-Object { [string]$_.TargetObject -like 'accessReviews/*' }).Count | Should -Be 0
+            } finally {
+                $script:AgApName = $SavedApName
+                $script:AgPolName = $SavedPolName
+            }
         }
     }
 
