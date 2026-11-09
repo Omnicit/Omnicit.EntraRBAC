@@ -1261,6 +1261,11 @@ or has no `value`, a repeated next link and a walk past the page limit end it wi
 `GraphPagingIncomplete`. `Get-OERPageWalkLimit` is the single owner of the limit (both wrappers read
 it, once per call); never cap a walk by truncating it. `Why: docs/development/rationale.md#graph-wrapper`
 
+**A next link is followed only when it is https on the host and port of the session cloud's Graph
+address** (`Get-OERCloudEndpoint`; Global with no session), and any other, a relative one included, is
+refused with `GraphPagingIncomplete` before it is requested; the link is sent as the string it came in.
+`Why: docs/development/rationale.md#graph-wrapper`
+
 `Connect-MgGraph -Environment` is passed only when the session's cloud is not `Global`; the
 environment name comes from `Get-OERCloudEndpoint`, never a literal.
 `Why: docs/development/rationale.md#sovereign-clouds`

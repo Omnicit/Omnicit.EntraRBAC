@@ -1408,6 +1408,53 @@ hold that the repeated and the over-limit page are never requested. The claims s
 state to build from: without one the original Graph error is thrown after one request
 (BL-124 O1, S12).
 
+### Sprint 14 step 3: a next link goes only to the session's Graph host (BL-179, A10)
+
+**Why.** The Graph SDK's token provider is built with no allowed-hosts list (read in
+Microsoft.Graph.Authentication 2.40.0, not measured against a live service: see
+#arm-transport), so a `@odata.nextLink` naming another https host would be requested with the
+session's bearer token. Every `-Uri` a caller passes starts with a literal `v1.0/` or `beta/`; only
+the link a response supplies can name a host, so only a link on page 2 or later is judged.
+
+**The rule.** In the `-All` loop, after the page-limit and repeat checks and before the send, a link
+(`$PageNumber -gt 1`) must parse as an absolute URI that is `https` (ordinal), has no user info, has
+the same `Port` as the session cloud's Graph address and an `IdnHost` equal to it ignoring case. The
+address is `Get-OERCloudEndpoint`'s `GraphResource` for the session's `Environment`, read once per
+call, never a URL literal (gate 7). **No session state, or a state with no `Environment`, reads the
+Global cloud**, mirroring the ARM transport's documented no-state fallback. A refused link is the
+existing `GraphPagingIncomplete` (no new id, A10) with the cause "its next link does not address the
+Microsoft Graph host of the session's cloud (...), so it was not requested"; the message never
+carries the link, which can hold a skiptoken. The throw is followed by `return`, as for the checks
+above it (probe S20 holds that a call with no `try` under `-ErrorAction SilentlyContinue` stops after
+one request, leaves only that record and returns nothing).
+
+**Ruling: a relative link is refused** like a foreign host. Graph documents next links as absolute
+URLs, and a relative one has no host to judge.
+
+**What is sent.** The ORIGINAL string, unchanged, never `Uri.ToString()`, which unescapes (`%20`
+becomes a space) and would re-encode a skiptoken. The SDK takes `-Uri` as `[uri]`; measured in pwsh
+with no module code, PowerShell's conversion of an absolute string and `[uri]::TryCreate` give the
+same `IdnHost` for the foreign-host shapes (suffix host, `host@other`, `:443`, upper case), so what is
+judged is what is requested. There is one send path (gate 10).
+
+**Proofs** (`tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1`): the Describe "sends a next link
+only to the session's Graph host (BL-179, A10)" drives eleven refused links (suffix host, `@`, user
+info, http, port 8443, another host, relative, UNC-shaped, a Global link in a USGov session and the
+reverse, a USGov link with no state), each with one request, page 2, `PartialValue` of page 1 and a
+message free of the link; ten followed links (v1.0, beta, host case, `:443`, escaped skiptoken, USGov,
+USGovDoD, China, no state, a state without `Environment`) compared byte for byte; and the order of
+the checks. F3 probes S20 and S21 run it in a runspace with no `try`.
+
+**Mutations** (scratch copy of the built module; each turned tests red): no refusal at all, the
+`-gt 1` guard replaced by `$false` (every refused case and S20), the guard widened to page 1 (the page 1
+case and the repeat case), the scheme term dropped (only "http on the https port" holds it, since port
+80 differs from 443 for plain http), the user info term (user info on the Graph host), the port term
+(port 8443), the host term (suffix host, other host, cross-cloud and no-state cases, S20), the cloud
+read as a fixed Global (the USGov, USGovDoD and China followed cases and the USGov-session refusal),
+the missing `return` (only S20: a second request) and the check placed below the send (every refused
+case, S20). One equivalent mutant: comparing `IdnHost` ordinally rather than ignoring case, since
+`System.Uri` lower-cases the host it parses, so the case-insensitive comparison is belt and braces.
+
 ### CLAUDE.md text for graph-wrapper
 
 What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
@@ -1658,7 +1705,8 @@ Behaviour that follows from this design:
   followed with the token:** `Invoke-WebRequest` drops the Authorization header on a redirect unless
   asked to keep it (documented default, not measured here), the wrapper never asks, and the unit
   test holds that `PreserveAuthorizationOnRedirect` is not bound.
-  The Graph transport is left as it is by this step. Read, not measured
+  The Graph transport is left as it is by this step. Sprint 14 step 3 changed that for the one
+  address a response supplies: see #graph-wrapper. Read, not measured
   (Microsoft.Graph.Authentication 2.40.0, its IL, and every `Invoke-OERGraphRequest -Uri` under
   `source/` by parse tree): no caller's value can stand first in a Graph address, since each one
   starts with a literal `v1.0/` or `beta/` or with `Get-OERPimGroupsGraphPath`; only

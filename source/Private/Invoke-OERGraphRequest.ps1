@@ -59,10 +59,13 @@ function Invoke-OERGraphRequest {
        before and attaches nothing.
 
        A -All walk that cannot be completed is an error, never a shorter list. A page after the
-       first that is $null or has no value member, a next link already requested in this walk, and a
-       walk past the page limit (Get-OERPageWalkLimit owns the number, 100000 pages) are refused with
+       first that is $null or has no value member, a next link already requested in this walk, a next
+       link that is not https on the host and port of the session's Microsoft Graph address (Global
+       when the module holds no session; a relative link is refused too), and a walk past the page
+       limit (Get-OERPageWalkLimit owns the number, 100000 pages) are refused with
        GraphPagingIncomplete (category InvalidResult), carrying the same three facts, and the page
-       after the cause is never requested. Links are compared as the text that was requested, so
+       after the cause is never requested (a next link on another host is never requested at all,
+       so the session's token cannot be sent there). Links are compared as the text that was requested, so
        an absolute link back to page 1, which was requested as the relative -Uri, is requested once
        more before the repeat is refused (bounded, and the walk still fails). A page whose value
        is an empty array is a normal page, and a $null FIRST page (an empty GET body) is still an empty collection, unless -RequireValue is passed (see that parameter). Under
@@ -99,8 +102,10 @@ function Invoke-OERGraphRequest {
     Follow @odata.nextLink on a GET list response and return a single object whose value property
     holds every item across all pages. Strictly opt-in: without this switch the wrapper returns the
     first page exactly as before. The next link is an absolute URL and is re-sent verbatim, per the
-    Microsoft Graph paging guidance. A walk that cannot complete (a later page that is $null or has
-    no value member, a repeated next link, a walk past the page limit) fails with
+    Microsoft Graph paging guidance, but only when it is https on the host and port of the session's
+    Microsoft Graph address (Global when the module holds no session). A walk that cannot complete
+    (a later page that is $null or has no value member, a repeated next link, a next link that is
+    not on that host, a walk past the page limit) fails with
     GraphPagingIncomplete and returns no partial list; see the paging paragraph of the description.
     Under -ErrorAction SilentlyContinue the call then returns nothing and keeps the record in $Error
     and -ErrorVariable: read it, never "no output" as an empty collection. Under -ErrorAction Ignore
@@ -1215,14 +1220,15 @@ function Invoke-OERGraphRequest {
     # $Page.PSObject.Properties['@odata.nextLink']: PSObject.Properties on a Hashtable exposes the
     # .NET Hashtable type's own members (Count, Keys, Values, ...), not its dictionary entries, so
     # that lookup always misses. The [string] cast below makes an absent key collapse to '' and end
-    # the loop. The link is an absolute URL and is re-sent verbatim (unlike the ARM wrapper, which
-    # converts it back to a path).
+    # the loop. The link is an absolute URL and, once it is on the session's Graph host (checked in the
+    # loop), is re-sent verbatim (unlike the ARM wrapper, which converts it back to a path).
     # The loop lives outside Invoke-GraphSingle so every page gets its own bounded throttle backoff
     # and its own single-shot claims/401 retry, rather than sharing a budget across all pages.
     #
     # A -ALL WALK THAT CANNOT BE COMPLETED FAILS; IT NEVER HANDS BACK WHAT IT HAS (BL-72, P0 family).
-    # Four causes, one record: a later page that is $null, a later page with no value member, a next
-    # link already requested in this walk, and a walk past the page limit. Get-GraphPagingIncompleteRecord
+    # Five causes, one record: a later page that is $null, a later page with no value member, a next
+    # link already requested in this walk, a next link that is not on the session's Graph host, and a
+    # walk past the page limit. Get-GraphPagingIncompleteRecord
     # builds the record; the throw and the return after it stay in the loop (see the rule at the paging
     # catch below). Its facts ride on the EXCEPTION, the way the paging catch attaches them.
     function Get-GraphPagingIncompleteRecord ([string]$Cause, [int]$AtPage, [string]$AtUri, [object[]]$Aggregated) {
@@ -1250,6 +1256,10 @@ function Invoke-OERGraphRequest {
     [int]$PageNumber = 0
     # Read ONCE per call, before the loop: Get-OERPageWalkLimit owns the number.
     [int]$PageLimit = Get-OERPageWalkLimit
+    # The session cloud's Graph address, read ONCE per call (Global with no session state or no
+    # Environment, as the ARM wrapper's no-state fallback). Never a URL literal: Get-OERCloudEndpoint owns it.
+    $GraphCloud = if ($script:_OERAuthState -and $script:_OERAuthState.Environment) { [string]$script:_OERAuthState.Environment } else { 'Global' }
+    $GraphBaseUrl = ([string](Get-OERCloudEndpoint -Environment $GraphCloud).GraphResource).TrimEnd('/')
     # Every URI this walk has requested, page 1's -Uri included. Ordinal: a skiptoken is case-sensitive.
     $RequestedUris = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     while ($NextUri) {
@@ -1267,6 +1277,30 @@ function Invoke-OERGraphRequest {
             throw (Get-GraphPagingIncompleteRecord -Cause 'its next link repeats a page already requested in this walk, so it was not requested again' `
                 -AtPage $PageNumber -AtUri $NextUri -Aggregated $AllValues.ToArray())
             return
+        }
+        # SEC (BL-179, A10): the Graph SDK has no allowed-hosts list of its own, so a next link is
+        # requested wherever it points, with the session's bearer token. Page 1 is the caller's own
+        # -Uri (always a literal); only a LATER page is a value a response supplied. Decided here on the
+        # parsed address: https, no user info, the port and IdnHost of the session cloud's Graph address
+        # (https, no user info, same Port, IdnHost equal ignoring case). A relative link is refused like
+        # a foreign host. The ORIGINAL string is what is sent below, never Uri.ToString() (which
+        # unescapes, so a skiptoken would be re-encoded): the SDK takes -Uri as [uri] and PowerShell
+        # converts the same absolute string to the same IdnHost the TryCreate here judges (measured), so
+        # what is judged is what is requested. The return is load-bearing, as after the checks above.
+        if ($PageNumber -gt 1) {
+            $NextLinkUri = $null
+            $GraphUri = $null
+            $OnGraphHost = [System.Uri]::TryCreate($NextUri, [System.UriKind]::Absolute, [ref]$NextLinkUri) -and
+                [System.Uri]::TryCreate($GraphBaseUrl, [System.UriKind]::Absolute, [ref]$GraphUri) -and
+                [string]::Equals($NextLinkUri.Scheme, 'https', [System.StringComparison]::Ordinal) -and
+                [string]::IsNullOrEmpty($NextLinkUri.UserInfo) -and
+                $NextLinkUri.Port -eq $GraphUri.Port -and
+                [string]::Equals($NextLinkUri.IdnHost, $GraphUri.IdnHost, [System.StringComparison]::OrdinalIgnoreCase)
+            if (-not $OnGraphHost) {
+                throw (Get-GraphPagingIncompleteRecord -Cause "its next link does not address the Microsoft Graph host of the session's cloud ($GraphBaseUrl), so it was not requested" `
+                    -AtPage $PageNumber -AtUri $NextUri -Aggregated $AllValues.ToArray())
+                return
+            }
         }
         Write-Verbose "[Invoke-OERGraphRequest] Fetching page $PageNumber..."
         $PageFailed = $false
