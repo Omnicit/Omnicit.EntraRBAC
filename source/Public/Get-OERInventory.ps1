@@ -186,7 +186,8 @@ function Get-OERInventory {
     with the lookup's AmbiguousName error. So the projection writes a name only when that same lookup
     finds this access package or assignment policy and no other; an access package name another
     access package in the tenant carries, or an assignment policy name another policy of the same
-    access package carries, is written by id instead, so the entry applies. The check costs one
+    access package carries, is written by id instead, so the entry applies. A name with the form of an
+    object id is written as this object's id with no lookup, since the engine reads such a name as an id. The check costs one
     request per access package name and one per access package, however many reviews share them.
     A multi-stage review (StageCount greater than zero) is skipped
     with a warning instead of being exported, because its reviewers live in stageSettings -- which
@@ -337,10 +338,11 @@ function Get-OERInventory {
     engine refuses an ambiguous name and neither entry could be applied; leaving a top-level entry out
     removes nothing, because -Prune acts on child collections only, and leaving an assignment policy
     out removes nothing either, because the apply engine never removes an assignment policy. Access
-    review names are counted over every definition read, the skipped ones included. A group or a
-    catalog whose own display name has the form of an object id is left out too, and named unread,
-    since the apply engine reads such a name as an object id (the packages of such a catalog are
-    still exported, naming the catalog by its object id). A
+    review names are counted over every definition read, the skipped ones included. A group, a
+    catalog or an access package whose own display name has the form of an object id is left out too,
+    and named unread, since the apply engine reads such a name as an object id (the packages of such
+    a catalog are still exported, naming the catalog by its object id; a review of such a package
+    names it by its object id). A
     policy name is reported as accessPackages/ followed by the package name, /assignmentPolicies/ and
     the policy name, and the policies of two different packages never count against each other. An
     access package in a catalog whose name another catalog carries is written with that catalog's
@@ -680,6 +682,23 @@ function Get-OERInventory {
             )
             if ([string]::IsNullOrWhiteSpace($Cause)) { return }
             $UnreadCauses.Add([PSCustomObject]@{ Cause = $Cause; Target = $Target })
+        }
+
+        # Sprint 14 step 2 (BL-174b): an object whose own display name has the form of an object id cannot be
+        # declared by its name, so its entry is left out and named unread, once per name, letter case aside.
+        function Add-GuidNamedEntryLeftOut {
+            param(
+                [string]$Name,
+                [string]$Section,
+                [string]$Noun,
+                [System.Collections.Generic.HashSet[string]]$Seen
+            )
+            if (-not $Seen.Add($Name)) { return }
+            $LeftOutPath = "$Section/$Name"
+            $UnreadCollections.Add($LeftOutPath)
+            $LeftOutCause = "the $Noun '$LeftOutPath' was left out: its display name has the form of an object id, which Invoke-OERStructure reads as an object id and not as a name, so the $Noun cannot be declared by its name"
+            Write-Verbose "Get-OERInventory: $LeftOutCause"
+            Add-UnreadCause -Cause $LeftOutCause -Target ''
         }
 
         # A section whose LIST could not be read at all is written as [] (a top-level section is never null),
@@ -1066,6 +1085,9 @@ function Get-OERInventory {
         # (named deviation)" in tests/Unit/Public/Get-OERInventory.Tests.ps1 holds the URIs and the
         # decisions in step with the resolvers.
         #
+        # A name that has the form of an object id (Test-OERGuid) is never looked up: both resolvers return
+        # such a value as the id, so the id of this object is written with no request (BL-174a).
+        #
         # -MatchOf picks the candidates the lookup's answer holds for the name, exactly as the resolver
         # does. Each answer is cached for the invocation under -CacheKey in -Cache, so the reviews of one
         # access package cost one lookup of each kind however many there are. A lookup that fails is
@@ -1084,6 +1106,10 @@ function Get-OERInventory {
                 [string]$Part,
                 [string]$Label
             )
+            # Sprint 14 step 2 (BL-174a): Resolve-OERAccessPackageId and Resolve-OERAssignmentPolicyId read
+            # a name that Test-OERGuid accepts as an object id, so such a name can never reach this object
+            # by a lookup: the id is written with no lookup, as the directory role reference does.
+            if (Test-OERGuid -Value $Name) { return $Id }
             if (-not $Cache.ContainsKey($CacheKey)) {
                 try {
                     $Answer = Invoke-OERGraphRequest -Uri $Uri
@@ -1512,13 +1538,7 @@ function Get-OERInventory {
             $GuidNamedCatalogs = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
             foreach ($Cat in $ResolvedCatalogList) {
                 if (Test-OERGuid -Value ([string]$Cat.DisplayName)) {
-                    if ($GuidNamedCatalogs.Add([string]$Cat.DisplayName)) {
-                        $GuidCatPath = "catalogs/$($Cat.DisplayName)"
-                        $UnreadCollections.Add($GuidCatPath)
-                        $GuidCatCause = "the catalog '$GuidCatPath' was left out: its display name has the form of an object id, which Invoke-OERStructure reads as an object id and not as a name, so the catalog cannot be declared by its name"
-                        Write-Verbose "Get-OERInventory: $GuidCatCause"
-                        Add-UnreadCause -Cause $GuidCatCause -Target ''
-                    }
+                    Add-GuidNamedEntryLeftOut -Name ([string]$Cat.DisplayName) -Section 'catalogs' -Noun 'catalog' -Seen $GuidNamedCatalogs
                     continue
                 }
                 $Proj = [ordered]@{
@@ -1627,6 +1647,7 @@ function Get-OERInventory {
                 $CountName = [string]$CountCat.DisplayName
                 $ApCatalogNameCount[$CountName] = 1 + $(if ($ApCatalogNameCount.ContainsKey($CountName)) { $ApCatalogNameCount[$CountName] } else { 0 })
             }
+            $GuidNamedPackages = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
             foreach ($ApCat in $ResolvedCatalogList) {
                 # The catalog reference every package of this catalog is written with: its name, or its
                 # object id when another listed catalog carries the name (see above). The unread paths of
@@ -1657,6 +1678,17 @@ function Get-OERInventory {
                     $UnreadCollections.Add("accessPackages/$ApCatalogRef/packages")
                     $ApList = @()
                 }
+                # Sprint 14 step 2 (BL-174b): a package whose own display name has the form of an object id is
+                # left out before anything is read for it, as a catalog with such a name is; its name is
+                # reported once. Leaving it out removes nothing (Prune is child-scope only), and a review of it
+                # references it by id (Get-AccessReviewUniqueReference).
+                $ApList = @(foreach ($ListedAp in $ApList) {
+                    if ($null -ne $ListedAp -and (Test-OERGuid -Value ([string]$ListedAp.DisplayName))) {
+                        Add-GuidNamedEntryLeftOut -Name ([string]$ListedAp.DisplayName) -Section 'accessPackages' -Noun 'access package' -Seen $GuidNamedPackages
+                        continue
+                    }
+                    $ListedAp
+                })
                 # Build an OriginId -> resource display-name map ONCE per catalog. A resource role
                 # binding's scope carries the resource OriginId plus a scope LABEL (commonly 'Root'
                 # for the whole-resource scope) -- not the resource name. The apply engine resolves
@@ -3010,7 +3042,7 @@ function Get-OERInventory {
             $CauseClause = Format-OERUnreadCauseClause -Cause $UnreadCauses.ToArray()
             Write-CmdletError `
                 -Message ([System.Exception]::new(
-                    "This inventory is PARTIAL: $($UnreadCollections.Count) collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group or a catalog has the form of an object id, and are not stated as facts in the document (an accessReviews entry named as unread may still carry an id where a name could not be read). " +
+                    "This inventory is PARTIAL: $($UnreadCollections.Count) collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group, a catalog or an access package has the form of an object id, and are not stated as facts in the document (an accessReviews entry named as unread may still carry an id where a name could not be read). " +
                     "Unread: $($UnreadCollections -join ', '). A section reported here by its name alone could not be read at all and is written as an empty array, which does not mean the tenant has none. A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as " +
                     'leave untouched; do not hand-edit it to an empty array, and do not treat this document as a full tenant snapshot. ' +
                     'An entry ending in scopedRoles/principalType is not such a key: it names a unit some or all of whose scoped role rows are written without principalType, since their principals'' type could not be read.' +

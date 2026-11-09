@@ -51,11 +51,12 @@ Describe 'ConvertTo-OERGroupPimPolicy' {
         }
     }
 
-    It 'returns genuinely empty arrays when a canonical rule id is missing from the policy' {
+    It 'returns $null for the enablement list and an empty alert list when a canonical rule id is missing from the policy' {
         InModuleScope Omnicit.EntraRBAC {
             $Out = ConvertTo-OERGroupPimPolicy -Rules @(@{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT2H' }) `
                 -GroupId 'g1' -PolicyId 'p1' -AccessType 'member'
-            @($Out.ActivationEnabledRules).Count | Should -Be 0
+            # BL-174c: a rule the answer does not carry is $null, no longer an empty list.
+            $null -eq $Out.ActivationEnabledRules | Should -BeTrue
             @($Out.Notifications.EligibleAlert).Count | Should -Be 0
             $Out.AllowPermanentEligibility | Should -BeNullOrEmpty
             # No Approval_EndUser_Assignment rule at all: RequireApproval is genuinely $null (distinct
@@ -64,6 +65,51 @@ Describe 'ConvertTo-OERGroupPimPolicy' {
             # documents for the other rule-derived collections).
             $Out.RequireApproval | Should -BeNullOrEmpty
             @($Out.Approvers).Count | Should -Be 0
+        }
+    }
+
+    Context 'a rule the answer does not carry is $null, an empty rule is @() (BL-174c)' {
+        It 'gives $null for both enablement lists when neither rule is in the answer' {
+            InModuleScope Omnicit.EntraRBAC {
+                $Out = ConvertTo-OERGroupPimPolicy -Rules @(@{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT2H' }) -GroupId 'g1' -PolicyId 'p1' -AccessType 'member'
+                $null -eq $Out.ActivationEnabledRules | Should -BeTrue
+                $null -eq $Out.ActiveEnabledRules | Should -BeTrue
+            }
+        }
+
+        It 'gives an empty array, not $null, for a rule that is in the answer with an empty list' {
+            InModuleScope Omnicit.EntraRBAC {
+                $Rules = @(@{ id = 'Enablement_EndUser_Assignment'; enabledRules = @() }, @{ id = 'Enablement_Admin_Assignment'; enabledRules = @() })
+                $Out = ConvertTo-OERGroupPimPolicy -Rules $Rules -GroupId 'g1' -PolicyId 'p1' -AccessType 'member'
+                $null -ne $Out.ActivationEnabledRules | Should -BeTrue
+                $null -ne $Out.ActiveEnabledRules | Should -BeTrue
+                $Out.ActivationEnabledRules.Count | Should -Be 0
+                $Out.ActiveEnabledRules.Count | Should -Be 0
+            }
+        }
+
+        It 'keeps a single entry an array' {
+            InModuleScope Omnicit.EntraRBAC {
+                $Rules = @(@{ id = 'Enablement_EndUser_Assignment'; enabledRules = @('Justification') }, @{ id = 'Enablement_Admin_Assignment'; enabledRules = @('Ticketing') })
+                $Out = ConvertTo-OERGroupPimPolicy -Rules $Rules -GroupId 'g1' -PolicyId 'p1' -AccessType 'member'
+                , $Out.ActivationEnabledRules | Should -BeOfType ([object[]])
+                $Out.ActivationEnabledRules.Count | Should -Be 1
+                , $Out.ActiveEnabledRules | Should -BeOfType ([object[]])
+                $Out.ActiveEnabledRules.Count | Should -Be 1
+            }
+        }
+
+        It 'leaves AuthenticationContextId $null for a rule that is off and for a rule that is absent, the claim value for one that is on' {
+            InModuleScope Omnicit.EntraRBAC {
+                $Off = ConvertTo-OERGroupPimPolicy -Rules @(@{ id = 'AuthenticationContext_EndUser_Assignment'; isEnabled = $false; claimValue = 'c1' }) -GroupId 'g1' -PolicyId 'p1' -AccessType 'member'
+                $Absent = ConvertTo-OERGroupPimPolicy -Rules @() -GroupId 'g1' -PolicyId 'p1' -AccessType 'member'
+                $On = ConvertTo-OERGroupPimPolicy -Rules @(@{ id = 'AuthenticationContext_EndUser_Assignment'; isEnabled = $true; claimValue = 'c1' }) -GroupId 'g1' -PolicyId 'p1' -AccessType 'member'
+                $null -eq $Off.AuthenticationContextId | Should -BeTrue
+                $null -eq $Absent.AuthenticationContextId | Should -BeTrue
+                $On.AuthenticationContextId | Should -BeExactly 'c1'
+                @($Off.Rules).Count | Should -Be 1
+                @($Absent.Rules).Count | Should -Be 0
+            }
         }
     }
 

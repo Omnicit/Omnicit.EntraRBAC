@@ -179,15 +179,18 @@ GROUPS IN AN EXPORT
     has the form of an object id is written by its object id wherever the
     document references it (an access package's catalog reference included),
     and its own groups entry is left out and named as unread, as is the own
-    catalogs entry of a catalog with such a name, since Invoke-OERStructure
-    reads such a name as an object id. Test-OERStructure warns on a
+    catalogs entry of a catalog and the own accessPackages entry of an access
+    package with such a name, since Invoke-OERStructure reads such a name as
+    an object id. Test-OERStructure warns on a
     hand-written groups, catalogs or accessPackages displayName of that form.
     The export warns once, and its README lists each name, with how many
     objects carry it, under "Names two or more objects share". An access
     package's catalog, an access review's access package or assignment
     policy, and a group named as the principal of a role assignment or a
     directory role assignment (with principalType Group) are written by
-    object id when their name is shared. Test-OERStructure refuses two assignment policies of one
+    object id when their name is shared, and an access review's access package
+    or assignment policy also when its name has the form of an object id.
+    Test-OERStructure refuses two assignment policies of one
     name in one access package.
 
 PIM ACTIVATIONS ARE NOT STANDING MEMBERS
@@ -614,7 +617,10 @@ VALIDATING AND APPLYING A DOCUMENT
     or activeDurationDays) is Failed the same way, with PimRuleValueUnknown,
     when the live policy gives no value for the other half, or a duration
     that is not a positive whole number of days, and the declared half does
-    not already match; declare both halves. A PIM policy change that empties an
+    not already match; declare both halves. A group's pimPolicy access type that
+    declares authenticationContextId, activationEnablement or activeEnablement
+    over a rule the read did not return is Failed the same way, with
+    PimRuleValueUnknown, and nothing is sent. A PIM policy change that empties an
     approver side while no other approver remains is Failed with
     ApproverRequired in a -WhatIf plan, as in a run, and so, for a directory
     role or a group policy, is requireApproval true over a live approval

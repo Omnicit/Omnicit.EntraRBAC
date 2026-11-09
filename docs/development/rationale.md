@@ -13511,6 +13511,54 @@ never as an object id, so a review named like an object id round-trips by its na
 would lose data, and a validator warning on it would be false. Cost if wrong: one reference and a
 section read to revert, and a warning to drop.
 
+### Sprint 14 step 2: a name shaped like an object id on a package, and an absent PIM rule (BL-174, A4)
+
+Two defects of the same kind: a value the engine reads one way was written, or decided, another way.
+What Microsoft Graph answers for these objects is recorded in
+`docs/live-verification/fix-guid-named-packages-and-absent-rules-checklist.md`.
+
+**Why a review names an access package or policy by id (BL-174a).** `Resolve-OERAccessPackageId` and
+`Resolve-OERAssignmentPolicyId` read a value that `Test-OERGuid` accepts as an object id and return it
+verbatim, never as a name. A review that referenced a package or an assignment policy by a GUID-shaped
+display name would therefore be applied against whatever object carries that id, or none. The review
+reference check in `Get-OERInventory` returns this object's own id for such a name, with no lookup and no
+request, as the directory role reference does. An assignment policy's OWN entry inside an ordinary package
+keeps a GUID-shaped name as it is: `Sync-OERStructureAccessPackage` matches `assignmentPolicies[]` by name
+within the entry, so only the review references go through a resolver.
+
+**Why a package is left out and never pruned (BL-174b).** An access package whose own display name has
+the form of an object id cannot be declared by its name, for the reason above, so `Get-OERInventory` leaves
+its `accessPackages` entry out before anything is read for it and names it once per name, letter case
+aside, as unread (`accessPackages/` followed by the name), with the cause written inline and a blank
+`Target`, as for a catalog. `Add-GuidNamedEntryLeftOut` is the one place that does this for catalogs and
+packages. Leaving an entry out removes nothing: `Invoke-OERStructure`'s prune acts on child collections of
+a declared parent only, and no handler calls `Remove-OERAccessPackage`, which `Invoke-OERStructure.Tests.ps1`
+holds. `Test-OERStructure` already warns on a hand-written entry of that form (BL-173b).
+
+**R-1 (the authentication context).** `AuthenticationContextId` stays `$null` both for a rule that is
+off and for one that is absent, as it was before this change: writing `''` for a rule that is off would
+change what `Get-OERGroupPimPolicy` returns for every policy, and only a rule that is absent may change
+that output. The diff tells the two apart through the `Rules` the converter already carries. Cost if
+wrong: one line in the converter and a sweep of the fixtures.
+
+**R-2 (an absent PIM rule is unknown).** A declared `authenticationContextId`, `activationEnablement` or
+`activeEnablement` over a group policy whose read did not return the rule
+(`AuthenticationContext_EndUser_Assignment`, `Enablement_EndUser_Assignment`,
+`Enablement_Admin_Assignment`) is named in `UnknownLiveValues` by `Resolve-OERGroupPimPolicyChange` and
+sent nowhere. `Sync-OERStructureGroup` refuses it with the existing `PimRuleValueUnknown` before
+`ShouldProcess`, whether the declared form is empty or filled; an undeclared value is never named. The
+MFA / authentication-context clear is not decided over an unknown half. Cost if wrong: a declared value
+over an absent rule is refused where it used to be compared with an empty live value and written.
+
+**The `$null` readers.** `ConvertTo-OERGroupPimPolicy` gives `ActivationEnabledRules` and
+`ActiveEnabledRules` `$null` for a rule the answer does not carry and `@()` for a rule it carries with an
+empty list; `AuthenticationContextId` is `$null` for a rule that is off and for one that is absent, and
+`Rules` shows which. Each branch assigns, since an `if` expression would unroll an empty list to `$null`.
+The readers: `Get-OERGroupPimPolicy` (the property), `Get-OERInventoryGroup` (a `$null` list is omitted
+from the document; it tests `$null` first, since `@($null).Count` is 1) and `Resolve-OERGroupPimPolicyChange`
+(the diff). Its conflict part treats `$null` as it does an empty list, apart from a declared value over
+the absent rule, which is unknown. No ErrorId, public parameter or output type is added or changed.
+
 ### CLAUDE.md text for roster-identity-and-shared-names
 
 What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:

@@ -7348,3 +7348,113 @@ Describe 'Invoke-OERStructure writes the validator''s warnings before anything e
         @($Got | Where-Object { $_.Message -like 'Invoke-OERStructure: structure document warning*' }).Count | Should -Be 0
     }
 }
+
+Describe 'Invoke-OERStructure and an access package left out of the export (Sprint 14 step 2, BL-174b)' {
+    # An access package whose display name has the form of an object id is left out of the export, so a
+    # document made from it never declares that package. Leaving it out must remove nothing: the engine
+    # prunes below a package (its policies and resource roles), never a package itself. No id below is
+    # version-4 shaped.
+    Context 'an access package left out of the export is never pruned or written' {
+        BeforeAll {
+            $script:LoName = '11111111-2222-3333-4444-555555555555'
+            $script:LoCatalogId = 'aaaa1111-0000-0000-0000-000000000051'
+            $script:LoPackageId = 'bbbb2222-0000-0000-0000-000000000051'
+            $script:LoOtherId = 'bbbb2222-0000-0000-0000-000000000052'
+            $script:LoDocMissing = ('{ "version": "1.0", "accessPackages": [ ' +
+                '{ "displayName": "AP-Other", "catalog": "Core", "resourceRoles": [] } ] }')
+            $script:LoDocEmpty = '{ "version": "1.0", "accessPackages": [] }'
+        }
+
+        BeforeEach {
+            InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+            $script:LoGraphCalls = [System.Collections.Generic.List[string]]::new()
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { [PSCustomObject]@{ Scope = $null; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null } }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                param($Method, $Uri)
+                $script:LoGraphCalls.Add(('{0} {1}' -f $Method, $Uri))
+                throw "Unexpected Graph request: $Uri"
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERCatalogId { $script:LoCatalogId }
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource { @() }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackage {
+                param($Catalog, $Id)
+                @(
+                    [PSCustomObject]@{ Id = $script:LoPackageId; DisplayName = $script:LoName; Description = $null }
+                    [PSCustomObject]@{ Id = $script:LoOtherId; DisplayName = 'AP-Other'; Description = $null }
+                )
+            }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole { @() }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { @() }
+            Mock -ModuleName $script:moduleName Set-OERAccessPackage { }
+            Mock -ModuleName $script:moduleName Remove-OERAccessPackage { }
+            Mock -ModuleName $script:moduleName Remove-OERAccessPackageAssignmentPolicy { }
+            Mock -ModuleName $script:moduleName Remove-OERAccessPackageResourceRole { }
+        }
+
+        It 'removes and writes nothing for the left-out package, with a document whose accessPackages omit it (<Mode>)' -ForEach @(
+            @{ Mode = '-Prune -Confirm:$false'; WhatIf = $false }
+            @{ Mode = '-Prune -WhatIf'; WhatIf = $true }
+        ) {
+            $Rows = @(Invoke-OERStructure -Json $script:LoDocMissing -Include AccessPackages -Prune -WhatIf:$WhatIf -Confirm:$false `
+                    -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+            # Positive control: the declared package was looked up, so the section ran.
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 1 -ParameterFilter { $Catalog -eq 'Core' }
+            @($Rows | Where-Object { $_.Item -eq 'AP-Other' }).Count | Should -BeGreaterThan 0
+            @($Rows | Where-Object { $_.Item -like "*$($script:LoName)*" -or $_.Detail -like "*$($script:LoName)*" -or $_.Detail -like "*$($script:LoPackageId)*" }).Count | Should -Be 0
+            @($script:LoGraphCalls | Where-Object { $_ -match '^(DELETE|PATCH) ' -and $_ -match 'accessPackages/' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Remove-OERAccessPackage -Times 0
+            Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackage -Times 0 -ParameterFilter { $Id -eq $script:LoPackageId }
+            Should -Invoke -ModuleName $script:moduleName Remove-OERAccessPackageAssignmentPolicy -Times 0
+            Should -Invoke -ModuleName $script:moduleName Remove-OERAccessPackageResourceRole -Times 0
+        }
+
+        It 'removes and writes nothing, with a document whose accessPackages section is empty, under -Prune (<Mode>)' -ForEach @(
+            @{ Mode = '-Confirm:$false'; WhatIf = $false }
+            @{ Mode = '-WhatIf'; WhatIf = $true }
+        ) {
+            $Rows = @(Invoke-OERStructure -Json $script:LoDocEmpty -Include AccessPackages -Prune -WhatIf:$WhatIf -Confirm:$false `
+                    -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+            @($Rows | Where-Object { $_.Item -like "*$($script:LoName)*" -or $_.Detail -like "*$($script:LoName)*" }).Count | Should -Be 0
+            @($script:LoGraphCalls | Where-Object { $_ -match '^(DELETE|PATCH) ' -and $_ -match 'accessPackages/' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Remove-OERAccessPackage -Times 0
+            Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackage -Times 0
+            Should -Invoke -ModuleName $script:moduleName Remove-OERAccessPackageAssignmentPolicy -Times 0
+            Should -Invoke -ModuleName $script:moduleName Remove-OERAccessPackageResourceRole -Times 0
+        }
+
+        It 'has no apply-engine file that calls Remove-OERAccessPackage or sends a DELETE to an access package itself' {
+            $Source = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../../../source')).Path
+            $Files = @(Get-ChildItem -LiteralPath (Join-Path $Source 'Private') -Filter 'Sync-OERStructure*.ps1') +
+            @(Get-Item -LiteralPath (Join-Path $Source 'Public/Invoke-OERStructure.ps1'))
+            $Files.Count | Should -BeGreaterThan 9
+            $RemoveCalls = 0
+            $GraphCalls = 0
+            $PolicyRemoveCalls = 0
+            $PackageDeletes = [System.Collections.Generic.List[string]]::new()
+            foreach ($File in $Files) {
+                $Tokens = $null; $ParseErrors = $null
+                $Ast = [System.Management.Automation.Language.Parser]::ParseFile($File.FullName, [ref]$Tokens, [ref]$ParseErrors)
+                $Commands = $Ast.FindAll({ param($Node) $Node -is [System.Management.Automation.Language.CommandAst] }, $true)
+                foreach ($Command in $Commands) {
+                    $CommandName = [string]$Command.GetCommandName()
+                    if ($CommandName -ieq 'Remove-OERAccessPackage') { $RemoveCalls++ }
+                    if ($CommandName -ieq 'Remove-OERAccessPackageResourceRole') { $PolicyRemoveCalls++ }
+                    if ($CommandName -ieq 'Invoke-OERGraphRequest') {
+                        $GraphCalls++
+                        $Text = $Command.Extent.Text
+                        if ($Text -match '(?i)-Method\s+[''"]?DELETE' -and $Text -match '(?i)entitlementManagement/accessPackages/[^/''"\s]*[''"]') {
+                            $PackageDeletes.Add("$($File.Name): $Text")
+                        }
+                    }
+                }
+            }
+            $RemoveCalls | Should -Be 0
+            @($PackageDeletes) | Should -BeNullOrEmpty
+            # Controls: the scan sees commands in these files, among them the resource role removal (the one
+            # removal the access package handler makes) it must not confuse with the package removal.
+            $GraphCalls | Should -BeGreaterThan 0
+            $PolicyRemoveCalls | Should -BeGreaterThan 0
+        }
+    }
+}

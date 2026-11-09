@@ -197,10 +197,11 @@ Describe 'Get-OERGroupPimPolicy' {
 
     It 'returns genuinely empty arrays (not a one-element null array) when a canonical rule is missing' {
         # The tenant's policy rules array below carries no 'Enablement_EndUser_Assignment' and no
-        # 'Notification_Admin_Admin_Eligibility' rule. Without a null-filter, @($NullVar.Property)
-        # wraps the missing rule's $null property access into a ONE-element array containing $null,
-        # not an empty array -- which would leak a stray null into the inventory/apply schema's
-        # enum-typed arrays.
+        # 'Notification_Admin_Admin_Eligibility' rule. A missing enablement rule is $null (BL-174c: the
+        # read did not return it, which is not "off" or an empty list); a missing notification rule
+        # is a real empty array. Without a null-filter, @($NullVar.Property) would wrap the missing
+        # rule's $null into a ONE-element array containing $null, which would leak a stray null into
+        # the inventory/apply schema's enum-typed arrays.
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
             @{ value = @(
                 @{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT8H' }
@@ -209,7 +210,8 @@ Describe 'Get-OERGroupPimPolicy' {
             ) }
         } -ParameterFilter { $Uri -match 'roleManagementPolicies/pol-1/rules' }
         $R = Get-OERGroupPimPolicy -Id 'gid-1'
-        @($R.ActivationEnabledRules).Count      | Should -Be 0
+        $null -eq $R.ActivationEnabledRules     | Should -BeTrue
+        $null -eq $R.ActiveEnabledRules         | Should -BeTrue
         @($R.Notifications.EligibleAlert).Count | Should -Be 0
     }
 

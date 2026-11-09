@@ -17,7 +17,10 @@ function ConvertTo-OERGroupPimPolicy {
     (so a beta-read group approver, which carries id and no groupId, still matches a declared group id)
     -- an absent approval rule or stage gives a genuinely empty array, never a one-element array holding
     $null. This private converter is the single owner of the PIM-for-groups policy READ shape and is
-    used by Get-OERGroupPimPolicy and Get-OERListedGroupPimPolicy. The patch summary that
+    used by Get-OERGroupPimPolicy and Get-OERListedGroupPimPolicy. A rule the answer does not carry
+    gives $null for ActivationEnabledRules and ActiveEnabledRules, a rule it carries with an empty
+    list gives @(); AuthenticationContextId is $null both for a rule that is off and for one that is
+    absent, and Rules shows which. The patch summary that
     Set-OERGroupPimPolicy returns is a different shape owned by ConvertTo-OERGroupPimPolicyResult.
 
     .PARAMETER Rules
@@ -77,7 +80,15 @@ function ConvertTo-OERGroupPimPolicy {
         # $null (a PowerShell array-wrap gotcha), not a genuinely empty array. That leaked a stray
         # null into enum-typed schema arrays (activationEnablement/activeEnablement) and notification
         # recipient lists downstream. Where-Object { $null -ne $PSItem } collapses both "rule missing"
-        # and "rule present but property null/empty" to a real empty array.
+        # and "rule present but property null/empty" to a real empty array for the notification lists.
+        # The two enablement lists tell the two apart (BL-174c): a rule the answer does not carry is
+        # $null, a rule it carries with an empty list is @(). Assigned in the branch: an if expression
+        # would unroll an empty list to $null.
+        $ActivationEnabledRules = $null
+        if ($null -ne $ActEnable) { $ActivationEnabledRules = @($ActEnable.enabledRules | Where-Object { $null -ne $PSItem }) }
+        $ActiveEnabledRules = $null
+        if ($null -ne $ActiveEnable) { $ActiveEnabledRules = @($ActiveEnable.enabledRules | Where-Object { $null -ne $PSItem }) }
+
         $Notifications = [PSCustomObject]@{
             EligibleAlert   = @($NotifElig.notificationRecipients | Where-Object { $null -ne $PSItem })
             ActiveAlert     = @($NotifActive.notificationRecipients | Where-Object { $null -ne $PSItem })
@@ -102,14 +113,14 @@ function ConvertTo-OERGroupPimPolicy {
             AccessType                = $AccessType
             ActivationMaxHours        = $MaxHours
             AuthenticationContextId   = $CtxId
-            ActivationEnabledRules    = @($ActEnable.enabledRules | Where-Object { $null -ne $PSItem })
+            ActivationEnabledRules    = $ActivationEnabledRules
             AllowPermanentEligibility = $AllowPermElig
             EligibleDuration          = $EligExpiry.maximumDuration
             EligibleDurationDays      = $EligDays
             AllowPermanentActive      = $AllowPermActive
             ActiveDuration            = $ActiveExpiry.maximumDuration
             ActiveDurationDays        = $ActiveDays
-            ActiveEnabledRules        = @($ActiveEnable.enabledRules | Where-Object { $null -ne $PSItem })
+            ActiveEnabledRules        = $ActiveEnabledRules
             RequireApproval           = $RequireApproval
             Approvers                 = $Approvers
             Notifications             = $Notifications

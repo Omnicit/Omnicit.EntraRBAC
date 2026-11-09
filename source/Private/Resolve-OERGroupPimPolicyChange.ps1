@@ -66,7 +66,12 @@ function Resolve-OERGroupPimPolicyChange {
     sent; with both halves declared an unknown live permanence counts as different, so the declared
     pair is sent. A declared requireApproval over a live RequireApproval of null (the policy carries
     no Approval_EndUser_Assignment rule) is named in UnknownLiveValues too, never read as false, and
-    no RequireApproval and no approver parameter is sent for that access type. A null Current is
+    no RequireApproval and no approver parameter is sent for that access type. The same holds for a
+    declared authenticationContextId over a policy whose read returned no AuthenticationContext_EndUser_Assignment
+    rule, a declared activationEnablement over no Enablement_EndUser_Assignment rule and a declared
+    activeEnablement over no Enablement_Admin_Assignment rule (the converter gives $null for those two
+    lists, @() for a rule with an empty list): each is named whether its declared form is empty or
+    filled, nothing is sent for it, and an undeclared value is never named. A null Current is
     compared exactly as before.
 
     .PARAMETER Declared
@@ -128,15 +133,32 @@ function Resolve-OERGroupPimPolicyChange {
         }
     }
 
+    # -- a rule the read did not return is unknown (BL-174c) ----------------------------------
+    # The converter gives ActivationEnabledRules / ActiveEnabledRules $null when the answer carries no
+    # Enablement_EndUser_Assignment / Enablement_Admin_Assignment rule, and @() when it carries the rule
+    # with an empty list. AuthenticationContextId is $null for a rule that is off and for a rule that is
+    # absent, so the context rule is looked for in Rules. A declared value over a rule that is absent,
+    # empty or filled, is named in UnknownLiveValues and sent nowhere, as requireApproval is; an
+    # undeclared value is never named. A null Current keeps its old reading.
+    $UnknownLiveValues = [System.Collections.Generic.List[string]]::new()
+    $CtxRuleInAnswer = $null -ne $Current -and @($Current.Rules | Where-Object { $null -ne $PSItem -and [string]$PSItem.id -eq 'AuthenticationContext_EndUser_Assignment' }).Count -gt 0
+    $CtxUnknown = (Test-DeclHas $Declared 'authenticationContextId') -and $null -ne $Current -and $null -eq $Current.AuthenticationContextId -and -not $CtxRuleInAnswer
+    $AerUnknown = (Test-DeclHas $Declared 'activationEnablement') -and $null -ne $Current -and $null -eq $Current.ActivationEnabledRules
+    $ActiveUnknown = (Test-DeclHas $Declared 'activeEnablement') -and $null -ne $Current -and $null -eq $Current.ActiveEnabledRules
+
     # -- scalar: authenticationContextId (empty string means disable) ----------------------
-    if (Test-DeclHas $Declared 'authenticationContextId') {
+    if ($CtxUnknown) {
+        $UnknownLiveValues.Add('authenticationContextId is declared, and whether the live policy has an authentication context on activation (AuthenticationContext_EndUser_Assignment) is unknown: the read returned no such rule')
+    } elseif (Test-DeclHas $Declared 'authenticationContextId') {
         $D = [string]$Declared.authenticationContextId
         $C = if ($null -ne $Current) { [string]$Current.AuthenticationContextId } else { '' }
         if ($null -eq $Current -or $D -ne $C) { $SetParams.AuthenticationContextId = $D; $Changes.Add("authenticationContextId=$D") }
     }
 
     # -- set: activationEnablement ---------------------------------------------------------
-    if (Test-DeclHas $Declared 'activationEnablement') {
+    if ($AerUnknown) {
+        $UnknownLiveValues.Add('activationEnablement is declared, and the live activation requirements (Enablement_EndUser_Assignment enabledRules) are unknown: the read returned no such rule')
+    } elseif (Test-DeclHas $Declared 'activationEnablement') {
         $D = @($Declared.activationEnablement)
         $C = if ($null -ne $Current) { @($Current.ActivationEnabledRules) } else { @() }
         if ($null -eq $Current -or -not (Test-SetEqual $D $C)) {
@@ -145,7 +167,9 @@ function Resolve-OERGroupPimPolicyChange {
     }
 
     # -- set: activeEnablement -------------------------------------------------------------
-    if (Test-DeclHas $Declared 'activeEnablement') {
+    if ($ActiveUnknown) {
+        $UnknownLiveValues.Add('activeEnablement is declared, and the live active assignment requirements (Enablement_Admin_Assignment enabledRules) are unknown: the read returned no such rule')
+    } elseif (Test-DeclHas $Declared 'activeEnablement') {
         $D = @($Declared.activeEnablement)
         $C = if ($null -ne $Current) { @($Current.ActiveEnabledRules) } else { @() }
         if ($null -eq $Current -or -not (Test-SetEqual $D $C)) {
@@ -167,7 +191,6 @@ function Resolve-OERGroupPimPolicyChange {
     # is absent or carries none, never $false. Both halves declared, and a null Current (the handler
     # never passes one, BL-40), keep the comparison below exactly as it was.
     # Final review of Sprint 11 step 11, Important 1.
-    $UnknownLiveValues = [System.Collections.Generic.List[string]]::new()
     function Get-UnknownUndeclaredHalf {
         param(
             [bool]$Read, [bool]$HasPerm, [bool]$HasDur, [object]$DeclaredPerm, [object]$DeclaredDays,
@@ -358,7 +381,7 @@ function Resolve-OERGroupPimPolicyChange {
     # and never writes its own warning about the pair. Set only when an arm below actually adds its
     # change; a ClearMfa whose reconciled list the policy already has changes nothing and says nothing.
     $ConflictReason = $null
-    if ($Resolution.Action -eq 'ClearMfa') {
+    if ($Resolution.Action -eq 'ClearMfa' -and -not $AerUnknown -and -not $CtxUnknown) {
         # Re-decide the enablement entry from scratch: the per-field comparison above may already
         # have queued the DECLARED list (which still carries MFA), and on the second apply run the
         # reconciled list is exactly what the policy already has, so the entry must come back OUT or

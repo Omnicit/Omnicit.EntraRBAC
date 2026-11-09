@@ -200,8 +200,8 @@ function Get-OERInventoryReadme {
     .PARAMETER IncompleteReads
     The IncompleteReads list of the Export-OERInventory output. First the Entra ID entries:
     collections or objects that could not be read, could not be written without an empty name, or
-    were left out because two or more live objects share a name or because the display name of a group
-    or a catalog has the form of an object id. Then one entry per role assignment
+    were left out because two or more live objects share a name or because the display name of a group,
+    a catalog or an access package has the form of an object id. Then one entry per role assignment
     principal that could not be read, reading 'roleAssignments/<role> -> <principal id> @ <scope>'
     followed by '/principal' (its lookup failed) or '/principalStatus' (only its deleted items read
     failed). Then one entry per Azure scope where at least one role management policy could not be
@@ -475,7 +475,7 @@ management policies kept without being judged", "Role assignment principal that 
 "Azure Lighthouse read that failed" and "Azure subscription whose tenant could not be read", each
 entry below names collections or objects that could not be read, could not be written without an
 empty name, or were left out because two or more live objects share a name or because the display name
-of a group or a catalog has the form of an object id; none of them is stated as a fact in this bundle.
+of a group, a catalog or an access package has the form of an object id; none of them is stated as a fact in this bundle.
 An entry labelled "Entra ID" can name several of them at once, separated by a comma and a space, since
 the collections that one read could not read are reported together as one entry.
 An entry labelled "Role
@@ -631,7 +631,9 @@ has the form of an object id is the exception to that: `Invoke-OERStructure` rea
 object id, so every place that references the group, those included, writes its object id, and the
 group's own entry is left out of `groups` and named as unread. A catalog whose display name has the
 form of an object id is treated the same way: its own entry is left out of `catalogs` and named as
-unread, and an access package in such a catalog names the catalog by its object id. Leaving them out
+unread, and an access package in such a catalog names the catalog by its object id. An access package
+whose display name has the form of an object id is left out of `accessPackages` and named as unread the
+same way, and an access review of it names the package or policy by its object id. Leaving them out
 of the export changes nothing in the tenant.
 '@
     $SharedNameSection = if ($SharedBullets.Count -gt 0) {

@@ -746,3 +746,131 @@ Describe 'Resolve-OERGroupPimPolicyChange: permanence' {
         }
     }
 }
+
+Describe 'Resolve-OERGroupPimPolicyChange: a rule the read did not return is unknown (BL-174c)' {
+    BeforeAll {
+        $script:CtxText = 'authenticationContextId is declared, and whether the live policy has an authentication context on activation (AuthenticationContext_EndUser_Assignment) is unknown: the read returned no such rule'
+        $script:AerText = 'activationEnablement is declared, and the live activation requirements (Enablement_EndUser_Assignment enabledRules) are unknown: the read returned no such rule'
+        $script:ActiveText = 'activeEnablement is declared, and the live active assignment requirements (Enablement_Admin_Assignment enabledRules) are unknown: the read returned no such rule'
+    }
+
+    Context 'a declared value over an absent rule is named and sent nowhere, empty or filled' {
+        It 'authenticationContextId <Name> over a policy with no context rule' -ForEach @(
+            @{ Value = ''; Name = 'empty' }
+            @{ Value = 'c1'; Name = 'filled' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Value = $Value; Text = $script:CtxText } {
+                param($Value, $Text)
+                $Declared = [pscustomobject]@{ authenticationContextId = $Value }
+                $Current = [pscustomobject]@{ AuthenticationContextId = $null; ActivationEnabledRules = @(); ActiveEnabledRules = @(); Rules = @() }
+                $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current
+                $R.Changed | Should -BeFalse
+                $R.SetParams.ContainsKey('AuthenticationContextId') | Should -BeFalse
+                @($R.UnknownLiveValues) | Should -Be @($Text)
+            }
+        }
+
+        It 'activationEnablement <Name> over a policy with no activation rule' -ForEach @(
+            @{ Name = 'empty'; Value = @() }
+            @{ Name = 'filled'; Value = @('Justification') }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Value = $Value; Text = $script:AerText } {
+                param($Value, $Text)
+                $Declared = [pscustomobject]@{ activationEnablement = $Value }
+                $Current = [pscustomobject]@{ AuthenticationContextId = $null; ActivationEnabledRules = $null; ActiveEnabledRules = @(); Rules = @() }
+                $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current
+                $R.Changed | Should -BeFalse
+                $R.SetParams.ContainsKey('ActivationEnabledRules') | Should -BeFalse
+                @($R.UnknownLiveValues) | Should -Be @($Text)
+            }
+        }
+
+        It 'activeEnablement <Name> over a policy with no active assignment rule' -ForEach @(
+            @{ Name = 'empty'; Value = @() }
+            @{ Name = 'filled'; Value = @('Justification') }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Value = $Value; Text = $script:ActiveText } {
+                param($Value, $Text)
+                $Declared = [pscustomobject]@{ activeEnablement = $Value }
+                $Current = [pscustomobject]@{ AuthenticationContextId = $null; ActivationEnabledRules = @(); ActiveEnabledRules = $null; Rules = @() }
+                $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current
+                $R.Changed | Should -BeFalse
+                $R.SetParams.ContainsKey('ActiveEnabledRules') | Should -BeFalse
+                @($R.UnknownLiveValues) | Should -Be @($Text)
+            }
+        }
+    }
+
+    Context 'an undeclared value over an absent rule is never named' {
+        It 'names nothing and refuses nothing' {
+            InModuleScope $script:moduleName {
+                $Declared = [pscustomobject]@{ activationMaxHours = 4 }
+                $Current = [pscustomobject]@{ ActivationMaxHours = 8; AuthenticationContextId = $null; ActivationEnabledRules = $null; ActiveEnabledRules = $null; Rules = @() }
+                $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current
+                @($R.UnknownLiveValues).Count | Should -Be 0
+                $R.SetParams.ActivationMaxHours | Should -Be 4
+            }
+        }
+    }
+
+    Context 'a rule that is in the answer is compared as before' {
+        It 'an empty activationEnablement and activeEnablement over empty rules is Unchanged' {
+            InModuleScope $script:moduleName {
+                $Declared = [pscustomobject]@{ activationEnablement = @(); activeEnablement = @() }
+                $Current = [pscustomobject]@{ AuthenticationContextId = $null; ActivationEnabledRules = @(); ActiveEnabledRules = @(); Rules = @() }
+                $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current
+                $R.Changed | Should -BeFalse
+                @($R.UnknownLiveValues).Count | Should -Be 0
+            }
+        }
+
+        It 'a context rule that is off (in Rules, AuthenticationContextId null): empty is Unchanged, c1 is sent' {
+            InModuleScope $script:moduleName {
+                $Current = [pscustomobject]@{ AuthenticationContextId = $null; ActivationEnabledRules = @('Justification'); ActiveEnabledRules = @(); Rules = @(@{ id = 'AuthenticationContext_EndUser_Assignment' }) }
+                $Empty = Resolve-OERGroupPimPolicyChange -Declared ([pscustomobject]@{ authenticationContextId = '' }) -Current $Current
+                $Empty.Changed | Should -BeFalse
+                @($Empty.UnknownLiveValues).Count | Should -Be 0
+                $On = Resolve-OERGroupPimPolicyChange -Declared ([pscustomobject]@{ authenticationContextId = 'c1' }) -Current $Current
+                $On.SetParams.AuthenticationContextId | Should -BeExactly 'c1'
+                @($On.UnknownLiveValues).Count | Should -Be 0
+            }
+        }
+    }
+
+    Context 'the MFA / authentication context reconcile is not run over a rule the read did not return' {
+        It 'c1 with MFA declared over an absent activation rule: no ActivationEnabledRules in SetParams' {
+            InModuleScope $script:moduleName {
+                $Declared = [pscustomobject]@{ authenticationContextId = 'c1'; activationEnablement = @('MultiFactorAuthentication', 'Justification') }
+                $Current = [pscustomobject]@{ AuthenticationContextId = 'c1'; ActivationEnabledRules = $null; ActiveEnabledRules = @(); Rules = @(@{ id = 'AuthenticationContext_EndUser_Assignment' }) }
+                $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current
+                $R.SetParams.ContainsKey('ActivationEnabledRules') | Should -BeFalse
+                @($R.UnknownLiveValues).Count | Should -Be 1
+                $R.ConflictReason | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'c1 over an absent context rule with MFA live: no ActivationEnabledRules in SetParams' {
+            InModuleScope $script:moduleName -Parameters @{ Text = $script:CtxText } {
+                param($Text)
+                $Declared = [pscustomobject]@{ authenticationContextId = 'c1' }
+                $Current = [pscustomobject]@{ AuthenticationContextId = $null; ActivationEnabledRules = @('MultiFactorAuthentication'); ActiveEnabledRules = @(); Rules = @() }
+                $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current
+                $R.SetParams.ContainsKey('ActivationEnabledRules') | Should -BeFalse
+                $R.SetParams.ContainsKey('AuthenticationContextId') | Should -BeFalse
+                @($R.UnknownLiveValues) | Should -Be @($Text)
+            }
+        }
+    }
+
+    Context 'a null Current keeps its old reading' {
+        It 'names nothing and sends every declared field' {
+            InModuleScope $script:moduleName {
+                $Declared = [pscustomobject]@{ authenticationContextId = 'c1'; activeEnablement = @('Justification') }
+                $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $null
+                @($R.UnknownLiveValues).Count | Should -Be 0
+                $R.SetParams.AuthenticationContextId | Should -BeExactly 'c1'
+                @($R.SetParams.ActiveEnabledRules) | Should -Be @('Justification')
+            }
+        }
+    }
+}

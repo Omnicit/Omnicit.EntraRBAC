@@ -3053,6 +3053,7 @@ Describe 'Get-OERInventory' {
         It 'states the rule in the help' {
             $Help = (Get-Help Get-OERInventory -Full | Out-String) -replace '\s+', ' '
             $Help | Should -Match ([regex]::Escape('So the projection writes a name only when that same lookup finds this access package or assignment policy and no other'))
+            $Help | Should -Match ([regex]::Escape('A name with the form of an object id is written as this object''s id with no lookup'))
             $Help | Should -Match ([regex]::Escape('a name whose uniqueness could not be checked, because the lookup above failed'))
             $Help | Should -Not -Match ([regex]::Escape('until the entry names it by id'))
         }
@@ -3182,6 +3183,61 @@ Describe 'Get-OERInventory' {
             $Ar.accessPackage | Should -BeExactly $(if ($ApOutcome -eq 'This') { $script:AgApName } else { $script:AgApId })
             $Ar.assignmentPolicy | Should -BeExactly $(if ($PolOutcome -eq 'This') { $script:AgPolName } else { $script:AgPolId })
             @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+        }
+
+        # BL-174a: a name with the form of an object id is read by both resolvers as that id, with no
+        # listing, so the export writes this object's id and sends no listing request either. No id
+        # below is version-4 shaped.
+        It 'writes the id and sends no listing for <Case>' -ForEach @(
+            @{ Case = 'a package and a policy named like object ids'; ApName = 'cccc3333-0000-0000-0000-000000000071'; PolName = 'dddd4444-0000-0000-0000-000000000071'; ApListed = $false; PolListed = $false }
+            @{ Case = 'a package named like an object id and a plain policy name'; ApName = 'cccc3333-0000-0000-0000-000000000072'; PolName = 'Default'; ApListed = $false; PolListed = $true }
+            @{ Case = 'a plain package name and a policy named like an object id'; ApName = 'AP Sales'; PolName = 'dddd4444-0000-0000-0000-000000000073'; ApListed = $true; PolListed = $false }
+            @{ Case = 'upper case object id forms'; ApName = 'CCCC3333-0000-0000-0000-000000000074'; PolName = 'DDDD4444-0000-0000-0000-000000000074'; ApListed = $false; PolListed = $false }
+        ) {
+            $SavedApName = $script:AgApName
+            $SavedPolName = $script:AgPolName
+            try {
+                $script:AgApName = $ApName
+                $script:AgPolName = $PolName
+                $script:AgPackages = @(@{ id = $script:AgApId; displayName = $ApName })
+                $script:AgPolicies = @(@{ id = $script:AgPolId; displayName = $PolName })
+                $Base = 'v1.0/identityGovernance/entitlementManagement/'
+
+                # The resolvers: a GUID-shaped name is returned as it is, which is not this object's id,
+                # and no listing is sent for it.
+                $script:AgCalls.Clear()
+                $ApResolved = InModuleScope $script:moduleName -Parameters @{ Name = $ApName } {
+                    param($Name)
+                    Resolve-OERAccessPackageId -DisplayName $Name
+                }
+                $PolResolved = InModuleScope $script:moduleName -Parameters @{ PackageId = $script:AgApId; Name = $PolName } {
+                    param($PackageId, $Name)
+                    Resolve-OERAssignmentPolicyId -AccessPackageId $PackageId -AssignmentPolicy $Name
+                }
+                if (-not $ApListed) {
+                    $ApResolved | Should -BeExactly $ApName
+                    $ApResolved | Should -Not -BeExactly $script:AgApId
+                }
+                if (-not $PolListed) {
+                    $PolResolved | Should -BeExactly $PolName
+                    $PolResolved | Should -Not -BeExactly $script:AgPolId
+                }
+
+                # The export, under the same transport mock.
+                $script:AgCalls.Clear()
+                $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+                $Ar = @($Inv.AccessReviews)[0]
+                $Ar.accessPackage | Should -BeExactly $(if ($ApListed) { $ApName } else { $script:AgApId })
+                $Ar.assignmentPolicy | Should -BeExactly $(if ($PolListed) { $PolName } else { $script:AgPolId })
+                @($script:AgCalls | Where-Object { $_.StartsWith($Base + 'accessPackages?') }).Count | Should -Be $(if ($ApListed) { 1 } else { 0 })
+                @($script:AgCalls | Where-Object { $_.StartsWith($Base + 'assignmentPolicies?') }).Count | Should -Be $(if ($PolListed) { 1 } else { 0 })
+                # An id-shaped name is no fault: no InventoryPartial and no unread collection.
+                @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+                @(@($InvErr) | Where-Object { [string]$_.TargetObject -like 'accessReviews/*' }).Count | Should -Be 0
+            } finally {
+                $script:AgApName = $SavedApName
+                $script:AgPolName = $SavedPolName
+            }
         }
     }
 
@@ -4137,7 +4193,7 @@ Describe 'Get-OERInventory' {
             $Msg = $Partial[0].Exception.Message
             $Msg | Should -Match ('Unread: catalogs/' + $script:GnName + '\. ')
             $Msg | Should -BeLike ("*the catalog 'catalogs/$($script:GnName)' was left out: its display name has the form of an object id, which Invoke-OERStructure reads as an object id and not as a name, so the catalog cannot be declared by its name*")
-            $Msg | Should -BeLike '*because the display name of a group or a catalog has the form of an object id*'
+            $Msg | Should -BeLike '*because the display name of a group, a catalog or an access package has the form of an object id*'
         }
 
         It 'writes the catalog by its object id in the package that names it, and still exports the package' {
@@ -4185,6 +4241,128 @@ Describe 'Get-OERInventory' {
             # Positive control: read once by the catalogs section and once by the packages section.
             Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 2 -Exactly -ParameterFilter { $Catalog -eq 'cat-1' }
             @(Get-GnPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+    }
+
+    Context 'an access package whose display name has the form of an object id (BL-174b)' {
+        # Sprint 14 step 2 (BL-174b): like a catalog with such a name (BL-173a), the package is left out
+        # of accessPackages before anything is read for it and named as unread, once per name, letter
+        # case aside. No id is version-4 shaped.
+        BeforeAll {
+            $script:GpName = '11111111-2222-3333-4444-555555555555'
+            $script:GpCause = "the access package 'accessPackages/$($script:GpName)' was left out: its display name has the form of an object id, which Invoke-OERStructure reads as an object id and not as a name, so the access package cannot be declared by its name"
+            function script:Get-GpPartial {
+                param([object[]]$Record)
+                @($Record | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            }
+            function script:New-GpPackage {
+                param([string]$Id, [string]$Name)
+                [PSCustomObject]@{ Id = $Id; DisplayName = $Name; Description = $null }
+            }
+        }
+
+        BeforeEach {
+            $script:GpCatalogs = @([PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'Core'; Description = 'd' })
+            $script:GpAccessPackages = @{}
+            Mock -ModuleName $script:moduleName Get-OERCatalog { $script:GpCatalogs }
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource { @() }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackage {
+                param($Catalog)
+                $script:GpAccessPackages[[string]$Catalog]
+            }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole { @() }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "Unexpected Graph request: $Uri" }
+        }
+
+        It 'leaves the package out, names accessPackages and its name as unread with its cause and reads nothing for it' {
+            $script:GpAccessPackages = @{ 'cat-1' = @(New-GpPackage -Id 'ap-g1' -Name $script:GpName) }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.accessPackages).Count | Should -Be 0
+            $Partial = Get-GpPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            $Msg = $Partial[0].Exception.Message
+            $Msg | Should -Match ('Unread: accessPackages/' + $script:GpName + '\. ')
+            $Msg | Should -BeLike "*$($script:GpCause)*"
+            $Msg | Should -BeLike '*because the display name of a group, a catalog or an access package has the form of an object id*'
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 0 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy -Times 0 -Exactly
+        }
+
+        It 'reads no catalog resources from the package section when the only package of the catalog is left out' {
+            $script:GpAccessPackages = @{ 'cat-1' = @(New-GpPackage -Id 'ap-g1' -Name $script:GpName) }
+            $null = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalog -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 0 -Exactly
+        }
+
+        It 'reports the same name once in two letter cases, and once in two catalogs' {
+            $script:GpCatalogs = @(
+                [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'Core'; Description = 'd' }
+                [PSCustomObject]@{ Id = 'cat-2'; DisplayName = 'Edge'; Description = 'd' }
+            )
+            $script:GpAccessPackages = @{
+                'cat-1' = @(
+                    New-GpPackage -Id 'ap-g1' -Name '11111111-2222-3333-4444-555555555AAA'
+                    New-GpPackage -Id 'ap-g2' -Name '11111111-2222-3333-4444-555555555aaa'
+                )
+                'cat-2' = @(New-GpPackage -Id 'ap-g3' -Name '11111111-2222-3333-4444-555555555AAA')
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.accessPackages).Count | Should -Be 0
+            $Partial = Get-GpPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            $Msg = $Partial[0].Exception.Message
+            $Msg | Should -Match 'Unread: accessPackages/11111111-2222-3333-4444-555555555AAA\. '
+            $Msg | Should -Not -MatchExactly 'accessPackages/11111111-2222-3333-4444-555555555aaa'
+            ([regex]::Matches($Msg, [regex]::Escape("the access package 'accessPackages/11111111-2222-3333-4444-555555555AAA' was left out"))).Count | Should -Be 1
+        }
+
+        It 'exports an ordinary package beside the left-out one, unchanged' {
+            $script:GpAccessPackages = @{ 'cat-1' = @(
+                    New-GpPackage -Id 'ap-g1' -Name $script:GpName
+                    New-GpPackage -Id 'ap-1' -Name 'Sales'
+                ) }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.accessPackages | ForEach-Object { "$($_.catalog)|$($_.displayName)" }) | Should -Be @('Core|Sales')
+            # The ordinary package is read as before; the left-out one is not.
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-1' }
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 0 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-g1' }
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy -Times 0 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-g1' }
+            $Partial = Get-GpPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            $Partial[0].Exception.Message | Should -Match ('Unread: accessPackages/' + $script:GpName + '\. ')
+        }
+
+        It 'keeps an assignment policy named like an object id under its name inside an ordinary package, with no unread entry' {
+            # Sync-OERStructureAccessPackage matches assignmentPolicies[] by name within the entry; only the
+            # review references go through a resolver. So the policy's own entry keeps its name.
+            $PolName = 'dddd4444-0000-0000-0000-000000000081'
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy {
+                [PSCustomObject]@{
+                    Id = 'pol-g1'; DisplayName = 'dddd4444-0000-0000-0000-000000000081'; Description = $null; RequestorScope = $null; RequestorSettings = $null
+                    RequireApproval = $false; RequireRequestorJustification = $false; RequireApprovalForUpdate = $false
+                    ApprovalStages = @(); DurationInDays = 30; DurationInHours = $null; ExpirationDateTime = $null
+                    NotificationsDisabled = $false
+                }
+            }
+            $script:GpAccessPackages = @{ 'cat-1' = @(New-GpPackage -Id 'ap-1' -Name 'Sales') }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.accessPackages).Count | Should -Be 1
+            @($Inv.accessPackages[0].assignmentPolicies).Count | Should -Be 1
+            $Inv.accessPackages[0].assignmentPolicies[0].displayName | Should -BeExactly $PolName
+            Get-GpPartial -Record @($InvErr) | Should -BeNullOrEmpty
+        }
+
+        It 'writes a catalog cause unchanged (control, BL-173a)' {
+            $script:GpCatalogs = @([PSCustomObject]@{ Id = 'cat-g1'; DisplayName = $script:GpName; Description = 'd' })
+            $Inv = Get-OERInventory -Include Catalogs -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.catalogs).Count | Should -Be 0
+            $Partial = Get-GpPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            $Partial[0].Exception.Message | Should -BeLike ("*the catalog 'catalogs/$($script:GpName)' was left out: its display name has the form of an object id, which Invoke-OERStructure reads as an object id and not as a name, so the catalog cannot be declared by its name*")
         }
     }
 
@@ -4362,7 +4540,7 @@ Describe 'Get-OERInventory' {
             [string]$Partial[0].TargetObject | Should -BeExactly 'groups/Dup'
             $Partial[0].Exception.Message | Should -Match '2 live objects share the name groups/Dup'
             $Partial[0].Exception.Message |
-                Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group or a catalog has the form of an object id, and are not stated as facts in the document*'
+                Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group, a catalog or an access package has the form of an object id, and are not stated as facts in the document*'
         }
 
         It 'writes every group of a unique name and reports nothing when no two names collide' {
@@ -6221,6 +6399,64 @@ Describe 'Get-OERInventory' {
                 Should -Not -Contain 'activationEnablement'
         }
 
+        It 'writes no key, and never [null], for an enablement list the converter gave as $null (BL-174c)' {
+            Mock -ModuleName $script:moduleName Get-OERGroupPimPolicy {
+                param($AccessType)
+                if ($AccessType -eq 'member') {
+                    [PSCustomObject]@{
+                        ActivationMaxHours        = 8
+                        AuthenticationContextId   = $null
+                        ActivationEnabledRules    = $null
+                        AllowPermanentEligibility = $null
+                        EligibleDurationDays      = $null
+                        AllowPermanentActive      = $null
+                        ActiveDurationDays        = 30
+                        ActiveEnabledRules        = $null
+                        Notifications             = [PSCustomObject]@{
+                            EligibleAlert = @(); ActiveAlert = @(); ActivationAlert = @()
+                        }
+                        Rules = @(
+                            [PSCustomObject]@{ id = 'Expiration_EndUser_Assignment' }
+                        )
+                    }
+                } else { $null }
+            }
+            $Inv = Get-OERInventory -Include Groups
+            $Member = $Inv.Groups[0].pimPolicy.member
+            $Member.PSObject.Properties.Name | Should -Contain 'activationMaxHours'
+            $Member.PSObject.Properties.Name | Should -Not -Contain 'activationEnablement'
+            $Member.PSObject.Properties.Name | Should -Not -Contain 'activeEnablement'
+        }
+
+        It 'writes no key for a $null enablement list even when its rule id stands in Rules' {
+            Mock -ModuleName $script:moduleName Get-OERGroupPimPolicy {
+                param($AccessType)
+                if ($AccessType -eq 'member') {
+                    [PSCustomObject]@{
+                        ActivationMaxHours        = 8
+                        AuthenticationContextId   = $null
+                        ActivationEnabledRules    = $null
+                        AllowPermanentEligibility = $null
+                        EligibleDurationDays      = $null
+                        AllowPermanentActive      = $null
+                        ActiveDurationDays        = $null
+                        ActiveEnabledRules        = $null
+                        Notifications             = [PSCustomObject]@{
+                            EligibleAlert = @(); ActiveAlert = @(); ActivationAlert = @()
+                        }
+                        Rules = @(
+                            [PSCustomObject]@{ id = 'Enablement_EndUser_Assignment'; enabledRules = @() }
+                            [PSCustomObject]@{ id = 'Enablement_Admin_Assignment'; enabledRules = @() }
+                        )
+                    }
+                } else { $null }
+            }
+            $Inv = Get-OERInventory -Include Groups
+            $Member = $Inv.Groups[0].pimPolicy.member
+            $Member.PSObject.Properties.Name | Should -Not -Contain 'activationEnablement'
+            $Member.PSObject.Properties.Name | Should -Not -Contain 'activeEnablement'
+        }
+
         It 'still omits pimPolicy entirely when an all-empty policy carries no rule at all' {
             Mock -ModuleName $script:moduleName Get-OERGroupPimPolicy {
                 [PSCustomObject]@{
@@ -7483,7 +7719,7 @@ Describe 'Get-OERInventory' {
             # The lead-in is true of a section named alone too, which is neither a members nor a
             # nameless collection: the list could not be read at all.
             $Read.Partial[0].Exception.Message |
-                Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group or a catalog has the form of an object id, and are not stated as facts in the document*'
+                Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group, a catalog or an access package has the form of an object id, and are not stated as facts in the document*'
             $Read.Partial[0].Exception.Message |
                 Should -BeLike '*Unread: groups. A section reported here by its name alone could not be read at all and is written as an empty array, which does not mean the tenant has none. A members, scopedRoles, resources or resourceRoles key reported here is an explicit null*'
         }
@@ -8352,7 +8588,7 @@ Describe 'Get-OERInventory' {
             # The lead-in is true of a collection that was READ but could not be written without an empty
             # name, not only of an unread one.
             $Partial[0].Exception.Message |
-                Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group or a catalog has the form of an object id, and are not stated as facts in the document*'
+                Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group, a catalog or an access package has the form of an object id, and are not stated as facts in the document*'
         }
 
         It 'writes the package''s resourceRoles as an explicit null, and names it, when a binding has no role name' {
