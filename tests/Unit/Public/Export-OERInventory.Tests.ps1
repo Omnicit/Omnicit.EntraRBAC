@@ -2004,7 +2004,7 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
         $Partial.Count | Should -Be 1
         $Partial[0].Exception.Message | Should -Match 'groups/Dup'
         $Partial[0].Exception.Message |
-            Should -BeLike '*1 partial Entra ID read entry(ies) name collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group or a catalog has the form of an object id, and are NOT stated as facts in the bundle*'
+            Should -BeLike '*1 partial Entra ID read entry(ies) name collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group, a catalog or an access package has the form of an object id, and are NOT stated as facts in the bundle*'
     }
 
     It 'still writes the whole bundle under -ErrorAction Stop when the inner read was partial' {
@@ -3440,7 +3440,7 @@ Describe 'Export-OERInventory (the group roster that could not be read is partia
         # The lead-in must be true when the only entry is groupsRoster, or a collection written as null
         # for want of a name: neither is "a collection that could not be read" alone.
         $Partial[0].Exception.Message |
-            Should -BeLike '*1 partial Entra ID read entry(ies) name collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group or a catalog has the form of an object id, and are NOT stated as facts in the bundle*'
+            Should -BeLike '*1 partial Entra ID read entry(ies) name collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group, a catalog or an access package has the form of an object id, and are NOT stated as facts in the bundle*'
         $Partial[0].Exception.Message |
             Should -BeLike '*: groupsRoster. The bundle''s README.md, which is not written under -WhatIf or a declined -Confirm, says what each kind of entry means and how an unread collection is written*'
         $Partial[0].Exception.Message | Should -Not -BeLike '*A section named alone*'

@@ -4193,7 +4193,7 @@ Describe 'Get-OERInventory' {
             $Msg = $Partial[0].Exception.Message
             $Msg | Should -Match ('Unread: catalogs/' + $script:GnName + '\. ')
             $Msg | Should -BeLike ("*the catalog 'catalogs/$($script:GnName)' was left out: its display name has the form of an object id, which Invoke-OERStructure reads as an object id and not as a name, so the catalog cannot be declared by its name*")
-            $Msg | Should -BeLike '*because the display name of a group or a catalog has the form of an object id*'
+            $Msg | Should -BeLike '*because the display name of a group, a catalog or an access package has the form of an object id*'
         }
 
         It 'writes the catalog by its object id in the package that names it, and still exports the package' {
@@ -4241,6 +4241,108 @@ Describe 'Get-OERInventory' {
             # Positive control: read once by the catalogs section and once by the packages section.
             Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 2 -Exactly -ParameterFilter { $Catalog -eq 'cat-1' }
             @(Get-GnPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+    }
+
+    Context 'an access package whose display name has the form of an object id (BL-174b)' {
+        # Sprint 14 step 2 (BL-174b): like a catalog with such a name (BL-173a), the package is left out
+        # of accessPackages before anything is read for it and named as unread, once per name, letter
+        # case aside. No id is version-4 shaped.
+        BeforeAll {
+            $script:GpName = '11111111-2222-3333-4444-555555555555'
+            $script:GpCause = "the access package 'accessPackages/$($script:GpName)' was left out: its display name has the form of an object id, which Invoke-OERStructure reads as an object id and not as a name, so the access package cannot be declared by its name"
+            function script:Get-GpPartial {
+                param([object[]]$Record)
+                @($Record | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            }
+            function script:New-GpPackage {
+                param([string]$Id, [string]$Name)
+                [PSCustomObject]@{ Id = $Id; DisplayName = $Name; Description = $null }
+            }
+        }
+
+        BeforeEach {
+            $script:GpCatalogs = @([PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'Core'; Description = 'd' })
+            $script:GpAccessPackages = @{}
+            Mock -ModuleName $script:moduleName Get-OERCatalog { $script:GpCatalogs }
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource { @() }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackage {
+                param($Catalog)
+                $script:GpAccessPackages[[string]$Catalog]
+            }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole { @() }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "Unexpected Graph request: $Uri" }
+        }
+
+        It 'leaves the package out, names accessPackages and its name as unread with its cause and reads nothing for it' {
+            $script:GpAccessPackages = @{ 'cat-1' = @(New-GpPackage -Id 'ap-g1' -Name $script:GpName) }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.accessPackages).Count | Should -Be 0
+            $Partial = Get-GpPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            $Msg = $Partial[0].Exception.Message
+            $Msg | Should -Match ('Unread: accessPackages/' + $script:GpName + '\. ')
+            $Msg | Should -BeLike "*$($script:GpCause)*"
+            $Msg | Should -BeLike '*because the display name of a group, a catalog or an access package has the form of an object id*'
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 0 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy -Times 0 -Exactly
+        }
+
+        It 'reads no catalog resources from the package section when the only package of the catalog is left out' {
+            $script:GpAccessPackages = @{ 'cat-1' = @(New-GpPackage -Id 'ap-g1' -Name $script:GpName) }
+            $null = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalog -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 0 -Exactly
+        }
+
+        It 'reports the same name once in two letter cases, and once in two catalogs' {
+            $script:GpCatalogs = @(
+                [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'Core'; Description = 'd' }
+                [PSCustomObject]@{ Id = 'cat-2'; DisplayName = 'Edge'; Description = 'd' }
+            )
+            $script:GpAccessPackages = @{
+                'cat-1' = @(
+                    New-GpPackage -Id 'ap-g1' -Name '11111111-2222-3333-4444-555555555AAA'
+                    New-GpPackage -Id 'ap-g2' -Name '11111111-2222-3333-4444-555555555aaa'
+                )
+                'cat-2' = @(New-GpPackage -Id 'ap-g3' -Name '11111111-2222-3333-4444-555555555AAA')
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.accessPackages).Count | Should -Be 0
+            $Partial = Get-GpPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            $Msg = $Partial[0].Exception.Message
+            $Msg | Should -Match 'Unread: accessPackages/11111111-2222-3333-4444-555555555AAA\. '
+            $Msg | Should -Not -MatchExactly 'accessPackages/11111111-2222-3333-4444-555555555aaa'
+            ([regex]::Matches($Msg, [regex]::Escape("the access package 'accessPackages/11111111-2222-3333-4444-555555555AAA' was left out"))).Count | Should -Be 1
+        }
+
+        It 'exports an ordinary package beside the left-out one, unchanged' {
+            $script:GpAccessPackages = @{ 'cat-1' = @(
+                    New-GpPackage -Id 'ap-g1' -Name $script:GpName
+                    New-GpPackage -Id 'ap-1' -Name 'Sales'
+                ) }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.accessPackages | ForEach-Object { "$($_.catalog)|$($_.displayName)" }) | Should -Be @('Core|Sales')
+            # The ordinary package is read as before; the left-out one is not.
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-1' }
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 0 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-g1' }
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy -Times 0 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-g1' }
+            $Partial = Get-GpPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            $Partial[0].Exception.Message | Should -Match ('Unread: accessPackages/' + $script:GpName + '\. ')
+        }
+
+        It 'writes a catalog cause unchanged (control, BL-173a)' {
+            $script:GpCatalogs = @([PSCustomObject]@{ Id = 'cat-g1'; DisplayName = $script:GpName; Description = 'd' })
+            $Inv = Get-OERInventory -Include Catalogs -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.catalogs).Count | Should -Be 0
+            $Partial = Get-GpPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            $Partial[0].Exception.Message | Should -BeLike ("*the catalog 'catalogs/$($script:GpName)' was left out: its display name has the form of an object id, which Invoke-OERStructure reads as an object id and not as a name, so the catalog cannot be declared by its name*")
         }
     }
 
@@ -4418,7 +4520,7 @@ Describe 'Get-OERInventory' {
             [string]$Partial[0].TargetObject | Should -BeExactly 'groups/Dup'
             $Partial[0].Exception.Message | Should -Match '2 live objects share the name groups/Dup'
             $Partial[0].Exception.Message |
-                Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group or a catalog has the form of an object id, and are not stated as facts in the document*'
+                Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group, a catalog or an access package has the form of an object id, and are not stated as facts in the document*'
         }
 
         It 'writes every group of a unique name and reports nothing when no two names collide' {
@@ -7539,7 +7641,7 @@ Describe 'Get-OERInventory' {
             # The lead-in is true of a section named alone too, which is neither a members nor a
             # nameless collection: the list could not be read at all.
             $Read.Partial[0].Exception.Message |
-                Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group or a catalog has the form of an object id, and are not stated as facts in the document*'
+                Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group, a catalog or an access package has the form of an object id, and are not stated as facts in the document*'
             $Read.Partial[0].Exception.Message |
                 Should -BeLike '*Unread: groups. A section reported here by its name alone could not be read at all and is written as an empty array, which does not mean the tenant has none. A members, scopedRoles, resources or resourceRoles key reported here is an explicit null*'
         }
@@ -8408,7 +8510,7 @@ Describe 'Get-OERInventory' {
             # The lead-in is true of a collection that was READ but could not be written without an empty
             # name, not only of an unread one.
             $Partial[0].Exception.Message |
-                Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group or a catalog has the form of an object id, and are not stated as facts in the document*'
+                Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name or because the display name of a group, a catalog or an access package has the form of an object id, and are not stated as facts in the document*'
         }
 
         It 'writes the package''s resourceRoles as an explicit null, and names it, when a binding has no role name' {

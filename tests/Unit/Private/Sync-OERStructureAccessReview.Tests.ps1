@@ -5736,6 +5736,35 @@ Describe 'Sync-OERStructureAccessReview reaches an access package or assignment 
             Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
         }
     }
+
+    # Sprint 14 step 2 (BL-174b): an access package whose name has the form of an object id is left out of
+    # the export, and a review of it names it by its object id. The id is not in accessPackages[], so the
+    # rename map holds nothing for it and must not be read for it.
+    Context 'a review that names its access package by its object id (BL-174b)' {
+
+        It 'finds the package by that id, reads nothing in the rename map and raises no StructureReferenceUnidentified (<Mode>)' -ForEach @(
+            @{ Mode = 'a real run'; PlanOnly = $false; Action = 'Updated'; Sets = 1 }
+            @{ Mode = 'a plan under -WhatIf'; PlanOnly = $true; Action = 'Skipped'; Sets = 0 }
+        ) {
+            $Map = New-MpMap
+            $Run = Invoke-MpSync -Item (New-MpEntry -AccessPackage $script:MpPkgId) -RenameMap $Map -WhatIf:$PlanOnly
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly $Action
+            $Run.Rows[0].Detail | Should -Not -BeLike '*has no id in this run*'
+            @($Run.All).Count | Should -Be 0
+            @($Run.Errors | Where-Object { ([string]$_.FullyQualifiedErrorId) -like 'StructureReferenceUnidentified*' }).Count | Should -Be 0
+            # The map was empty and stays empty: nothing registered for the package.
+            $Map.Count | Should -Be 0
+            # The package is the id as written: no name lookup, and the policy is looked up within it.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times 1 -Exactly -ParameterFilter {
+                $AccessPackageId -eq $script:MpPkgId -and $AssignmentPolicy -eq 'Standard'
+            }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times $Sets -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+        }
+    }
 }
 
 Describe 'Sync-OERStructureAccessReview applies a review of a group''s members (BL-137)' {
