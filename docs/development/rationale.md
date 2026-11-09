@@ -13514,8 +13514,8 @@ section read to revert, and a warning to drop.
 ### Sprint 14 step 2: a name shaped like an object id on a package, and an absent PIM rule (BL-174, A4)
 
 Two defects of the same kind: a value the engine reads one way was written, or decided, another way.
-This is proved with mocked tests only; no live run of it has been made yet, so nothing here is a
-measured fact about Microsoft Graph.
+What Microsoft Graph answers for these objects is recorded in
+`docs/live-verification/fix-guid-named-packages-and-absent-rules-checklist.md`.
 
 **Why a review names an access package or policy by id (BL-174a).** `Resolve-OERAccessPackageId` and
 `Resolve-OERAssignmentPolicyId` read a value that `Test-OERGuid` accepts as an object id and return it
@@ -13533,10 +13533,11 @@ packages. Leaving an entry out removes nothing: `Invoke-OERStructure`'s prune ac
 a declared parent only, and no handler calls `Remove-OERAccessPackage`, which `Invoke-OERStructure.Tests.ps1`
 holds. `Test-OERStructure` already warns on a hand-written entry of that form (BL-173b).
 
-**R-1 (the review reference).** An access review of a package or an assignment policy whose display name
-has the form of an object id writes that object's id in the reference, never the name and never a
-lookup. Cost if wrong: such a review is written by id where its name would have applied by name; the id
-applies exactly.
+**R-1 (the authentication context).** `AuthenticationContextId` stays `$null` both for a rule that is
+off and for one that is absent, as it was before this change: writing `''` for a rule that is off would
+change what `Get-OERGroupPimPolicy` returns for every policy, and only a rule that is absent may change
+that output. The diff tells the two apart through the `Rules` the converter already carries. Cost if
+wrong: one line in the converter and a sweep of the fixtures.
 
 **R-2 (an absent PIM rule is unknown).** A declared `authenticationContextId`, `activationEnablement` or
 `activeEnablement` over a group policy whose read did not return the rule
