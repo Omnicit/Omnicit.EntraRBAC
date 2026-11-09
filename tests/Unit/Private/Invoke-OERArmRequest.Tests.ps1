@@ -3012,3 +3012,428 @@ Describe 'Invoke-OERArmRequest refreshes a device code session with Force (A17, 
         ($Arm[0].Keys -contains 'Force') | Should -BeTrue -Because 'the refresh''s device code Azure Resource Manager token request builds a new credential'
     }
 }
+
+Describe 'Invoke-OERArmRequest sends the token only to the cloud''s own host (BL-177, A9)' {
+    # The address is "$BaseUrl$CallPath" and callers put a value they were given first in the path, so
+    # a path that begins with a host suffix, '@host' or ':port@host' names ANOTHER host and the request
+    # would carry the bearer token there. The wrapper parses the address and refuses anything but https,
+    # no user information, and exactly the host and port of the session's Azure Resource Manager
+    # address, after the two sign-in gates and before the token is read at all. The state's ArmToken is
+    # a ScriptProperty that counts its reads, so "the token was not read" is observable.
+    BeforeAll {
+        function script:New-GuardState {
+            param(
+                [string]$Environment = 'Global',
+                [string]$ArmResourceUrl,
+                [switch]$NoToken
+            )
+            $State = [PSCustomObject]@{
+                AuthMethod  = 'Interactive'
+                TenantId    = '44444444-4444-4444-4444-444444444444'
+                Environment = $Environment
+            }
+            if ($ArmResourceUrl) { Add-Member -InputObject $State -NotePropertyName ArmResourceUrl -NotePropertyValue $ArmResourceUrl }
+            if (-not $NoToken) {
+                Add-Member -InputObject $State -MemberType ScriptProperty -Name ArmToken -Value {
+                    $global:OERArmGuardTokenReads++
+                    ConvertTo-SecureString 'NOT-A-REAL-TOKEN-arm' -AsPlainText -Force
+                }
+            }
+            $State
+        }
+
+        # One wrapper call in the module scope: the result and the terminating record it threw, if any.
+        function script:Invoke-GuardedArm {
+            param(
+                [AllowNull()]$State,
+                [Parameter(Mandatory)][string]$Path,
+                [switch]$All
+            )
+            & (Get-Module Omnicit.EntraRBAC) {
+                param($S, $P, $A)
+                $script:_OERAuthState = $S
+                $Out = @{ Result = $null; Error = $null }
+                try {
+                    $Out.Result = if ($A) { Invoke-OERArmRequest -Path $P -All } else { Invoke-OERArmRequest -Path $P }
+                } catch {
+                    $Out.Error = $PSItem
+                }
+                $Out
+            } $State $Path $All.IsPresent
+        }
+
+        # The ARM resource url the cloud table holds for a cloud, read here and never hardcoded twice.
+        function script:Get-GuardCloudArm {
+            param([Parameter(Mandatory)][string]$Cloud)
+            & (Get-Module Omnicit.EntraRBAC) { param($C) (Get-OERCloudEndpoint -Environment $C).ArmResource } $Cloud
+        }
+
+        # The ErrorId, before the first comma.
+        function script:Get-GuardErrorId {
+            param([Parameter(Mandatory)]$ErrorRecord)
+            ($ErrorRecord.FullyQualifiedErrorId -split ',')[0]
+        }
+    }
+
+    BeforeEach {
+        $global:OERArmGuardTokenReads = 0
+        $global:OERArmGuardUris = [System.Collections.Generic.List[object]]::new()
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest {
+            $global:OERArmGuardUris.Add($Uri)
+            [PSCustomObject]@{ StatusCode = 200; Content = '{}' }
+        }
+        Mock -ModuleName Omnicit.EntraRBAC Start-Sleep { }
+    }
+
+    AfterEach {
+        InModuleScope Omnicit.EntraRBAC {
+            $script:_OERAuthState = $null
+            Remove-Variable -Scope Script -Name _OERSignInIdentity -ErrorAction Ignore
+        }
+        Remove-Variable -Scope Global -Name OERArmGuardTokenReads, OERArmGuardUris, OERArmGuardPage -ErrorAction Ignore
+    }
+
+    It 'refuses <Name> (<Path>) with ArmRequestOutsideCloudHost, sending nothing and never reading the token' -ForEach @(
+        @{ Name = 'a host suffix'; Path = '.contoso.invalid/x?api-version=1' }
+        @{ Name = 'an at host'; Path = '@contoso.invalid/x?api-version=1' }
+        @{ Name = 'a port at host'; Path = (':443' + '@contoso.invalid/x?api-version=1') }  # split so the line holds no email-shaped literal
+        @{ Name = 'an absolute address to another host'; Path = 'https://contoso.invalid/x?api-version=1' }
+        @{ Name = 'another port on the host'; Path = ':8443/x?api-version=1' }
+        @{ Name = 'user information on the own host'; Path = '@management.azure.com/x' }
+        @{ Name = 'no leading slash'; Path = 'subscriptions/x?api-version=1' }
+        @{ Name = 'an unparsable port'; Path = ':notaport/x' }
+        @{ Name = 'a trailing dot on the host'; Path = './x' }
+        @{ Name = 'a backslash then a host suffix'; Path = '.contoso.invalid\x' }
+    ) {
+        $R = Invoke-GuardedArm -State (New-GuardState -ArmResourceUrl 'https://management.azure.com/') -Path $Path
+
+        $R.Error | Should -Not -BeNullOrEmpty
+        Get-GuardErrorId -ErrorRecord $R.Error | Should -BeExactly 'ArmRequestOutsideCloudHost'
+        $R.Error.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $R.Error.TargetObject | Should -BeExactly $Path
+        $R.Error.Exception.Message | Should -BeLike '*https://management.azure.com*'
+        $R.Error.Exception.Message | Should -Not -BeLike '*NOT-A-REAL-TOKEN*'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 0
+        $global:OERArmGuardTokenReads | Should -Be 0
+    }
+
+    It 'refuses a session whose own ARM address is http, since only https is sent to' {
+        $R = Invoke-GuardedArm -State (New-GuardState -ArmResourceUrl 'http://management.azure.com') -Path '/x'
+
+        Get-GuardErrorId -ErrorRecord $R.Error | Should -BeExactly 'ArmRequestOutsideCloudHost'
+        $R.Error.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 0
+        $global:OERArmGuardTokenReads | Should -Be 0
+    }
+
+    It 'sends a path to the <Cloud> host once when the session has <Source>, and reads the token once' -ForEach @(
+        @{ Cloud = 'USGov'; Source = 'no ArmResourceUrl'; WithUrl = $false }
+        @{ Cloud = 'USGovDoD'; Source = 'no ArmResourceUrl'; WithUrl = $false }
+        @{ Cloud = 'China'; Source = 'no ArmResourceUrl'; WithUrl = $false }
+        @{ Cloud = 'USGov'; Source = 'its ArmResourceUrl'; WithUrl = $true }
+        @{ Cloud = 'USGovDoD'; Source = 'its ArmResourceUrl'; WithUrl = $true }
+        @{ Cloud = 'China'; Source = 'its ArmResourceUrl'; WithUrl = $true }
+    ) {
+        $Arm = Get-GuardCloudArm -Cloud $Cloud
+        $Arm | Should -Not -BeNullOrEmpty
+        $State = if ($WithUrl) { New-GuardState -Environment $Cloud -ArmResourceUrl $Arm } else { New-GuardState -Environment $Cloud }
+
+        $R = Invoke-GuardedArm -State $State -Path '/subscriptions?api-version=2022-12-01'
+
+        $R.Error | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 1 -Exactly
+        [string]$global:OERArmGuardUris[0] | Should -BeExactly "$($Arm.TrimEnd('/'))/subscriptions?api-version=2022-12-01"
+        $global:OERArmGuardTokenReads | Should -Be 1
+    }
+
+    It 'refuses a host suffix on a <Cloud> session with <Source>, never reading the token' -ForEach @(
+        @{ Cloud = 'USGov'; Source = 'no ArmResourceUrl'; WithUrl = $false }
+        @{ Cloud = 'USGovDoD'; Source = 'no ArmResourceUrl'; WithUrl = $false }
+        @{ Cloud = 'China'; Source = 'no ArmResourceUrl'; WithUrl = $false }
+        @{ Cloud = 'USGov'; Source = 'its ArmResourceUrl'; WithUrl = $true }
+        @{ Cloud = 'USGovDoD'; Source = 'its ArmResourceUrl'; WithUrl = $true }
+        @{ Cloud = 'China'; Source = 'its ArmResourceUrl'; WithUrl = $true }
+    ) {
+        $Arm = Get-GuardCloudArm -Cloud $Cloud
+        $State = if ($WithUrl) { New-GuardState -Environment $Cloud -ArmResourceUrl $Arm } else { New-GuardState -Environment $Cloud }
+
+        $R = Invoke-GuardedArm -State $State -Path '.contoso.invalid/x'
+
+        Get-GuardErrorId -ErrorRecord $R.Error | Should -BeExactly 'ArmRequestOutsideCloudHost'
+        $R.Error.Exception.Message | Should -BeLike "*$($Arm.TrimEnd('/'))*"
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 0
+        $global:OERArmGuardTokenReads | Should -Be 0
+    }
+
+    It 'refuses the public-cloud host as an absolute address on a USGov session' {
+        $R = Invoke-GuardedArm -State (New-GuardState -Environment 'USGov') -Path 'https://management.azure.com/x'
+
+        Get-GuardErrorId -ErrorRecord $R.Error | Should -BeExactly 'ArmRequestOutsideCloudHost'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 0
+        $global:OERArmGuardTokenReads | Should -Be 0
+    }
+
+    It 'sends <Path> once to management.azure.com as a System.Uri and reads the token once' -ForEach @(
+        @{ Path = '/subscriptions?api-version=2022-12-01' }
+        @{ Path = '/providers/Microsoft.Management/managementGroups?api-version=2021-04-01' }
+        @{ Path = '/subscriptions/00000000-0000-0000-0000-000000000000/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&$filter=atScope()' }
+    ) {
+        $R = Invoke-GuardedArm -State (New-GuardState -ArmResourceUrl 'https://management.azure.com/') -Path $Path
+
+        $R.Error | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 1 -Exactly
+        $global:OERArmGuardUris[0] | Should -BeOfType ([System.Uri])
+        $global:OERArmGuardUris[0].Host | Should -BeExactly 'management.azure.com'
+        $global:OERArmGuardTokenReads | Should -Be 1
+    }
+
+    It 'sends a path that names the default port of the own host, since host and port are the same' {
+        $R = Invoke-GuardedArm -State (New-GuardState -ArmResourceUrl 'https://management.azure.com/') -Path ':443/subscriptions?api-version=2022-12-01'
+
+        $R.Error | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 1 -Exactly
+        $global:OERArmGuardUris[0].Host | Should -BeExactly 'management.azure.com'
+        $global:OERArmGuardTokenReads | Should -Be 1
+    }
+
+    It 'follows a next link naming another host to the own host only, and returns both pages' {
+        $global:OERArmGuardPage = 0
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest {
+            $global:OERArmGuardUris.Add($Uri)
+            $global:OERArmGuardPage++
+            if ($global:OERArmGuardPage -eq 1) {
+                [PSCustomObject]@{ StatusCode = 200; Content = '{"value":["one"],"nextLink":"https://contoso.invalid/subscriptions?api-version=2022-12-01&$skiptoken=2"}' }
+            } else {
+                [PSCustomObject]@{ StatusCode = 200; Content = '{"value":["two"]}' }
+            }
+        }
+
+        $R = Invoke-GuardedArm -State (New-GuardState -ArmResourceUrl 'https://management.azure.com/') -Path '/subscriptions?api-version=2022-12-01' -All
+
+        $R.Error | Should -BeNullOrEmpty
+        @($R.Result.value) | Should -Be @('one', 'two')
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 2 -Exactly
+        @($global:OERArmGuardUris | Where-Object { $_.Host -eq 'management.azure.com' }).Count | Should -Be 2
+        @($global:OERArmGuardUris | Where-Object { $_.Host -like '*invalid' }).Count | Should -Be 0
+        $global:OERArmGuardTokenReads | Should -Be 2
+    }
+
+    It 'follows a next link on the cloud''s own host in a USGov session, to that host' {
+        $Arm = (Get-GuardCloudArm -Cloud 'USGov').TrimEnd('/')
+        $global:OERArmGuardPage = 0
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest {
+            $global:OERArmGuardUris.Add($Uri)
+            $global:OERArmGuardPage++
+            if ($global:OERArmGuardPage -eq 1) {
+                [PSCustomObject]@{ StatusCode = 200; Content = ('{"value":["one"],"nextLink":"' + $global:OERArmGuardNext + '"}') }
+            } else {
+                [PSCustomObject]@{ StatusCode = 200; Content = '{"value":["two"]}' }
+            }
+        }
+        $global:OERArmGuardNext = "$Arm/subscriptions?api-version=2022-12-01&`$skiptoken=2"
+        try {
+            $R = Invoke-GuardedArm -State (New-GuardState -Environment 'USGov') -Path '/subscriptions?api-version=2022-12-01' -All
+        } finally {
+            Remove-Variable -Scope Global -Name OERArmGuardNext -ErrorAction Ignore
+        }
+
+        $R.Error | Should -BeNullOrEmpty
+        @($R.Result.value) | Should -Be @('one', 'two')
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 2 -Exactly
+        @($global:OERArmGuardUris | Where-Object { "$($_.Scheme)://$($_.Host)" -eq $Arm }).Count | Should -Be 2
+    }
+
+    It 'passes the guard on each throttled retry: a 429 then a 200 is two sends and two token reads' {
+        $global:OERArmGuardPage = 0
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest {
+            $global:OERArmGuardUris.Add($Uri)
+            $global:OERArmGuardPage++
+            if ($global:OERArmGuardPage -eq 1) {
+                [PSCustomObject]@{ StatusCode = 429; Content = ''; Headers = @{ 'Retry-After' = '1' } }
+            } else {
+                [PSCustomObject]@{ StatusCode = 200; Content = '{"value":["ok"]}' }
+            }
+        }
+
+        $R = Invoke-GuardedArm -State (New-GuardState -ArmResourceUrl 'https://management.azure.com/') -Path '/subscriptions?api-version=2022-12-01'
+
+        $R.Error | Should -BeNullOrEmpty
+        @($R.Result.value) | Should -Be @('ok')
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 2 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Start-Sleep -Times 1 -Exactly
+        $global:OERArmGuardTokenReads | Should -Be 2
+    }
+
+    It 'refuses the first page of an -All walk with the three facts on the exception, sending nothing' {
+        $Path = '.contoso.invalid/x?api-version=1'
+        $R = Invoke-GuardedArm -State (New-GuardState -ArmResourceUrl 'https://management.azure.com/') -Path $Path -All
+
+        Get-GuardErrorId -ErrorRecord $R.Error | Should -BeExactly 'ArmRequestOutsideCloudHost'
+        @($R.Error.Exception.PartialValue).Count | Should -Be 0
+        $R.Error.Exception.NextLink | Should -BeExactly $Path
+        $R.Error.Exception.PageNumber | Should -Be 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 0
+        $global:OERArmGuardTokenReads | Should -Be 0
+    }
+
+    It 'refuses a host suffix against the fallback host when there is no session state at all' {
+        $R = Invoke-GuardedArm -State $null -Path '.contoso.invalid/x'
+
+        Get-GuardErrorId -ErrorRecord $R.Error | Should -BeExactly 'ArmRequestOutsideCloudHost'
+        $R.Error.Exception.Message | Should -BeLike '*https://management.azure.com*'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 0
+    }
+
+    It 'still refuses an ordinary path with ArmTokenAcquisitionFailed when there is no session state at all' {
+        $R = Invoke-GuardedArm -State $null -Path '/subscriptions?api-version=2022-12-01'
+
+        Get-GuardErrorId -ErrorRecord $R.Error | Should -BeExactly 'ArmTokenAcquisitionFailed'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 0
+    }
+
+    It 'refuses a host suffix with ArmRequestOutsideCloudHost, not the missing token, when the session holds no ARM token' {
+        $R = Invoke-GuardedArm -State (New-GuardState -ArmResourceUrl 'https://management.azure.com/' -NoToken) -Path '.contoso.invalid/x'
+
+        Get-GuardErrorId -ErrorRecord $R.Error | Should -BeExactly 'ArmRequestOutsideCloudHost'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 0
+    }
+
+    It 'still refuses an ordinary path with ArmTokenAcquisitionFailed when the session holds no ARM token (positive control)' {
+        $R = Invoke-GuardedArm -State (New-GuardState -ArmResourceUrl 'https://management.azure.com/' -NoToken) -Path '/subscriptions?api-version=2022-12-01'
+
+        Get-GuardErrorId -ErrorRecord $R.Error | Should -BeExactly 'ArmTokenAcquisitionFailed'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 0
+    }
+
+    It 'order: a latched command with a host suffix is still told SignInRefused' {
+        $Caught = InModuleScope Omnicit.EntraRBAC {
+            $script:_OERAuthState = @{
+                AuthMethod     = 'Interactive'
+                TenantId       = '44444444-4444-4444-4444-444444444444'
+                ArmToken       = (ConvertTo-SecureString 'NOT-A-REAL-TOKEN-arm' -AsPlainText -Force)
+                ArmResourceUrl = 'https://management.azure.com/'
+            }
+            function Initialize-StandIn { $null = Lock-OERSignIn }
+            function Invoke-RefusedCommand {
+                [CmdletBinding()]
+                param()
+                Initialize-StandIn
+                $Caught = $null
+                try { $null = Invoke-OERArmRequest -Path '.contoso.invalid/x' } catch { $Caught = $PSItem }
+                $Caught
+            }
+            Invoke-RefusedCommand
+        }
+
+        $Caught | Should -Not -BeNullOrEmpty
+        ($Caught.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'SignInRefused'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 0
+    }
+
+    It 'order: a superseded command with a host suffix is still told SignInSuperseded' {
+        $Caught = InModuleScope Omnicit.EntraRBAC {
+            $script:_OERAuthState = @{
+                AuthMethod     = 'Interactive'
+                TenantId       = '44444444-4444-4444-4444-444444444444'
+                ArmToken       = (ConvertTo-SecureString 'NOT-A-REAL-TOKEN-arm' -AsPlainText -Force)
+                ArmResourceUrl = 'https://management.azure.com/'
+            }
+            function Invoke-SupersededCommand {
+                [CmdletBinding()]
+                param()
+                Register-OERSignInIdentity -Invocation $MyInvocation
+                $script:_OERAuthState.TenantId = '77777777-7777-7777-7777-777777777777'
+                $Caught = $null
+                try { $null = Invoke-OERArmRequest -Path '.contoso.invalid/x' } catch { $Caught = $PSItem }
+                $Caught
+            }
+            Invoke-SupersededCommand
+        }
+
+        $Caught | Should -Not -BeNullOrEmpty
+        ($Caught.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'SignInSuperseded'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 0
+    }
+}
+
+Describe 'Invoke-OERArmRequest refuses another host and stops, outside any try (BL-177, A9)' {
+    # Under -ErrorAction SilentlyContinue, with no try up the call stack, a function carries on past its
+    # own throw, so the refusal's own return is what keeps the request from going out with the token.
+    # Pester's It is a try, so the wrapper runs in a runspace with no try; the shape of
+    # Invoke-ArmNoTokenProbe, with a session that holds a token.
+    BeforeAll {
+        function script:Invoke-ArmHostProbe {
+            param([Parameter(Mandatory)][string]$ProbePath)
+            $Text = @'
+Import-Module Omnicit.EntraRBAC
+& (Get-Module Omnicit.EntraRBAC) {
+    $script:_OERAuthState = @{
+        TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'
+        ClientId = ''; Environment = 'Global'
+        ArmToken = ConvertTo-SecureString 'NOT-A-REAL-TOKEN-arm' -AsPlainText -Force
+        ArmTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+        ArmResourceUrl = 'https://management.azure.com/'
+    }
+}
+$global:OERGuardProbeArmCalls = 0
+& (Get-Module Omnicit.EntraRBAC) {
+    function script:Invoke-WebRequest {
+        [CmdletBinding()]
+        param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
+        $global:OERGuardProbeArmCalls++
+        $global:OERGuardProbeUriType = $Uri.GetType().FullName
+        if ($global:OERGuardProbeArmCalls -gt 5) { exit }
+        [pscustomobject]@{ StatusCode = 200; Content = '{"value":["sent"]}'; Headers = @{} }
+    }
+}
+$Error.Clear()
+$Result = @(& (Get-Module Omnicit.EntraRBAC) {
+    Invoke-OERArmRequest -Path '__PATH__' -ErrorAction SilentlyContinue
+})
+$Ids = @($Error | ForEach-Object { [string]$_.FullyQualifiedErrorId })
+# Unqualified, from the module scope: removes the nearest definition, which is the stub.
+& (Get-Module Omnicit.EntraRBAC) { Remove-Item -Path function:Invoke-WebRequest }
+$Resolved = & (Get-Module Omnicit.EntraRBAC) { Get-Command -Name Invoke-WebRequest -CommandType Function -ErrorAction Ignore }
+'TRIPWIRE RESTORED: {0}' -f ([bool]$Resolved -and $Resolved.ScriptBlock.ToString().Contains('OER-TRANSPORT-TRIPWIRE'))
+'RESULT COUNT: {0}' -f $Result.Count
+'ARM CALLS: {0}' -f $global:OERGuardProbeArmCalls
+'URI TYPE: {0}' -f $global:OERGuardProbeUriType
+foreach ($Id in $Ids) { 'ERROR ID: {0}' -f $Id }
+'END OF SCRIPT REACHED'
+'@
+            $Text = $Text.Replace('__PATH__', $ProbePath)
+            Invoke-OERWithConfirmAnswer -Answer '&No' -Script ([scriptblock]::Create($Text))
+        }
+
+        function script:Get-HostProbeErrorId {
+            param([Parameter(Mandatory)]$Probe)
+            @($Probe.Output | Where-Object { "$_" -like 'ERROR ID: *' } | ForEach-Object { ("$_" -replace '^ERROR ID: ', '' -split ',')[0] })
+        }
+    }
+
+    It 'H1: a host suffix sends no request, returns nothing and leaves ArmRequestOutsideCloudHost as the only record' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-ArmHostProbe -ProbePath '.contoso.invalid/x'
+
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'ARM CALLS: 0'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        Get-HostProbeErrorId -Probe $R | Should -Be @('ArmRequestOutsideCloudHost')
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'H2: an ordinary path in the same runspace is sent once (positive control for H1)' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-ArmHostProbe -ProbePath '/subscriptions?api-version=2022-12-01'
+
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'ARM CALLS: 1'
+        # An untyped stub parameter receives the object the wrapper handed over, so this is the parsed address.
+        $R.Output | Should -Contain 'URI TYPE: System.Uri'
+        $R.Output | Should -Contain 'RESULT COUNT: 1'
+        Get-HostProbeErrorId -Probe $R | Should -BeNullOrEmpty
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+}

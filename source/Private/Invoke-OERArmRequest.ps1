@@ -21,6 +21,13 @@ function Invoke-OERArmRequest {
     supersession gates and before anything is sent, with ArmTokenAcquisitionFailed. Run
     Connect-OER -IncludeARM to acquire the token.
 
+    Every address is parsed before anything is sent, and is refused with ArmRequestOutsideCloudHost
+    (nothing sent, the token not read) unless it is https, carries no user information and is on
+    exactly the host and port of the session's Azure Resource Manager address. This applies to every
+    send -- the first request, each throttled retry, the 401 retry and every page -- and stands after
+    the sign-in latch and supersession gates, so a refused or replaced sign-in is still reported as
+    itself.
+
     Invoke-WebRequest is called with -SkipHttpErrorCheck so HTTP errors do not throw. Each response is
     normalized to a { StatusCode; Content; Headers } object before the status logic runs; the header
     collection stays inside this wrapper and only its Retry-After entry is ever read. The wrapper
@@ -79,7 +86,7 @@ function Invoke-OERArmRequest {
 
     .PARAMETER Path
     ARM path including the api-version query parameter, e.g. '/subscriptions?api-version=2022-12-01'.
-    Never includes the hostname.
+    Never includes the hostname. A path that does not begin with '/' addresses another host and is refused.
 
     .PARAMETER Body
     Optional request body hashtable, serialized with ConvertTo-Json -Depth 100 into the request body
@@ -199,6 +206,34 @@ function Invoke-OERArmRequest {
             return
         }
 
+        # SEC (BL-177, A9): the bearer token goes to the Azure Resource Manager host of the session's own
+        # cloud and nowhere else. The address is "$BaseUrl$CallPath" and callers put a value they were
+        # given first in $CallPath, so a path that begins with a host suffix ('.contoso.invalid/x'), with
+        # '@host' or ':port@host' names ANOTHER host, with the token in its header. Decided here, on the
+        # parsed address, for every send of this wrapper -- the first, each throttled retry, the 401 retry
+        # and every page -- after the two gates, so a refused or replaced sign-in is still reported as
+        # itself, and before the token is read at all. The parsed object is the one handed to
+        # Invoke-WebRequest below, so what is judged is what is sent; IdnHost is the name the HTTP client
+        # connects to. https, no user info, the cloud's host and its port, and nothing else. The return is
+        # load-bearing, as after each gate above.
+        $SendUri = $null
+        $CloudUri = $null
+        $OnCloudHost = [System.Uri]::TryCreate("$BaseUrl$CallPath", [System.UriKind]::Absolute, [ref]$SendUri) -and
+            [System.Uri]::TryCreate($BaseUrl, [System.UriKind]::Absolute, [ref]$CloudUri) -and
+            [string]::Equals($SendUri.Scheme, 'https', [System.StringComparison]::Ordinal) -and
+            [string]::IsNullOrEmpty($SendUri.UserInfo) -and
+            $SendUri.Port -eq $CloudUri.Port -and
+            [string]::Equals($SendUri.IdnHost, $CloudUri.IdnHost, [System.StringComparison]::OrdinalIgnoreCase)
+        if (-not $OnCloudHost) {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new(("No Azure Resource Manager request was sent: this path does not address the " +
+                    "Azure Resource Manager host of the session's cloud ($BaseUrl). A path names a resource on that " +
+                    "host and begins with '/'.")),
+                'ArmRequestOutsideCloudHost',
+                [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                $CallPath)
+            return
+        }
         # Materialize the bearer token only at the request boundary; clear it in the finally block.
         $Plain = [System.Net.NetworkCredential]::new('', $script:_OERAuthState.ArmToken).Password
         # SEC (BL-65, BL-96): never an ARM request without an ARM token. No state, no ArmToken and an
@@ -220,7 +255,7 @@ function Invoke-OERArmRequest {
         }
         $InvokeParams = @{
             Method             = $CallMethod
-            Uri                = "$BaseUrl$CallPath"
+            Uri                = $SendUri
             Headers            = @{ Authorization = "Bearer $Plain" }
             SkipHttpErrorCheck = $true
             ErrorAction        = 'Stop'
