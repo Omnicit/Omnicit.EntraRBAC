@@ -127,9 +127,9 @@ function Get-OERRoleManagementPolicy {
     }
     process {
         if ($PSCmdlet.ParameterSetName -eq 'ByPolicyId') {
-            # Only an Azure Resource Manager path can go to Azure Resource Manager: a Microsoft Graph directory role or PIM for
-            # Groups policy id (piped from a cmdlet with the same output type) is refused here, before any request. The test is
-            # the leading '/' alone, the mirror of Get-OERDirectoryRoleManagementPolicy's own test: an Azure resource name can
+            # Only an Azure Resource Manager path can go to Azure Resource Manager: a Microsoft Graph directory role
+            # policy id (piped from Get-OERDirectoryRoleManagementPolicy, which has the same output type) or a PIM for Groups
+            # policy id is refused here, before any request. The test is the leading '/' alone: an Azure resource name can
             # legally hold a space, so no other character is refused.
             if (-not $PolicyId.StartsWith('/', [System.StringComparison]::Ordinal)) {
                 Write-CmdletError -Message ([System.Exception]::new(

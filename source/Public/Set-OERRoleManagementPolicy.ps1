@@ -270,19 +270,19 @@ function Set-OERRoleManagementPolicy {
             }
         }
 
-        # No setting at all is refused here, ahead of the policy id and of any approver lookup, in the order of
-        # Set-OERDirectoryRoleManagementPolicy. A bound approver parameter never reaches this condition: the two offline
-        # checks above refused an approver list naming nobody, and approvers named are a setting.
+        # A call that binds no setting at all is refused here, ahead of the policy id and of any approver lookup, in the
+        # order of Set-OERDirectoryRoleManagementPolicy. A call that binds an approver parameter is not refused here:
+        # approvers named are a setting, and an approver list naming nobody was refused as ApproverRequired above.
         if ($Setting.Count -eq 0 -and -not ($PSBoundParameters.ContainsKey('ApproverUser') -or $PSBoundParameters.ContainsKey('ApproverGroup'))) {
             $NothingToUpdateTarget = if ($PSCmdlet.ParameterSetName -eq 'ByPolicyId') { $PolicyId } else { $Role }
             Write-CmdletError -Message ([System.Exception]::new('No policy change was supplied. Specify at least one setting parameter.')) -ErrorId 'NothingToUpdate' -Category InvalidArgument -TargetObject $NothingToUpdateTarget -Cmdlet $PSCmdlet
             return
         }
 
-        # Only an Azure Resource Manager path can go to Azure Resource Manager: a Microsoft Graph directory role or PIM for
-        # Groups policy id (piped from a cmdlet with the same output type) is refused here, before the approver lookups, any
-        # request and ShouldProcess. The test is the leading '/' alone, the mirror of Set-OERDirectoryRoleManagementPolicy's
-        # own test: an Azure resource name can legally hold a space, so no other character is refused.
+        # Only an Azure Resource Manager path can go to Azure Resource Manager: a Microsoft Graph directory role
+        # policy id (piped from Get-OERDirectoryRoleManagementPolicy, which has the same output type) or a PIM for Groups
+        # policy id is refused here, before the approver lookups, any request and ShouldProcess. The test is the leading
+        # '/' alone: an Azure resource name can legally hold a space, so no other character is refused.
         if ($PSCmdlet.ParameterSetName -eq 'ByPolicyId' -and -not $PolicyId.StartsWith('/', [System.StringComparison]::Ordinal)) {
             Write-CmdletError -Message ([System.Exception]::new(
                     "The policy id '$PolicyId' is not an Azure Resource Manager role management policy id (a path " +

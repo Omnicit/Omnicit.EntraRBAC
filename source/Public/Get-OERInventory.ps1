@@ -945,8 +945,8 @@ function Get-OERInventory {
             if ($Undecided.Count -gt 0) {
                 foreach ($One in $Undecided) {
                     # The reason of a failed read ends in that read's own message, which may end with a period,
-                    # and the causes clause and the verbose line add their own: trimmed here, so neither ends in
-                    # '..'. The owner's Reason itself is left as it is. A Home verdict has no Reason, so the
+                    # and the causes clause and the verbose line drop a closing full stop of their own too: trimmed
+                    # here the same way. The owner's Reason itself is left as it is. A Home verdict has no Reason, so the
                     # id-less case says what is missing instead.
                     $UndecidedCause = if ([string]$One.Verdict.Verdict -in @('Home', 'NoSubscription')) {
                         "the subscription check gave no subscription id for '$($One.Given)', so the subscription cannot be read by its id"
@@ -1917,9 +1917,8 @@ function Get-OERInventory {
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
                     $RaItems = @()
-                    # The reader's message is trimmed of trailing white space and then of trailing full stops: the
-                    # causes clause adds its own, and a message that ends in one (the role and policy lookups'
-                    # do) would show '..'. The same trim as the Undecided cause above (R-18).
+                    # The reader's message is trimmed of trailing white space and then of trailing full stops, the same trim
+                    # as the Undecided cause above (R-18). Format-OERUnreadCauseClause drops a cause's own closing full stop too.
                     Add-UnreadSection -Key 'roleAssignments' -Cause "Could not read role assignments: $(([string]$PSItem.Exception.Message).TrimEnd().TrimEnd('.'))"
                 }
 

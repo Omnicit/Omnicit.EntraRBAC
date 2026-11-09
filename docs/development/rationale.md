@@ -11076,6 +11076,16 @@ reads that rule by its id, refuses it as `ApprovalRuleReadFailed` when the read 
 `PimRuleValueUnknown` when it answers no rule; nothing is written either way. Cost if wrong: a plan
 reports `Failed` for a change Graph would have accepted, and nothing is sent.
 
+### The principal combination is not a failed lookup
+
+Sprint 14 step 1 (A3) changed one published id of the principal lookup exception.
+`Get-OERActiveRoleAssignment`, `Get-OEREligibleRoleAssignment` and `Get-OERRoleAssignment` publish two of `-User`,
+`-Group` and `-ServicePrincipal` as `MutuallyExclusiveParameter`, the id `Resolve-OERPrincipal` throws, and no
+longer as `PrincipalNotFound`: it is a mistake in the call that was never a lookup. An ambiguous name keeps
+`AmbiguousPrincipalName` and every other failure of that lookup keeps `PrincipalNotFound`. No parameter set was
+introduced, since one would change binding for existing callers. The refusal stands where the resolver throws it,
+after `Resolve-OERScope`, so a scope named by display name is still read first.
+
 ### CLAUDE.md text for approver-lookup
 
 What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
@@ -11084,10 +11094,7 @@ What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule
   `Ambiguous*`, never as `*NotFound` -- a COHORT check holds that, not a helper.** The principal
   and Azure role definition lookups are the decided exception, still publishing a failed read as
   `PrincipalNotFound` or `RoleDefinitionNotFound` -- never "fix" one of them into a changed
-  published ErrorId. The one change there is the combination of two of `-User`, `-Group` and
-  `-ServicePrincipal` on the three Azure role assignment readers (Sprint 14, A3): a caller error that
-  was never a lookup, so `MutuallyExclusiveParameter` replaced `PrincipalNotFound` for that alone.
-  The PIM approver lookups follow the rule: an ambiguous approver name is
+  published ErrorId. The PIM approver lookups follow the rule: an ambiguous approver name is
   `AmbiguousApproverName`, a failed lookup is published as itself, and `ApproverNotFound` means only
   an approver that matches nothing, in the three policy cmdlets and the three apply handlers alike.
   They tell the three apart by the internal ids `PrincipalUnresolved` and `ApproverUnresolved`,

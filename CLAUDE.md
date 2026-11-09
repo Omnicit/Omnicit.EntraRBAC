@@ -856,8 +856,8 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   mean only a lookup that matched nothing, any other failure and an ambiguous name are published as
   themselves. `Get-OERActiveRoleAssignment`, `Get-OEREligibleRoleAssignment` and
   `Get-OERRoleAssignment` publish two of `-User`, `-Group` and `-ServicePrincipal` as
-  `MutuallyExclusiveParameter` (the resolver's own id, InvalidArgument), and every other failure of
-  that lookup as `PrincipalNotFound`. Never change another of those ErrorIds. PIM approver lookups follow the rule:
+  `MutuallyExclusiveParameter` (the resolver's own id, InvalidArgument), an ambiguous name as
+  `AmbiguousPrincipalName`, and every other failure of that lookup as `PrincipalNotFound`. Never change another of those ErrorIds. PIM approver lookups follow the rule:
   ambiguous is `AmbiguousApproverName`, a failed lookup is published as itself, `ApproverNotFound`
   means only an approver matching nothing -- in the three policy cmdlets and the three apply
   handlers alike -- told apart by the internal ids `PrincipalUnresolved` and `ApproverUnresolved`

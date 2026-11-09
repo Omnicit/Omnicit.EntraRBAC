@@ -14,7 +14,7 @@ function Get-OERActiveRoleAssignment {
     (active assignments at or above the scope). -AsTarget applies $filter=asTarget() (the caller's own
     active assignments). A principal filter, -AtScope, and -AsTarget are mutually exclusive. Naming
     more than one of -User, -Group and -ServicePrincipal is refused with a non-terminating
-    MutuallyExclusiveParameter error before any request. Output
+    MutuallyExclusiveParameter error before any principal lookup or role assignment read. Output
     objects are tagged Omnicit.EntraRBAC.ActiveRoleAssignment and expose RoleAssignmentScheduleId,
     PrincipalId, RoleDefinitionId, and Scope. Friendly RoleName/PrincipalDisplayName are returned
     directly from the API expandedProperties. Requires an ARM token; authentication is ensured via
@@ -124,7 +124,8 @@ function Get-OERActiveRoleAssignment {
                     return
                 }
                 # Two of -User, -Group and -ServicePrincipal are a mistake in the call, not a principal that was not found:
-                # published as the resolver's own id, before PrincipalNotFound. Nothing has been requested at this point.
+                # published as the resolver's own id, before PrincipalNotFound. No principal has been looked up and no role assignment
+                # read at this point.
                 if (([string]$PSItem.FullyQualifiedErrorId).StartsWith('MutuallyExclusiveParameter', [System.StringComparison]::Ordinal)) {
                     Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'MutuallyExclusiveParameter' -Category InvalidArgument -TargetObject $PrincipalTarget -Cmdlet $PSCmdlet
                     return
