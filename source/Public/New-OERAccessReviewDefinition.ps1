@@ -16,6 +16,9 @@ function New-OERAccessReviewDefinition {
     written in the form Microsoft Graph accepts for it (a principalResourceMembershipsScope over all
     users and the role definition; the query form Microsoft Learn shows for this review is refused).
     Who Microsoft Graph asks to review was not measured.
+    With -DirectoryRoleAssignmentType Eligible or Active the review covers only the eligible or only the
+    active (assigned) assignments of the role, written as the access review query form Microsoft Graph
+    accepted for each (measured 2026-11-10); omitted, the all-assignments form above is written.
     Scope, reviewer, and catalog ids are resolved from friendly display names or GUIDs. Supports
     -WhatIf and -Confirm.
 
@@ -46,6 +49,14 @@ function New-OERAccessReviewDefinition {
     RoleDefinitionReadFailed; each is a non-terminating error and nothing is sent. Tab-completion offers
     the built-in directory roles; any other role name is still accepted. Not combined with -AccessPackage,
     -AssignmentPolicy, -Catalog or -Group.
+
+    .PARAMETER DirectoryRoleAssignmentType
+    Eligible or Active, with -DirectoryRole only (both DirectoryRole parameter sets). Omitted, the review
+    covers every eligible and active assignment of the role, as before. Eligible reviews only the
+    eligible assignments of the role; Active reviews only its active (assigned) assignments. In both
+    new forms the review covers users only, since the scope query filters on user principals. The
+    scope cannot change after creation. Microsoft Graph accepted both forms (measured 2026-11-10);
+    who it asks to review was not measured.
 
     .PARAMETER AssignmentPolicy
     The assignment policy display name or id whose assignments are reviewed. A display name that
@@ -158,7 +169,14 @@ function New-OERAccessReviewDefinition {
     New-OERAccessReviewDefinition -DisplayName 'Reports Reader holders' -DescriptionForAdmins 'Yearly review' `
         -DescriptionForReviewers 'Please review role access' -DirectoryRole 'Reports Reader' `
         -Reviewer 'manager@contoso.com' -Recurrence Annually -StartDate (Get-Date '2027-01-01')
-    Creates a yearly single-stage access review of every user holding the Reports Reader directory role.
+    Creates a yearly single-stage access review of the users assigned to the Reports Reader directory role.
+
+    .EXAMPLE
+    New-OERAccessReviewDefinition -DisplayName 'Reports Reader eligible' -DescriptionForAdmins 'Yearly review' `
+        -DescriptionForReviewers 'Please review eligible role access' -DirectoryRole 'Reports Reader' `
+        -DirectoryRoleAssignmentType Eligible -Reviewer 'manager@contoso.com' `
+        -Recurrence Annually -StartDate (Get-Date '2027-01-01')
+    Creates a yearly single-stage access review of the eligible assignments to the Reports Reader directory role only.
     #>
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'SingleStage')]
     [OutputType([PSCustomObject])]
@@ -185,6 +203,11 @@ function New-OERAccessReviewDefinition {
         [Parameter(ParameterSetName = 'DirectoryRoleMultiStage', Mandatory)]
         [ValidateNotNullOrEmpty()]
         [string]$DirectoryRole,
+
+        [Parameter(ParameterSetName = 'DirectoryRoleSingleStage')]
+        [Parameter(ParameterSetName = 'DirectoryRoleMultiStage')]
+        [ValidateSet('Eligible', 'Active')]
+        [string]$DirectoryRoleAssignmentType,
 
         [Parameter(ParameterSetName = 'SingleStage', Mandatory)]
         [Parameter(ParameterSetName = 'MultiStage', Mandatory)]
@@ -341,7 +364,11 @@ function New-OERAccessReviewDefinition {
                 Write-CmdletError @ErrParams
                 return
             }
-            $Scope = New-OERAccessReviewScopeQuery -DirectoryRoleId $RoleInput.RoleDefinitionId
+            $RoleScopeParams = @{ DirectoryRoleId = $RoleInput.RoleDefinitionId }
+            if ($PSBoundParameters.ContainsKey('DirectoryRoleAssignmentType')) {
+                $RoleScopeParams.DirectoryRoleAssignmentType = $DirectoryRoleAssignmentType
+            }
+            $Scope = New-OERAccessReviewScopeQuery @RoleScopeParams
         }
         else {
             $ScopeParams = @{ AccessPackage = $AccessPackage; AssignmentPolicy = $AssignmentPolicy }

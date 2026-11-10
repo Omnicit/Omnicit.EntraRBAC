@@ -41,6 +41,17 @@ function New-OERAccessReviewScopeQuery {
     .PARAMETER DirectoryRoleId
     The directory role definition whose assignments are reviewed (parameter set DirectoryRole).
 
+    .PARAMETER DirectoryRoleAssignmentType
+    Eligible or Active (parameter set DirectoryRole only; compared without regard to letter case).
+    Unbound, the all-assignments scope above is returned, exactly as before. Eligible builds an
+    accessReviewQueryScope whose query is
+    '/roleManagement/directory/roleEligibilityScheduleInstances?$expand=principal&$filter=(isof(principal,'microsoft.graph.user') and roleDefinitionId eq '{id}')';
+    Active builds one over '/roleManagement/directory/roleAssignmentScheduleInstances' filtered on
+    assignmentType 'Assigned' as well. Both texts are written without a version prefix, which is the
+    exact text Resolve-OERAccessReviewRoleScope classifies. Microsoft Graph accepted both forms (POST 201)
+    and read them back with a leading '/beta' (measured 2026-11-10). Who Microsoft Graph asks to review
+    was not measured.
+
     .EXAMPLE
     New-OERAccessReviewScopeQuery -AccessPackageId $ap -AssignmentPolicyId $pol
     Returns the scope object for the access package's assignments under the policy.
@@ -48,6 +59,10 @@ function New-OERAccessReviewScopeQuery {
     .EXAMPLE
     New-OERAccessReviewScopeQuery -DirectoryRoleId $role
     Returns the scope object for every user's assignments to the directory role.
+
+    .EXAMPLE
+    New-OERAccessReviewScopeQuery -DirectoryRoleId $role -DirectoryRoleAssignmentType Eligible
+    Returns the accessReviewQueryScope over the role's eligible assignment schedule instances.
 
     .EXAMPLE
     New-OERAccessReviewScopeQuery -GroupId $group
@@ -61,9 +76,24 @@ function New-OERAccessReviewScopeQuery {
         [Parameter(Mandatory, ParameterSetName = 'AccessPackage')][string]$AccessPackageId,
         [Parameter(Mandatory, ParameterSetName = 'AccessPackage')][string]$AssignmentPolicyId,
         [Parameter(Mandatory, ParameterSetName = 'Group')][string]$GroupId,
-        [Parameter(Mandatory, ParameterSetName = 'DirectoryRole')][string]$DirectoryRoleId
+        [Parameter(Mandatory, ParameterSetName = 'DirectoryRole')][string]$DirectoryRoleId,
+        [Parameter(ParameterSetName = 'DirectoryRole')][ValidateSet('Eligible', 'Active')][string]$DirectoryRoleAssignmentType
     )
     if ($PSCmdlet.ParameterSetName -eq 'DirectoryRole') {
+        if ($DirectoryRoleAssignmentType -eq 'Eligible') {
+            return @{
+                '@odata.type' = '#microsoft.graph.accessReviewQueryScope'
+                query         = "/roleManagement/directory/roleEligibilityScheduleInstances?`$expand=principal&`$filter=(isof(principal,'microsoft.graph.user') and roleDefinitionId eq '$DirectoryRoleId')"
+                queryType     = 'MicrosoftGraph'
+            }
+        }
+        if ($DirectoryRoleAssignmentType -eq 'Active') {
+            return @{
+                '@odata.type' = '#microsoft.graph.accessReviewQueryScope'
+                query         = "/roleManagement/directory/roleAssignmentScheduleInstances?`$expand=principal&`$filter=(assignmentType eq 'Assigned' and isof(principal,'microsoft.graph.user') and roleDefinitionId eq '$DirectoryRoleId')"
+                queryType     = 'MicrosoftGraph'
+            }
+        }
         return @{
             '@odata.type'  = '#microsoft.graph.principalResourceMembershipsScope'
             principalScopes = @(
