@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No changes to the module since 1.6.0. A preview published from this point differs from 1.6.0 only in
+documentation, tests or the build.
+
+## [1.6.0] - 2026-11-10
+
 A refused call now says what is wrong. `Get-OERActiveRoleAssignment`, `Get-OEREligibleRoleAssignment` and
 `Get-OERRoleAssignment` report two of `-User`, `-Group` and `-ServicePrincipal` as
 `MutuallyExclusiveParameter`, not `PrincipalNotFound`. `Get-`/`Set-OERRoleManagementPolicy` refuse a
