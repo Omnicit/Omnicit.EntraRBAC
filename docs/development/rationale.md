@@ -1419,8 +1419,10 @@ Microsoft.Graph.Authentication 2.40.0, not measured against a live service: see
 #arm-transport), so a `@odata.nextLink` naming another https host would be requested with the
 session's bearer token. Measured in Sprint 15 step 1 (below), the provider does carry a list: the
 Graph host of every cloud and two Microsoft test hosts. A link to another host gets no token; a link
-to another cloud's Graph host is on the list, so this check still decides. Every `-Uri` a caller passes starts with a literal `v1.0/` or `beta/`; only
-the link a response supplies can name a host, so only a link on page 2 or later is judged.
+to another cloud's Graph host is on the list, so the SDK would not stop it (inferred from the list,
+not measured) and this check still decides. Every `-Uri` a caller passes starts with a literal
+`v1.0/` or `beta/`; only the link a response supplies can name a host, so only a link on page 2 or
+later is judged.
 
 **The rule.** In the `-All` loop, after the page-limit and repeat checks and before the send, a link
 (`$PageNumber -gt 1`) must parse as an absolute URI that is `https` (ordinal), has no user info, has
@@ -1782,8 +1784,9 @@ origin), and sinks answering 200 with an empty `value`. Each listener logged onl
 - **Azure Resource Manager.** `Invoke-WebRequest` with exactly the wrapper's parameters (`Method`,
   `Uri` as a `System.Uri`, `Headers` holding `Authorization`, `SkipHttpErrorCheck`, `ErrorAction Stop`,
   `Verbose $false`; `Body` and `ContentType` on a write) followed the redirect in every case: a 302 GET
-  to another port, to another host and to the same origin, and a 307 PUT to another port, its body sent
-  again. The header reached the redirector every time and the next request never, not even on the
+  to another port, to another host and to the same origin, and a 307 PUT to another port, which carried
+  its 40-byte body to the next request as well (the listener logged the body's length, never its
+  content). The header reached the redirector every time and the next request never, not even on the
   same origin.
 - **Microsoft Graph.** After `Connect-MgGraph -AccessToken` the SDK's token provider carries an
   allowed-hosts list: `graph.microsoft.com`, `graph.microsoft.us`, `dod-graph.microsoft.us`,
@@ -1795,7 +1798,8 @@ origin), and sinks answering 200 with an empty `value`. Each listener logged onl
   dropped on a 302 GET to another port, a 302 GET to another host and a 307 POST to another port;
   `-SkipHttpErrorCheck` changed nothing. The SDK's handler chain runs `AuthenticationHandler` first and
   Kiota's `RedirectHandler` inside it (`MaxRedirect` 5, `AllowRedirectOnSchemeChange` false, a
-  `ScrubSensitiveHeaders` callback set), so a followed redirect does not pass the token step again.
+  `ScrubSensitiveHeaders` callback set), so a followed redirect does not pass the token step again (read from the order of the chain, not
+  measured on its own).
 
 **What follows.** On neither transport did the token follow a redirect to another host or port, so the
 transports are unchanged. What keeps it so is the parameter set: each transport's send passes exactly
@@ -1807,11 +1811,16 @@ unmeasured. The tests below turn red on such a change until it has been measured
 of scheme by the option above, and `Invoke-WebRequest` documents that it refuses https to http without
 `-AllowInsecureRedirect` -- neither was run here); a real Microsoft Graph or Azure Resource Manager host
 answering with a redirect; a later SDK or PowerShell version (the build resolves the newest of every
-module, so these tests hold the module's own parameters, not the SDK's behaviour).
+module, so these tests hold the module's own parameters, not the SDK's behaviour); a request to
+another cloud's Graph host (that such a host would receive the token is read from the allowed-hosts
+list, not measured).
 
-**Recorded, not changed.** Both transports FOLLOW a redirect to another host, without the token: what
-that host answers is read as the Microsoft Graph or Azure Resource Manager answer, and a 307 sends a
-write's body (principal and role definition ids) there again. Reported to the architect in the Sprint 15
+**Recorded, not changed.** Both transports follow a redirect to another host, without the token: the
+cmdlet returned what the other host answered (the sink's 200) as its answer, so the wrapper would read
+it as the Microsoft Graph or Azure Resource Manager answer (the wrapper itself was not run against the
+listeners). On Azure Resource Manager a 307 sent a write's body to the other host again (measured on
+another port); on Microsoft Graph the 307 POST arrived at the other port as a POST, with the test host
+allowed, and whether its body arrived was not logged. Reported to the architect in the Sprint 15
 step 1 report as a finding outside the step's scope.
 
 **Proofs.** `tests/Unit/Private/Invoke-OERArmRequest.Tests.ps1`, Describe "Invoke-OERArmRequest follows a

@@ -1449,8 +1449,8 @@ Describe 'Invoke-OERGraphRequest -All paging' {
 
 Describe 'Invoke-OERGraphRequest -All sends a next link only to the session''s Graph host (BL-179, A10)' {
     # The SDK requests a next link wherever it points, and its allowed-hosts list (measured in Sprint
-    # 15 step 1) attaches the session's token to the Graph host of any cloud, so this check is what
-    # keeps a link inside the session's cloud. Page 1 is the caller's literal -Uri; only a later page
+    # 15 step 1) NAMES the Graph host of every cloud, so the SDK does not stop a link to another
+    # cloud's Graph host; this check is what keeps a link inside the session's cloud. Page 1 is the caller's literal -Uri; only a later page
     # is judged. The state is built by hand, the cloud as each case names it; no state reads the
     # Global cloud.
     BeforeAll {
