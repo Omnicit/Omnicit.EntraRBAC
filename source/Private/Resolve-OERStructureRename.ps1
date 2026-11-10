@@ -172,22 +172,35 @@ function Resolve-OERStructureRename {
     )
     # BL-147 (R-8): an accessPackages entry that renames nothing is registered (-Identified,
     # -Unidentified) for that section only, and an identified package always has an id: anything else is a
-    # private caller error, so it throws before anything is registered.
+    # private caller error, so it throws a RenameRegistrationInvalid record before anything is registered.
     $RegistersEntry = $Identified -or $Unidentified
     if ($RegistersEntry) {
         if ($Section -ne 'accessPackages') {
-            throw [System.ArgumentException]::new("An entry that renames nothing (-Identified, -Unidentified) is registered for the accessPackages section only, not for $Section.", 'Section')
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.ArgumentException]::new("An entry that renames nothing (-Identified, -Unidentified) is registered for the accessPackages section only, not for $Section.", 'Section'),
+                'RenameRegistrationInvalid',
+                [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                $Section)
         }
         if ($Identified -and [string]::IsNullOrEmpty($Id)) {
-            throw [System.ArgumentException]::new('-Identified requires the id of the access package the entry found or created.', 'Id')
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.ArgumentException]::new('-Identified requires the id of the access package the entry found or created.', 'Id'),
+                'RenameRegistrationInvalid',
+                [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                $Name)
         }
     }
 
     # A policy is matched within its package: without the package there is no key and no message to
-    # build. A private caller error, so it throws (the callers pass the package their entry sits in).
+    # build. A private caller error, so it throws a RenameRegistrationInvalid record (the callers pass
+    # the package their entry sits in).
     $IsPolicy = $Section -eq 'assignmentPolicies'
     if ($IsPolicy -and [string]::IsNullOrEmpty($AccessPackage)) {
-        throw [System.ArgumentException]::new('-AccessPackage is required for the assignmentPolicies section: an assignment policy is matched within its access package.', 'AccessPackage')
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.ArgumentException]::new('-AccessPackage is required for the assignmentPolicies section: an assignment policy is matched within its access package.', 'AccessPackage'),
+            'RenameRegistrationInvalid',
+            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+            $Name)
     }
 
     # The keys the outcome is registered under, owned here and in Get-OERStructureRenameTarget alone: the

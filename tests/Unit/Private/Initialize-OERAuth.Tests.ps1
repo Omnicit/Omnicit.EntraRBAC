@@ -5485,6 +5485,33 @@ Describe 'Initialize-OERAuth tenant named by domain (BL-12)' {
             }
         }
 
+        It 'republishes a typed TenantResolutionFailed record from the resolver with the same message, category, target and inner exception' {
+            # BL-176a: the resolver throws an ErrorRecord now (its exception unchanged); the sign-in
+            # reads only .Exception.Message and .Exception from it.
+            Mock -ModuleName $script:moduleName Resolve-OERTenantDomain {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.InvalidOperationException]::new('did not resolve', [System.Exception]::new('inner cause')),
+                    'TenantResolutionFailed',
+                    [System.Management.Automation.ErrorCategory]::AuthenticationError,
+                    $Domain)
+            }
+
+            $R = Invoke-DomainProbe -Parameters @{ TenantId = 'contoso.onmicrosoft.com'; AuthMethod = 'Interactive' }
+
+            $R.Caught | Should -Not -BeNullOrEmpty
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'TenantResolutionFailed,Initialize-OERAuth'
+            $R.Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
+            $R.Caught.TargetObject | Should -BeExactly 'contoso.onmicrosoft.com'
+            $R.Caught.Exception.Message | Should -BeExactly ("Could not resolve tenant 'contoso.onmicrosoft.com' to its tenant ID: did not resolve Omnicit.EntraRBAC checks the tenant every token " +
+                'is issued for, and a tenant named by domain is checked through its tenant ID, so no token ' +
+                'was requested. Check the domain and the cloud (-Environment), or name the tenant by its ' +
+                'tenant ID (a GUID).')
+            $R.Caught.Exception.InnerException | Should -BeOfType ([System.InvalidOperationException])
+            $R.Caught.Exception.InnerException.Message | Should -BeExactly 'did not resolve'
+            $R.Caught.Exception.InnerException.InnerException.Message | Should -BeExactly 'inner cause'
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 0
+        }
+
         It 'leaves the authority tracker on the commercial authority when a sovereign-cloud lookup fails' {
             # Not vacuous: the sovereign authority differs from the one the entry seeds.
             InModuleScope $script:moduleName {
@@ -5544,6 +5571,40 @@ Describe 'Initialize-OERAuth tenant named by domain (BL-12)' {
 
             $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'TenantResolutionFailed,Initialize-OERAuth'
             $R.Refusal | Should -Not -BeNullOrEmpty
+        }
+    }
+
+    Context 'a domain whose real lookup fails, seen from the caller''s -ErrorVariable' {
+        It 'holds exactly one record under the published id TenantResolutionFailed, not the resolver''s thrown copy as well' {
+            # The REAL resolver runs; only the network call is mocked. A caller's -ErrorVariable also
+            # collects the record the resolver throws and the sign-in catches, so that record must
+            # carry an internal id and only the republished one the published id.
+            Mock -ModuleName $script:moduleName Invoke-RestMethod { throw [System.Net.Http.HttpRequestException]::new('lookup refused (injected)') }
+            # A stand-in caller: it signs in and catches the refusal. Its -ErrorVariable holds the refusal
+            # the sign-in raises (one) and every record a nested helper threw on the way, which is what a
+            # consumer counts.
+            $Collected = InModuleScope $script:moduleName {
+                function Invoke-SignInStandIn {
+                    [CmdletBinding()]
+                    param()
+                    try {
+                        Initialize-OERAuth -TenantId 'contoso.onmicrosoft.com' -AuthMethod 'Interactive'
+                    } catch {
+                        $null = $PSItem
+                        return
+                    }
+                }
+                try {
+                    Invoke-SignInStandIn -ErrorVariable Ev -ErrorAction SilentlyContinue
+                } finally {
+                    Remove-Item function:Invoke-SignInStandIn
+                }
+                , @($Ev)
+            }
+
+            Should -Invoke -ModuleName $script:moduleName Invoke-RestMethod -Times 1 -Exactly
+            @($Collected | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like 'TenantResolutionFailed*' }).Count |
+                Should -Be 1
         }
     }
 

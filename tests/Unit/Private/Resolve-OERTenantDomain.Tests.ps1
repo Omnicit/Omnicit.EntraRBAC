@@ -175,6 +175,42 @@ Describe 'Resolve-OERTenantDomain' {
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-RestMethod -Times 2 -Exactly
     }
 
+    It 'throws a typed TenantDomainUnresolved record for a failed request: category, target, message and inner exception' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-RestMethod {
+            throw [System.Exception]::new('Response status code does not indicate success: 400 (Bad Request).')
+        }
+
+        $Caught = InModuleScope Omnicit.EntraRBAC {
+            try { Resolve-OERTenantDomain -Domain 'contoso.onmicrosoft.com' -Environment 'Global'; $null } catch { $PSItem }
+        }
+
+        $Caught | Should -Not -BeNullOrEmpty
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'TenantDomainUnresolved'
+        $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
+        $Caught.TargetObject | Should -BeExactly 'contoso.onmicrosoft.com'
+        $Caught.Exception | Should -BeOfType ([System.InvalidOperationException])
+        $Caught.Exception.Message | Should -BeExactly "The Microsoft Entra ID authority 'https://login.microsoftonline.com/' did not resolve 'contoso.onmicrosoft.com' to a tenant: Response status code does not indicate success: 400 (Bad Request)."
+        $Caught.Exception.InnerException | Should -Not -BeNullOrEmpty
+        $Caught.Exception.InnerException.Message | Should -BeExactly 'Response status code does not indicate success: 400 (Bad Request).'
+    }
+
+    It 'throws a typed TenantDomainUnresolved record for a document with no tenant in its issuer: category, target and message' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-RestMethod {
+            [pscustomobject]@{ issuer = 'https://login.microsoftonline.com/{tenantid}/v2.0' }
+        }
+
+        $Caught = InModuleScope Omnicit.EntraRBAC {
+            try { Resolve-OERTenantDomain -Domain 'common' -Environment 'Global'; $null } catch { $PSItem }
+        }
+
+        $Caught | Should -Not -BeNullOrEmpty
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'TenantDomainUnresolved'
+        $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
+        $Caught.TargetObject | Should -BeExactly 'common'
+        $Caught.Exception | Should -BeOfType ([System.InvalidOperationException])
+        $Caught.Exception.Message | Should -BeExactly "The OpenID discovery document the Microsoft Entra ID authority 'https://login.microsoftonline.com/' returned for 'common' names no tenant ID in its issuer ('https://login.microsoftonline.com/{tenantid}/v2.0')."
+    }
+
     It 'resolves the domain on the next call after a failure, since a failure is not cached' {
         Mock -ModuleName Omnicit.EntraRBAC Invoke-RestMethod {
             throw [System.Exception]::new('Response status code does not indicate success: 503 (Service Unavailable).')

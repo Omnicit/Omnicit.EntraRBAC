@@ -1158,15 +1158,23 @@ token counts, region-content checks) so a detection bug fails loudly instead of 
 empty collection.
 
 **11. Typed error records** (Sprint 13 step 5, BL-22). No file under `source/Private` or
-`source/Public` throws a bare string. The gate parses both directories itself, in its own
-`BeforeAll`, and a detector (`Get-OERStringThrow`) flags every `throw` whose operand, after
+`source/Public` throws a bare string or an exception object. The gate parses both directories itself, in
+its own `BeforeAll`, and a detector (`Get-OERStringThrow`) flags every `throw` whose operand, after
 unwrapping parentheses, is a string constant, an expandable string, a `+` or `-f` expression with a
-string side, or a variable assigned from such an expression in the same innermost function. A bare
-rethrow, `throw $PSItem`, a record variable, a typed `ErrorRecord` and a `throw (Command ...)` are not
-flagged; known answers hold each shape. Two named exceptions (E1 and E2, under `#error-handling`) are
-keyed by file name and operand text, never by line, and each must match exactly one throw, so a stale
-entry fails. Non-vacuity: no parse failure, more than 190 parsed files, more than 145 throw statements
-and more than 80 typed throws (measured 155 and 88 on 2026-11-07).
+string side, a `-join`, `-replace` or `[string]` cast, a `[string]::Format` call, a subexpression
+yielding one of those, or a variable assigned from such an expression (an if-expression counts when
+any branch yields one) in the same innermost function (row `Kind` = `String`); and every `throw` of
+`[<Exception type>]::new(...)` or `New-Object <Exception type>`, directly or through such a variable
+(`Kind` = `Exception`; `Test-OERExceptionObjectExpression`). A bare rethrow, `throw $PSItem`, a record
+variable, a typed `ErrorRecord` and a `throw (Command ...)` are not flagged; known answers hold each
+shape. Two named exceptions (E1 and E2, under `#error-handling`) are keyed by file name and operand
+text, never by line, and each must match exactly one throw, so a stale entry fails. Non-vacuity: no
+parse failure, more than 190 parsed files, more than 145 throw statements and more than 88 typed
+throws (measured 157 and 96 on 2026-11-09). Gate 11 still does not see: a type-constrained assignment
+(`[string]$Msg = ...`), a switch, ternary or try assignment, `[string]::Join` or `Concat`, `-f` with a
+non-literal left side, member access (`throw $X.Message`), a conversion (`[System.Exception]'m'`) and a
+variable bound by a parameter default or a foreach; none stands in `source/` today (a scan of all 157
+throws by the final review of Sprint 14 step 3).
 
 ### CLAUDE.md text for static-source-gates
 
@@ -1403,6 +1411,53 @@ transport's own id as the only record, `RESULT COUNT: 0` and no request after th
 hold that the repeated and the over-limit page are never requested. The claims step-up needs a sign-in
 state to build from: without one the original Graph error is thrown after one request
 (BL-124 O1, S12).
+
+### Sprint 14 step 3: a next link goes only to the session's Graph host (BL-179, A10)
+
+**Why.** The Graph SDK's token provider is built with no allowed-hosts list (read in
+Microsoft.Graph.Authentication 2.40.0, not measured against a live service: see
+#arm-transport), so a `@odata.nextLink` naming another https host would be requested with the
+session's bearer token. Every `-Uri` a caller passes starts with a literal `v1.0/` or `beta/`; only
+the link a response supplies can name a host, so only a link on page 2 or later is judged.
+
+**The rule.** In the `-All` loop, after the page-limit and repeat checks and before the send, a link
+(`$PageNumber -gt 1`) must parse as an absolute URI that is `https` (ordinal), has no user info, has
+the same `Port` as the session cloud's Graph address and an `IdnHost` equal to it ignoring case. The
+address is `Get-OERCloudEndpoint`'s `GraphResource` for the session's `Environment`, read once per
+call, never a URL literal (gate 7). **No session state, or a state with no `Environment`, reads the
+Global cloud**, mirroring the ARM transport's documented no-state fallback. A refused link is the
+existing `GraphPagingIncomplete` (no new id, A10) with the cause "its next link does not address the
+Microsoft Graph host of the session's cloud (...), so it was not requested"; the message never
+carries the link, which can hold a skiptoken. The throw is followed by `return`, as for the checks
+above it (probe S20 holds that a call with no `try` under `-ErrorAction SilentlyContinue` stops after
+one request, leaves only that record and returns nothing).
+
+**Ruling: a relative link is refused** like a foreign host. Graph documents next links as absolute
+URLs, and a relative one has no host to judge.
+
+**What is sent.** The ORIGINAL string, unchanged, never `Uri.ToString()`, which unescapes (`%20`
+becomes a space) and would re-encode a skiptoken. The SDK takes `-Uri` as `[uri]`; measured in pwsh
+with no module code, PowerShell's conversion of an absolute string and `[uri]::TryCreate` give the
+same `IdnHost` for the foreign-host shapes (suffix host, `host@other`, `:443`, upper case), so what is
+judged is what is requested. There is one send path (gate 10).
+
+**Proofs** (`tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1`): the Describe "sends a next link
+only to the session's Graph host (BL-179, A10)" drives twelve refused links (suffix host, `@`, user
+info, http, http on the https port, port 8443, another host, relative, UNC-shaped, a Global link in a USGov session and the
+reverse, a USGov link with no state), each with one request, page 2, `PartialValue` of page 1 and a
+message free of the link; ten followed links (v1.0, beta, host case, `:443`, escaped skiptoken, USGov,
+USGovDoD, China, no state, a state without `Environment`) compared byte for byte; and the order of
+the checks. F3 probes S20 and S21 run it in a runspace with no `try`.
+
+**Mutations** (scratch copy of the built module; each turned tests red): no refusal at all, the
+`-gt 1` guard replaced by `$false` (every refused case and S20), the guard widened to page 1 (the page 1
+case and the repeat case), the scheme term dropped (only "http on the https port" holds it, since port
+80 differs from 443 for plain http), the user info term (user info on the Graph host), the port term
+(port 8443), the host term (suffix host, other host, cross-cloud and no-state cases, S20), the cloud
+read as a fixed Global (the USGov, USGovDoD and China followed cases and the USGov-session refusal),
+the missing `return` (only S20: a second request) and the check placed below the send (every refused
+case, S20). One equivalent mutant: comparing `IdnHost` ordinally rather than ignoring case, since
+`System.Uri` lower-cases the host it parses, so the case-insensitive comparison is belt and braces.
 
 ### CLAUDE.md text for graph-wrapper
 
@@ -1654,7 +1709,8 @@ Behaviour that follows from this design:
   followed with the token:** `Invoke-WebRequest` drops the Authorization header on a redirect unless
   asked to keep it (documented default, not measured here), the wrapper never asks, and the unit
   test holds that `PreserveAuthorizationOnRedirect` is not bound.
-  The Graph transport is left as it is by this step. Read, not measured
+  The Graph transport is left as it is by this step. Sprint 14 step 3 changed that for the one
+  address a response supplies: see #graph-wrapper. Read, not measured
   (Microsoft.Graph.Authentication 2.40.0, its IL, and every `Invoke-OERGraphRequest -Uri` under
   `source/` by parse tree): no caller's value can stand first in a Graph address, since each one
   starts with a literal `v1.0/` or `beta/` or with `Get-OERPimGroupsGraphPath`; only
@@ -15595,9 +15651,40 @@ The two string-variable throws (E1 and E2) stay strings, by ruling, and the gate
 Gate 11 of `tests/QA/sourcehygiene.tests.ps1` holds it, keyed by file name and operand text, never by
 line. A new exception needs a ruling recorded here first.
 
-Gate 11 checks string throws only. A `throw` of a bare `[System.*Exception]` object has the same defect
-(its message is the id): seven remain (`Get-OERDirectoryRoleNameMap` x2, `Resolve-OERStructureRename` x3,
-`Resolve-OERTenantDomain` x2), are not yet converted, and no new one is added.
+### Sprint 14 step 3: the seven exception throws and the wider gate (BL-176, A5)
+
+A `throw` of a bare `[System.*Exception]` object has the same defect as a string throw (its message is
+the id). Seven remained after Sprint 13; they became typed records with each exception's type,
+message and inner exception kept, so a caller reading `.Exception.Message` or the type is unchanged:
+
+| Function | Throws | Id | Category | Target | Exception |
+|---|---|---|---|---|---|
+| `Get-OERDirectoryRoleNameMap` | 2 | `DirectoryRoleNameMapUnread` | `ReadError` | `v1.0/directoryRoles` | `System.Exception` (first keeps the read's exception as inner) |
+| `Resolve-OERStructureRename` | 3 | `RenameRegistrationInvalid` | `InvalidArgument` | `$Section`, `$Name`, `$Name` | `System.ArgumentException` (paramName `Section`, `Id`, `AccessPackage`) |
+| `Resolve-OERTenantDomain` | 2 | `TenantDomainUnresolved` | `AuthenticationError` | `$Domain` | `System.InvalidOperationException` (first keeps the request's exception as inner) |
+
+Rulings, each with the cost if wrong:
+
+- **The map's id is internal, `DirectoryRoleNameMapUnread`, and is published by none.** A caller's
+  `-ErrorVariable` also holds the records a nested helper throws and its caller catches, so an internal
+  record must never carry a published id. The first draft gave the map the id `AdministrativeUnitScopedRoleReadFailed`
+  that `Get-OERAdministrativeUnit` publishes; `Get-OERInventory` keeps the records of that id from its
+  `-ErrorVariable`, so its `InventoryPartial` message listed the map's bare cause as an extra cause beside the
+  published one (measured by the final review). The callers republish the cause under their own ids,
+  untouched. A consumer that counts its own record tells it by the `,<Command>` suffix of
+  `FullyQualifiedErrorId`. Cost if wrong: a duplicated cause in a message, or a count that is one too high.
+- **`RenameRegistrationInvalid` is new and internal** (BL-22 precedent for private caller errors).
+  Cost: the rename of an id a correct caller never sees.
+- **The tenant record is internal too, `TenantDomainUnresolved`; `Initialize-OERAuth` republishes it as
+  `TenantResolutionFailed`.** Same mechanism: a caller's `-ErrorVariable` held an inner copy under the
+  published id, so a count of `TenantResolutionFailed` records read two. The category (`AuthenticationError`),
+  target and exception are unchanged. Cost if wrong: a duplicate record under the published id.
+
+Gate 11 now also refuses these. It reports a `Kind` on each row (`String` or `Exception`), flags the
+extra string shapes (a `[string]` cast, an if-expression assignment, `-join`, `-replace`, a
+subexpression, `[string]::Format`) and every `throw` of an exception object, `::new` or `New-Object`,
+directly or through a variable. A typed record built in an if-expression stays clean. The widened gate
+found nothing new in `source/` once the seven were converted.
 
 ## arm-requests
 

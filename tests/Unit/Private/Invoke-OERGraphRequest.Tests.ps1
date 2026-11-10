@@ -1447,6 +1447,163 @@ Describe 'Invoke-OERGraphRequest -All paging' {
     }
 }
 
+Describe 'Invoke-OERGraphRequest -All sends a next link only to the session''s Graph host (BL-179, A10)' {
+    # The Graph SDK has no allowed-hosts list: a next link is requested wherever it points, with the
+    # session's token. Page 1 is the caller's literal -Uri; only a later page is judged. The state is
+    # built by hand, the cloud as each case names it; no state reads the Global cloud.
+    BeforeAll {
+        $script:HostStateText = @'
+@{
+    TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'
+    ClientId = '33333333-3333-3333-3333-333333333333'; Environment = '__ENV__'
+    GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+}
+'@
+    }
+
+    Context 'a next link off the session''s Graph address is refused and never requested' {
+        It 'refuses <Name> (<Env>)' -ForEach @(
+            @{ Name = 'a host that starts with the Graph host'; Env = 'Global'; Link = 'https://graph.microsoft.com.contoso.invalid/v1.0/groups?$skiptoken=X'; Named = 'https://graph.microsoft.com)' }
+            @{ Name = 'a Graph host before an @ (user info)'; Env = 'Global'; Link = ('https://graph.microsoft.com' + '@' + 'contoso.invalid/v1.0/groups?$skiptoken=X'); Named = 'https://graph.microsoft.com)' }
+            @{ Name = 'user info on the Graph host'; Env = 'Global'; Link = ('https://user' + '@' + 'graph.microsoft.com/v1.0/groups?$skiptoken=X'); Named = 'https://graph.microsoft.com)' }
+            @{ Name = 'http'; Env = 'Global'; Link = 'http://graph.microsoft.com/v1.0/groups?$skiptoken=X'; Named = 'https://graph.microsoft.com)' }
+            @{ Name = 'http on the https port'; Env = 'Global'; Link = 'http://graph.microsoft.com:443/v1.0/groups?$skiptoken=X'; Named = 'https://graph.microsoft.com)' }
+            @{ Name = 'another port'; Env = 'Global'; Link = 'https://graph.microsoft.com:8443/v1.0/groups?$skiptoken=X'; Named = 'https://graph.microsoft.com)' }
+            @{ Name = 'another host'; Env = 'Global'; Link = 'https://contoso.invalid/v1.0/groups?$skiptoken=X'; Named = 'https://graph.microsoft.com)' }
+            @{ Name = 'a relative link'; Env = 'Global'; Link = 'v1.0/groups?$skiptoken=X'; Named = 'https://graph.microsoft.com)' }
+            @{ Name = 'a UNC-shaped link'; Env = 'Global'; Link = '\\contoso.invalid\x'; Named = 'https://graph.microsoft.com)' }
+            @{ Name = 'a Global link in a USGov session'; Env = 'USGov'; Link = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=X'; Named = 'https://graph.microsoft.us)' }
+            @{ Name = 'a USGov link in a Global session'; Env = 'Global'; Link = 'https://graph.microsoft.us/v1.0/groups?$skiptoken=X'; Named = 'https://graph.microsoft.com)' }
+            @{ Name = 'a USGov link with no session state (the Global fallback)'; Env = ''; Link = 'https://graph.microsoft.us/v1.0/groups?$skiptoken=X'; Named = 'https://graph.microsoft.com)' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Link = $Link; Env = $Env; Named = $Named; StateText = $script:HostStateText } {
+                param($Link, $Env, $Named, $StateText)
+                $script:_OERAuthState = if ($Env) { & ([scriptblock]::Create($StateText.Replace('__ENV__', $Env))) } else { $null }
+                $script:Page = 0
+                $script:NextLink = $Link
+                Mock Invoke-MgGraphRequest {
+                    $script:Page++
+                    if ($script:Page -gt 5) { return @{ value = @("overrun$($script:Page)") } }
+                    if ($script:Page -eq 1) { return @{ value = @('p1'); '@odata.nextLink' = $script:NextLink } }
+                    @{ value = @('p2') }
+                }
+
+                $Caught = $null
+                $Result = $null
+                try { $Result = Invoke-OERGraphRequest -Uri 'v1.0/groups' -All } catch { $Caught = $PSItem }
+
+                $Caught | Should -Not -BeNullOrEmpty
+                $Caught.FullyQualifiedErrorId | Should -Be 'GraphPagingIncomplete'
+                $Caught.Exception.PageNumber | Should -Be 2
+                @($Caught.Exception.PartialValue) | Should -Be @('p1')
+                $Caught.Exception.Message | Should -BeLike "*does not address the Microsoft Graph host of the session's cloud ($Named*"
+                $Caught.Exception.Message | Should -Not -Match 'skiptoken'
+                $Result | Should -BeNullOrEmpty
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly
+            }
+        }
+    }
+
+    Context 'a next link on the session''s Graph address is requested as the string it came in' {
+        It 'follows <Name> (<Env>)' -ForEach @(
+            @{ Name = 'a v1.0 link'; Env = 'Global'; Link = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=X' }
+            @{ Name = 'a beta link'; Env = 'Global'; Link = 'https://graph.microsoft.com/beta/identityGovernance/x?$skiptoken=X' }
+            @{ Name = 'a link in another host case'; Env = 'Global'; Link = 'https://GRAPH.microsoft.com/v1.0/groups?$skiptoken=X' }
+            @{ Name = 'a link with an explicit :443'; Env = 'Global'; Link = 'https://graph.microsoft.com:443/v1.0/groups?$skiptoken=X' }
+            @{ Name = 'a link with an escaped skiptoken'; Env = 'Global'; Link = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=a%2Bb%20c' }
+            @{ Name = 'a USGov link'; Env = 'USGov'; Link = 'https://graph.microsoft.us/v1.0/groups?$skiptoken=X' }
+            @{ Name = 'a USGovDoD beta link'; Env = 'USGovDoD'; Link = 'https://dod-graph.microsoft.us/beta/x?$skiptoken=X' }
+            @{ Name = 'a China link'; Env = 'China'; Link = 'https://microsoftgraph.chinacloudapi.cn/v1.0/x?$skiptoken=X' }
+            @{ Name = 'a Global link with no session state'; Env = ''; Link = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=X' }
+            @{ Name = 'a Global link with a state that has no Environment key'; Env = 'NOKEY'; Link = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=X' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Link = $Link; Env = $Env; StateText = $script:HostStateText } {
+                param($Link, $Env, $StateText)
+                $script:_OERAuthState = if ($Env -eq 'NOKEY') {
+                    $State = & ([scriptblock]::Create($StateText.Replace('__ENV__', 'Global')))
+                    $State.Remove('Environment')
+                    $State
+                } elseif ($Env) { & ([scriptblock]::Create($StateText.Replace('__ENV__', $Env))) } else { $null }
+                $script:Page = 0
+                $script:NextLink = $Link
+                $script:Sent = [System.Collections.Generic.List[string]]::new()
+                Mock Invoke-MgGraphRequest {
+                    param($Uri)
+                    # The mock binds the SDK's [uri] -Uri like the real command; OriginalString is the
+                    # text it was converted from (ToString() would unescape and lower-case).
+                    $script:Sent.Add($(if ($Uri -is [System.Uri]) { $Uri.OriginalString } else { [string]$Uri }))
+                    $script:Page++
+                    if ($script:Page -gt 5) { return @{ value = @("overrun$($script:Page)") } }
+                    if ($script:Page -eq 1) { return @{ value = @('p1'); '@odata.nextLink' = $script:NextLink } }
+                    @{ value = @('p2') }
+                }
+
+                $Result = Invoke-OERGraphRequest -Uri 'v1.0/groups' -All
+
+                @($Result.value) | Should -Be @('p1', 'p2')
+                Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly
+                # Byte for byte, case included: never Uri.ToString().
+                $script:Sent[1] | Should -BeExactly $Link
+            }
+        }
+    }
+
+    Context 'order of the checks' {
+        It 'refuses a link that repeats page 1''s -Uri as a repeat, not as a foreign host' {
+            InModuleScope $script:moduleName {
+                $script:_OERAuthState = $null
+                $script:Page = 0
+                Mock Invoke-MgGraphRequest {
+                    $script:Page++
+                    if ($script:Page -gt 5) { return @{ value = @("overrun$($script:Page)") } }
+                    @{ value = @("p$($script:Page)"); '@odata.nextLink' = 'v1.0/groups' }
+                }
+
+                $Caught = $null
+                try { $null = Invoke-OERGraphRequest -Uri 'v1.0/groups' -All } catch { $Caught = $PSItem }
+
+                $Caught.FullyQualifiedErrorId | Should -Be 'GraphPagingIncomplete'
+                $Caught.Exception.Message | Should -Match 'repeats a page already requested'
+                $Caught.Exception.Message | Should -Not -Match 'does not address'
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly
+            }
+        }
+
+        It 'reports the page limit, not the host, for a walk past the limit given a foreign link' {
+            InModuleScope $script:moduleName {
+                $script:_OERAuthState = $null
+                Mock Get-OERPageWalkLimit { 1 }
+                $script:Page = 0
+                Mock Invoke-MgGraphRequest {
+                    $script:Page++
+                    if ($script:Page -gt 5) { return @{ value = @("overrun$($script:Page)") } }
+                    @{ value = @('p1'); '@odata.nextLink' = 'https://contoso.invalid/v1.0/groups?$skiptoken=X' }
+                }
+
+                $Caught = $null
+                try { $null = Invoke-OERGraphRequest -Uri 'v1.0/groups' -All } catch { $Caught = $PSItem }
+
+                $Caught.FullyQualifiedErrorId | Should -Be 'GraphPagingIncomplete'
+                $Caught.Exception.Message | Should -Match 'limit of 1 page'
+                $Caught.Exception.Message | Should -Not -Match 'does not address'
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly
+            }
+        }
+
+        It 'does not judge page 1: a first -Uri that is not on the Graph host is the caller''s own' {
+            InModuleScope $script:moduleName {
+                $script:_OERAuthState = $null
+                Mock Invoke-MgGraphRequest { @{ value = @('p1') } }
+
+                $Result = Invoke-OERGraphRequest -Uri 'https://contoso.invalid/v1.0/groups' -All
+
+                @($Result.value) | Should -Be @('p1')
+                Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly
+            }
+        }
+    }
+}
+
 Describe 'Invoke-OERGraphRequest verbose output' {
     It 'emits one verbose line naming the method and uri' {
         Mock -ModuleName $script:moduleName Invoke-MgGraphRequest { @{ value = @() } }
@@ -6828,6 +6985,8 @@ $Resolved = & (Get-Module Omnicit.EntraRBAC) { Get-Command -Name Invoke-MgGraphR
 'GRAPH CALLS: {0}' -f $global:OERStopGraphCalls
 'INIT CALLS: {0}' -f $global:OERStopInitCalls
 foreach ($Id in $Ids) { 'ERROR ID: {0}' -f $Id }
+# Optional: printed only when the -Call block set it (the ids its -ErrorVariable collected).
+if (Test-Path -Path variable:global:OERStopEvIds) { 'EV IDS: {0}' -f $global:OERStopEvIds }
 'END OF SCRIPT REACHED'
 '@
             $Text = $Text.Replace('__AUTHMETHOD__', $AuthMethod).Replace('__RESPOND__', $Respond.ToString()).Replace('__CALL__', $Call.ToString())
@@ -7102,6 +7261,43 @@ foreach ($Id in $Ids) { 'ERROR ID: {0}' -f $Id }
         Get-StopProbeErrorId -Probe $R | Should -Be @('InternalServerError')
         $R.Output | Should -Contain 'GRAPH CALLS: 1'
         $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S20: a next link on another host ends the walk: one request, only GraphPagingIncomplete, nothing returned (BL-179)' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-GraphStopProbe -AuthMethod Interactive -Respond {
+            return @{ value = @("item$($global:OERStopGraphCalls)"); '@odata.nextLink' = 'https://graph.microsoft.com.contoso.invalid/v1.0/groups?$skiptoken=X' }
+        } -Call {
+            Invoke-OERGraphRequest -Uri 'v1.0/groups' -All -ErrorAction SilentlyContinue -ErrorVariable OerEv
+            $global:OERStopEvIds = (@($OerEv | ForEach-Object { [string]$_.FullyQualifiedErrorId }) -join ',')
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('GraphPagingIncomplete')
+        # The -ErrorVariable holds the same one record.
+        $R.Output | Should -Contain 'EV IDS: GraphPagingIncomplete'
+        # Page 1 only: the foreign link is never requested, and no page comes back on the success channel.
+        $R.Output | Should -Contain 'GRAPH CALLS: 1'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S21: a next link on the session host is followed (positive control for S20)' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-GraphStopProbe -AuthMethod Interactive -Respond {
+            if ($global:OERStopGraphCalls -eq 1) {
+                return @{ value = @('item1'); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=X' }
+            }
+            return @{ value = @('item2') }
+        } -Call {
+            Invoke-OERGraphRequest -Uri 'v1.0/groups' -All -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @()
+        $R.Output | Should -Contain 'GRAPH CALLS: 2'
+        $R.Output | Should -Contain 'RESULT COUNT: 1'
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
     }
 }

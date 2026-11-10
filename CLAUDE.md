@@ -1233,9 +1233,10 @@ hyphens) for em-dash contexts in comments and help text, and straight quotes `'`
   (id, category, target), never a bare string: a string throw's id is its message text. The two named
   exceptions are the no-match `throw $NotFoundMessage` of `Resolve-OERRoleDefinitionId` and
   `Get-OERRoleManagementPolicyId`; gate 11 of `tests/QA/sourcehygiene.tests.ps1` holds it, and an
-  exception needs a ruling first. Gate 11 checks string throws only; a `throw` of a bare
-  `[System.*Exception]` object has the same defect (seven remain, not yet converted), and a new one is
-  not added. `Why: docs/development/rationale.md#error-handling`
+  exception needs a ruling first. Gate 11 also refuses a `throw` of an exception object
+  (`[System.*Exception]::new(...)` or `New-Object`, directly or through a variable), and sees the
+  string shapes: a cast, an if-expression assignment, `-join`, `-replace`, a subexpression and
+  `[string]::Format`. `Why: docs/development/rationale.md#error-handling`
 - **Every Graph or ARM `catch` block** must call `Remove-OERErrorRecord -Record $PSItem` as its
   **first** statement. The older `$null = $Error.Remove($PSItem)` idiom looks equivalent but is
   **inert** -- it never removed anything. `Why: docs/development/rationale.md#bearer-scrub`
@@ -1259,6 +1260,11 @@ and structured error conversion. `Why: docs/development/rationale.md#graph-wrapp
 or has no `value`, a repeated next link and a walk past the page limit end it with
 `GraphPagingIncomplete`. `Get-OERPageWalkLimit` is the single owner of the limit (both wrappers read
 it, once per call); never cap a walk by truncating it. `Why: docs/development/rationale.md#graph-wrapper`
+
+**A next link is followed only when it is https on the host and port of the session cloud's Graph
+address** (`Get-OERCloudEndpoint`; Global with no session), and any other, a relative one included, is
+refused with `GraphPagingIncomplete` before it is requested; the link is sent as the string it came in.
+`Why: docs/development/rationale.md#graph-wrapper`
 
 `Connect-MgGraph -Environment` is passed only when the session's cloud is not `Global`; the
 environment name comes from `Get-OERCloudEndpoint`, never a literal.

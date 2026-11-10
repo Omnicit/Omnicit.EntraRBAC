@@ -21,8 +21,10 @@ function Resolve-OERTenantDomain {
     so a domain costs one request per process and cloud. A failure is not cached: the next sign-in asks
     again. Re-importing the module empties the cache.
 
-    It throws an InvalidOperationException when the request fails or the document names no tenant ID;
-    the caller turns that into TenantResolutionFailed.
+    It throws a TenantDomainUnresolved record (AuthenticationError, target the domain) whose exception is
+    an InvalidOperationException, when the request fails or the document names no tenant ID; the caller
+    republishes it as TenantResolutionFailed. The id is internal and published by none: a caller's
+    -ErrorVariable also collects the records a nested helper throws.
 
     What the call bounds: -TimeoutSec 30 ends a connection that is accepted but never answered, and an
     address that never answers ends at the operating system's connect timeout (measured 21 s).
@@ -89,9 +91,13 @@ function Resolve-OERTenantDomain {
                 Remove-OERErrorRecord -Record $PSItem
             }
         }
-        throw [System.InvalidOperationException]::new(
-            ("The Microsoft Entra ID authority '{0}' did not resolve '{1}' to a tenant: {2}" -f $Endpoint.AuthorityHost, $Domain, $Detail),
-            $RequestError.Exception)
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.InvalidOperationException]::new(
+                ("The Microsoft Entra ID authority '{0}' did not resolve '{1}' to a tenant: {2}" -f $Endpoint.AuthorityHost, $Domain, $Detail),
+                $RequestError.Exception),
+            'TenantDomainUnresolved',
+            [System.Management.Automation.ErrorCategory]::AuthenticationError,
+            $Domain)
     }
 
     [string]$Issuer = if ($Document) { [string]$Document.issuer } else { '' }
@@ -104,8 +110,12 @@ function Resolve-OERTenantDomain {
         }
     }
     if (-not $TenantGuid) {
-        throw [System.InvalidOperationException]::new(
-            ("The OpenID discovery document the Microsoft Entra ID authority '{0}' returned for '{1}' names no tenant ID in its issuer ('{2}')." -f $Endpoint.AuthorityHost, $Domain, $Issuer))
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.InvalidOperationException]::new(
+                ("The OpenID discovery document the Microsoft Entra ID authority '{0}' returned for '{1}' names no tenant ID in its issuer ('{2}')." -f $Endpoint.AuthorityHost, $Domain, $Issuer)),
+            'TenantDomainUnresolved',
+            [System.Management.Automation.ErrorCategory]::AuthenticationError,
+            $Domain)
     }
 
     $script:_OERTenantDomainCache[$Key] = $TenantGuid

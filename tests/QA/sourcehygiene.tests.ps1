@@ -4904,6 +4904,120 @@ Describe 'Private error record hygiene' -Tags 'SourceHygiene' {
                 $Ast.Operator -in @('Plus', 'Format')) {
                 return ((Test-OERStringExpression -Ast $Ast.Left) -or (Test-OERStringExpression -Ast $Ast.Right))
             }
+            # -join and -replace always yield a string (-replace is Ireplace/Creplace in the token kinds).
+            if ($Ast -is [System.Management.Automation.Language.BinaryExpressionAst] -and
+                $Ast.Operator -in @('Join', 'Ireplace', 'Creplace', 'Replace')) {
+                return $true
+            }
+            if ($Ast -is [System.Management.Automation.Language.UnaryExpressionAst] -and $Ast.TokenKind -eq 'Join') {
+                return $true
+            }
+            if ($Ast -is [System.Management.Automation.Language.ConvertExpressionAst] -and
+                $Ast.Type.TypeName.FullName -in @('string', 'System.String')) {
+                return $true
+            }
+            if ($Ast -is [System.Management.Automation.Language.SubExpressionAst]) {
+                foreach ($Statement in @($Ast.SubExpression.Statements)) {
+                    foreach ($Value in @(Get-OERValueExpression -Ast $Statement)) {
+                        if (Test-OERStringExpression -Ast $Value) { return $true }
+                    }
+                }
+                return $false
+            }
+            if ($Ast -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                $Ast.Static -and
+                $Ast.Expression -is [System.Management.Automation.Language.TypeExpressionAst] -and
+                $Ast.Expression.TypeName.FullName -in @('string', 'System.String') -and
+                $Ast.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                $Ast.Member.Value -eq 'Format') {
+                return $true
+            }
+            $false
+        }
+
+        # The expressions a statement can yield: one expression or command statement, or the last
+        # statement of every branch of an if-expression (recursively); anything else yields nothing.
+        function Get-OERValueExpression {
+            param($Ast)
+            if ($Ast -is [System.Management.Automation.Language.PipelineAst]) {
+                if ($Ast.PipelineElements.Count -eq 1) {
+                    $Element = $Ast.PipelineElements[0]
+                    if ($Element -is [System.Management.Automation.Language.CommandExpressionAst]) { $Element.Expression }
+                    elseif ($Element -is [System.Management.Automation.Language.CommandAst]) { $Element }
+                }
+            } elseif ($Ast -is [System.Management.Automation.Language.CommandExpressionAst]) {
+                $Ast.Expression
+            } elseif ($Ast -is [System.Management.Automation.Language.IfStatementAst]) {
+                $Bodies = [System.Collections.Generic.List[object]]::new()
+                foreach ($Clause in $Ast.Clauses) { $Bodies.Add($Clause.Item2) }
+                if ($null -ne $Ast.ElseClause) { $Bodies.Add($Ast.ElseClause) }
+                foreach ($Body in $Bodies) {
+                    $Last = @($Body.Statements) | Select-Object -Last 1
+                    if ($null -ne $Last) { Get-OERValueExpression -Ast $Last }
+                }
+            }
+        }
+
+        function Resolve-OERTypeName {
+            param($TypeName)
+            $Type = $null
+            try { $Type = $TypeName.GetReflectionType() } catch { $Type = $null }
+            if ($null -eq $Type) {
+                $Text = $TypeName.FullName
+                $Type = $Text -as [type]
+                if ($null -eq $Type) { $Type = "System.$Text" -as [type] }
+            }
+            $Type
+        }
+
+        function Test-OERExceptionObjectExpression {
+            param($Ast)
+            while ($Ast -is [System.Management.Automation.Language.ParenExpressionAst]) {
+                $Inner = $Ast.Pipeline
+                if ($Inner -is [System.Management.Automation.Language.PipelineAst] -and
+                    $Inner.PipelineElements.Count -eq 1) {
+                    $Element = $Inner.PipelineElements[0]
+                    if ($Element -is [System.Management.Automation.Language.CommandExpressionAst]) {
+                        $Ast = $Element.Expression
+                    } else {
+                        $Ast = $Element
+                    }
+                } else {
+                    return $false
+                }
+            }
+            if ($Ast -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                $Ast.Static -and
+                $Ast.Expression -is [System.Management.Automation.Language.TypeExpressionAst] -and
+                $Ast.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                $Ast.Member.Value -eq 'new') {
+                $Type = Resolve-OERTypeName -TypeName $Ast.Expression.TypeName
+                return ($null -ne $Type -and [System.Exception].IsAssignableFrom($Type))
+            }
+            if ($Ast -is [System.Management.Automation.Language.CommandAst] -and
+                $Ast.CommandElements.Count -gt 1 -and
+                $Ast.CommandElements[0] -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                $Ast.CommandElements[0].Value -eq 'New-Object') {
+                $TypeText = $null
+                for ($Index = 1; $Index -lt $Ast.CommandElements.Count; $Index++) {
+                    $Element = $Ast.CommandElements[$Index]
+                    if ($Element -is [System.Management.Automation.Language.CommandParameterAst]) {
+                        if ('TypeName' -like "$($Element.ParameterName)*" -and $Element.ParameterName.Length -gt 0) {
+                            $Value = if ($null -ne $Element.Argument) { $Element.Argument } else { $Ast.CommandElements[$Index + 1] }
+                            if ($Value -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $TypeText = $Value.Value }
+                            break
+                        }
+                        if ($null -eq $Element.Argument) { $Index++ }
+                        continue
+                    }
+                    if ($Element -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $TypeText = $Element.Value }
+                    break
+                }
+                if ($null -eq $TypeText) { return $false }
+                $Type = $TypeText -as [type]
+                if ($null -eq $Type) { $Type = "System.$TypeText" -as [type] }
+                return ($null -ne $Type -and [System.Exception].IsAssignableFrom($Type))
+            }
             $false
         }
 
@@ -4929,6 +5043,10 @@ Describe 'Private error record hygiene' -Tags 'SourceHygiene' {
                     $Operand.PipelineElements.Count -eq 1 -and
                     $Operand.PipelineElements[0] -is [System.Management.Automation.Language.CommandExpressionAst]) {
                     $Operand = $Operand.PipelineElements[0].Expression
+                } elseif ($Operand -is [System.Management.Automation.Language.PipelineAst] -and
+                    $Operand.PipelineElements.Count -eq 1 -and
+                    $Operand.PipelineElements[0] -is [System.Management.Automation.Language.CommandAst]) {
+                    $Operand = $Operand.PipelineElements[0]
                 } else {
                     continue
                 }
@@ -4943,7 +5061,8 @@ Describe 'Private error record hygiene' -Tags 'SourceHygiene' {
                     }
                 }
                 $IsString = Test-OERStringExpression -Ast $Operand
-                if (-not $IsString -and $Operand -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                $IsException = -not $IsString -and (Test-OERExceptionObjectExpression -Ast $Operand)
+                if (-not $IsString -and -not $IsException -and $Operand -is [System.Management.Automation.Language.VariableExpressionAst]) {
                     $Name = $Operand.VariablePath.UserPath
                     $Scope = Get-OERInnermostFunction -Ast $Throw
                     $Root = if ($null -ne $Scope) { $Scope } else { $Ast }
@@ -4955,19 +5074,16 @@ Describe 'Private error record hygiene' -Tags 'SourceHygiene' {
                         }, $true)
                     foreach ($Assignment in $Assignments) {
                         if ($null -ne $Scope -and (Get-OERInnermostFunction -Ast $Assignment) -ne $Scope) { continue }
-                        $Right = $Assignment.Right
-                        if ($Right -is [System.Management.Automation.Language.PipelineAst] -and
-                            $Right.PipelineElements.Count -eq 1 -and
-                            $Right.PipelineElements[0] -is [System.Management.Automation.Language.CommandExpressionAst]) {
-                            $Right = $Right.PipelineElements[0].Expression
-                        } elseif ($Right -is [System.Management.Automation.Language.CommandExpressionAst]) {
-                            $Right = $Right.Expression
+                        foreach ($Right in @(Get-OERValueExpression -Ast $Assignment.Right)) {
+                            if (Test-OERStringExpression -Ast $Right) { $IsString = $true; break }
+                            if (Test-OERExceptionObjectExpression -Ast $Right) { $IsException = $true }
                         }
-                        if (Test-OERStringExpression -Ast $Right) { $IsString = $true; break }
+                        if ($IsString) { break }
                     }
                 }
-                if ($IsString) {
-                    [PSCustomObject]@{ File = $File; Line = $Throw.Extent.StartLineNumber; Operand = $Operand.Extent.Text }
+                if ($IsString -or $IsException) {
+                    $Kind = if ($IsString) { 'String' } else { 'Exception' }
+                    [PSCustomObject]@{ File = $File; Line = $Throw.Extent.StartLineNumber; Operand = $Operand.Extent.Text; Kind = $Kind }
                 }
             }
         }
@@ -5018,17 +5134,18 @@ Describe 'Private error record hygiene' -Tags 'SourceHygiene' {
 
     It 'parses the tree and scans a meaningful number of throw statements' {
         <#
-            Non-vacuity guard. Measured on 2026-11-07 over source/Private and source/Public after
-            Sprint 13 step 5: 155 throw statements, 88 of them typed ErrorRecord throws.
+            Non-vacuity guard. Measured on 2026-11-09 over source/Private and source/Public after
+            Sprint 14 step 3 task 1: 317 files, 157 throw statements (156 before the final review of the step), 96 of them typed ErrorRecord
+            throws (89 before the seven exception throws became typed records).
         #>
         $script:TypedErrorParseFailures | Should -BeNullOrEmpty -Because (
             'a source file that no longer parses silently drops out of this scan; fix the file rather than letting the gate measure less than the tree')
         $script:TypedErrorFileCount | Should -BeGreaterThan 190 -Because (
             'source/Private and source/Public held more than 190 parseable files when this gate was written; below that the scan has lost a directory')
         $script:TypedErrorThrowCount | Should -BeGreaterThan 145 -Because (
-            'the tree held 155 throw statements when this gate was written; below 145 the AST walk has broken, not found less code')
-        $script:TypedErrorTypedCount | Should -BeGreaterThan 80 -Because (
-            'the tree held 88 typed ErrorRecord throws when this gate was written; below 80 the typed-throw recognition has broken')
+            'the tree held 157 throw statements when this gate was last measured; below 145 the AST walk has broken, not found less code')
+        $script:TypedErrorTypedCount | Should -BeGreaterThan 88 -Because (
+            'the tree held 96 typed ErrorRecord throws when this gate was last measured; below 88 the typed-throw recognition has broken')
     }
 
     It 'recognises the string throw shapes it is written to detect (known answers)' {
@@ -5039,9 +5156,22 @@ Describe 'Private error record hygiene' -Tags 'SourceHygiene' {
             'plus'            = 'function F { throw ''a'' + $b }'
             'format'          = 'function F { throw (''{0} bad'' -f $x) }'
             'string variable' = 'function F { $Msg = ''x '' + $y; throw $Msg }'
+            'string cast'              = 'function F { throw [string]$x }'
+            'string cast variable'     = 'function F { $Msg = [string]$x; throw $Msg }'
+            'if-expression assignment' = 'function F { $Msg = if ($a) { ''one'' } else { ''two'' }; throw $Msg }'
+            'if-expression one branch' = 'function F { $Msg = if ($a) { $Rec } else { "two $b" }; throw $Msg }'
+            'join'                     = 'function F { throw ($Parts -join '', '') }'
+            'unary join'               = 'function F { throw (-join $Parts) }'
+            'replace'                  = 'function F { throw ($Text -replace ''a'', ''b'') }'
+            'subexpression'            = 'function F { throw $(''a '' + $b) }'
+            'subexpression variable'   = 'function F { $Msg = $("x $y"); throw $Msg }'
+            'string Format'            = 'function F { throw [string]::Format(''{0} bad'', $x) }'
+            'System.String Format'     = 'function F { throw ([System.String]::Format(''{0}'', $x)) }'
         }
         foreach ($Name in $Flagged.Keys) {
-            @(ConvertTo-OERMiniatureThrow -Code $Flagged[$Name]).Count | Should -Be 1 -Because "the $Name throw is a string throw"
+            $Rows = @(ConvertTo-OERMiniatureThrow -Code $Flagged[$Name])
+            $Rows.Count | Should -Be 1 -Because "the $Name throw is a string throw"
+            $Rows[0].Kind | Should -BeExactly 'String' -Because "the $Name throw is reported as a string throw"
         }
         $Clean = [ordered]@{
             'bare rethrow'               = 'function F { try { 1 } catch { throw } }'
@@ -5050,9 +5180,27 @@ Describe 'Private error record hygiene' -Tags 'SourceHygiene' {
             'ErrorRecord'                = 'function F { throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new(''m''), ''Id'', [System.Management.Automation.ErrorCategory]::InvalidArgument, $null) }'
             'command call'               = 'function F { throw (New-OERSignInRefusedError -Reason x) }'
             'variable in other function' = 'function G { $Msg = ''x'' } function F { throw $Msg }'
+            'record from if'             = 'function F { $Err = if ($a) { [System.Management.Automation.ErrorRecord]::new([System.Exception]::new(''m''), ''Id'', [System.Management.Automation.ErrorCategory]::InvalidArgument, $null) } else { $PSItem }; throw $Err }'
+            'int cast'                   = 'function F { throw [int]$x }'
+            'non-exception new'          = 'function F { throw [System.Text.StringBuilder]::new() }'
         }
         foreach ($Name in $Clean.Keys) {
             @(ConvertTo-OERMiniatureThrow -Code $Clean[$Name]).Count | Should -Be 0 -Because "the $Name throw is not a string throw"
+        }
+    }
+
+    It 'recognises an exception-object throw (known answers)' {
+        $Flagged = [ordered]@{
+            'Exception new'      = 'function F { throw [System.Exception]::new(''m'') }'
+            'derived new'        = 'function F { throw [System.InvalidOperationException]::new(''m'', $e) }'
+            'short name'         = 'function F { throw [ArgumentException]::new(''m'', ''p'') }'
+            'New-Object'         = 'function F { throw (New-Object System.ArgumentException ''m'') }'
+            'exception variable' = 'function F { $Ex = [System.Exception]::new(''m''); throw $Ex }'
+        }
+        foreach ($Name in $Flagged.Keys) {
+            $Rows = @(ConvertTo-OERMiniatureThrow -Code $Flagged[$Name])
+            $Rows.Count | Should -Be 1 -Because "the $Name throw is an exception-object throw"
+            $Rows[0].Kind | Should -BeExactly 'Exception' -Because "the $Name throw is reported as an exception-object throw"
         }
     }
 
@@ -5063,15 +5211,16 @@ Describe 'Private error record hygiene' -Tags 'SourceHygiene' {
         }
     }
 
-    It 'throws no string outside the named exceptions' {
+    It 'throws no string and no exception object outside the named exceptions' {
         $Violations = foreach ($Row in $script:TypedErrorFound) {
             $Listed = @($script:TypedErrorExceptions | Where-Object { $_.File -eq $Row.File -and $_.Operand -ceq $Row.Operand })
-            if ($Listed.Count -eq 0) { "$($Row.File):$($Row.Line) throw $($Row.Operand)" }
+            if ($Listed.Count -eq 0) { "$($Row.File):$($Row.Line) throw $($Row.Operand) ($($Row.Kind))" }
         }
         $Violations -join "`n" | Should -BeNullOrEmpty -Because @'
 A bare string throw gives the caller a record whose FullyQualifiedErrorId is the message text,
 category OperationStopped and a RuntimeException: a caller that publishes the record as itself shows
-the operator the message as the id. Throw a typed
+the operator the message as the id. A throw of an exception object has the same defect (the id is
+the exception's message too, and the category is OperationStopped). Throw a typed
 [System.Management.Automation.ErrorRecord]::new(<exception>, '<ErrorId>', <ErrorCategory>, <target>)
 with the same message instead. Do NOT add an entry to the exception list without a ruling recorded in
 docs/development/rationale.md#error-handling.
