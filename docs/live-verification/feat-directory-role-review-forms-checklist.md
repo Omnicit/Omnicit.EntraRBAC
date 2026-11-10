@@ -63,7 +63,7 @@ helpers block H.1** (the runner prepends H.1 to every block).
 
 ### H.1. The helpers every check uses
 
-- [ ] **H.1** The helpers load; nothing is printed and nothing is sent. #type/subtask
+- [x] **H.1** The helpers load; nothing is printed and nothing is sent. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -163,13 +163,19 @@ function Test-S144Form {
 **Expect:** nothing printed.
 **Failure looks like:** a parse error -- fix the block before any check runs.
 
-Result:
+Result: 2026-11-10 07:03 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The helpers parse and load in every check (the runner prepends them); nothing is printed by them and nothing is sent.
+
+oer-testmiljo.psd1 loaded: True; oer-cc-identitet.psd1 loaded: True; worktree exists: True; base source exists: True
+```
 
 ## M. The measurement, before any code (A6)
 
 ### M.1. Graph accepts the eligible-only form and reads it back as the same form
 
-- [ ] **M.1** `Initialize-OerS144Prereq.ps1 -Measure` created `oer-s144-m-elig` with the eligible-only query of Reports Reader written exactly as `Resolve-OERAccessReviewRoleScope` reads it (no version prefix): POST 201; the read by id and the list return it with a leading `/beta`; the base build's converter and classifier read it as `Eligible` with the same role id. #type/subtask
+- [x] **M.1** `Initialize-OerS144Prereq.ps1 -Measure` created `oer-s144-m-elig` with the eligible-only query of Reports Reader written exactly as `Resolve-OERAccessReviewRoleScope` reads it (no version prefix): POST 201; the read by id and the list return it with a leading `/beta`; the base build's converter and classifier read it as `Eligible` with the same role id. #type/subtask
 
 The measurement ran once, before any code of this branch was written
 (`pwsh -NoProfile -NonInteractive -File (Join-Path $VaultDir 'Initialize-OerS144Prereq.ps1') -Measure -Unattended`);
@@ -186,11 +192,19 @@ Write-OerLiveStep "elig stored: $($F.ReadByIdScope.query)"
 **Expect:** POST 201; read 200; `Eligible` both ways; `True/True`; the stored query is the written one with a leading `/beta`.
 **Failure looks like:** a 400 (the form is not built, A6), or another kind.
 
-Result:
+Result: 2026-11-10 07:03 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Measured before any code (2026-11-10 02:53 UTC): the eligible-only query of Reports Reader, written exactly as the classifier reads it, answered POST 201; the read by id answered 200; Graph stores it with a leading /beta; the base build's converter and classifier read it as Eligible by id and in the list, with the same role id.
+
+oer-testmiljo.psd1 loaded: True; oer-cc-identitet.psd1 loaded: True; worktree exists: True; base source exists: True
+[oer-s144] elig: POST 201; read by id 200; kind by id Eligible, listed Eligible; same role id True/True
+[oer-s144] elig stored: /beta/roleManagement/directory/roleEligibilityScheduleInstances?$expand=principal&$filter=(isof(principal,'microsoft.graph.user') and roleDefinitionId eq 'ROLE-RR')
+```
 
 ### M.2. Graph accepts the active-only form and reads it back as the same form
 
-- [ ] **M.2** The same for `oer-s144-m-active` (the active-only query of Reports Reader): POST 201; read back with a leading `/beta`; classified `Active` with the same role id. #type/subtask
+- [x] **M.2** The same for `oer-s144-m-active` (the active-only query of Reports Reader): POST 201; read back with a leading `/beta`; classified `Active` with the same role id. #type/subtask
 
 ```powershell
 $M = Get-Content -LiteralPath (Join-Path $Raw 'measure.json') -Raw | ConvertFrom-Json
@@ -202,11 +216,19 @@ Write-OerLiveStep "active stored: $($F.ReadByIdScope.query)"
 **Expect:** as M.1, with `Active`.
 **Failure looks like:** as M.1.
 
-Result:
+Result: 2026-11-10 07:03 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Measured before any code: the active-only query of Reports Reader answered POST 201, read 200, stored with a leading /beta, classified Active both ways with the same role id.
+
+oer-testmiljo.psd1 loaded: True; oer-cc-identitet.psd1 loaded: True; worktree exists: True; base source exists: True
+[oer-s144] active: POST 201; read by id 200; kind by id Active, listed Active; same role id True/True
+[oer-s144] active stored: /beta/roleManagement/directory/roleAssignmentScheduleInstances?$expand=principal&$filter=(assignmentType eq 'Assigned' and isof(principal,'microsoft.graph.user') and roleDefinitionId eq 'ROLE-RR')
+```
 
 ### M.3. Who a role review's instance covers (BL-175b)
 
-- [ ] **M.3** The measurement counts the assignees of the two low-risk roles by principal type; with a service principal assignee it would create two reviews starting today and read their decisions. #type/subtask
+- [~] **M.3** The measurement counts the assignees of the two low-risk roles by principal type; with a service principal assignee it would create two reviews starting today and read their decisions. #type/subtask
 
 ```powershell
 $M = Get-Content -LiteralPath (Join-Path $Raw 'measure.json') -Raw | ConvertFrom-Json
@@ -220,11 +242,20 @@ Write-OerLiveStep "Note: $($M.InstanceNote)"
 **Expect:** a count per role and the note; when no role has a service principal assignee, the check is `[~]`.
 **Failure looks like:** a read error.
 
-Result:
+Result: 2026-11-10 07:03 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: NOT MEASURED (BL-175b). Neither low-risk role holds any assignee in the test tenant (active 0, eligible 0, every principal type), so an instance would have no decision to read; giving a service principal the role needs a role assignment and an app registration, objects outside this step. Nothing was created for it.
+
+oer-testmiljo.psd1 loaded: True; oer-cc-identitet.psd1 loaded: True; worktree exists: True; base source exists: True
+[oer-s144] Reports Reader: active 0 principal type(s), eligible 0 principal type(s)
+[oer-s144] Message Center Reader: active 0 principal type(s), eligible 0 principal type(s)
+[oer-s144] Note: no low-risk role has a service principal assignee: BL-175b not measured (giving one needs a role assignment to an object outside the prefix or an app registration)
+```
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the prerequisite objects are recorded. #type/subtask
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the prerequisite objects are recorded. #type/subtask
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -246,13 +277,25 @@ Write-OerLiveStep ("Recorded: reviews elig {0} act {1} all {2} m-elig {3} m-acti
 **Expect:** every line `True`; the HEAD is this branch's tip; 0 tracked changes.
 **Failure looks like:** `False` on a marker (rebuild the worktree), or the main clone named.
 
-Result:
+Result: 2026-11-10 07:03 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The module loads from the step worktree's build (built by the green gate at 683ebae; the later commits change only this checklist); every marker is present; every prerequisite review is recorded; 0 tracked changes.
+
+oer-testmiljo.psd1 loaded: True; oer-cc-identitet.psd1 loaded: True; worktree exists: True; base source exists: True
+[oer-s144] The module loads from a worktree that is not the main clone: True
+[oer-s144] Worktree: branch feat/directory-role-review-forms; HEAD 13231f9 docs: name the earlier role review form in the live checklist as measured; tracked changes: 0
+[oer-s144] The build carries A (schema): True
+[oer-s144] The build carries B: True
+[oer-s144] The build carries D: True
+[oer-s144] Recorded: reviews elig True act True all True m-elig True m-active True
+```
 
 ## 1. A review in each form from a document (A, C)
 
 ### 1.1. Eligible: the plan, then the run, create the review
 
-- [ ] **1.1** `Invoke-OERStructure -WhatIf` of a document declaring `directoryRole: Reports Reader` with `directoryRoleAssignmentType: Eligible` plans the review and writes nothing; the real run creates `oer-s144-del`, and Graph reads back the eligible-only form of Reports Reader. #type/subtask
+- [x] **1.1** `Invoke-OERStructure -WhatIf` of a document declaring `directoryRole: Reports Reader` with `directoryRoleAssignmentType: Eligible` plans the review and writes nothing; the real run creates `oer-s144-del`, and Graph reads back the eligible-only form of Reports Reader. #type/subtask
 
 ```powershell
 Connect-S144
@@ -277,11 +320,38 @@ Write-OerLiveStep "The read-back is the eligible-only form of Reports Reader: $(
 write (one POST); the read-back is the eligible-only form of Reports Reader.
 **Failure looks like:** a `Failed` row, a fence refusal, or another scope read back (the All form).
 
-Result:
+Result: 2026-11-10 07:03 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Plan: Skipped (would create), 1 read, 0 writes. Run: Created with 1 write (one POST). Graph reads back the eligible-only form of Reports Reader (the written query with a leading /beta).
+
+oer-testmiljo.psd1 loaded: True; oer-cc-identitet.psd1 loaded: True; worktree exists: True; base source exists: True
+[oer-s144] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg4\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s144] The module is the worktree's build: True
+[oer-s144] Token fence in place: True
+[oer-s144] Request fence in place: True
+What if: Performing the operation "Create access review definition" on target "oer-s144-del".
+[oer-s144] row: accessReviews | oer-s144-del | Skipped | record: none
+[oer-s144] Plan: 1 read(s), 0 write(s)
+[oer-s144] row: accessReviews | oer-s144-del | Created | record: none
+[oer-s144] Run and plan: 3 read(s), 1 write(s)
+[oer-s144] the new review is listed: converged after 1 read(s), 0.1 s.
+[oer-s144] Listed once: True; read back: {"queryType":"MicrosoftGraph","queryRoot":null,"@odata.type":"#microsoft.graph.accessReviewQueryScope","query":"/beta/roleManagement/directory/roleEligibilityScheduleInstances?$expand=principal&$filter=(isof(principal,'microsoft.graph.user') and roleDefinitionId eq 'ROLE-RR')"}
+[oer-s144] The read-back is the eligible-only form of Reports Reader: True
+```
 
 ### 1.2. Eligible: the same document again, only Unchanged (G8)
 
-- [ ] **1.2** The document of 1.1 applied again reports `Unchanged` and writes nothing. #type/subtask
+- [x] **1.2** The document of 1.1 applied again reports `Unchanged` and writes nothing. #type/subtask
 
 ```powershell
 Connect-S144
@@ -295,11 +365,32 @@ Write-OerLiveStep "Every row Unchanged: $(@($Rows | Where-Object { $_.Action -ne
 **Expect:** one row `Unchanged`; 0 writes.
 **Failure looks like:** `Updated`, `Failed` (the form was read as another), or a fence refusal.
 
-Result:
+Result: 2026-11-10 07:03 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The same document again: one row Unchanged, 2 reads, 0 writes (G8).
+
+oer-testmiljo.psd1 loaded: True; oer-cc-identitet.psd1 loaded: True; worktree exists: True; base source exists: True
+[oer-s144] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg4\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s144] The module is the worktree's build: True
+[oer-s144] Token fence in place: True
+[oer-s144] Request fence in place: True
+[oer-s144] row: accessReviews | oer-s144-del | Unchanged | record: none
+[oer-s144] Every row Unchanged: True (1 row(s)); 2 read(s), 0 write(s)
+```
 
 ### 1.3. Active: the plan, then the run, create the review
 
-- [ ] **1.3** The same with `directoryRole: Message Center Reader` and `directoryRoleAssignmentType: Active`: the plan writes nothing, the run creates `oer-s144-dact`, and Graph reads back the active-only form of Message Center Reader. #type/subtask
+- [x] **1.3** The same with `directoryRole: Message Center Reader` and `directoryRoleAssignmentType: Active`: the plan writes nothing, the run creates `oer-s144-dact`, and Graph reads back the active-only form of Message Center Reader. #type/subtask
 
 ```powershell
 Connect-S144
@@ -323,11 +414,38 @@ Write-OerLiveStep "The read-back is the active-only form of Message Center Reade
 **Expect:** as 1.1, with the active-only form of Message Center Reader.
 **Failure looks like:** as 1.1.
 
-Result:
+Result: 2026-11-10 07:03 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Plan: Skipped, 0 writes. Run: Created with 1 write. Graph reads back the active-only form of Message Center Reader.
+
+oer-testmiljo.psd1 loaded: True; oer-cc-identitet.psd1 loaded: True; worktree exists: True; base source exists: True
+[oer-s144] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg4\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s144] The module is the worktree's build: True
+[oer-s144] Token fence in place: True
+[oer-s144] Request fence in place: True
+What if: Performing the operation "Create access review definition" on target "oer-s144-dact".
+[oer-s144] row: accessReviews | oer-s144-dact | Skipped | record: none
+[oer-s144] Plan: 1 read(s), 0 write(s)
+[oer-s144] row: accessReviews | oer-s144-dact | Created | record: none
+[oer-s144] Run and plan: 3 read(s), 1 write(s)
+[oer-s144] the new review is listed: converged after 1 read(s), 0.3 s.
+[oer-s144] Listed once: True; read back: {"query":"/beta/roleManagement/directory/roleAssignmentScheduleInstances?$expand=principal&$filter=(assignmentType eq 'Assigned' and isof(principal,'microsoft.graph.user') and roleDefinitionId eq 'ROLE-MCR')","@odata.type":"#microsoft.graph.accessReviewQueryScope","queryRoot":null,"queryType":"MicrosoftGraph"}
+[oer-s144] The read-back is the active-only form of Message Center Reader: True
+```
 
 ### 1.4. Active: the same document again, only Unchanged (G8)
 
-- [ ] **1.4** The document of 1.3 applied again reports `Unchanged` and writes nothing. #type/subtask
+- [x] **1.4** The document of 1.3 applied again reports `Unchanged` and writes nothing. #type/subtask
 
 ```powershell
 Connect-S144
@@ -341,13 +459,34 @@ Write-OerLiveStep "Every row Unchanged: $(@($Rows | Where-Object { $_.Action -ne
 **Expect:** one row `Unchanged`; 0 writes.
 **Failure looks like:** as 1.2.
 
-Result:
+Result: 2026-11-10 07:03 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The same document again: one row Unchanged, 0 writes (G8).
+
+oer-testmiljo.psd1 loaded: True; oer-cc-identitet.psd1 loaded: True; worktree exists: True; base source exists: True
+[oer-s144] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg4\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s144] The module is the worktree's build: True
+[oer-s144] Token fence in place: True
+[oer-s144] Request fence in place: True
+[oer-s144] row: accessReviews | oer-s144-dact | Unchanged | record: none
+[oer-s144] Every row Unchanged: True (1 row(s)); 2 read(s), 0 write(s)
+```
 
 ## 2. New-OERAccessReviewDefinition -DirectoryRoleAssignmentType (B)
 
 ### 2.1. The parameter creates an eligible-only review
 
-- [ ] **2.1** `New-OERAccessReviewDefinition -DirectoryRole 'Message Center Reader' -DirectoryRoleAssignmentType Eligible -SelfReview` creates `oer-s144-cel` with one POST, and Graph reads back the eligible-only form of Message Center Reader. #type/subtask
+- [x] **2.1** `New-OERAccessReviewDefinition -DirectoryRole 'Message Center Reader' -DirectoryRoleAssignmentType Eligible -SelfReview` creates `oer-s144-cel` with one POST, and Graph reads back the eligible-only form of Message Center Reader. #type/subtask
 
 ```powershell
 Connect-S144
@@ -366,11 +505,34 @@ Write-OerLiveStep "The read-back is the eligible-only form of Message Center Rea
 read-back is the eligible-only form of Message Center Reader.
 **Failure looks like:** an error record, or the All form read back.
 
-Result:
+Result: 2026-11-10 07:03 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. New-OERAccessReviewDefinition -DirectoryRoleAssignmentType Eligible returned the definition (ScopeType accessReviewQueryScope) with 1 read (the role name) and 1 write (one POST); Graph reads back the eligible-only form of Message Center Reader.
+
+oer-testmiljo.psd1 loaded: True; oer-cc-identitet.psd1 loaded: True; worktree exists: True; base source exists: True
+[oer-s144] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg4\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s144] The module is the worktree's build: True
+[oer-s144] Token fence in place: True
+[oer-s144] Request fence in place: True
+[oer-s144] Returned: True; ScopeType #microsoft.graph.accessReviewQueryScope; 1 read(s), 1 write(s)
+[oer-s144] the new review is listed: converged after 1 read(s), 0.3 s.
+[oer-s144] Read back: {"query":"/beta/roleManagement/directory/roleEligibilityScheduleInstances?$expand=principal&$filter=(isof(principal,'microsoft.graph.user') and roleDefinitionId eq 'ROLE-MCR')","queryRoot":null,"@odata.type":"#microsoft.graph.accessReviewQueryScope","queryType":"MicrosoftGraph"}
+[oer-s144] The read-back is the eligible-only form of Message Center Reader: True
+```
 
 ### 2.2. The parameter creates an active-only review
 
-- [ ] **2.2** `-DirectoryRole 'Reports Reader' -DirectoryRoleAssignmentType Active` creates `oer-s144-cact` with one POST, and Graph reads back the active-only form of Reports Reader. #type/subtask
+- [x] **2.2** `-DirectoryRole 'Reports Reader' -DirectoryRoleAssignmentType Active` creates `oer-s144-cact` with one POST, and Graph reads back the active-only form of Reports Reader. #type/subtask
 
 ```powershell
 Connect-S144
@@ -388,13 +550,36 @@ Write-OerLiveStep "The read-back is the active-only form of Reports Reader: $(Te
 **Expect:** as 2.1, with the active-only form of Reports Reader.
 **Failure looks like:** as 2.1.
 
-Result:
+Result: 2026-11-10 07:03 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. -DirectoryRoleAssignmentType Active: 1 read, 1 write; Graph reads back the active-only form of Reports Reader.
+
+oer-testmiljo.psd1 loaded: True; oer-cc-identitet.psd1 loaded: True; worktree exists: True; base source exists: True
+[oer-s144] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg4\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s144] The module is the worktree's build: True
+[oer-s144] Token fence in place: True
+[oer-s144] Request fence in place: True
+[oer-s144] Returned: True; ScopeType #microsoft.graph.accessReviewQueryScope; 1 read(s), 1 write(s)
+[oer-s144] the new review is listed: converged after 1 read(s), 0.1 s.
+[oer-s144] Read back: {"query":"/beta/roleManagement/directory/roleAssignmentScheduleInstances?$expand=principal&$filter=(assignmentType eq 'Assigned' and isof(principal,'microsoft.graph.user') and roleDefinitionId eq 'ROLE-RR')","@odata.type":"#microsoft.graph.accessReviewQueryScope","queryRoot":null,"queryType":"MicrosoftGraph"}
+[oer-s144] The read-back is the active-only form of Reports Reader: True
+```
 
 ## 3. The export (D)
 
 ### 3.1. The export writes the key for the eligible-only and active-only reviews
 
-- [ ] **3.1** `Get-OERInventory -Include AccessReviews -AccessReviewFilter 'oer-s144-*'` writes every prefixed review with `directoryRole`; the eligible-only and active-only ones carry `directoryRoleAssignmentType` `Eligible` or `Active`, and `oer-s144-all` carries no such key. #type/subtask
+- [x] **3.1** `Get-OERInventory -Include AccessReviews -AccessReviewFilter 'oer-s144-*'` writes every prefixed review with `directoryRole`; the eligible-only and active-only ones carry `directoryRoleAssignmentType` `Eligible` or `Active`, and `oer-s144-all` carries no such key. #type/subtask
 
 ```powershell
 Connect-S144
@@ -417,11 +602,41 @@ Write-OerLiveStep "Requests: $(Get-S144Count)"
 `oer-s144-m-active` (Reports Reader) with `Active`; no skip warning for a role review (`0`); 0 writes.
 **Failure looks like:** a review left out, a key on `oer-s144-all`, or a wrong value.
 
-Result:
+Result: 2026-11-10 07:03 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Nine entries, all with directoryRole by name: oer-s144-all without the key; the four eligible-only reviews with Eligible and the four active-only reviews with Active; no skip warning for a role review; 12 reads, 0 writes.
+
+oer-testmiljo.psd1 loaded: True; oer-cc-identitet.psd1 loaded: True; worktree exists: True; base source exists: True
+[oer-s144] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg4\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s144] The module is the worktree's build: True
+[oer-s144] Token fence in place: True
+[oer-s144] Request fence in place: True
+[oer-s144] entry: oer-s144-act | directoryRole 'Message Center Reader' | directoryRoleAssignmentType Active
+[oer-s144] entry: oer-s144-all | directoryRole 'Reports Reader' | directoryRoleAssignmentType (no key)
+[oer-s144] entry: oer-s144-cact | directoryRole 'Reports Reader' | directoryRoleAssignmentType Active
+[oer-s144] entry: oer-s144-cel | directoryRole 'Message Center Reader' | directoryRoleAssignmentType Eligible
+[oer-s144] entry: oer-s144-dact | directoryRole 'Message Center Reader' | directoryRoleAssignmentType Active
+[oer-s144] entry: oer-s144-del | directoryRole 'Reports Reader' | directoryRoleAssignmentType Eligible
+[oer-s144] entry: oer-s144-elig | directoryRole 'Reports Reader' | directoryRoleAssignmentType Eligible
+[oer-s144] entry: oer-s144-m-active | directoryRole 'Reports Reader' | directoryRoleAssignmentType Active
+[oer-s144] entry: oer-s144-m-elig | directoryRole 'Reports Reader' | directoryRoleAssignmentType Eligible
+[oer-s144] Skip warning names a review of a directory role: 0
+[oer-s144] Requests: 12 read(s), 0 write(s)
+```
 
 ### 3.2. The export applied twice: only Unchanged (G8)
 
-- [ ] **3.2** `Invoke-OERStructure` of the export of 3.1, run twice, reports every row `Unchanged` both times and writes nothing. #type/subtask
+- [x] **3.2** `Invoke-OERStructure` of the export of 3.1, run twice, reports every row `Unchanged` both times and writes nothing. #type/subtask
 
 ```powershell
 Connect-S144
@@ -438,13 +653,52 @@ foreach ($Run in 1, 2) {
 **Expect:** nine rows, all `Unchanged`, in both runs; 0 writes.
 **Failure looks like:** an `Updated` or `Failed` row, or a fence refusal.
 
-Result:
+Result: 2026-11-10 07:03 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The export of 3.1 applied twice: nine rows Unchanged in each run, 18 reads and 0 writes each (G8 on the export path).
+
+oer-testmiljo.psd1 loaded: True; oer-cc-identitet.psd1 loaded: True; worktree exists: True; base source exists: True
+[oer-s144] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg4\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s144] The module is the worktree's build: True
+[oer-s144] Token fence in place: True
+[oer-s144] Request fence in place: True
+[oer-s144] row: accessReviews | oer-s144-cact | Unchanged | record: none
+[oer-s144] row: accessReviews | oer-s144-cel | Unchanged | record: none
+[oer-s144] row: accessReviews | oer-s144-dact | Unchanged | record: none
+[oer-s144] row: accessReviews | oer-s144-del | Unchanged | record: none
+[oer-s144] row: accessReviews | oer-s144-all | Unchanged | record: none
+[oer-s144] row: accessReviews | oer-s144-act | Unchanged | record: none
+[oer-s144] row: accessReviews | oer-s144-elig | Unchanged | record: none
+[oer-s144] row: accessReviews | oer-s144-m-active | Unchanged | record: none
+[oer-s144] row: accessReviews | oer-s144-m-elig | Unchanged | record: none
+[oer-s144] Run 1: every row Unchanged: True (9 row(s)); 18 read(s), 0 write(s)
+[oer-s144] row: accessReviews | oer-s144-cact | Unchanged | record: none
+[oer-s144] row: accessReviews | oer-s144-cel | Unchanged | record: none
+[oer-s144] row: accessReviews | oer-s144-dact | Unchanged | record: none
+[oer-s144] row: accessReviews | oer-s144-del | Unchanged | record: none
+[oer-s144] row: accessReviews | oer-s144-all | Unchanged | record: none
+[oer-s144] row: accessReviews | oer-s144-act | Unchanged | record: none
+[oer-s144] row: accessReviews | oer-s144-elig | Unchanged | record: none
+[oer-s144] row: accessReviews | oer-s144-m-active | Unchanged | record: none
+[oer-s144] row: accessReviews | oer-s144-m-elig | Unchanged | record: none
+[oer-s144] Run 2: every row Unchanged: True (9 row(s)); 18 read(s), 0 write(s)
+```
 
 ## 4. A review in another form under the same name is refused (C)
 
 ### 4.1. A live eligible-only review declared as active-only
 
-- [ ] **4.1** An entry `oer-s144-elig` declaring `directoryRole: Reports Reader`, `directoryRoleAssignmentType: Active` (the live review reviews only the eligible assignments) is refused with `AccessReviewScopeMismatch` in the plan and the run, and the live review reads the same before and after. #type/subtask
+- [x] **4.1** An entry `oer-s144-elig` declaring `directoryRole: Reports Reader`, `directoryRoleAssignmentType: Active` (the live review reviews only the eligible assignments) is refused with `AccessReviewScopeMismatch` in the plan and the run, and the live review reads the same before and after. #type/subtask
 
 ```powershell
 Connect-S144
@@ -466,11 +720,34 @@ Write-OerLiveStep "The live review reads the same before and after: $Same; $(Get
 review only the active assignments; `True`; 0 writes.
 **Failure looks like:** `Updated`, a fence refusal, or `False`.
 
-Result:
+Result: 2026-11-10 07:03 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. A live eligible-only review declared as active-only: Failed with AccessReviewScopeMismatch in the plan and the run; the message says the live review does not review only the active assignments; the live review reads the same before and after; 0 writes.
+
+oer-testmiljo.psd1 loaded: True; oer-cc-identitet.psd1 loaded: True; worktree exists: True; base source exists: True
+[oer-s144] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg4\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s144] The module is the worktree's build: True
+[oer-s144] Token fence in place: True
+[oer-s144] Request fence in place: True
+[oer-s144] row: accessReviews | oer-s144-elig | Failed | record: AccessReviewScopeMismatch
+[oer-s144] row: accessReviews | oer-s144-elig | Failed | record: AccessReviewScopeMismatch
+[oer-s144] The run's message: Access review 'oer-s144-elig' in the tenant does not review only the active assignments to a directory role in the form this module writes (its scope is '/beta/roleManagement/directory/roleEligibilityScheduleInstances?$expand=principal&$filter=(isof(principal,'microsoft.graph.user') and roleDefinitionId eq 'ID-FRAGMENT')'), so it is not the review this entry declares for directory role 'Reports Reader'. Nothing was written. Access review display names are not unique: give the entry or the review in the tenant another display name.
+[oer-s144] The live review reads the same before and after: True; 2 read(s), 0 write(s)
+```
 
 ### 4.2. A live active-only review declared as eligible-only
 
-- [ ] **4.2** An entry `oer-s144-act` declaring `directoryRole: Message Center Reader`, `directoryRoleAssignmentType: Eligible` is refused with `AccessReviewScopeMismatch`, nothing written. #type/subtask
+- [x] **4.2** An entry `oer-s144-act` declaring `directoryRole: Message Center Reader`, `directoryRoleAssignmentType: Eligible` is refused with `AccessReviewScopeMismatch`, nothing written. #type/subtask
 
 ```powershell
 Connect-S144
@@ -484,11 +761,32 @@ Write-OerLiveStep "Requests: $(Get-S144Count)"
 **Expect:** one row `Failed` with `AccessReviewScopeMismatch`; 0 writes.
 **Failure looks like:** `Updated` or `Unchanged`.
 
-Result:
+Result: 2026-11-10 07:03 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. A live active-only review declared as eligible-only: Failed with AccessReviewScopeMismatch after 1 read (the listing); 0 writes.
+
+oer-testmiljo.psd1 loaded: True; oer-cc-identitet.psd1 loaded: True; worktree exists: True; base source exists: True
+[oer-s144] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg4\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s144] The module is the worktree's build: True
+[oer-s144] Token fence in place: True
+[oer-s144] Request fence in place: True
+[oer-s144] row: accessReviews | oer-s144-act | Failed | record: AccessReviewScopeMismatch
+[oer-s144] Requests: 1 read(s), 0 write(s)
+```
 
 ### 4.3. A live review of the form written before this branch declared as eligible-only
 
-- [ ] **4.3** An entry `oer-s144-all` declaring `directoryRole: Reports Reader`, `directoryRoleAssignmentType: Eligible` (the live review is of the form written before this branch) is refused with `AccessReviewScopeMismatch`, nothing written. #type/subtask
+- [x] **4.3** An entry `oer-s144-all` declaring `directoryRole: Reports Reader`, `directoryRoleAssignmentType: Eligible` (the live review is of the form written before this branch) is refused with `AccessReviewScopeMismatch`, nothing written. #type/subtask
 
 ```powershell
 Connect-S144
@@ -502,13 +800,34 @@ Write-OerLiveStep "Requests: $(Get-S144Count)"
 **Expect:** one row `Failed` with `AccessReviewScopeMismatch`; 0 writes.
 **Failure looks like:** `Updated` or `Unchanged`.
 
-Result:
+Result: 2026-11-10 07:03 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. A live review of the form written before this branch declared as eligible-only: Failed with AccessReviewScopeMismatch after 1 read; 0 writes.
+
+oer-testmiljo.psd1 loaded: True; oer-cc-identitet.psd1 loaded: True; worktree exists: True; base source exists: True
+[oer-s144] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg4\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s144] The module is the worktree's build: True
+[oer-s144] Token fence in place: True
+[oer-s144] Request fence in place: True
+[oer-s144] row: accessReviews | oer-s144-all | Failed | record: AccessReviewScopeMismatch
+[oer-s144] Requests: 1 read(s), 0 write(s)
+```
 
 ## 5. A document without the key gives the same result as on main (E)
 
 ### 5.1. The base build and this branch apply the same documents with the same rows and messages
 
-- [ ] **5.1** With the base commit's source (`OER_BASE_SOURCE`, development mode) and then with this branch's build, a document declaring `oer-s144-all` with `directoryRole: Reports Reader` and no key is `Unchanged` with 0 writes, a document declaring `oer-s144-elig` the same way is `Failed` with `AccessReviewScopeMismatch` and the same message from both, and the export of `oer-s144-all` is the same entry from both. #type/subtask
+- [x] **5.1** With the base commit's source (`OER_BASE_SOURCE`, development mode) and then with this branch's build, a document declaring `oer-s144-all` with `directoryRole: Reports Reader` and no key is `Unchanged` with 0 writes, a document declaring `oer-s144-elig` the same way is `Failed` with `AccessReviewScopeMismatch` and the same message from both, and the export of `oer-s144-all` is the same entry from both. #type/subtask
 
 ```powershell
 $Docs = [ordered]@{
@@ -548,13 +867,55 @@ foreach ($K in 'all', 'elig', 'export') { Write-OerLiveStep "${K}: the same from
 three closing lines `True`.
 **Failure looks like:** `False` on a closing line (this branch changed what a document without the key does).
 
-Result:
+Result: 2026-11-10 07:03 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The base source (dc955c1, development mode) and this branch give the same rows and messages for a document without the key: oer-s144-all Unchanged and oer-s144-elig Failed (AccessReviewScopeMismatch) in both, 0 writes; the export of oer-s144-all is the same entry from both. The first run stopped at the branch sign-in on a block bug (the base phase's token fence was still in place; nothing was written); the block now removes it first, and the second run passed.
+
+oer-testmiljo.psd1 loaded: True; oer-cc-identitet.psd1 loaded: True; worktree exists: True; base source exists: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s144] The base source is loaded: True; it lacks the parameter: True
+[oer-s144] Token fence in place: True
+[oer-s144] Request fence in place: True
+[oer-s144] row: accessReviews | oer-s144-all | Unchanged | record: none
+[oer-s144] base all: Unchanged; 2 read(s), 0 write(s)
+[oer-s144] row: accessReviews | oer-s144-elig | Failed | record: AccessReviewScopeMismatch
+[oer-s144] base elig: Failed; 1 read(s), 0 write(s)
+[oer-s144] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg4\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s144] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s144] The module is the worktree's build: True
+[oer-s144] Token fence in place: True
+[oer-s144] Request fence in place: True
+[oer-s144] row: accessReviews | oer-s144-all | Unchanged | record: none
+[oer-s144] branch all: Unchanged; 2 read(s), 0 write(s)
+[oer-s144] row: accessReviews | oer-s144-elig | Failed | record: AccessReviewScopeMismatch
+[oer-s144] branch elig: Failed; 1 read(s), 0 write(s)
+[oer-s144] all: the same from both builds: True
+[oer-s144] elig: the same from both builds: True
+[oer-s144] export: the same from both builds: True
+```
 
 ## Teardown
 
 ### T.1. The prerequisite objects and the checks' reviews are removed
 
-- [ ] **T.1** `Initialize-OerS144Prereq.ps1 -Teardown -Unattended` removes every prefixed review definition, and the sweep is 0. #type/subtask
+- [x] **T.1** `Initialize-OerS144Prereq.ps1 -Teardown -Unattended` removes every prefixed review definition, and the sweep is 0. #type/subtask
 
 ```powershell
 pwsh -NoProfile -NonInteractive -File (Join-Path $VaultDir 'Initialize-OerS144Prereq.ps1') -Teardown -Unattended
@@ -563,11 +924,50 @@ pwsh -NoProfile -NonInteractive -File (Join-Path $VaultDir 'Initialize-OerS144Pr
 **Expect:** the access review definitions are deleted; `Teardown complete: the sweep is 0.`
 **Failure looks like:** `Teardown NOT complete` -- run it again later and write the residue here.
 
-Result:
+Result: 2026-11-10 07:03 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The teardown added the 4 review ids the checks recorded and deleted the nine prefixed access review definitions (204 each): removed 9, residue 0, unreadable 0, already gone 0, skipped 0; the sweep is 0.
+
+oer-testmiljo.psd1 loaded: True; oer-cc-identitet.psd1 loaded: True; worktree exists: True; base source exists: True
+[oer-s144] Transcript (redacted): raw\s144\prereq-teardown-20261110-070206Z.log; OerLive 1.1.0.
+[oer-s144] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg4\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s144] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s144] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s144] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s144] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s144] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s144] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s144] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s144] Residue: raw\residue.json holds 5 row(s); 0 carry the prefix 'oer-s144-', the other 5 are left untouched.
+[oer-s144] Teardown: 4 review id(s) recorded by the checks are added.
+[oer-s144] Teardown: Remove-OerLiveTestObjects for the prefix with the recorded ids (access review definitions first).
+[oer-s144] Teardown of 'oer-s144-': users 0, groups 0, access packages 0, access review definitions 9, catalogs 0; administrative units 0 and app registrations 0 are reported only.
+[oer-s144] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s144] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s144] Teardown 3/6: access review definitions, access package resource roles, access packages, catalog resources, catalogs.
+[oer-s144] Deleted: access review definition oer-s144-cact (204).
+[oer-s144] Deleted: access review definition oer-s144-cel (204).
+[oer-s144] Deleted: access review definition oer-s144-dact (204).
+[oer-s144] Deleted: access review definition oer-s144-del (204).
+[oer-s144] Deleted: access review definition oer-s144-all (204).
+[oer-s144] Deleted: access review definition oer-s144-act (204).
+[oer-s144] Deleted: access review definition oer-s144-elig (204).
+[oer-s144] Deleted: access review definition oer-s144-m-active (204).
+[oer-s144] Deleted: access review definition oer-s144-m-elig (204).
+[oer-s144] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s144] Teardown 5/6: the prefixed groups.
+[oer-s144] Teardown 6/6: the prefixed users.
+[oer-s144] Teardown of 'oer-s144-': removed 9, residue 0, unreadable 0, already gone 0, skipped 0.
+[oer-s144] Teardown summary: Removed 9, Residue 0, Unreadable 0, Unread 0, AlreadyGone 0, Skipped 0
+[oer-s144] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s144-' is left.
+[oer-s144] Sweep: 0 object(s) with the prefix, 0 unread kind(s).
+[oer-s144] Teardown complete: the sweep is 0.
+```
 
 ### T.2. A read-back a minute later is clean
 
-- [ ] **T.2** A sweep a minute after T.1 lists nothing with the prefix, and the step's raw folder is deleted. #type/subtask
+- [x] **T.2** A sweep a minute after T.1 lists nothing with the prefix, and the step's raw folder is deleted. #type/subtask
 
 ```powershell
 Connect-OerLive -Graph
@@ -579,4 +979,21 @@ if ($Left.Count -eq 0) { Remove-Item -LiteralPath $Raw -Recurse -Force -ErrorAct
 **Expect:** `Sweep: 0`, `raw\s144 deleted: True`.
 **Failure looks like:** a listed object -- write it here as residue.
 
-Result:
+Result: 2026-11-10 07:03 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. A sweep about a minute after T.1 lists nothing with the prefix; raw\s144 is deleted (the redacted measurement is kept outside the repo and the vault for the report).
+
+oer-testmiljo.psd1 loaded: True; oer-cc-identitet.psd1 loaded: True; worktree exists: True; base source exists: True
+[oer-s144] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg4\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s144] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s144] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s144] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s144] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s144] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s144] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s144] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s144] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s144-' is left.
+[oer-s144] Sweep: 0 object(s) or unread kind(s) with the prefix.
+[oer-s144] raw\s144 deleted: True
+```
