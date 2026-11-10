@@ -7395,3 +7395,77 @@ Describe 'Invoke-OERGraphRequest refreshes a device code session with Force (A17
         ($script:A17Calls[0].Keys -contains 'Force') | Should -BeTrue -Because 'the refresh''s device code token request builds a new credential'
     }
 }
+
+Describe 'Invoke-OERGraphRequest follows a redirect only without the token (Sprint 15 step 1, A3)' {
+    # Measured 2026-11-10 against loopback listeners with Microsoft.Graph.Authentication 2.40.0
+    # (docs/development/rationale.md, #arm-transport, "Sprint 15 step 1"): after Connect-MgGraph
+    # -AccessToken the SDK attaches the token only to a host on its allowed-hosts list, and its redirect
+    # handler drops it when a redirect changes the port or the host. That was measured with exactly the
+    # parameters below. These tests pin them: a parameter added to the send (-Headers, a request session)
+    # turns them red until it has been measured too.
+    BeforeEach {
+        $global:OERRedirectGraphSends = [System.Collections.Generic.List[object]]::new()
+    }
+
+    AfterEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Remove-Variable -Scope Global -Name OERRedirectGraphSends -ErrorAction Ignore
+    }
+
+    It 'sends <Name> with exactly the measured parameters' -ForEach @(
+        @{ Name = 'a read'; Method = 'GET'; WithBody = $false; Expected = $null; Names = @('ErrorAction', 'Method', 'Uri', 'Verbose') }
+        @{ Name = 'a write'; Method = 'POST'; WithBody = $true; Expected = $null; Names = @('Body', 'ErrorAction', 'Method', 'Uri', 'Verbose') }
+        @{ Name = 'a read that expects an error'; Method = 'GET'; WithBody = $false; Expected = 'Request_ResourceNotFound'; Names = @('ErrorAction', 'Method', 'ResponseHeadersVariable', 'SkipHttpErrorCheck', 'StatusCodeVariable', 'Uri', 'Verbose') }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Method = $Method; WithBody = $WithBody; Expected = $Expected } {
+            param($Method, $WithBody, $Expected)
+            $script:_OERAuthState = $null
+            Mock Invoke-MgGraphRequest {
+                $global:OERRedirectGraphSends.Add(@($PesterBoundParameters.Keys | Sort-Object))
+                @{ value = @() }
+            }
+            $Call = @{ Method = $Method; Uri = 'v1.0/groups' }
+            if ($WithBody) { $Call.Body = @{ displayName = 'x' } }
+            if ($Expected) { $Call.ExpectedErrorCode = $Expected }
+            $null = Invoke-OERGraphRequest @Call
+        }
+
+        $global:OERRedirectGraphSends.Count | Should -Be 1
+        $global:OERRedirectGraphSends[0] | Should -Be $Names
+    }
+
+    It 'sends every page of an -All walk with exactly the measured parameters' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:RedirectPage = 0
+            Mock Invoke-MgGraphRequest {
+                $global:OERRedirectGraphSends.Add(@($PesterBoundParameters.Keys | Sort-Object))
+                $script:RedirectPage++
+                if ($script:RedirectPage -eq 1) { return @{ value = @('p1'); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=X' } }
+                @{ value = @('p2') }
+            }
+            $null = Invoke-OERGraphRequest -Uri 'v1.0/groups' -All
+        }
+
+        $global:OERRedirectGraphSends.Count | Should -Be 2
+        foreach ($Send in $global:OERRedirectGraphSends) {
+            $Send | Should -Be @('ErrorAction', 'Method', 'Uri', 'Verbose')
+        }
+    }
+
+    It 'binds no parameter that decides what a request or its redirect carries' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            Mock Invoke-MgGraphRequest {
+                $global:OERRedirectGraphSends.Add(@($PesterBoundParameters.Keys | Sort-Object))
+                @{ value = @() }
+            }
+            $null = Invoke-OERGraphRequest -Uri 'v1.0/groups'
+        }
+
+        $global:OERRedirectGraphSends.Count | Should -Be 1
+        foreach ($Name in @('Headers', 'GraphRequestSession', 'SessionVariable', 'UserAgent')) {
+            $global:OERRedirectGraphSends[0] | Should -Not -Contain $Name
+        }
+    }
+}
