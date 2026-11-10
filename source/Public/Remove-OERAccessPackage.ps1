@@ -16,14 +16,25 @@ function Remove-OERAccessPackage {
     -DisplayName instead does check it first, and reports AccessPackageNotFound before any write.
 
     .PARAMETER DisplayName
-    The access package display name to resolve and delete.
+    The access package display name to resolve and delete. An access package name is unique only
+    within its catalog: use -Catalog for a name several catalogs share.
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
 
+    .PARAMETER Catalog
+    A catalog name or id (ByName set only). With it the -DisplayName is looked up only in that catalog,
+    and an access package id given as -DisplayName that is not in it is refused with
+    AccessPackageNotInCatalog before anything is deleted. An ambiguous catalog name is
+    AmbiguousCatalogName and an unknown one CatalogNotFound. Does not bind from the pipeline.
+
     .EXAMPLE
     Remove-OERAccessPackage -DisplayName 'AP-Sales'
     Deletes the access package after confirmation.
+
+    .EXAMPLE
+    Remove-OERAccessPackage -DisplayName 'AP-Sales' -Catalog 'CAT-IT-Core'
+    Deletes the access package named AP-Sales in the catalog CAT-IT-Core only, after confirmation.
 
     .EXAMPLE
     Remove-OERAccessPackage -Id '00000000-0000-0000-0000-000000000001' -Confirm:$false
@@ -39,7 +50,11 @@ function Remove-OERAccessPackage {
         [string]$DisplayName,
 
         [ValidateNotNullOrEmpty()]
-        [string]$TenantId
+        [string]$TenantId,
+
+        [Parameter(ParameterSetName = 'ByName')]
+        [ValidateNotNullOrEmpty()]
+        [string]$Catalog
     )
     begin {
         $AuthParams = @{}
@@ -50,8 +65,10 @@ function Remove-OERAccessPackage {
         # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
         # $null return (a display name that matched nothing) reaches the not-found branch.
         $PackageId = $null
+        $ResolveParams = @{ DisplayName = $DisplayName }
+        if ($PSBoundParameters.ContainsKey('Catalog')) { $ResolveParams.Catalog = $Catalog }
         try {
-            $PackageId = if ($PSCmdlet.ParameterSetName -eq 'ByName') { Resolve-OERAccessPackageId -DisplayName $DisplayName }
+            $PackageId = if ($PSCmdlet.ParameterSetName -eq 'ByName') { Resolve-OERAccessPackageId @ResolveParams }
             else { Resolve-OERAccessPackageId -Id $Id }
         } catch {
             Remove-OERErrorRecord -Record $PSItem
@@ -72,8 +89,10 @@ function Remove-OERAccessPackage {
             return
         }
         if (-not $PackageId) {
+            $NotFoundText = 'Access package not found.'
+            if ($PSBoundParameters.ContainsKey('Catalog')) { $NotFoundText = "Access package '$DisplayName' not found in catalog '$Catalog'." }
             Write-CmdletError `
-                -Message ([System.Exception]::new('Access package not found.')) `
+                -Message ([System.Exception]::new($NotFoundText)) `
                 -ErrorId 'AccessPackageNotFound' -Category ObjectNotFound `
                 -TargetObject $(if ($Id) { $Id } else { $DisplayName }) -Cmdlet $PSCmdlet
             return

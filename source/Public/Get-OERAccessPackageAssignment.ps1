@@ -16,7 +16,15 @@ function Get-OERAccessPackageAssignment {
 
     .PARAMETER AccessPackage
     An access package id or display name to filter assignments by package. Accepts pipeline input by
-    property name from Get-OERAccessPackage (binds Id or DisplayName).
+    property name from Get-OERAccessPackage (binds Id or DisplayName). An access package name is
+    unique only within its catalog: use -Catalog for a name several catalogs share.
+
+    .PARAMETER Catalog
+    A catalog name or id. With it the -AccessPackage name is looked up only in that catalog, and an
+    access package id that is not in it is refused with AccessPackageNotInCatalog before anything is
+    read. An ambiguous catalog name is AmbiguousCatalogName and an unknown one CatalogNotFound.
+    Supplying -Catalog without -AccessPackage is refused with CatalogWithoutAccessPackage. Does not
+    bind from the pipeline.
 
     .PARAMETER Target
     A user object id (GUID) to filter assignments by target. A non-GUID value yields an
@@ -43,6 +51,10 @@ function Get-OERAccessPackageAssignment {
     .EXAMPLE
     Get-OERAccessPackageAssignment -AccessPackage 'AP-Sales' -State Delivered
     Lists delivered assignments for the access package named AP-Sales.
+
+    .EXAMPLE
+    Get-OERAccessPackageAssignment -AccessPackage 'AP-Sales' -Catalog 'CAT-IT-Core'
+    Lists the assignments of the access package named AP-Sales in the catalog CAT-IT-Core only.
 
     .EXAMPLE
     Get-OERAccessPackageAssignment -Target '00000000-0000-0000-0000-000000000001'
@@ -87,7 +99,10 @@ function Get-OERAccessPackageAssignment {
         [string]$TenantId,
 
         # Declared after the pre-existing parameters so their positional binding is unchanged.
-        [string]$User
+        [string]$User,
+
+        [ValidateNotNullOrEmpty()]
+        [string]$Catalog
     )
     begin {
         $AuthParams = @{}
@@ -95,13 +110,22 @@ function Get-OERAccessPackageAssignment {
         Initialize-OERAuth @AuthParams
     }
     process {
+        if ($PSBoundParameters.ContainsKey('Catalog') -and -not $AccessPackage) {
+            Write-CmdletError `
+                -Message ([System.Exception]::new('-Catalog scopes the -AccessPackage lookup and filters nothing on its own: supply -AccessPackage with -Catalog, or omit -Catalog.')) `
+                -ErrorId 'CatalogWithoutAccessPackage' -Category InvalidArgument `
+                -TargetObject $Catalog -Cmdlet $PSCmdlet
+            return
+        }
         $Filters = @()
         if ($AccessPackage) {
             # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only
             # a $null return (a display name that matched nothing) reaches the not-found branch.
             $PackageId = $null
+            $ResolveParams = @{ DisplayName = $AccessPackage }
+            if ($PSBoundParameters.ContainsKey('Catalog')) { $ResolveParams.Catalog = $Catalog }
             try {
-                $PackageId = Resolve-OERAccessPackageId -DisplayName $AccessPackage
+                $PackageId = Resolve-OERAccessPackageId @ResolveParams
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
                 if (Test-OERAmbiguousNameError -Record $PSItem) {
@@ -121,7 +145,9 @@ function Get-OERAccessPackageAssignment {
                 return
             }
             if (-not $PackageId) {
-                Write-CmdletError -Message ([System.Exception]::new("Access package '$AccessPackage' not found.")) `
+                $NotFoundText = "Access package '$AccessPackage' not found."
+                if ($PSBoundParameters.ContainsKey('Catalog')) { $NotFoundText = "Access package '$AccessPackage' not found in catalog '$Catalog'." }
+                Write-CmdletError -Message ([System.Exception]::new($NotFoundText)) `
                     -ErrorId 'AccessPackageNotFound' -Category ObjectNotFound -TargetObject $AccessPackage -Cmdlet $PSCmdlet
                 return
             }

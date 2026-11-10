@@ -11,7 +11,8 @@ function Remove-OERAccessPackageResourceRole {
     .PARAMETER AccessPackage
     The access package id or display name the binding belongs to. Accepts pipeline input by property
     name via the AccessPackageId alias, so Get-OERAccessPackageResourceRole | Remove-OERAccessPackageResourceRole
-    binds directly.
+    binds directly. An access package name is unique only within its catalog: use -Catalog for a name
+    several catalogs share.
 
     .PARAMETER ResourceRoleScopeId
     The id of the resource role scope to remove. Accepts pipeline input by property name, so
@@ -19,6 +20,16 @@ function Remove-OERAccessPackageResourceRole {
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
+
+    .PARAMETER Catalog
+    A catalog name or id. With it the -AccessPackage name is looked up only in that catalog, and an
+    access package id that is not in it is refused with AccessPackageNotInCatalog before anything is
+    written. An ambiguous catalog name is AmbiguousCatalogName and an unknown one CatalogNotFound. Does
+    not bind from the pipeline.
+
+    .EXAMPLE
+    Remove-OERAccessPackageResourceRole -AccessPackage 'AP-Sales' -Catalog 'CAT-IT-Core' -ResourceRoleScopeId 'scope-guid'
+    Unbinds the resource role from the access package named AP-Sales in the catalog CAT-IT-Core only.
 
     .EXAMPLE
     Remove-OERAccessPackageResourceRole -AccessPackage 'AP-Sales' -ResourceRoleScopeId 'scope-guid'
@@ -36,7 +47,10 @@ function Remove-OERAccessPackageResourceRole {
         [string]$ResourceRoleScopeId,
 
         [ValidateNotNullOrEmpty()]
-        [string]$TenantId
+        [string]$TenantId,
+
+        [ValidateNotNullOrEmpty()]
+        [string]$Catalog
     )
     begin {
         $AuthParams = @{}
@@ -47,8 +61,10 @@ function Remove-OERAccessPackageResourceRole {
         # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
         # $null return (a display name that matched nothing) reaches the not-found branch.
         $PackageId = $null
+        $ResolveParams = @{ DisplayName = $AccessPackage }
+        if ($PSBoundParameters.ContainsKey('Catalog')) { $ResolveParams.Catalog = $Catalog }
         try {
-            $PackageId = Resolve-OERAccessPackageId -DisplayName $AccessPackage
+            $PackageId = Resolve-OERAccessPackageId @ResolveParams
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             if (Test-OERAmbiguousNameError -Record $PSItem) {
@@ -68,7 +84,9 @@ function Remove-OERAccessPackageResourceRole {
             return
         }
         if (-not $PackageId) {
-            Write-CmdletError -Message ([System.Exception]::new("Access package '$AccessPackage' not found.")) `
+            $NotFoundText = "Access package '$AccessPackage' not found."
+            if ($PSBoundParameters.ContainsKey('Catalog')) { $NotFoundText = "Access package '$AccessPackage' not found in catalog '$Catalog'." }
+            Write-CmdletError -Message ([System.Exception]::new($NotFoundText)) `
                 -ErrorId 'AccessPackageNotFound' -Category ObjectNotFound -TargetObject $AccessPackage -Cmdlet $PSCmdlet
             return
         }

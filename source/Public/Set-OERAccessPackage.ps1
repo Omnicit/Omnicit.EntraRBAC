@@ -28,7 +28,8 @@ function Set-OERAccessPackage {
     -DisplayName instead does check it first, and reports AccessPackageNotFound before any write.
 
     .PARAMETER DisplayName
-    The access package display name to resolve and update.
+    The access package display name to resolve and update. An access package name is unique only
+    within its catalog: use -Catalog for a name several catalogs share.
 
     .PARAMETER NewDisplayName
     New display name to rename the access package to. Distinct from -DisplayName, which only locates the
@@ -42,6 +43,16 @@ function Set-OERAccessPackage {
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
+
+    .PARAMETER Catalog
+    A catalog name or id (ByName set only). With it the -DisplayName is looked up only in that catalog,
+    and an access package id given as -DisplayName that is not in it is refused with
+    AccessPackageNotInCatalog before anything is written. An ambiguous catalog name is
+    AmbiguousCatalogName and an unknown one CatalogNotFound. Does not bind from the pipeline.
+
+    .EXAMPLE
+    Set-OERAccessPackage -DisplayName 'AP-Sales' -Catalog 'CAT-IT-Core' -Description 'Sales tooling'
+    Updates the description of the access package named AP-Sales in the catalog CAT-IT-Core only.
 
     .EXAMPLE
     Set-OERAccessPackage -DisplayName 'AP-Sales' -Description 'Updated sales tooling access'
@@ -68,7 +79,11 @@ function Set-OERAccessPackage {
         [string]$Description,
         [switch]$Hidden,
         [ValidateNotNullOrEmpty()]
-        [string]$TenantId
+        [string]$TenantId,
+
+        [Parameter(ParameterSetName = 'ByName')]
+        [ValidateNotNullOrEmpty()]
+        [string]$Catalog
     )
     begin {
         $AuthParams = @{}
@@ -94,8 +109,10 @@ function Set-OERAccessPackage {
         # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
         # $null return (a display name that matched nothing) reaches the not-found branch.
         $PackageId = $null
+        $ResolveParams = @{ DisplayName = $DisplayName }
+        if ($PSBoundParameters.ContainsKey('Catalog')) { $ResolveParams.Catalog = $Catalog }
         try {
-            $PackageId = if ($PSCmdlet.ParameterSetName -eq 'ByName') { Resolve-OERAccessPackageId -DisplayName $DisplayName }
+            $PackageId = if ($PSCmdlet.ParameterSetName -eq 'ByName') { Resolve-OERAccessPackageId @ResolveParams }
             else { Resolve-OERAccessPackageId -Id $Id }
         } catch {
             Remove-OERErrorRecord -Record $PSItem
@@ -117,8 +134,10 @@ function Set-OERAccessPackage {
         }
 
         if (-not $PackageId) {
+            $NotFoundText = 'Access package not found.'
+            if ($PSBoundParameters.ContainsKey('Catalog')) { $NotFoundText = "Access package '$DisplayName' not found in catalog '$Catalog'." }
             Write-CmdletError `
-                -Message ([System.Exception]::new('Access package not found.')) `
+                -Message ([System.Exception]::new($NotFoundText)) `
                 -ErrorId 'AccessPackageNotFound' `
                 -Category ObjectNotFound `
                 -TargetObject ($DisplayName ? $DisplayName : $Id) `

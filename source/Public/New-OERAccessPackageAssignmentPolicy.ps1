@@ -18,7 +18,8 @@ function New-OERAccessPackageAssignmentPolicy {
 
     .PARAMETER AccessPackage
     The access package id or display name to attach the policy to. Accepts pipeline input by property
-    name from Get-OERAccessPackage (binds Id or AccessPackageId).
+    name from Get-OERAccessPackage (binds Id or AccessPackageId). An access package name is unique
+    only within its catalog: use -Catalog for a name several catalogs share.
 
     .PARAMETER DisplayName
     The policy display name.
@@ -63,9 +64,21 @@ function New-OERAccessPackageAssignmentPolicy {
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
 
+    .PARAMETER Catalog
+    A catalog name or id. With it the -AccessPackage name is looked up only in that catalog, and an
+    access package id that is not in it is refused with AccessPackageNotInCatalog before anything is
+    written. An ambiguous catalog name is AmbiguousCatalogName and an unknown one CatalogNotFound. Does
+    not bind from the pipeline.
+
     .EXAMPLE
     $scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
-    $stage = New-OERAccessPackageApprovalStage -DurationDays 7 -Manager
+    New-OERAccessPackageAssignmentPolicy -AccessPackage 'AP-Sales' -Catalog 'CAT-IT-Core' -DisplayName 'Default' -RequestorScope $scope
+
+    Creates a policy on the access package named AP-Sales in the catalog CAT-IT-Core only.
+
+    .EXAMPLE
+    $scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
+    $stage =New-OERAccessPackageApprovalStage -DurationDays 7 -Manager
     New-OERAccessPackageAssignmentPolicy -AccessPackage 'AP-Sales' -DisplayName 'Default' -RequestorScope $scope -ApprovalStage $stage -DurationInDays 30
 
     Creates a self-service policy with manager approval and a 30-day assignment lifetime.
@@ -113,7 +126,10 @@ function New-OERAccessPackageAssignmentPolicy {
         [switch]$DisableAssignmentNotifications,
 
         [ValidateNotNullOrEmpty()]
-        [string]$TenantId
+        [string]$TenantId,
+
+        [ValidateNotNullOrEmpty()]
+        [string]$Catalog
     )
     begin {
         $AuthParams = @{}
@@ -162,8 +178,10 @@ function New-OERAccessPackageAssignmentPolicy {
         # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
         # $null return (a display name that matched nothing) reaches the not-found branch.
         $PackageId = $null
+        $ResolveParams = @{ DisplayName = $AccessPackage }
+        if ($PSBoundParameters.ContainsKey('Catalog')) { $ResolveParams.Catalog = $Catalog }
         try {
-            $PackageId = Resolve-OERAccessPackageId -DisplayName $AccessPackage
+            $PackageId = Resolve-OERAccessPackageId @ResolveParams
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             if (Test-OERAmbiguousNameError -Record $PSItem) {
@@ -183,7 +201,9 @@ function New-OERAccessPackageAssignmentPolicy {
             return
         }
         if (-not $PackageId) {
-            Write-CmdletError -Message ([System.Exception]::new("Access package '$AccessPackage' not found.")) `
+            $NotFoundText = "Access package '$AccessPackage' not found."
+            if ($PSBoundParameters.ContainsKey('Catalog')) { $NotFoundText = "Access package '$AccessPackage' not found in catalog '$Catalog'." }
+            Write-CmdletError -Message ([System.Exception]::new($NotFoundText)) `
                 -ErrorId 'AccessPackageNotFound' -Category ObjectNotFound -TargetObject $AccessPackage -Cmdlet $PSCmdlet
             return
         }

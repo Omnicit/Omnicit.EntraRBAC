@@ -21,7 +21,8 @@ function New-OERAccessPackageAssignment {
     Omnicit.EntraRBAC.Assignment (from Get-OERAccessPackageAssignment) or
     Omnicit.EntraRBAC.AssignmentRequest (from this cmdlet's own output) binds directly. Deliberately
     NOT aliased to Id: an Assignment object carries its own (different) Id alongside AccessPackageId,
-    and an Id alias would silently bind the wrong one.
+    and an Id alias would silently bind the wrong one. An access package name is unique only within
+    its catalog: use -Catalog for a name several catalogs share.
 
     .PARAMETER Policy
     The assignment policy id under which the assignment is created. Must be a canonical GUID -- there
@@ -40,6 +41,16 @@ function New-OERAccessPackageAssignment {
     .PARAMETER User
     The user to assign, given as a user principal name or object id (GUID) and resolved via
     Resolve-OERPrincipal. Mutually exclusive with -TargetId; supply exactly one.
+
+    .PARAMETER Catalog
+    A catalog name or id. With it the -AccessPackage name is looked up only in that catalog, and an
+    access package id that is not in it is refused with AccessPackageNotInCatalog before anything is
+    written. An ambiguous catalog name is AmbiguousCatalogName and an unknown one CatalogNotFound. Does
+    not bind from the pipeline.
+
+    .EXAMPLE
+    New-OERAccessPackageAssignment -AccessPackage 'AP-Sales' -Catalog 'CAT-IT-Core' -Policy $policyId -TargetId $userId
+    Assigns the user to the access package named AP-Sales in the catalog CAT-IT-Core only.
 
     .EXAMPLE
     New-OERAccessPackageAssignment -AccessPackage 'AP-Sales' -Policy $policyId -TargetId $userId
@@ -71,7 +82,10 @@ function New-OERAccessPackageAssignment {
         [string]$TenantId,
 
         # Declared after the pre-existing parameters so their positional binding is unchanged.
-        [string]$User
+        [string]$User,
+
+        [ValidateNotNullOrEmpty()]
+        [string]$Catalog
     )
     begin {
         $AuthParams = @{}
@@ -82,8 +96,10 @@ function New-OERAccessPackageAssignment {
         # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
         # $null return (a display name that matched nothing) reaches the not-found branch.
         $PackageId = $null
+        $ResolveParams = @{ DisplayName = $AccessPackage }
+        if ($PSBoundParameters.ContainsKey('Catalog')) { $ResolveParams.Catalog = $Catalog }
         try {
-            $PackageId = Resolve-OERAccessPackageId -DisplayName $AccessPackage
+            $PackageId = Resolve-OERAccessPackageId @ResolveParams
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             if (Test-OERAmbiguousNameError -Record $PSItem) {
@@ -103,8 +119,10 @@ function New-OERAccessPackageAssignment {
             return
         }
         if (-not $PackageId) {
+            $NotFoundText = "Access package '$AccessPackage' not found."
+            if ($PSBoundParameters.ContainsKey('Catalog')) { $NotFoundText = "Access package '$AccessPackage' not found in catalog '$Catalog'." }
             Write-CmdletError `
-                -Message ([System.Exception]::new("Access package '$AccessPackage' not found.")) `
+                -Message ([System.Exception]::new($NotFoundText)) `
                 -ErrorId 'AccessPackageNotFound' -Category ObjectNotFound -TargetObject $AccessPackage -Cmdlet $PSCmdlet
             return
         }
