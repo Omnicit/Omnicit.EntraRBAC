@@ -931,6 +931,12 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   and `Resolve-OERAssignmentPolicyId`.
   `Why: docs/development/rationale.md#access-review-target`,
   `docs/development/rationale.md#roster-identity-and-shared-names`
+- **`Resolve-OERAccessPackageId` is the single owner of looking up an access package by a caller's
+  argument**, in the whole tenant or, with `-Catalog`, in that catalog only (a name by
+  `displayName eq ... and catalog/id eq ...`, an id by its `$expand=catalog` read, refused with
+  `AccessPackageNotInCatalog` when it is another catalog's). The apply engine's `accessPackages[]`
+  handler keeps its own list read of the declared catalog.
+  `Why: docs/development/rationale.md#access-package-catalog-parameter`
 - **`Resolve-OERStructureRename` is the single owner of the keys of the run's rename map; every
   `accessPackages` entry registers its package there, not only a rename.**
   `Sync-OERStructureAccessReview` reads a declared package's name only through the map, never in the

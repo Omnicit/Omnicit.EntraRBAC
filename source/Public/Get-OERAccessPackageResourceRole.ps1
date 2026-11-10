@@ -22,14 +22,25 @@ function Get-OERAccessPackageResourceRole {
     ResourceDisplayName left $null -- a reporting nicety never fails the read.
 
     .PARAMETER AccessPackage
-    The access package display name or GUID whose resource role bindings are listed.
+    The access package display name or GUID whose resource role bindings are listed. An access package
+    name is unique only within its catalog: use -Catalog for a name several catalogs share.
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
 
+    .PARAMETER Catalog
+    A catalog name or id. With it the -AccessPackage name is looked up only in that catalog, and an
+    access package id that is not in it is refused with AccessPackageNotInCatalog before anything is
+    read. An ambiguous catalog name is AmbiguousCatalogName and an unknown one CatalogNotFound. Does
+    not bind from the pipeline.
+
     .EXAMPLE
     Get-OERAccessPackageResourceRole -AccessPackage 'AP-Sales'
     Lists the resource role bindings on the AP-Sales access package.
+
+    .EXAMPLE
+    Get-OERAccessPackageResourceRole -AccessPackage 'AP-Sales' -Catalog 'CAT-IT-Core'
+    Lists the bindings of the access package named AP-Sales in the catalog CAT-IT-Core only.
 
     .EXAMPLE
     Get-OERAccessPackage -DisplayName 'AP-Sales' | Get-OERAccessPackageResourceRole
@@ -43,7 +54,10 @@ function Get-OERAccessPackageResourceRole {
         [string]$AccessPackage,
 
         [ValidateNotNullOrEmpty()]
-        [string]$TenantId
+        [string]$TenantId,
+
+        [ValidateNotNullOrEmpty()]
+        [string]$Catalog
     )
     begin {
         $AuthParams = @{}
@@ -54,8 +68,10 @@ function Get-OERAccessPackageResourceRole {
         # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
         # $null return (a display name that matched nothing) reaches the not-found branch.
         $PackageId = $null
+        $ResolveParams = @{ DisplayName = $AccessPackage }
+        if ($PSBoundParameters.ContainsKey('Catalog')) { $ResolveParams.Catalog = $Catalog }
         try {
-            $PackageId = Resolve-OERAccessPackageId -DisplayName $AccessPackage
+            $PackageId = Resolve-OERAccessPackageId @ResolveParams
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             if (Test-OERAmbiguousNameError -Record $PSItem) {
@@ -75,8 +91,10 @@ function Get-OERAccessPackageResourceRole {
             return
         }
         if (-not $PackageId) {
+            $NotFoundText = "Access package '$AccessPackage' not found."
+            if ($PSBoundParameters.ContainsKey('Catalog')) { $NotFoundText = "Access package '$AccessPackage' not found in catalog '$Catalog'." }
             Write-CmdletError `
-                -Message ([System.Exception]::new("Access package '$AccessPackage' not found.")) `
+                -Message ([System.Exception]::new($NotFoundText)) `
                 -ErrorId 'AccessPackageNotFound' -Category ObjectNotFound -TargetObject $AccessPackage -Cmdlet $PSCmdlet
             return
         }

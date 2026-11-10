@@ -382,10 +382,11 @@ function Invoke-OERStructure {
     created, name a principal that exists and remove principalStatus, as the Skipped row says. A
     principalStatus entry whose principal is not an object id fails validation.
 
-    An access package that has to be created in the catalog it declares while a package of that name
-    exists in another catalog is reported Failed, with nothing written to that package or for the
-    entry, since New-OERAccessPackage, which looks the name up in the whole tenant, returns that
-    package in place of creating one.
+    An access package that has to be created in the catalog it declares is created there even when a
+    package of that name exists in another catalog: New-OERAccessPackage looks the name up within the
+    declared catalog only, since access package names are unique only within a catalog. The engine
+    still reports the entry Failed, with nothing written to that package or for the entry, if the
+    package returned is not in the declared catalog (a defence).
 
     AccessReviews target check: an existing access review is found by its display name in the whole
     tenant, and display names are not unique, so the review found can be one of a group, a role or

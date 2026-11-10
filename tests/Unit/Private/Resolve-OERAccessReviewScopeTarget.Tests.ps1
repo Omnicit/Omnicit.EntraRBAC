@@ -99,6 +99,84 @@ Describe 'Resolve-OERAccessReviewScopeTarget' {
     }
 }
 
+Describe 'Resolve-OERAccessReviewScopeTarget -- an explicit -Catalog scopes the access package lookup' {
+    BeforeEach { InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null } }
+
+    It 'resolves the catalog first and looks the package up with -Catalog set to its id' {
+        InModuleScope Omnicit.EntraRBAC {
+            $script:OERTestCallOrder = [System.Collections.Generic.List[string]]::new()
+            Mock Resolve-OERCatalogId { $script:OERTestCallOrder.Add('catalog'); 'cat-id' }
+            Mock Resolve-OERAccessPackageId { $script:OERTestCallOrder.Add('package'); 'ap-id' }
+            Mock Invoke-OERGraphRequest {
+                param($Uri)
+                if ($Uri -like '*assignmentPolicies*') { return @{ value = @(@{ id = 'pol-id'; displayName = 'Standard' }) } }
+            }
+            $r = Resolve-OERAccessReviewScopeTarget -AccessPackage 'AP' -AssignmentPolicy 'Standard' -Catalog 'CAT'
+            ($script:OERTestCallOrder -join ',') | Should -Be 'catalog,package'
+            $r.AccessPackageId | Should -Be 'ap-id'
+            $r.CatalogId       | Should -Be 'cat-id'
+            Should -Invoke Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter {
+                $DisplayName -eq 'AP' -and $Catalog -eq 'cat-id'
+            }
+        }
+    }
+    It 'passes a catalog GUID on to the package lookup without a catalog request' {
+        InModuleScope Omnicit.EntraRBAC {
+            $cat = '55555555-5555-5555-5555-555555555555'
+            Mock Resolve-OERCatalogId { 'must-not-be-called' }
+            Mock Resolve-OERAccessPackageId { 'ap-id' }
+            Mock Invoke-OERGraphRequest {
+                param($Uri)
+                if ($Uri -like '*assignmentPolicies*') { return @{ value = @(@{ id = 'pol-id'; displayName = 'Standard' }) } }
+            }
+            $r = Resolve-OERAccessReviewScopeTarget -AccessPackage 'AP' -AssignmentPolicy 'Standard' -Catalog $cat
+            $r.CatalogId | Should -Be $cat
+            Should -Invoke Resolve-OERCatalogId -Times 0 -Exactly
+            Should -Invoke Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter { $Catalog -eq $cat }
+        }
+    }
+    It 'passes no Catalog key to the package lookup without -Catalog' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Resolve-OERAccessPackageId { 'ap-id' }
+            Mock Invoke-OERGraphRequest {
+                param($Uri)
+                if ($Uri -like '*accessPackages/ap-id*') { return @{ id = 'ap-id'; catalog = @{ id = 'cat-id' } } }
+                if ($Uri -like '*assignmentPolicies*')   { return @{ value = @(@{ id = 'pol-id'; displayName = 'Standard' }) } }
+            }
+            $null = Resolve-OERAccessReviewScopeTarget -AccessPackage 'AP' -AssignmentPolicy 'Standard'
+            Should -Invoke Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter {
+                $DisplayName -eq 'AP' -and -not $PSBoundParameters.ContainsKey('Catalog')
+            }
+        }
+    }
+    It 'carries AccessPackageNotInCatalog through the Fail channel as InvalidArgument' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Resolve-OERAccessPackageId {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Access package is not in catalog.'),
+                    'AccessPackageNotInCatalog',
+                    [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                    'ap-other')
+            }
+            $r = Resolve-OERAccessReviewScopeTarget -AccessPackage 'ap-other' -AssignmentPolicy 'Standard' `
+                -Catalog '55555555-5555-5555-5555-555555555555'
+            $r.FailedKind     | Should -Be 'AccessPackage'
+            $r.FailedErrorId  | Should -Be 'AccessPackageNotInCatalog'
+            $r.FailedCategory | Should -Be 'InvalidArgument'
+            $r.FailedMessage  | Should -Be 'Access package is not in catalog.'
+        }
+    }
+    It 'stops at an unresolved catalog before any package lookup' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Resolve-OERCatalogId { $null }
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            $r = Resolve-OERAccessReviewScopeTarget -AccessPackage 'AP' -AssignmentPolicy 'Standard' -Catalog 'Ghost'
+            $r.FailedKind | Should -Be 'Catalog'
+            Should -Invoke Resolve-OERAccessPackageId -Times 0 -Exactly
+        }
+    }
+}
+
 Describe 'Resolve-OERAccessReviewScopeTarget ambiguity handling' {
     BeforeEach { InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null } }
 
@@ -485,6 +563,34 @@ Describe 'New-OERAccessReviewDefinition -- a failed scope resolve is not a not-f
         $Published[0].FullyQualifiedErrorId | Should -Match '^Authorization_RequestDenied'
         $Published[0].FullyQualifiedErrorId | Should -Not -Match 'AccessPackageNotFound'
         $Published[0].CategoryInfo.Category | Should -Be 'PermissionDenied'
+        Should -Invoke -ModuleName 'Omnicit.EntraRBAC' Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+    }
+
+    It 'publishes AccessPackageNotInCatalog as InvalidArgument for an access package id of another catalog, and POSTs nothing' {
+        # The REAL Resolve-OERAccessReviewScopeTarget runs; only the package resolver is mocked.
+        Mock -ModuleName 'Omnicit.EntraRBAC' Resolve-OERAccessPackageId {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Access package is not in catalog.'),
+                'AccessPackageNotInCatalog',
+                [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                'ap-other')
+        }
+        $Err = $null
+        New-OERAccessReviewDefinition -DisplayName 'Q3' -DescriptionForAdmins 'x' -DescriptionForReviewers 'x' `
+            -AccessPackage 'ap-other' -AssignmentPolicy '11111111-1111-1111-1111-111111111111' `
+            -Catalog '55555555-5555-5555-5555-555555555555' `
+            -Recurrence OneTime -StartDate (Get-Date) -SelfReview -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+        $Published = @(@($Err) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+                $_.InvocationInfo.MyCommand.Name -eq 'New-OERAccessReviewDefinition'
+            })
+        $Published.Count | Should -Be 1
+        $Published[0].FullyQualifiedErrorId | Should -Match '^AccessPackageNotInCatalog'
+        $Published[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+        Should -Invoke -ModuleName 'Omnicit.EntraRBAC' Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter {
+            $Catalog -eq '55555555-5555-5555-5555-555555555555'
+        }
         Should -Invoke -ModuleName 'Omnicit.EntraRBAC' Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
     }
 

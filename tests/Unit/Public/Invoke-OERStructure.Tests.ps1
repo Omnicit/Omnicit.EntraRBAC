@@ -4771,7 +4771,14 @@ Describe 'Invoke-OERStructure applies what an export writes by id: a package''s 
             $ByName = $ApBase + '?$filter=displayName eq '''
             if ($Uri.StartsWith($ByName)) {
                 $Name = [uri]::UnescapeDataString($Uri.Substring($ByName.Length).Split("'")[0]).Replace("''", "'")
-                return @{ value = @($script:IdTenant.Packages | Where-Object { $_.displayName -eq $Name } | ForEach-Object { @{ id = $_.id; displayName = $_.displayName } }) }
+                # A catalog-scoped name lookup adds "and catalog/id eq '<id>'" to the filter, as Graph
+                # answers it (measured live): only a package of that catalog is returned.
+                $ScopeMarker = "' and catalog/id eq '"
+                $ScopeIndex = $Uri.IndexOf($ScopeMarker, [System.StringComparison]::Ordinal)
+                $ScopeCatalogId = if ($ScopeIndex -ge 0) { $Uri.Substring($ScopeIndex + $ScopeMarker.Length).Split("'")[0] } else { $null }
+                return @{ value = @($script:IdTenant.Packages |
+                            Where-Object { $_.displayName -eq $Name -and ($null -eq $ScopeCatalogId -or $_.catalog.id -eq $ScopeCatalogId) } |
+                            ForEach-Object { @{ id = $_.id; displayName = $_.displayName } }) }
             }
             if ($Uri.StartsWith($ApBase + '/')) {
                 $Rest = $Uri.Substring($ApBase.Length + 1)
@@ -4821,12 +4828,12 @@ Describe 'Invoke-OERStructure applies what an export writes by id: a package''s 
         @($script:IdTenant.Packages).Count | Should -Be 2
     }
 
-    It 'fails with the cmdlet''s refusal, writing nothing, a package to be created in the catalog its id names while a package of that name is in another catalog (twin catalogs)' {
+    It 'creates a package in the catalog its id names although a package of that name is in another catalog, leaving the twin untouched (twin catalogs)' {
         # The catalog the id names does not hold AP-ById; a package of that name exists in another catalog --
         # the case the export's catalog id makes reachable for two catalogs that share a name.
-        # New-OERAccessPackage's tenant-wide name check finds that package, reads it with its catalog and
-        # refuses it (AccessPackageInAnotherCatalog): the entry is one Failed row carrying that record, with
-        # nothing written to that package or for the entry.
+        # New-OERAccessPackage looks the name up within the named catalog only (access package names are
+        # unique only within a catalog), so the twin is never a candidate: the package is created in the
+        # declared catalog and nothing is written to the twin.
         $TwinId = 'aaaa1111-0000-0000-0000-000000000053'
         $OtherCatalogId = 'eeee5555-0000-0000-0000-000000000052'
         $script:IdTenant.Packages.Add(@{
@@ -4836,22 +4843,19 @@ Describe 'Invoke-OERStructure applies what an export writes by id: a package''s 
 
         $Err = $null
         $Rows = @(Invoke-OERStructure -Json $script:IdPackageDoc -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue)
-        $Message = "Access package 'AP-ById' exists in another catalog ($OtherCatalogId), not in catalog '$($script:IdCatId)' ($($script:IdCatId)), so it was not returned and nothing was created. " +
-            'Access package names are unique only within a catalog, and this command looks the name up in the whole tenant; use a name no other access package carries.'
-        @(ConvertTo-IdRowLine -Row $Rows) | Should -Be @("accessPackages|AP-ById|Failed|access package creation failed: $Message")
-        @($Rows).Count | Should -Be 1
-        @($Rows[0].Error.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'AccessPackageInAnotherCatalog'
-        @($Err | Where-Object { @($_.FullyQualifiedErrorId -split ',')[0] -eq 'AccessPackageInAnotherCatalog' }).Count | Should -BeGreaterOrEqual 1
-        # Reached: the declared catalog was read by its id, and New-OERAccessPackage made its tenant-wide name
-        # check and read the package it found with its catalog.
+        @(ConvertTo-IdRowLine -Row $Rows) | Should -Be @("accessPackages|AP-ById|Created|created access package AP-ById ($($script:IdNewPkgId))")
+        @($Err | Where-Object { @($_.FullyQualifiedErrorId -split ',')[0] -eq 'AccessPackageInAnotherCatalog' }).Count | Should -Be 0
+        # The name lookup was scoped to the declared catalog (the twin was never a candidate), and the
+        # one POST created the package in that catalog.
         $script:IdTenant.Requests | Should -Contain ("GET v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=catalog/id eq '$($script:IdCatId)'&`$expand=catalog")
-        $script:IdTenant.Requests | Should -Contain "GET v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-ById'&`$select=id,displayName"
-        $script:IdTenant.Requests | Should -Contain "GET v1.0/identityGovernance/entitlementManagement/accessPackages/$TwinId`?`$expand=catalog"
-        # Nothing written, and nothing else read for the twin: no resource role or policy read, no catalog lookup.
-        @($script:IdTenant.Posts).Count | Should -Be 0
-        @($script:IdTenant.Requests | Where-Object { $_ -notlike 'GET *' }) | Should -BeNullOrEmpty
-        @($script:IdTenant.Requests | Where-Object { $_ -like '*resourceRoleScopes*' -or $_ -like '*assignmentPolicies*' -or $_ -like '*/catalogs*' }) | Should -BeNullOrEmpty
-        @($script:IdTenant.Packages).Count | Should -Be 2
+        $script:IdTenant.Requests | Should -Contain "GET v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-ById' and catalog/id eq '$($script:IdCatId)'&`$select=id,displayName"
+        @($script:IdTenant.Requests | Where-Object { $_ -like "*accessPackages/$TwinId*" }) | Should -BeNullOrEmpty
+        @($script:IdTenant.Posts).Count | Should -Be 1
+        $script:IdTenant.Posts[0].catalog.id | Should -BeExactly $script:IdCatId
+        # Nothing was written to the twin: it is still in the other catalog, unchanged.
+        @($script:IdTenant.Packages | Where-Object { $_.id -eq $TwinId -and $_.catalog.id -eq $OtherCatalogId }).Count | Should -Be 1
+        @($script:IdTenant.Requests | Where-Object { $_ -like '*/catalogs*' }) | Should -BeNullOrEmpty
+        @($script:IdTenant.Packages).Count | Should -Be 3
     }
 
     It 'creates an access review on its access package and assignment policy ids, and on a second run matches it and reaches Unchanged (BL-142)' {

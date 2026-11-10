@@ -143,6 +143,106 @@ Describe 'Get-OERAccessPackageResourceRole' {
             }
         }
     }
+
+    Context '-Catalog (BL-184)' {
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } }
+
+        }
+
+        It 'passes the bound -Catalog and the package name to the resolver' {
+            Get-OERAccessPackageResourceRole -AccessPackage 'AP-Sales' -Catalog 'CAT-IT-Core'  -ErrorAction SilentlyContinue | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter {
+                $PesterBoundParameters.ContainsKey('Catalog') -and $Catalog -eq 'CAT-IT-Core' -and $DisplayName -eq 'AP-Sales'
+            }
+        }
+
+        It 'calls the resolver without a Catalog key when -Catalog is not bound' {
+            Get-OERAccessPackageResourceRole -AccessPackage 'AP-Sales'  -ErrorAction SilentlyContinue | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter {
+                -not $PesterBoundParameters.ContainsKey('Catalog') -and $DisplayName -eq 'AP-Sales'
+            }
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0 -ParameterFilter {
+                $PesterBoundParameters.ContainsKey('Catalog')
+            }
+        }
+
+        It 'names the catalog in the not-found text with -Catalog and keeps the old text without it' {
+            Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId { $null }
+            $Err = $null
+            Get-OERAccessPackageResourceRole -AccessPackage 'AP-Sales' -Catalog 'CAT-IT-Core'  -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Own = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AccessPackageNotFound,Get-OERAccessPackageResourceRole' })
+            $Own.Count | Should -Be 1
+            $Own[0].Exception.Message | Should -BeExactly "Access package 'AP-Sales' not found in catalog 'CAT-IT-Core'."
+            $Err = $null
+            Get-OERAccessPackageResourceRole -AccessPackage 'AP-Sales'  -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Own = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AccessPackageNotFound,Get-OERAccessPackageResourceRole' })
+            $Own.Count | Should -Be 1
+            $Own[0].Exception.Message | Should -BeExactly "Access package 'AP-Sales' not found."
+        }
+
+        It 'publishes an AccessPackageNotInCatalog refusal as itself, with no write request and no read' {
+            Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('refused'),
+                    'AccessPackageNotInCatalog',
+                    [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                    'x')
+            }
+            $Err = $null
+            Get-OERAccessPackageResourceRole -AccessPackage 'AP-Sales' -Catalog 'CAT-IT-Core'  -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Own = @($Err | Where-Object { $_.FullyQualifiedErrorId -match '^AccessPackageNotInCatalog,Get-OERAccessPackageResourceRole$' })
+            $Own.Count | Should -Be 1
+            $Own[0].InvocationInfo.MyCommand.Name | Should -BeExactly 'Get-OERAccessPackageResourceRole'
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -match '^AmbiguousAccessPackageName' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+        }
+        It 'publishes an AmbiguousCatalogName refusal as itself, with no write request and no read' {
+            Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('refused'),
+                    'AmbiguousCatalogName',
+                    [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                    'x')
+            }
+            $Err = $null
+            Get-OERAccessPackageResourceRole -AccessPackage 'AP-Sales' -Catalog 'CAT-IT-Core'  -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Own = @($Err | Where-Object { $_.FullyQualifiedErrorId -match '^AmbiguousCatalogName,Get-OERAccessPackageResourceRole$' })
+            $Own.Count | Should -Be 1
+            $Own[0].InvocationInfo.MyCommand.Name | Should -BeExactly 'Get-OERAccessPackageResourceRole'
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -match '^AmbiguousAccessPackageName' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+        }
+        It 'publishes a CatalogNotFound refusal as itself, with no write request and no read' {
+            Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('refused'),
+                    'CatalogNotFound',
+                    [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                    'x')
+            }
+            $Err = $null
+            Get-OERAccessPackageResourceRole -AccessPackage 'AP-Sales' -Catalog 'CAT-IT-Core'  -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Own = @($Err | Where-Object { $_.FullyQualifiedErrorId -match '^CatalogNotFound,Get-OERAccessPackageResourceRole$' })
+            $Own.Count | Should -Be 1
+            $Own[0].InvocationInfo.MyCommand.Name | Should -BeExactly 'Get-OERAccessPackageResourceRole'
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -match '^AmbiguousAccessPackageName' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+        }
+
+        It 'declares -Catalog last, validated, aliasless and not bound from the pipeline' {
+            $Cmd = Get-Command Get-OERAccessPackageResourceRole
+            $P = $Cmd.Parameters['Catalog']
+            $P | Should -Not -BeNullOrEmpty
+            @($P.Attributes | Where-Object { $_ -is [System.Management.Automation.ValidateNotNullOrEmptyAttribute] }).Count | Should -Be 1
+            $P.Aliases.Count | Should -Be 0
+            @($P.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] -and $_.ValueFromPipelineByPropertyName }).Count | Should -Be 0
+            @($P.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] -and $_.ValueFromPipeline }).Count | Should -Be 0
+            $Last = $Cmd.ScriptBlock.Ast.Body.ParamBlock.Parameters[-1].Name.VariablePath.UserPath
+            $Last | Should -BeExactly 'Catalog'
+
+        }
+    }
 }
 
 Describe 'Get-OERAccessPackageResourceRole -- a failed resolver read is not a not-found (issue #71, fix round 1)' {

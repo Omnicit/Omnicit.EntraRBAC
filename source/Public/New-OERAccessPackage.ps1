@@ -9,10 +9,12 @@ function New-OERAccessPackage {
     -Catalog selects the parent catalog (id or display name, resolved via Resolve-OERCatalogId).
     -Description sets the description; -Hidden sets isHidden. The command is idempotent: when a package
     with the resolved display name already exists in the SAME catalog it is returned and nothing is
-    created. The name is looked up in the whole tenant, but access package names are unique only within
-    a catalog: a package of that name in another catalog (or one whose catalog cannot be read) is never
-    returned -- the command writes AccessPackageInAnotherCatalog, returns nothing and creates nothing,
-    under -WhatIf too. Output is a tagged
+    created. The name is looked up within -Catalog only, since access package names are unique only
+    within a catalog: a package of that name in another catalog does not stop the create. A -DisplayName
+    that is a GUID is read as an access package id; one that is not in -Catalog is refused with
+    AccessPackageNotInCatalog and nothing is created. As a defence, a found package whose catalog the
+    confirmation read does not show to be the named one is never returned -- the command writes
+    AccessPackageInAnotherCatalog, returns nothing and creates nothing, under -WhatIf too. Output is a tagged
     Omnicit.EntraRBAC.AccessPackage object. Supports -WhatIf and -Confirm.
 
     Both output paths return a populated CatalogId. The v1.0 accessPackage entity has no catalogId
@@ -134,9 +136,16 @@ function New-OERAccessPackage {
         # create a duplicate package against a tenant that is merely throttled, so report the
         # failure and stop instead of proceeding to the create below.
         $ExistingId = try {
-            Resolve-OERAccessPackageId -DisplayName $ResolvedName
+            Resolve-OERAccessPackageId -DisplayName $ResolvedName -Catalog $CatalogId
         } catch {
             Remove-OERErrorRecord -Record $PSItem
+            # A GUID-shaped name is read as an id; one that belongs to another catalog is published as
+            # AccessPackageNotInCatalog itself (the first comma segment, compared ordinally), nothing
+            # created. Every other throw keeps the wrapping below.
+            if ((([string]$PSItem.FullyQualifiedErrorId) -split ',')[0].Trim() -ceq 'AccessPackageNotInCatalog') {
+                $PSCmdlet.WriteError($PSItem)
+                return
+            }
             Write-CmdletError `
                 -Message ([System.Exception]::new(
                     "Failed to look up access package '$ResolvedName': $($PSItem.Exception.Message)")) `
@@ -159,14 +168,15 @@ function New-OERAccessPackage {
                 $PSCmdlet.WriteError($PSItem)
                 return
             }
-            # The name was looked up in the whole tenant, and access package names are unique only
-            # within a catalog, so the package found may belong to another catalog. Returning it would
-            # hand the caller a package of the wrong catalog; refuse instead (nothing is created).
+            # The name was looked up within the catalog, so the package found belongs to it. The
+            # comparison below stays as a defence: access package names are unique only within a
+            # catalog, and returning a package of the wrong catalog would hand the caller the wrong
+            # one; refuse instead (nothing is created).
             $ExistingCatalogId = [string]$Existing.catalog.id
             if (-not $ExistingCatalogId) {
                 $Reason = "Access package '$ResolvedName' exists ($ExistingId), but its catalog could not be read, so it cannot be told whether it is in catalog '$Catalog' ($CatalogId); it was not returned and nothing was created."
             } elseif (-not [string]::Equals($ExistingCatalogId, [string]$CatalogId, [System.StringComparison]::OrdinalIgnoreCase)) {
-                $Reason = "Access package '$ResolvedName' exists in another catalog ($ExistingCatalogId), not in catalog '$Catalog' ($CatalogId), so it was not returned and nothing was created. Access package names are unique only within a catalog, and this command looks the name up in the whole tenant; use a name no other access package carries."
+                $Reason = "Access package '$ResolvedName' exists in another catalog ($ExistingCatalogId), not in catalog '$Catalog' ($CatalogId), so it was not returned and nothing was created. Access package names are unique only within a catalog, and this command looks the name up within the named catalog."
             } else {
                 $Reason = $null
             }

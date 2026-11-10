@@ -289,6 +289,125 @@ Describe 'Get-OERAccessPackageAssignment' {
             $Published[0].Exception.PageNumber | Should -Be 2
         }
     }
+
+    Context '-Catalog (BL-184)' {
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } }
+
+        }
+
+        It 'passes the bound -Catalog and the package name to the resolver' {
+            Get-OERAccessPackageAssignment -AccessPackage 'AP-Sales' -Catalog 'CAT-IT-Core'  -ErrorAction SilentlyContinue | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter {
+                $PesterBoundParameters.ContainsKey('Catalog') -and $Catalog -eq 'CAT-IT-Core' -and $DisplayName -eq 'AP-Sales'
+            }
+        }
+
+        It 'calls the resolver without a Catalog key when -Catalog is not bound' {
+            Get-OERAccessPackageAssignment -AccessPackage 'AP-Sales'  -ErrorAction SilentlyContinue | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter {
+                -not $PesterBoundParameters.ContainsKey('Catalog') -and $DisplayName -eq 'AP-Sales'
+            }
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0 -ParameterFilter {
+                $PesterBoundParameters.ContainsKey('Catalog')
+            }
+        }
+
+        It 'names the catalog in the not-found text with -Catalog and keeps the old text without it' {
+            Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId { $null }
+            $Err = $null
+            Get-OERAccessPackageAssignment -AccessPackage 'AP-Sales' -Catalog 'CAT-IT-Core'  -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Own = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AccessPackageNotFound,Get-OERAccessPackageAssignment' })
+            $Own.Count | Should -Be 1
+            $Own[0].Exception.Message | Should -BeExactly "Access package 'AP-Sales' not found in catalog 'CAT-IT-Core'."
+            $Err = $null
+            Get-OERAccessPackageAssignment -AccessPackage 'AP-Sales'  -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Own = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AccessPackageNotFound,Get-OERAccessPackageAssignment' })
+            $Own.Count | Should -Be 1
+            $Own[0].Exception.Message | Should -BeExactly "Access package 'AP-Sales' not found."
+        }
+
+        It 'publishes an AccessPackageNotInCatalog refusal as itself, with no write request and no read' {
+            Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('refused'),
+                    'AccessPackageNotInCatalog',
+                    [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                    'x')
+            }
+            $Err = $null
+            Get-OERAccessPackageAssignment -AccessPackage 'AP-Sales' -Catalog 'CAT-IT-Core'  -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Own = @($Err | Where-Object { $_.FullyQualifiedErrorId -match '^AccessPackageNotInCatalog,Get-OERAccessPackageAssignment$' })
+            $Own.Count | Should -Be 1
+            $Own[0].InvocationInfo.MyCommand.Name | Should -BeExactly 'Get-OERAccessPackageAssignment'
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -match '^AmbiguousAccessPackageName' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+        }
+        It 'publishes an AmbiguousCatalogName refusal as itself, with no write request and no read' {
+            Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('refused'),
+                    'AmbiguousCatalogName',
+                    [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                    'x')
+            }
+            $Err = $null
+            Get-OERAccessPackageAssignment -AccessPackage 'AP-Sales' -Catalog 'CAT-IT-Core'  -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Own = @($Err | Where-Object { $_.FullyQualifiedErrorId -match '^AmbiguousCatalogName,Get-OERAccessPackageAssignment$' })
+            $Own.Count | Should -Be 1
+            $Own[0].InvocationInfo.MyCommand.Name | Should -BeExactly 'Get-OERAccessPackageAssignment'
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -match '^AmbiguousAccessPackageName' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+        }
+        It 'publishes a CatalogNotFound refusal as itself, with no write request and no read' {
+            Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('refused'),
+                    'CatalogNotFound',
+                    [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                    'x')
+            }
+            $Err = $null
+            Get-OERAccessPackageAssignment -AccessPackage 'AP-Sales' -Catalog 'CAT-IT-Core'  -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Own = @($Err | Where-Object { $_.FullyQualifiedErrorId -match '^CatalogNotFound,Get-OERAccessPackageAssignment$' })
+            $Own.Count | Should -Be 1
+            $Own[0].InvocationInfo.MyCommand.Name | Should -BeExactly 'Get-OERAccessPackageAssignment'
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -match '^AmbiguousAccessPackageName' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+        }
+
+        It 'refuses -Catalog without -AccessPackage before any request' {
+            $Err = $null
+            Get-OERAccessPackageAssignment -Catalog 'CAT-IT-Core' -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Own = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'CatalogWithoutAccessPackage,Get-OERAccessPackageAssignment' })
+            $Own.Count | Should -Be 1
+            $Own[0].Exception.Message | Should -BeExactly '-Catalog scopes the -AccessPackage lookup and filters nothing on its own: supply -AccessPackage with -Catalog, or omit -Catalog.'
+            $Own[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Own[0].TargetObject | Should -BeExactly 'CAT-IT-Core'
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+        }
+
+        It 'does not refuse -Catalog beside -AccessPackage and scopes the filter to the resolved package' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } }
+            Get-OERAccessPackageAssignment -AccessPackage 'AP-Sales' -Catalog 'CAT-IT-Core' | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -like "*accessPackage/id eq 'ap-1'*"
+            }
+        }
+        It 'declares -Catalog last, validated, aliasless and not bound from the pipeline' {
+            $Cmd = Get-Command Get-OERAccessPackageAssignment
+            $P = $Cmd.Parameters['Catalog']
+            $P | Should -Not -BeNullOrEmpty
+            @($P.Attributes | Where-Object { $_ -is [System.Management.Automation.ValidateNotNullOrEmptyAttribute] }).Count | Should -Be 1
+            $P.Aliases.Count | Should -Be 0
+            @($P.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] -and $_.ValueFromPipelineByPropertyName }).Count | Should -Be 0
+            @($P.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] -and $_.ValueFromPipeline }).Count | Should -Be 0
+            $Last = $Cmd.ScriptBlock.Ast.Body.ParamBlock.Parameters[-1].Name.VariablePath.UserPath
+            $Last | Should -BeExactly 'Catalog'
+
+        }
+    }
 }
 
 Describe 'Get-OERAccessPackageAssignment -- a stale access package id is not silence (issue #71)' {

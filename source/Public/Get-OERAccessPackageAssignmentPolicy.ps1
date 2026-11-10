@@ -14,10 +14,18 @@ function Get-OERAccessPackageAssignmentPolicy {
     .PARAMETER AccessPackage
     The access package id or display name whose policies are listed. Accepts pipeline input by
     property name from Get-OERAccessPackage (binds DisplayName or AccessPackageId; the Id alias is
-    not used here because this cmdlet has its own -Id parameter for the ById set).
+    not used here because this cmdlet has its own -Id parameter for the ById set). An access package
+    name is unique only within its catalog: use -Catalog for a name several catalogs share.
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
+
+    .PARAMETER Catalog
+    A catalog name or id (ByPackage set only). With it the -AccessPackage name is looked up only in
+    that catalog, and an access package id that is not in it is refused with AccessPackageNotInCatalog
+    before its policies are read. An ambiguous catalog name is AmbiguousCatalogName and an unknown one
+    CatalogNotFound. Does not bind from the pipeline. With -Catalog, an access package piped from
+    Get-OERAccessPackage is checked by its own id.
 
     .EXAMPLE
     Get-OERAccessPackageAssignmentPolicy -Id '00000000-0000-0000-0000-000000000001'
@@ -26,6 +34,10 @@ function Get-OERAccessPackageAssignmentPolicy {
     .EXAMPLE
     Get-OERAccessPackageAssignmentPolicy -AccessPackage 'AP-Sales'
     Lists all assignment policies on the access package named AP-Sales.
+
+    .EXAMPLE
+    Get-OERAccessPackageAssignmentPolicy -AccessPackage 'AP-Sales' -Catalog 'CAT-IT-Core'
+    Lists the policies of the access package named AP-Sales in the catalog CAT-IT-Core only.
 
     .EXAMPLE
     Get-OERAccessPackageAssignmentPolicy -AccessPackage '00000000-0000-0000-0000-000000000002'
@@ -42,7 +54,11 @@ function Get-OERAccessPackageAssignmentPolicy {
         [string]$AccessPackage,
 
         [ValidateNotNullOrEmpty()]
-        [string]$TenantId
+        [string]$TenantId,
+
+        [Parameter(ParameterSetName = 'ByPackage')]
+        [ValidateNotNullOrEmpty()]
+        [string]$Catalog
     )
     begin {
         $AuthParams = @{}
@@ -66,8 +82,17 @@ function Get-OERAccessPackageAssignmentPolicy {
         # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
         # $null return (a display name that matched nothing) reaches the not-found branch.
         $PackageId = $null
+        $ResolveParams = @{ DisplayName = $AccessPackage }
+        if ($PSBoundParameters.ContainsKey('Catalog')) {
+            $ResolveParams.Catalog = $Catalog
+            # A piped access package binds by its DisplayName; with -Catalog its own id is used so
+            # the resolver checks it against the catalog rather than looking the name up again there.
+            $PipedId = Get-OERPipedAccessPackageId -InputObject $PSItem -AccessPackage $AccessPackage `
+                -CatalogBound -Expecting:$MyInvocation.ExpectingInput
+            if ($PipedId) { $ResolveParams.DisplayName = $PipedId }
+        }
         try {
-            $PackageId = Resolve-OERAccessPackageId -DisplayName $AccessPackage
+            $PackageId = Resolve-OERAccessPackageId @ResolveParams
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             if (Test-OERAmbiguousNameError -Record $PSItem) {
@@ -87,7 +112,9 @@ function Get-OERAccessPackageAssignmentPolicy {
             return
         }
         if (-not $PackageId) {
-            Write-CmdletError -Message ([System.Exception]::new("Access package '$AccessPackage' not found.")) `
+            $NotFoundText = "Access package '$AccessPackage' not found."
+            if ($PSBoundParameters.ContainsKey('Catalog')) { $NotFoundText = "Access package '$AccessPackage' not found in catalog '$Catalog'." }
+            Write-CmdletError -Message ([System.Exception]::new($NotFoundText)) `
                 -ErrorId 'AccessPackageNotFound' -Category ObjectNotFound -TargetObject $AccessPackage -Cmdlet $PSCmdlet
             return
         }

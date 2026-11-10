@@ -65,6 +65,9 @@ function New-OERAccessReviewDefinition {
 
     .PARAMETER Catalog
     Optional catalog display name or id. When omitted the catalog is derived from the access package.
+    When given it also scopes the access package lookup: a package display name is looked up in that
+    catalog only, and an access package id of another catalog is refused with AccessPackageNotInCatalog
+    (InvalidArgument) before anything is written.
 
     .PARAMETER Reviewer
     One or more primary reviewer user principal names or user object ids (GUIDs). Single-stage only.

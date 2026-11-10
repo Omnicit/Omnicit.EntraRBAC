@@ -23,7 +23,7 @@ BeforeDiscovery {
     $script:GuardCases = @(
         @{
             Cmdlet = 'Add-OERAccessPackageResourceRole'; Resolver = 'Resolve-OERAccessPackageId'
-            ErrorId = 'AmbiguousAccessPackageName'; Pre = @{}
+            ErrorId = 'AmbiguousAccessPackageName'; Pre = @{ 'Resolve-OERCatalogId' = 'cat-1' }
             Invoke = {
                 Add-OERAccessPackageResourceRole -AccessPackage 'Dup' -Catalog 'cat-1' -ResourceOriginId 'grp-guid' `
                     -Role 'Member' -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
@@ -32,7 +32,7 @@ BeforeDiscovery {
         }
         @{
             Cmdlet = 'Add-OERAccessPackageResourceRole'; Resolver = 'Resolve-OERCatalogId'
-            ErrorId = 'AmbiguousCatalogName'; Pre = @{ 'Resolve-OERAccessPackageId' = 'ap-1' }
+            ErrorId = 'AmbiguousCatalogName'; Pre = @{}
             Invoke = {
                 Add-OERAccessPackageResourceRole -AccessPackage 'AP-Sales' -Catalog 'Dup' -ResourceOriginId 'grp-guid' `
                     -Role 'Member' -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
@@ -541,6 +541,95 @@ BeforeDiscovery {
             ErrorId = 'AmbiguousName'; FailureId = 'AccessReviewDefinitionResolveFailed'; Pre = @{}
             Invoke = {
                 Stop-OERAccessReviewInstance -Definition 'Dup' -Instance 'inst-1' -Confirm:$false `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        # Sprint 15 step 1b: the -Catalog of the access package cmdlets. Each case mocks the CATALOG
+        # resolver and lets the real Resolve-OERAccessPackageId run, which re-throws the catalog's
+        # ambiguity as AmbiguousCatalogName (never AmbiguousName, so it is never mistaken for a package
+        # ambiguity) and any other catalog failure as itself, before any package request.
+        @{
+            Cmdlet = 'Get-OERAccessPackageAssignment'; Resolver = 'Resolve-OERCatalogId'
+            ErrorId = 'AmbiguousCatalogName'; Pre = @{}
+            Invoke = {
+                Get-OERAccessPackageAssignment -AccessPackage 'AP-Sales' -Catalog 'Dup' -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            Cmdlet = 'Get-OERAccessPackageAssignmentPolicy'; Resolver = 'Resolve-OERCatalogId'
+            ErrorId = 'AmbiguousCatalogName'; Pre = @{}
+            Invoke = {
+                Get-OERAccessPackageAssignmentPolicy -AccessPackage 'AP-Sales' -Catalog 'Dup' -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            Cmdlet = 'Get-OERAccessPackageResourceRole'; Resolver = 'Resolve-OERCatalogId'
+            ErrorId = 'AmbiguousCatalogName'; Pre = @{}
+            Invoke = {
+                Get-OERAccessPackageResourceRole -AccessPackage 'AP-Sales' -Catalog 'Dup' -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            Cmdlet = 'New-OERAccessPackageAssignment'; Resolver = 'Resolve-OERCatalogId'
+            ErrorId = 'AmbiguousCatalogName'; Pre = @{}
+            Invoke = {
+                New-OERAccessPackageAssignment -AccessPackage 'AP-Sales' -Catalog 'Dup' -Policy 'pol-1' `
+                    -TargetId 'aaaa0000-0000-0000-0000-000000000001' -Confirm:$false `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            Cmdlet = 'New-OERAccessPackageAssignmentPolicy'; Resolver = 'Resolve-OERCatalogId'
+            ErrorId = 'AmbiguousCatalogName'; Pre = @{}
+            Invoke = {
+                $Scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
+                New-OERAccessPackageAssignmentPolicy -AccessPackage 'AP-Sales' -Catalog 'Dup' -DisplayName 'Default' `
+                    -RequestorScope $Scope -DurationInDays 30 -Confirm:$false `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            Cmdlet = 'Remove-OERAccessPackage'; Resolver = 'Resolve-OERCatalogId'
+            ErrorId = 'AmbiguousCatalogName'; Pre = @{}
+            Invoke = {
+                Remove-OERAccessPackage -DisplayName 'AP-Sales' -Catalog 'Dup' -Confirm:$false `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            Cmdlet = 'Remove-OERAccessPackageResourceRole'; Resolver = 'Resolve-OERCatalogId'
+            ErrorId = 'AmbiguousCatalogName'; Pre = @{}
+            Invoke = {
+                Remove-OERAccessPackageResourceRole -AccessPackage 'AP-Sales' -Catalog 'Dup' -ResourceRoleScopeId 'scope-1' `
+                    -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            Cmdlet = 'Set-OERAccessPackage'; Resolver = 'Resolve-OERCatalogId'
+            ErrorId = 'AmbiguousCatalogName'; Pre = @{}
+            Invoke = {
+                Set-OERAccessPackage -DisplayName 'AP-Sales' -Catalog 'Dup' -NewDisplayName 'Renamed' -Confirm:$false `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            # The review scope target resolves its catalog itself (R-6: first, then the package within it)
+            # and publishes the ambiguity as AmbiguousCatalogName through the review cmdlet.
+            Cmdlet = 'New-OERAccessReviewDefinition'; Resolver = 'Resolve-OERCatalogId'
+            ErrorId = 'AmbiguousCatalogName'; Pre = @{}
+            Invoke = {
+                New-OERAccessReviewDefinition -DisplayName 'Pkg review' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
+                    -AccessPackage 'AP-Sales' -Catalog 'Dup' -AssignmentPolicy 'Standard' -SelfReview `
+                    -Recurrence OneTime -StartDate ([datetime]'2026-07-05') -Confirm:$false `
                     -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
                 $Err
             }
