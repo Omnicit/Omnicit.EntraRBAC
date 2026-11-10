@@ -486,7 +486,7 @@ Write-OerLiveStep "Requests: $(Get-S144Count)"
 
 Result:
 
-### 4.3. A live every-assignment review declared as eligible-only
+### 4.3. A live review of the form written before this branch declared as eligible-only
 
 - [ ] **4.3** An entry `oer-s144-all` declaring `directoryRole: Reports Reader`, `directoryRoleAssignmentType: Eligible` (the live review is of the form written before this branch) is refused with `AccessReviewScopeMismatch`, nothing written. #type/subtask
 
