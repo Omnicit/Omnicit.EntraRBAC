@@ -210,6 +210,8 @@ $Rows = foreach ($Build in 'branch', 'base') {
     }
     Get-Module -Name Omnicit.EntraRBAC | Remove-Module -Force
     Import-Module $Psd1 -Force -Global
+    $Loaded = (Get-Module -Name Omnicit.EntraRBAC).ModuleBase
+    Write-OerLiveStep "${Build}: the module loads from the $(if ($Build -eq 'branch') { 'worktree build' } else { 'base source' }): $($Loaded.StartsWith($(if ($Build -eq 'branch') { Join-Path $Cfg.Repo 'output\module' } else { Join-Path ([System.IO.Path]::GetTempPath()) 'oer-s143-base' }), [System.StringComparison]::OrdinalIgnoreCase))"
     Install-S143Fence
     $R = Get-S143Refusal { Connect-OER -TenantId $MissingDomain -ClientId $Cfg.AppId -Certificate $Cert -ErrorAction Stop }
     [PSCustomObject]@{
