@@ -401,8 +401,11 @@ function Invoke-OERStructure {
     scope is refused with the same error. An entry that declares directoryRole (a role name or id) is
     a review of the users assigned to that directory role and is updated
     only when the live review is exactly that form for the same role (ids compared without regard to
-    letter case); a review of another role, only eligible or only active assignments, a guest-only
-    scope, a group or a package is refused with the same error. A name compared as the map's id is named by that id in the error the
+    letter case); an entry that also declares directoryRoleAssignmentType (Eligible or Active) is a
+    review of only the eligible or only the active assignments of the role (users only), and one that
+    omits it is a review of every eligible and active assignment; a review of another role, in
+    another of these forms, a guest-only scope, a group or a package is refused with the same error
+    (the scope of a review cannot change, so create a new review). A name compared as the map's id is named by that id in the error the
     check publishes, and the Failed row says which declared name was read as which id. A name that
     matches nothing is reported Failed with AccessPackageNotFound or AssignmentPolicyNotFound, and a
     lookup that fails (an ambiguous name, a 403) with its own error, and nothing is written either.

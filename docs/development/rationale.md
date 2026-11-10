@@ -12587,7 +12587,7 @@ live review.
   creating them needs a second public parameter on `New-OERAccessReviewDefinition` (the engine creates
   through it), and only `-DirectoryRole` is allowed. So there is no enum key; the owner still classifies
   `Eligible` and `Active`. If wrong: a later step adds the enum key and one parameter; the owner already
-  names both forms.
+  names both forms. Superseded by Sprint 14 step 4, which adds the key and the parameter (below).
 - **R-2, Learn's example 12.1 is not writable** (400, measured), so the All form is written as the
   `principalResourceMembershipsScope` above. If wrong: Graph starts accepting 12.1 and the module writes the
   longer form for nothing; reads are unaffected.
@@ -12618,6 +12618,48 @@ assigned to one directory role".
 role definition id case-insensitively and reuses `AccessReviewScopeMismatch`. `New-OERAccessReviewDefinition
 -DirectoryRole` creates the review (`DirectoryRoleSingleStage` or `DirectoryRoleMultiStage`).
 
+### Sprint 14 step 4: eligible-only and active-only reviews (BL-175a, A6)
+
+**Measured live on 2026-11-10** (test tenant, `oer-live-cc`, before any code):
+
+| Written (role id `{id}`, Reports Reader) | POST | Read back (by id and in the list, identical) | The module's converter and classifier read |
+|---|---|---|---|
+| eligible only: `accessReviewQueryScope`, query `/roleManagement/directory/roleEligibilityScheduleInstances?$expand=principal&$filter=(isof(principal,'microsoft.graph.user') and roleDefinitionId eq '{id}')` | 201 | the same query with a leading `/beta`, type `accessReviewQueryScope`, `queryType` `MicrosoftGraph`, `queryRoot` null | `Eligible`, the same role id |
+| active only: query `/roleManagement/directory/roleAssignmentScheduleInstances?$expand=principal&$filter=(assignmentType eq 'Assigned' and isof(principal,'microsoft.graph.user') and roleDefinitionId eq '{id}')` | 201 | the same with a leading `/beta` | `Active`, the same role id |
+
+The queries were written exactly as `Resolve-OERAccessReviewRoleScope` reads them, without a version
+segment; Graph adds `/beta`. Both forms review user principals only (the query filters on them).
+
+Not measured (BL-175b): who an instance covers or who is asked to review. Neither low-risk role held an
+assignee in the test tenant (0 active, 0 eligible, every principal type), so an instance would have had no
+decision to read; giving a service principal the role needs a role assignment and an app registration,
+objects outside this step. No text of the module claims who Graph asks to review.
+
+**Rulings (each with an "If wrong" line):**
+
+- **R-1, the key and the parameter.** `directoryRoleAssignmentType` (document) and
+  `-DirectoryRoleAssignmentType` (`New-OERAccessReviewDefinition`, the two directory role parameter sets
+  only), values `Eligible` and `Active`, the existing enum of the same name reused (the
+  `directoryRoleAssignments` section's `assignmentType` uses it). There is no `All` value: omitted means every
+  eligible and active assignment, as before, so every existing document and call gives the same result. If
+  wrong: rename before 1.6.0; no stable release carries it yet.
+- **R-2, the export writes the key.** An `Eligible` or `Active` review is exported as `directoryRole` plus
+  the key; `All` carries no key (exports of such reviews are unchanged); `OtherForm` is still skipped and
+  counted. If wrong: an export lists a form a document cannot apply, and the target check refuses it.
+- **R-3, the form is part of the scope and never written.** The target check compares the declared form
+  (omitted means `All`) with the live Kind and refuses another form with the existing
+  `AccessReviewScopeMismatch`; its message for an omitted key is unchanged. The pure diff notes a declared
+  form that differs (`NotApplied`) and never sends one. If wrong: an operator who meant to change the form
+  must create a new review, which is what Graph requires anyway (the scope cannot change).
+- **R-4, one text, two places, held together.** `New-OERAccessReviewScopeQuery` writes the two query texts;
+  `Resolve-OERAccessReviewRoleScope` stays the single owner of classifying them. An agreement test runs the
+  builder's output, with and without `/beta`, through the converter and the classifier. If wrong: a text
+  change in one place reddens the test, never production.
+- **R-5, no new ErrorId.** A review in another form is `AccessReviewScopeMismatch`; an unknown value is
+  refused offline by the validator and, for a hand-built entry, by the target check with the same id.
+  If wrong: a caller wanting a form-specific id gets the scope id.
+- **R-6, no new permission and no new Graph path.** The create posts to the same definitions endpoint, so
+  `Get-OERRequiredScopeMap` is unchanged. If wrong: the requiredscope gate names it.
 ## policy-update-keeps-custom-extensions
 
 Sprint 11 step 3 made `Set-OERAccessPackageAssignmentPolicy` stop dropping what Microsoft Graph

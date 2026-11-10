@@ -2692,7 +2692,7 @@ function Get-OERInventory {
                 if ($SkippedReviewerCount -gt 0) {
                     $SkippedParts.Add("$SkippedReviewerCount review(s) whose reviewers the module cannot write back (for example a group's owners)")
                 }
-                Write-Warning "Get-OERInventory: skipped $SkippedAllCount access review definition(s) the apply document cannot declare: $($SkippedParts -join ', '). Access package reviews, reviews of all members of one group and reviews of all assignments of one directory role round-trip through Invoke-OERStructure."
+                Write-Warning "Get-OERInventory: skipped $SkippedAllCount access review definition(s) the apply document cannot declare: $($SkippedParts -join ', '). Access package reviews, reviews of all members of one group and reviews of one directory role (every assignment, eligible only or active only) round-trip through Invoke-OERStructure."
             }
         }
 

@@ -2098,7 +2098,7 @@ Describe 'Get-OERInventory' {
             @($ArReviewerWarning).Count | Should -Be 1
             [string]$ArReviewerWarning[0] | Should -BeExactly ('Get-OERInventory: skipped 1 access review definition(s) the apply document cannot declare: ' +
                 '1 review(s) whose reviewers the module cannot write back (for example a group''s owners). ' +
-                'Access package reviews, reviews of all members of one group and reviews of all assignments of one directory role round-trip through Invoke-OERStructure.')
+                'Access package reviews, reviews of all members of one group and reviews of one directory role (every assignment, eligible only or active only) round-trip through Invoke-OERStructure.')
         }
         It 'warns once with a count when access reviews were skipped as not access-package-scoped' {
             Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
@@ -2240,7 +2240,7 @@ Describe 'Get-OERInventory' {
             [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 3 access review definition(s) the apply document cannot declare: ' +
                 '2 review(s) of a group in a form the module cannot write back (guest users only, direct members only, or another query), ' +
                 '1 review(s) of an application or another scope. ' +
-                'Access package reviews, reviews of all members of one group and reviews of all assignments of one directory role round-trip through Invoke-OERStructure.')
+                'Access package reviews, reviews of all members of one group and reviews of one directory role (every assignment, eligible only or active only) round-trip through Invoke-OERStructure.')
         }
 
         It 'words the skip warning for the group-form kind alone' {
@@ -2248,7 +2248,7 @@ Describe 'Get-OERInventory' {
             $null = Get-OERInventory -Include AccessReviews -WarningVariable Warned -WarningAction SilentlyContinue
             [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 1 access review definition(s) the apply document cannot declare: ' +
                 '1 review(s) of a group in a form the module cannot write back (guest users only, direct members only, or another query). ' +
-                'Access package reviews, reviews of all members of one group and reviews of all assignments of one directory role round-trip through Invoke-OERStructure.')
+                'Access package reviews, reviews of all members of one group and reviews of one directory role (every assignment, eligible only or active only) round-trip through Invoke-OERStructure.')
         }
 
         It 'words the skip warning for the other-scope kind alone' {
@@ -2256,7 +2256,7 @@ Describe 'Get-OERInventory' {
             $null = Get-OERInventory -Include AccessReviews -WarningVariable Warned -WarningAction SilentlyContinue
             [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 1 access review definition(s) the apply document cannot declare: ' +
                 '1 review(s) of an application or another scope. ' +
-                'Access package reviews, reviews of all members of one group and reviews of all assignments of one directory role round-trip through Invoke-OERStructure.')
+                'Access package reviews, reviews of all members of one group and reviews of one directory role (every assignment, eligible only or active only) round-trip through Invoke-OERStructure.')
         }
 
         It 'skips a group review whose only reviewer is the group''s owners, and exports no entry for it' {
@@ -2268,7 +2268,7 @@ Describe 'Get-OERInventory' {
             @($Warned).Count | Should -Be 1
             [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 1 access review definition(s) the apply document cannot declare: ' +
                 '1 review(s) whose reviewers the module cannot write back (for example a group''s owners). ' +
-                'Access package reviews, reviews of all members of one group and reviews of all assignments of one directory role round-trip through Invoke-OERStructure.')
+                'Access package reviews, reviews of all members of one group and reviews of one directory role (every assignment, eligible only or active only) round-trip through Invoke-OERStructure.')
         }
 
         It 'skips a group review with a user reviewer beside an owners scope' {
@@ -2300,7 +2300,7 @@ Describe 'Get-OERInventory' {
                 '1 review(s) of a group in a form the module cannot write back (guest users only, direct members only, or another query), ' +
                 '1 review(s) of an application or another scope, ' +
                 '1 review(s) whose reviewers the module cannot write back (for example a group''s owners). ' +
-                'Access package reviews, reviews of all members of one group and reviews of all assignments of one directory role round-trip through Invoke-OERStructure.')
+                'Access package reviews, reviews of all members of one group and reviews of one directory role (every assignment, eligible only or active only) round-trip through Invoke-OERStructure.')
         }
 
         It 'sends no name lookup for a review it skips for its reviewers' {
@@ -2316,7 +2316,7 @@ Describe 'Get-OERInventory' {
             @($Inv.AccessReviews).Count | Should -Be 0
             [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 1 access review definition(s) the apply document cannot declare: ' +
                 '1 review(s) of a group in a form the module cannot write back (guest users only, direct members only, or another query). ' +
-                'Access package reviews, reviews of all members of one group and reviews of all assignments of one directory role round-trip through Invoke-OERStructure.')
+                'Access package reviews, reviews of all members of one group and reviews of one directory role (every assignment, eligible only or active only) round-trip through Invoke-OERStructure.')
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
         }
 
@@ -13513,7 +13513,7 @@ Describe 'Get-OERInventory exports a review of all assignments of a directory ro
         @($Warned).Count | Should -Be 1
         [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 1 access review definition(s) the apply document cannot declare: ' +
             '1 review(s) of a directory role in a form the module cannot write back (guest users only, or another query). ' +
-            'Access package reviews, reviews of all members of one group and reviews of all assignments of one directory role round-trip through Invoke-OERStructure.')
+            'Access package reviews, reviews of all members of one group and reviews of one directory role (every assignment, eligible only or active only) round-trip through Invoke-OERStructure.')
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly
     }
 
@@ -13532,7 +13532,7 @@ Describe 'Get-OERInventory exports a review of all assignments of a directory ro
         @($Inv.AccessReviews).Count | Should -Be 0
         [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 1 access review definition(s) the apply document cannot declare: ' +
             '1 review(s) of an application or another scope. ' +
-            'Access package reviews, reviews of all members of one group and reviews of all assignments of one directory role round-trip through Invoke-OERStructure.')
+            'Access package reviews, reviews of all members of one group and reviews of one directory role (every assignment, eligible only or active only) round-trip through Invoke-OERStructure.')
     }
 
     It 'exports a package review and a group review in the same read exactly as before' {
