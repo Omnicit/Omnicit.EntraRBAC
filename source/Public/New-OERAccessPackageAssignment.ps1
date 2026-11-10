@@ -46,7 +46,8 @@ function New-OERAccessPackageAssignment {
     A catalog name or id. With it the -AccessPackage name is looked up only in that catalog, and an
     access package id that is not in it is refused with AccessPackageNotInCatalog before anything is
     written. An ambiguous catalog name is AmbiguousCatalogName and an unknown one CatalogNotFound. Does
-    not bind from the pipeline.
+    not bind from the pipeline. With -Catalog, an access package piped from Get-OERAccessPackage is
+    checked by its own id.
 
     .EXAMPLE
     New-OERAccessPackageAssignment -AccessPackage 'AP-Sales' -Catalog 'CAT-IT-Core' -Policy $policyId -TargetId $userId
@@ -97,7 +98,14 @@ function New-OERAccessPackageAssignment {
         # $null return (a display name that matched nothing) reaches the not-found branch.
         $PackageId = $null
         $ResolveParams = @{ DisplayName = $AccessPackage }
-        if ($PSBoundParameters.ContainsKey('Catalog')) { $ResolveParams.Catalog = $Catalog }
+        if ($PSBoundParameters.ContainsKey('Catalog')) {
+            $ResolveParams.Catalog = $Catalog
+            # A piped access package binds by its DisplayName; with -Catalog its own id is used so
+            # the resolver checks it against the catalog rather than looking the name up again there.
+            $PipedId = Get-OERPipedAccessPackageId -InputObject $PSItem -AccessPackage $AccessPackage `
+                -CatalogBound -Expecting:$MyInvocation.ExpectingInput
+            if ($PipedId) { $ResolveParams.DisplayName = $PipedId }
+        }
         try {
             $PackageId = Resolve-OERAccessPackageId @ResolveParams
         } catch {

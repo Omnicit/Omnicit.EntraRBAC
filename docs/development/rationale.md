@@ -15973,7 +15973,9 @@ answers exactly the package of that catalog, in both term orders; an upper-case 
 empty list. M3: the apply engine's list request (`catalog/id eq` alone, as `Get-OERAccessPackage -Catalog` sends it) plus a client-side case-insensitive match finds the same single package. M4:
 `accessPackages/{id}?$expand=catalog` answers 200 with `catalog.id`, and for an id that does not exist
 404 `AccessPackageNotFound`, the code of the former `?$select=id` probe. M5: the tenant-wide
-`displayName eq` request returns both packages (count 2).
+`displayName eq` request returns both packages (count 2). M2b: the same request with the catalog id in
+UPPER case answers 200 with exactly that catalog's package (Graph compares `catalog/id` case-insensitively), so
+the id is sent as given and needs no case folding.
 
 **R-1 (the owner).** `Resolve-OERAccessPackageId -Catalog` is the single owner of looking up an access
 package named by a caller's argument within a catalog: a name by the M2 request (one request, measured
@@ -15991,8 +15993,16 @@ catalog would scope nothing and a silent ignore would list every assignment. Bot
 safer direction, and both are sent before any write and before `ShouldProcess`.
 
 **R-3 (the pipeline).** The new `-Catalog` does not bind from the pipeline. A piped package binds
-exactly as before (its `Id`), so it is that package by construction; with an explicit `-Catalog` each
-piped package id is checked against that catalog and one of another catalog is refused. Binding
+exactly as before: by its `Id` in `Get-OERAccessPackageAssignment`, `Get-OERAccessPackageResourceRole`,
+`New-OERAccessPackageAssignmentPolicy` and `Add-OERAccessPackageResourceRole`, where the id path checks
+it against an explicit `-Catalog` and a package of another catalog is refused; by its `DisplayName` in
+`Get-OERAccessPackageAssignmentPolicy` and `New-OERAccessPackageAssignment`, where with `-Catalog` the
+piped object's own `Id` is used instead (`Get-OERPipedAccessPackageId`: the object is tagged
+`Omnicit.EntraRBAC.AccessPackage`, the command itself receives pipeline input, and its `DisplayName` is
+the bound value), so the name is never looked up again in the named catalog and landed on another
+catalog's package of the same name. `Remove-OERAccessPackage` and `Set-OERAccessPackage` take a piped
+package by `-Id`, a set without `-Catalog` (a pipeline with `-Catalog` fails at binding), and
+`Remove-OERAccessPackageResourceRole` binds `AccessPackageId` (from a resource role binding, an id). Binding
 `-Catalog` from a piped object's `CatalogId` would change the requests every piped call sends and would
 let any piped object choose the catalog. The existing pipeline binding of
 `New-OERAccessPackage -Catalog` is unchanged, and no alias is added, so the alias order rule is untouched.

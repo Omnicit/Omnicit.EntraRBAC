@@ -351,6 +351,60 @@ Describe 'New-OERAccessPackageAssignment' {
 
         }
     }
+
+    Context 'a piped access package with -Catalog is resolved by its own id' {
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } }
+            $script:PipedAp = [pscustomobject]@{ Id = '00000000-0000-0000-0000-000000000031'; DisplayName = 'AP'; CatalogId = '00000000-0000-0000-0000-000000000032' }
+            $script:PipedAp.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.AccessPackage')
+        }
+
+        It 'passes the piped object''s Id as the name to the resolver, with the catalog' {
+            $script:PipedAp | New-OERAccessPackageAssignment -Policy '00000000-0000-0000-0000-000000000021' -TargetId '00000000-0000-0000-0000-000000000022' -Catalog 'CAT-B' -WhatIf -ErrorAction SilentlyContinue | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter {
+                $PesterBoundParameters.ContainsKey('Catalog') -and $Catalog -eq 'CAT-B' -and $DisplayName -eq '00000000-0000-0000-0000-000000000031'
+            }
+        }
+
+        It 'resolves the name as before when -Catalog is not bound' {
+            $script:PipedAp | New-OERAccessPackageAssignment -Policy '00000000-0000-0000-0000-000000000021' -TargetId '00000000-0000-0000-0000-000000000022' -WhatIf -ErrorAction SilentlyContinue | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter {
+                -not $PesterBoundParameters.ContainsKey('Catalog') -and $DisplayName -eq 'AP'
+            }
+        }
+
+        It 'keeps an explicit -AccessPackage name with -Catalog when nothing is piped' {
+            New-OERAccessPackageAssignment -AccessPackage 'AP' -Policy '00000000-0000-0000-0000-000000000021' -TargetId '00000000-0000-0000-0000-000000000022' -Catalog 'CAT-B' -WhatIf -ErrorAction SilentlyContinue | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter {
+                $Catalog -eq 'CAT-B' -and $DisplayName -eq 'AP'
+            }
+        }
+
+        It 'keeps the name when the command is called inside a pipeline it does not receive' {
+            1 | ForEach-Object { New-OERAccessPackageAssignment -AccessPackage 'AP' -Policy '00000000-0000-0000-0000-000000000021' -TargetId '00000000-0000-0000-0000-000000000022' -Catalog 'CAT-B' -WhatIf -ErrorAction SilentlyContinue } | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter {
+                $Catalog -eq 'CAT-B' -and $DisplayName -eq 'AP'
+            }
+        }
+    }
+}
+
+Describe 'New-OERAccessPackageAssignment -- a piped package of another catalog with the real resolver' {
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = '00000000-0000-0000-0000-000000000031'; catalog = @{ id = '00000000-0000-0000-0000-000000000033' } } } -ParameterFilter { $Uri -like '*accessPackages/00000000-0000-0000-0000-000000000031?$expand=catalog*' }
+    }
+
+    It 'publishes AccessPackageNotInCatalog and sends no write request' {
+        $Ap = [pscustomobject]@{ Id = '00000000-0000-0000-0000-000000000031'; DisplayName = 'AP'; CatalogId = '00000000-0000-0000-0000-000000000033' }
+        $Ap.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.AccessPackage')
+        $Err = $null
+        $Ap | New-OERAccessPackageAssignment -Policy '00000000-0000-0000-0000-000000000021' -TargetId '00000000-0000-0000-0000-000000000022' -Catalog '00000000-0000-0000-0000-000000000032' -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AccessPackageNotInCatalog,New-OERAccessPackageAssignment' }).Count | Should -Be 1
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+    }
 }
 
 Describe 'New-OERAccessPackageAssignment GUID access package pass-through' {
