@@ -3443,3 +3443,80 @@ foreach ($Id in $Ids) { 'ERROR ID: {0}' -f $Id }
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
     }
 }
+
+Describe 'Invoke-OERArmRequest follows a redirect only without the token (Sprint 15 step 1, A3)' {
+    # Measured 2026-11-10 in pwsh 7.6.9 against loopback listeners (docs/development/rationale.md,
+    # #arm-transport, "Sprint 15 step 1"): Invoke-WebRequest, called with exactly the parameters below,
+    # followed a 302 to another port, another host and the same origin, and a 307 (a PUT) to another
+    # port, and sent the Authorization header on the first request only. That was measured for THIS
+    # parameter set. These
+    # tests pin it: a parameter added to the send -- the token moved out of -Headers,
+    # PreserveAuthorizationOnRedirect, a web session -- turns them red until it has been measured too.
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC {
+            $script:_OERAuthState = @{
+                AuthMethod     = 'Interactive'
+                TenantId       = 'organizations'
+                ArmToken       = (ConvertTo-SecureString 'NOT-A-REAL-TOKEN-arm' -AsPlainText -Force)
+                ArmResourceUrl = 'https://management.azure.com/'
+            }
+        }
+        $global:OERRedirectArmSends = [System.Collections.Generic.List[object]]::new()
+        $global:OERRedirectArmPage = 0
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest {
+            $global:OERRedirectArmSends.Add([PSCustomObject]@{
+                    Names       = @($PesterBoundParameters.Keys | Sort-Object)
+                    HeaderNames = @(@($PesterBoundParameters['Headers'].Keys) | Sort-Object)
+                })
+            $global:OERRedirectArmPage++
+            if ($global:OERRedirectArmPage -eq 1 -and [string]$Uri -like '*paged*') {
+                return [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/paged?api-version=2022-12-01&$skiptoken=X"}' }
+            }
+            [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"b"}]}' }
+        }
+        Mock -ModuleName Omnicit.EntraRBAC Start-Sleep { }
+    }
+
+    AfterEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Remove-Variable -Scope Global -Name OERRedirectArmSends, OERRedirectArmPage -ErrorAction Ignore
+    }
+
+    It 'sends a read with exactly the measured parameters, the token in -Headers alone' {
+        $null = InModuleScope Omnicit.EntraRBAC { Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' }
+
+        $global:OERRedirectArmSends.Count | Should -Be 1
+        $global:OERRedirectArmSends[0].Names | Should -Be @('ErrorAction', 'Headers', 'Method', 'SkipHttpErrorCheck', 'Uri', 'Verbose')
+        $global:OERRedirectArmSends[0].HeaderNames | Should -Be @('Authorization')
+    }
+
+    It 'sends a write with exactly the measured parameters and its body' {
+        $null = InModuleScope Omnicit.EntraRBAC {
+            Invoke-OERArmRequest -Method PUT -Path '/subscriptions/x/providers/y?api-version=2022-04-01' -Body @{ properties = @{ x = 1 } }
+        }
+
+        $global:OERRedirectArmSends.Count | Should -Be 1
+        $global:OERRedirectArmSends[0].Names | Should -Be @('Body', 'ContentType', 'ErrorAction', 'Headers', 'Method', 'SkipHttpErrorCheck', 'Uri', 'Verbose')
+        $global:OERRedirectArmSends[0].HeaderNames | Should -Be @('Authorization')
+    }
+
+    It 'sends every page of an -All walk with exactly the measured parameters' {
+        $null = InModuleScope Omnicit.EntraRBAC { Invoke-OERArmRequest -Path '/paged?api-version=2022-12-01' -All }
+
+        $global:OERRedirectArmSends.Count | Should -Be 2
+        foreach ($Send in $global:OERRedirectArmSends) {
+            $Send.Names | Should -Be @('ErrorAction', 'Headers', 'Method', 'SkipHttpErrorCheck', 'Uri', 'Verbose')
+            $Send.HeaderNames | Should -Be @('Authorization')
+        }
+    }
+
+    It 'binds no parameter that decides what a redirect carries' {
+        $null = InModuleScope Omnicit.EntraRBAC { Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' }
+
+        $global:OERRedirectArmSends.Count | Should -Be 1
+        foreach ($Name in @('PreserveAuthorizationOnRedirect', 'AllowInsecureRedirect', 'MaximumRedirection',
+                'WebSession', 'SessionVariable', 'Authentication', 'Token', 'Credential', 'UseDefaultCredentials')) {
+            $global:OERRedirectArmSends[0].Names | Should -Not -Contain $Name
+        }
+    }
+}
