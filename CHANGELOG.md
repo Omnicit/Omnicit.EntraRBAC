@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No changes to the module since 1.6.0. A preview published from this point differs from 1.6.0 only in
-documentation, tests or the build.
+An access package can be named within its catalog. Eight cmdlets that take a package by name gain
+`-Catalog` (name or id), and the `-Catalog` of `Add-OERAccessPackageResourceRole`, `New-OERAccessPackage`
+and `New-OERAccessReviewDefinition` now scopes the package lookup too: a name two catalogs share is found
+in the one named, and a package id of another catalog is refused with `AccessPackageNotInCatalog` before
+anything is written. `New-OERAccessPackage`, and through it `Invoke-OERStructure`, creates the package even
+when another catalog holds the name.
+Without `-Catalog` nothing changes.
 
 ## [1.6.0] - 2026-11-10
 
