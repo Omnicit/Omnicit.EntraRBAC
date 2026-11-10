@@ -53,7 +53,7 @@
       "durationInDays": 14
     },
     {
-      "displayName": "AR-OER-Demo-Reports-Reader",
+      "displayName": "AR-IT-ReportsReaderEligible",
       "directoryRole": "Reports Reader",
       "directoryRoleAssignmentType": "Eligible",
       "reviewers": [ "manager" ],
