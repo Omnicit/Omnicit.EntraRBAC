@@ -22,10 +22,13 @@ function Add-OERAccessPackageResourceRole {
 
     .PARAMETER AccessPackage
     The access package id or display name to add the resource role to. Accepts pipeline input by
-    property name from Get-OERAccessPackage (binds Id or DisplayName).
+    property name from Get-OERAccessPackage (binds Id or DisplayName). A display name is looked up in
+    -Catalog only (access package names are unique only within a catalog); an id of an access package
+    in another catalog is refused with AccessPackageNotInCatalog before the POST and before
+    ShouldProcess.
 
     .PARAMETER Catalog
-    The catalog id or display name that contains the resource.
+    The catalog id or display name that contains the resource and the access package.
 
     .PARAMETER ResourceOriginId
     The origin id (directory object id or site identifier) of the catalog resource whose role is bound,
@@ -92,36 +95,8 @@ function Add-OERAccessPackageResourceRole {
         Initialize-OERAuth @AuthParams
     }
     process {
-        # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
-        # $null return (a display name that matched nothing) reaches the not-found branch.
-        $PackageId = $null
-        try {
-            $PackageId = Resolve-OERAccessPackageId -DisplayName $AccessPackage
-        } catch {
-            Remove-OERErrorRecord -Record $PSItem
-            if (Test-OERAmbiguousNameError -Record $PSItem) {
-                Write-CmdletError `
-                    -Message ([System.Exception]::new($PSItem.Exception.Message)) `
-                    -ErrorId 'AmbiguousAccessPackageName' -Category InvalidArgument `
-                    -TargetObject $AccessPackage -Cmdlet $PSCmdlet
-                return
-            }
-            # Anything else the resolver raised is surfaced AS ITSELF, never folded into the
-            # not-found branch below. Its own AccessPackageNotFound already names the id and why it
-            # may be wrong, and a 403 or an exhausted 429 from its existence read is not evidence
-            # that no such package exists -- reporting either as not found is the failed-read-as-an-
-            # empty-fact defect of issue #76. A display name matching nothing still returns $null
-            # rather than throwing, so the not-found branch below is unchanged for it.
-            $PSCmdlet.WriteError($PSItem)
-            return
-        }
-        if (-not $PackageId) {
-            Write-CmdletError `
-                -Message ([System.Exception]::new("Access package '$AccessPackage' not found.")) `
-                -ErrorId 'AccessPackageNotFound' -Category ObjectNotFound -TargetObject $AccessPackage -Cmdlet $PSCmdlet
-            return
-        }
-
+        # The catalog is resolved FIRST: the access package is looked up within it (an access package
+        # name is unique only within its catalog), and its id is passed on to the resolver.
         # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
         # $null return (a display name that matched nothing) reaches the not-found branch.
         $CatalogId = $null
@@ -145,6 +120,38 @@ function Add-OERAccessPackageResourceRole {
             Write-CmdletError `
                 -Message ([System.Exception]::new("Catalog '$Catalog' not found.")) `
                 -ErrorId 'CatalogNotFound' -Category ObjectNotFound -TargetObject $Catalog -Cmdlet $PSCmdlet
+            return
+        }
+
+        # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
+        # $null return (a display name that matched nothing IN THE CATALOG) reaches the not-found
+        # branch. A package id of another catalog throws AccessPackageNotInCatalog, published as
+        # itself below, before any resource lookup, the POST and ShouldProcess.
+        $PackageId = $null
+        try {
+            $PackageId = Resolve-OERAccessPackageId -DisplayName $AccessPackage -Catalog $CatalogId
+        } catch {
+            Remove-OERErrorRecord -Record $PSItem
+            if (Test-OERAmbiguousNameError -Record $PSItem) {
+                Write-CmdletError `
+                    -Message ([System.Exception]::new($PSItem.Exception.Message)) `
+                    -ErrorId 'AmbiguousAccessPackageName' -Category InvalidArgument `
+                    -TargetObject $AccessPackage -Cmdlet $PSCmdlet
+                return
+            }
+            # Anything else the resolver raised is surfaced AS ITSELF, never folded into the
+            # not-found branch below. Its own AccessPackageNotFound already names the id and why it
+            # may be wrong, and a 403 or an exhausted 429 from its existence read is not evidence
+            # that no such package exists -- reporting either as not found is the failed-read-as-an-
+            # empty-fact defect of issue #76. A display name matching nothing still returns $null
+            # rather than throwing, so the not-found branch below is unchanged for it.
+            $PSCmdlet.WriteError($PSItem)
+            return
+        }
+        if (-not $PackageId) {
+            Write-CmdletError `
+                -Message ([System.Exception]::new("Access package '$AccessPackage' not found in catalog '$Catalog'.")) `
+                -ErrorId 'AccessPackageNotFound' -Category ObjectNotFound -TargetObject $AccessPackage -Cmdlet $PSCmdlet
             return
         }
 

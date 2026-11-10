@@ -342,6 +342,56 @@ Describe 'New-OERAccessPackage' {
         }
     }
 
+    Context 'the existence check is scoped to the catalog' {
+        It 'looks the name up with -Catalog set to the resolved catalog id' {
+            Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId { $null }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $null }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ id = 'ap-new'; displayName = 'AP-Sales' }
+            } -ParameterFilter { $Method -eq 'POST' }
+            New-OERAccessPackage -DisplayName 'AP-Sales' -Catalog 'CAT-IT-Core' -Confirm:$false | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter {
+                $DisplayName -eq 'AP-Sales' -and $Catalog -eq 'cat-1'
+            }
+        }
+
+        It 'creates the package when the name exists only in another catalog (the scoped lookup finds nothing)' {
+            # The resolver is catalog-scoped, so a twin in another catalog is never a candidate: it
+            # answers $null and the create goes ahead into the named catalog.
+            Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId { $null }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $null }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ id = 'ap-new'; displayName = 'AP-Sales' }
+            } -ParameterFilter { $Method -eq 'POST' }
+            $R = New-OERAccessPackage -DisplayName 'AP-Sales' -Catalog 'CAT-IT-Core' -Confirm:$false
+            $R.Id | Should -BeExactly 'ap-new'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'POST' -and $Body.displayName -eq 'AP-Sales' -and $Body.catalog.id -eq 'cat-1'
+            }
+        }
+
+        It 'publishes AccessPackageNotInCatalog as itself for a GUID name of another catalog, creating nothing' {
+            Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Access package is not in catalog.'),
+                    'AccessPackageNotInCatalog',
+                    [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                    '00000000-0000-0000-0000-000000000011')
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $null }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest -ParameterFilter { $Method -eq 'POST' } -MockWith { }
+            $Err = $null
+            $R = New-OERAccessPackage -DisplayName '00000000-0000-0000-0000-000000000011' -Catalog 'CAT-IT-Core' -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err
+            $R | Should -BeNullOrEmpty
+            $Mine = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AccessPackageNotInCatalog,New-OERAccessPackage' })
+            $Mine.Count | Should -Be 1
+            $Mine[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'AccessPackageResolveFailed*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+    }
+
     Context 'create then call again converges (G8)' {
         AfterEach { Remove-Variable -Name OERT6Created -Scope Global -ErrorAction SilentlyContinue }
 

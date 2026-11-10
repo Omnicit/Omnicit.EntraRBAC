@@ -365,6 +365,9 @@ Describe 'Add-OERAccessPackageResourceRole -- a failed resolver read is not a no
         InModuleScope 'Omnicit.EntraRBAC' { $script:_OERAuthState = $null }
         Mock -ModuleName 'Omnicit.EntraRBAC' Initialize-OERAuth {}
         Mock -ModuleName 'Omnicit.EntraRBAC' Invoke-OERGraphRequest {}
+        # The catalog is resolved before the access package, so it has to resolve for the package
+        # lookup under test to be reached.
+        Mock -ModuleName 'Omnicit.EntraRBAC' Resolve-OERCatalogId { 'cat-1' }
     }
 
     It 'surfaces a 403 out of Resolve-OERAccessPackageId as itself, never as AccessPackageNotFound' {
@@ -394,6 +397,76 @@ Describe 'Add-OERAccessPackageResourceRole -- a failed resolver read is not a no
             'a permission failure booked as a missing object is the failed-read-as-an-empty-fact defect of issue #76')
         $Published[0].CategoryInfo.Category | Should -Be 'PermissionDenied'
         Should -Invoke -ModuleName 'Omnicit.EntraRBAC' Invoke-OERGraphRequest -Times 0 -Exactly
+    }
+}
+
+Describe 'Add-OERAccessPackageResourceRole -- the access package is looked up within the catalog' {
+    BeforeEach {
+        InModuleScope 'Omnicit.EntraRBAC' { $script:_OERAuthState = $null }
+        Mock -ModuleName 'Omnicit.EntraRBAC' Initialize-OERAuth {}
+        Mock -ModuleName 'Omnicit.EntraRBAC' Invoke-OERGraphRequest {}
+        Mock -ModuleName 'Omnicit.EntraRBAC' Resolve-OERCatalogId { 'cat-1' }
+        Mock -ModuleName 'Omnicit.EntraRBAC' Resolve-OERAccessPackageId { 'ap-1' }
+        Mock -ModuleName 'Omnicit.EntraRBAC' Resolve-OERCatalogResource {
+            @{ id = 'res-1'; originId = 'grp-guid'; originSystem = 'AadGroup'; roles = @(@{ id = 'r'; displayName = 'Member'; originId = 'Member_x' }) }
+        }
+        Mock -ModuleName 'Omnicit.EntraRBAC' Get-OERAccessPackageResourceRole { $null }
+    }
+
+    It 'resolves the access package with -Catalog set to the resolved catalog id' {
+        Add-OERAccessPackageResourceRole -AccessPackage 'AP-Sales' -Catalog 'CAT-IT-Core' -ResourceOriginId 'grp-guid' `
+            -Role 'Member' -Confirm:$false | Out-Null
+        Should -Invoke -ModuleName 'Omnicit.EntraRBAC' Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter {
+            $DisplayName -eq 'AP-Sales' -and $Catalog -eq 'cat-1'
+        }
+        Should -Invoke -ModuleName 'Omnicit.EntraRBAC' Resolve-OERCatalogId -Times 1 -Exactly
+    }
+
+    It 'resolves the catalog before the access package' {
+        # The mock bodies record the order in a global list, removed again in the finally.
+        $Global:OERAddRoleCallOrder = [System.Collections.Generic.List[string]]::new()
+        try {
+            Mock -ModuleName 'Omnicit.EntraRBAC' Resolve-OERCatalogId { $Global:OERAddRoleCallOrder.Add('catalog'); 'cat-1' }
+            Mock -ModuleName 'Omnicit.EntraRBAC' Resolve-OERAccessPackageId { $Global:OERAddRoleCallOrder.Add('package'); 'ap-1' }
+            Add-OERAccessPackageResourceRole -AccessPackage 'AP-Sales' -Catalog 'CAT-IT-Core' -ResourceOriginId 'grp-guid' `
+                -Role 'Member' -Confirm:$false | Out-Null
+            $Order = $Global:OERAddRoleCallOrder -join ','
+        } finally {
+            Remove-Variable -Name OERAddRoleCallOrder -Scope Global -ErrorAction SilentlyContinue
+        }
+        $Order | Should -Be 'catalog,package'
+    }
+
+    It 'publishes AccessPackageNotInCatalog as itself and sends no POST and no confirmation prompt' {
+        Mock -ModuleName 'Omnicit.EntraRBAC' Resolve-OERAccessPackageId {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Access package is not in catalog.'),
+                'AccessPackageNotInCatalog',
+                [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                'ap-other')
+        }
+        $Err = $null
+        Add-OERAccessPackageResourceRole -AccessPackage '00000000-0000-0000-0000-000000000011' -Catalog 'cat-1' `
+            -ResourceOriginId 'grp-guid' -Role 'Member' -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+        $Published = @(@($Err) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+                $_.InvocationInfo.MyCommand.Name -eq 'Add-OERAccessPackageResourceRole'
+            })
+        $Published.Count | Should -Be 1
+        $Published[0].FullyQualifiedErrorId | Should -Match '^AccessPackageNotInCatalog'
+        $Published[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+        Should -Invoke -ModuleName 'Omnicit.EntraRBAC' Invoke-OERGraphRequest -Times 0 -Exactly
+        Should -Invoke -ModuleName 'Omnicit.EntraRBAC' Resolve-OERCatalogResource -Times 0 -Exactly
+    }
+
+    It 'reports a package missing from the catalog with the catalog named in the text' {
+        Mock -ModuleName 'Omnicit.EntraRBAC' Resolve-OERAccessPackageId { $null }
+        $Err = $null
+        Add-OERAccessPackageResourceRole -AccessPackage 'NoSuch' -Catalog 'CAT-IT-Core' -ResourceOriginId 'grp-guid' `
+            -Role 'Member' -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+        $Published = @(@($Err) | Where-Object { $_.FullyQualifiedErrorId -eq 'AccessPackageNotFound,Add-OERAccessPackageResourceRole' })
+        $Published.Count | Should -Be 1
+        $Published[0].Exception.Message | Should -Be "Access package 'NoSuch' not found in catalog 'CAT-IT-Core'."
     }
 }
 

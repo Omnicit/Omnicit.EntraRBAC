@@ -7,7 +7,8 @@ function Resolve-OERAccessReviewScopeTarget {
     .DESCRIPTION
     Resolves -AccessPackage (display name or GUID) to an id via Resolve-OERAccessPackageId. The catalog
     id is taken from -Catalog when supplied (display name resolved via Resolve-OERCatalogId, GUID used
-    verbatim), otherwise read from the access package. The assignment policy id is taken from
+    verbatim; resolved BEFORE the package, which is then looked up within it), otherwise read from the
+    access package. The assignment policy id is taken from
     -AssignmentPolicy through Resolve-OERAssignmentPolicyId, the single owner of that lookup: a GUID is
     used verbatim, otherwise the package's assignment policies are queried and matched by display
     name. Returns a hashtable with AccessPackageId, AssignmentPolicyId, CatalogId
@@ -50,13 +51,16 @@ function Resolve-OERAccessReviewScopeTarget {
     failure id already, so it sets no FailedRecord either.
 
     .PARAMETER AccessPackage
-    The access package display name or id.
+    The access package display name or id. With -Catalog a display name is looked up in that catalog
+    only, and an id of another catalog is refused with 'AccessPackageNotInCatalog' (carried in
+    FailedErrorId, FailedCategory 'InvalidArgument').
 
     .PARAMETER AssignmentPolicy
     The assignment policy display name or id whose assignments are reviewed.
 
     .PARAMETER Catalog
-    Optional catalog display name or id; when omitted the catalog is read from the access package.
+    Optional catalog display name or id; when omitted the catalog is read from the access package. When
+    given, the catalog is resolved first and scopes the access package lookup.
 
     .EXAMPLE
     Resolve-OERAccessReviewScopeTarget -AccessPackage 'AP-Sales' -AssignmentPolicy 'Standard'
@@ -103,26 +107,13 @@ function Resolve-OERAccessReviewScopeTarget {
     # exists. Booking either of those as a plain not-found is the failed-read-as-an-empty-fact
     # defect of issue #76. A display name that matched nothing still returns $null rather than
     # throwing, and that alone keeps the bare not-found shape below.
-    $ApId = $null
-    try {
-        $ApId = Resolve-OERAccessPackageId -DisplayName $AccessPackage
-    } catch {
-        Remove-OERErrorRecord -Record $PSItem
-        if (Test-OERAmbiguousNameError -Record $PSItem) {
-            return (& $Fail 'AccessPackage' $AccessPackage 'AmbiguousAccessPackageName' $PSItem.Exception.Message 'InvalidArgument')
-        }
-        # The record's own ErrorId, taken from the FIRST comma-separated segment: a record that has
-        # crossed a WriteError boundary carries the composed '<ErrorId>,<CommandName>' form, and the
-        # caller writes this value straight into its own error record's id.
-        $ResolverErrorId = (([string]$PSItem.FullyQualifiedErrorId) -split ',')[0].Trim()
-        if (-not $ResolverErrorId) { $ResolverErrorId = 'AccessPackageResolveFailed' }
-        return (& $Fail 'AccessPackage' $AccessPackage $ResolverErrorId $PSItem.Exception.Message `
-                ([string]$PSItem.CategoryInfo.Category))
-    }
-    if (-not $ApId) { return (& $Fail 'AccessPackage' $AccessPackage) }
-
+    #
+    # With an explicit -Catalog the catalog is resolved FIRST, and the package is looked up within it
+    # (an access package name is unique only within its catalog; an id of another catalog throws
+    # AccessPackageNotInCatalog, which travels the same channel). Without -Catalog the package comes
+    # first and the catalog is derived from it, exactly as before.
+    $CatId = $null
     if ($Catalog) {
-        $CatId = $null
         if (Test-OERGuid -Value $Catalog) {
             $CatId = $Catalog
         } else {
@@ -140,7 +131,28 @@ function Resolve-OERAccessReviewScopeTarget {
         }
         if (-not $CatId) { return (& $Fail 'Catalog' $Catalog) }
     }
-    else {
+
+    $ApId = $null
+    $ResolveParams = @{ DisplayName = $AccessPackage }
+    if ($Catalog) { $ResolveParams.Catalog = $CatId }
+    try {
+        $ApId = Resolve-OERAccessPackageId @ResolveParams
+    } catch {
+        Remove-OERErrorRecord -Record $PSItem
+        if (Test-OERAmbiguousNameError -Record $PSItem) {
+            return (& $Fail 'AccessPackage' $AccessPackage 'AmbiguousAccessPackageName' $PSItem.Exception.Message 'InvalidArgument')
+        }
+        # The record's own ErrorId, taken from the FIRST comma-separated segment: a record that has
+        # crossed a WriteError boundary carries the composed '<ErrorId>,<CommandName>' form, and the
+        # caller writes this value straight into its own error record's id.
+        $ResolverErrorId = (([string]$PSItem.FullyQualifiedErrorId) -split ',')[0].Trim()
+        if (-not $ResolverErrorId) { $ResolverErrorId = 'AccessPackageResolveFailed' }
+        return (& $Fail 'AccessPackage' $AccessPackage $ResolverErrorId $PSItem.Exception.Message `
+                ([string]$PSItem.CategoryInfo.Category))
+    }
+    if (-not $ApId) { return (& $Fail 'AccessPackage' $AccessPackage) }
+
+    if (-not $Catalog) {
         # The v1.0 accessPackage resource has no catalogId scalar; the catalog is a navigation
         # property, so expand it and read catalog.id (a $select of catalogId returns a 400).
         #

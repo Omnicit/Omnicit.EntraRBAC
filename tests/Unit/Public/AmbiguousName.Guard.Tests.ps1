@@ -23,7 +23,7 @@ BeforeDiscovery {
     $script:GuardCases = @(
         @{
             Cmdlet = 'Add-OERAccessPackageResourceRole'; Resolver = 'Resolve-OERAccessPackageId'
-            ErrorId = 'AmbiguousAccessPackageName'; Pre = @{}
+            ErrorId = 'AmbiguousAccessPackageName'; Pre = @{ 'Resolve-OERCatalogId' = 'cat-1' }
             Invoke = {
                 Add-OERAccessPackageResourceRole -AccessPackage 'Dup' -Catalog 'cat-1' -ResourceOriginId 'grp-guid' `
                     -Role 'Member' -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
@@ -32,7 +32,7 @@ BeforeDiscovery {
         }
         @{
             Cmdlet = 'Add-OERAccessPackageResourceRole'; Resolver = 'Resolve-OERCatalogId'
-            ErrorId = 'AmbiguousCatalogName'; Pre = @{ 'Resolve-OERAccessPackageId' = 'ap-1' }
+            ErrorId = 'AmbiguousCatalogName'; Pre = @{}
             Invoke = {
                 Add-OERAccessPackageResourceRole -AccessPackage 'AP-Sales' -Catalog 'Dup' -ResourceOriginId 'grp-guid' `
                     -Role 'Member' -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
