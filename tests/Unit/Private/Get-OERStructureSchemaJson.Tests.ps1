@@ -1405,7 +1405,7 @@ Describe 'Get-OERStructureSchemaJson renames of administrative units, catalogs a
         }
     }
 
-    It 'validates a directory role review and rejects every mixed form (Sprint 13 step 4)'-Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+    It 'validates a directory role review and rejects every mixed form (Sprint 13 step 4)' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
         InModuleScope $script:moduleName {
             $Schema = Get-OERStructureSchemaJson
             $Wrap = { param($Item) '{ "version": "1.0", "accessReviews": [ ' + $Item + ' ] }' }
