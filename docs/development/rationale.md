@@ -13539,7 +13539,12 @@ when they differ reports the entry as one `Failed` row and returns, with nothing
 package or for the entry; a lookup that fails is scrubbed first and reported `Failed` with its error,
 nothing further written. A package with no catalog in the answer is one the create sent into the
 declared catalog whose confirmation read did not answer, and is reported `Created` as before. The handler added no
-ErrorId (Sprint 12 step 4 added one to the cmdlet, above). Residual: none. (d) `Get-OERInventory` reads the listing of every group once per
+ErrorId (Sprint 12 step 4 added one to the cmdlet, above). Residual: none. Sprint 15 step 1b changed
+the lookup beneath that guard: `New-OERAccessPackage` now looks the name up within the named catalog
+only ([#access-package-catalog-parameter](#access-package-catalog-parameter)), so a package of that
+name in another catalog is no longer found at all and no longer stops the create;
+`AccessPackageInAnotherCatalog` stays as a defence for a found package whose confirmation read shows
+another catalog. (d) `Get-OERInventory` reads the listing of every group once per
 invocation that meets a group principal whose name was read, and `Export-OERInventory` makes one
 invocation per Azure scope, whose role assignment read returns inherited assignments too: one group
 assignment at a management group costs ceil(G/999) requests at every scope beneath it (about 9,300
@@ -14373,7 +14378,9 @@ package the document declares without a rename was resolved like any name, in th
 target check (`Resolve-OERAccessPackageId`) and by the create (`Resolve-OERAccessReviewScopeTarget`).
 So for a package declared in catalog A while a package of that name exists in catalog B, the review was
 checked against, or created on, B's package -- the mocked test for it showed the create looking the
-name up and finding B's package. Step 5's guard already failed the package itself when
+name up and finding B's package (since Sprint 15 step 1b `New-OERAccessReviewDefinition -Catalog`
+looks the name up within that catalog, [#access-package-catalog-parameter](#access-package-catalog-parameter);
+the rename map of this anchor is unchanged). Step 5's guard already failed the package itself when
 `New-OERAccessPackage` returned another catalog's ([#roster-identity-and-shared-names](#roster-identity-and-shared-names),
 known limit (c)); the review was the remaining path.
 
@@ -15942,3 +15949,74 @@ requires a command to exist, and two negative assertions depend on it -- `Connec
 `-Times 0` in `Initialize-OERAuth.Tests.ps1` and `Disconnect-AzAccount` `-Times 0` in
 `Disconnect-OER.Tests.ps1`. That is not a runtime need, which is why it is absent from the table
 above.
+
+## access-package-catalog-parameter
+
+An access package name is unique within its catalog, not in the tenant, yet every access package
+cmdlet that took a name looked it up in the whole tenant. A name two catalogs share was refused as
+ambiguous (`AmbiguousAccessPackageName`), so the package of the intended catalog could be reached only
+by its id, and `New-OERAccessPackage` stopped a create whenever ANY catalog held the name
+([#roster-identity-and-shared-names](#roster-identity-and-shared-names), known limit (c)). Sprint 15
+step 1b adds an optional `-Catalog` (a name or an id) to the eight cmdlets that looked a package up
+without one -- `Get-OERAccessPackageAssignment`, `Get-OERAccessPackageAssignmentPolicy`,
+`Get-OERAccessPackageResourceRole`, `New-OERAccessPackageAssignment`,
+`New-OERAccessPackageAssignmentPolicy`, `Remove-OERAccessPackageResourceRole`,
+`Remove-OERAccessPackage` and `Set-OERAccessPackage` -- and makes the `-Catalog` that
+`Add-OERAccessPackageResourceRole`, `New-OERAccessPackage` and `New-OERAccessReviewDefinition`
+already had scope the package lookup too. Without `-Catalog` every call is exactly as before.
+
+**Measured live (2026-11-10, the dedicated test identity, own-prefix objects).** M1: Microsoft Graph
+accepts a second access package with the same display name in another catalog (201). M2: the request
+`accessPackages?$filter=displayName eq '<name>' and catalog/id eq '<catalogId>'&$select=id,displayName`
+answers exactly the package of that catalog, in both term orders; an upper-case name finds it too
+(Graph compares the name case-insensitively); a catalog id that does not exist answers 200 with an
+empty list. M3: the apply engine's list request (`catalog/id eq` alone, as `Get-OERAccessPackage -Catalog` sends it) plus a client-side case-insensitive match finds the same single package. M4:
+`accessPackages/{id}?$expand=catalog` answers 200 with `catalog.id`, and for an id that does not exist
+404 `AccessPackageNotFound`, the code of the former `?$select=id` probe. M5: the tenant-wide
+`displayName eq` request returns both packages (count 2).
+
+**R-1 (the owner).** `Resolve-OERAccessPackageId -Catalog` is the single owner of looking up an access
+package named by a caller's argument within a catalog: a name by the M2 request (one request, measured
+exact), an id by its M4 read. The apply engine's `accessPackages[]` handler is NOT moved onto it: it
+lists the declared catalog whole and reconciles the entry against that list (name, previous name by
+name or by id, the candidates for the ambiguity marks, rows with their own texts), and never looks a
+package up by an argument; moving it would change published rows. M2 and M3 agree live. Cost if wrong:
+two ways to find a package in a catalog, held in step by the agreement of M2 and M3; a follow-up can
+move the engine's match onto the resolver with the rows held by tests.
+
+**R-2 (two new ErrorIds).** `AccessPackageNotInCatalog` (InvalidArgument): a package id that is not in
+the named catalog, or whose catalog the read did not carry. `CatalogWithoutAccessPackage`
+(InvalidArgument): `Get-OERAccessPackageAssignment -Catalog` without `-AccessPackage`, since the
+catalog would scope nothing and a silent ignore would list every assignment. Both are refusals, the
+safer direction, and both are sent before any write and before `ShouldProcess`.
+
+**R-3 (the pipeline).** The new `-Catalog` does not bind from the pipeline. A piped package binds
+exactly as before (its `Id`), so it is that package by construction; with an explicit `-Catalog` each
+piped package id is checked against that catalog and one of another catalog is refused. Binding
+`-Catalog` from a piped object's `CatalogId` would change the requests every piped call sends and would
+let any piped object choose the catalog. The existing pipeline binding of
+`New-OERAccessPackage -Catalog` is unchanged, and no alias is added, so the alias order rule is untouched.
+
+**R-4 (catalog failures).** In catalog mode the resolver resolves the catalog with
+`Resolve-OERCatalogId` (a GUID is taken verbatim, no request). An ambiguous catalog name is re-thrown as
+a typed `AmbiguousCatalogName`, a name matching no catalog as `CatalogNotFound`, any other failure as
+itself, each before any package request. The callers' existing catch publishes each as itself
+(`AmbiguousCatalogName` does not start with `AmbiguousName`, so it is never mistaken for a package
+ambiguity), so no cmdlet needed a new catch branch. `tests/Unit/Public/AmbiguousName.Guard.Tests.ps1`
+holds it for the eight cmdlets and for `New-OERAccessReviewDefinition`.
+
+**R-5 (`New-OERAccessPackage`).** Its existence check is the catalog-scoped lookup, so a name in
+another catalog never stops the create (also through `Invoke-OERStructure`). A GUID-shaped
+`-DisplayName` (read as an id, as before) of a package in another catalog is published as
+`AccessPackageNotInCatalog` itself, nothing created. `AccessPackageInAnotherCatalog` stays for a found
+package whose catalog the confirmation read does not show to be the named one (defence).
+
+**R-6 (order).** Where the catalog was resolved after the package (`Add-OERAccessPackageResourceRole`,
+`Resolve-OERAccessReviewScopeTarget` with `-Catalog`), it is now resolved first and its id passed on.
+
+**Known limits.** (a) The apply engine keeps its own list read of the declared catalog (R-1). (b) An
+ambiguous catalog name cannot be produced live, since Microsoft Graph refuses to create or rename a
+catalog to a name another carries (400 on create, 409 on rename); `AmbiguousCatalogName` is proven with
+mocked tests only. (c) Without `-Catalog` a name two catalogs share is still refused as ambiguous: the
+tenant-wide behaviour is deliberately unchanged. (d) A package id read costs one `$expand=catalog`
+read with `-Catalog`, where it cost the `$select=id` existence read without it.

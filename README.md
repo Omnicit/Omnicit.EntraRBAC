@@ -658,6 +658,15 @@ be included in access packages:
 - `New-OERAccessPackageAssignment`, `Get-OERAccessPackageAssignment`,
   `Remove-OERAccessPackageAssignment`
 
+**Naming an access package within its catalog** -- an access package name is unique only within its
+catalog, not in the tenant. Every cmdlet that takes an access package by name accepts an optional
+`-Catalog` (a name or an id): the name is then looked up in that catalog only, and an access package
+id of another catalog is refused with `AccessPackageNotInCatalog` before anything is read or written.
+Without `-Catalog` the name is looked up in the whole tenant as before, and a name two catalogs share
+is refused as ambiguous. `Get-OERAccessPackageAssignment` refuses `-Catalog` without `-AccessPackage`
+(`CatalogWithoutAccessPackage`). `New-OERAccessPackage` no longer stops at a package of that name in
+another catalog.
+
 > **SharePoint note:** to onboard SharePoint sites as catalog resources the service principal
 > must also hold `Sites.FullControl.All` (application permission on SharePoint, not Graph).
 > This permission is separate from the Graph `EntitlementManagement.ReadWrite.All` scope and

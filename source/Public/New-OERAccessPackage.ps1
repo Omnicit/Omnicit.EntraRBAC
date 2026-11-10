@@ -176,7 +176,7 @@ function New-OERAccessPackage {
             if (-not $ExistingCatalogId) {
                 $Reason = "Access package '$ResolvedName' exists ($ExistingId), but its catalog could not be read, so it cannot be told whether it is in catalog '$Catalog' ($CatalogId); it was not returned and nothing was created."
             } elseif (-not [string]::Equals($ExistingCatalogId, [string]$CatalogId, [System.StringComparison]::OrdinalIgnoreCase)) {
-                $Reason = "Access package '$ResolvedName' exists in another catalog ($ExistingCatalogId), not in catalog '$Catalog' ($CatalogId), so it was not returned and nothing was created. Access package names are unique only within a catalog, and this command looks the name up within the named catalog; it was not returned and nothing was created."
+                $Reason = "Access package '$ResolvedName' exists in another catalog ($ExistingCatalogId), not in catalog '$Catalog' ($CatalogId), so it was not returned and nothing was created. Access package names are unique only within a catalog, and this command looks the name up within the named catalog."
             } else {
                 $Reason = $null
             }

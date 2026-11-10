@@ -78,7 +78,7 @@ function New-OERAccessPackageAssignmentPolicy {
 
     .EXAMPLE
     $scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
-    $stage =New-OERAccessPackageApprovalStage -DurationDays 7 -Manager
+    $stage = New-OERAccessPackageApprovalStage -DurationDays 7 -Manager
     New-OERAccessPackageAssignmentPolicy -AccessPackage 'AP-Sales' -DisplayName 'Default' -RequestorScope $scope -ApprovalStage $stage -DurationInDays 30
 
     Creates a self-service policy with manager approval and a 30-day assignment lifetime.
