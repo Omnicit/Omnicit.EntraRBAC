@@ -257,6 +257,7 @@ function Read-OERStructureDocument {
         foreach ($Review in @($Doc.accessReviews)) {
             Write-OEREnumValue -Node $Review -Key 'recurrence' -EnumName 'accessReviewRecurrence'
             Write-OEREnumValue -Node $Review -Key 'defaultDecision' -EnumName 'accessReviewDefaultDecision'
+            Write-OEREnumValue -Node $Review -Key 'directoryRoleAssignmentType' -EnumName 'directoryRoleAssignmentType'
         }
         foreach ($Assignment in @($Doc.roleAssignments)) {
             Write-OEREnumValue -Node $Assignment -Key 'principalType' -EnumName 'principalType'

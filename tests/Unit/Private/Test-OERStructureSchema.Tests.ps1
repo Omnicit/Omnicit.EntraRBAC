@@ -500,6 +500,65 @@ Describe 'Test-OERStructureSchema' {
         }
     }
 
+    It 'accepts directoryRoleAssignmentType <Value> beside directoryRole with no finding' -ForEach @(
+        @{ Value = 'Eligible' }
+        @{ Value = 'Active' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Value = $Value } {
+            $Doc = ('{ "version": "1.0", "accessReviews": [ { "displayName": "r", "directoryRole": "Global Reader", "directoryRoleAssignmentType": "' + $Value + '", "reviewers": [ "self" ] } ] }') | ConvertFrom-Json
+            $Result = Test-OERStructureSchema -Document $Doc
+            # Findings of both severities are collected in Errors (Severity says which).
+            @($Result.Errors).Count | Should -Be 0
+        }
+    }
+
+    It 'refuses directoryRoleAssignmentType without directoryRole with exactly one Error' -ForEach @(
+        @{ Form = '"group": "g"' }
+        @{ Form = '"accessPackage": "ap", "assignmentPolicy": "p"' }
+        @{ Form = '"directoryRole": null, "group": "g"' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Form = $Form } {
+            $Doc = ('{ "version": "1.0", "accessReviews": [ { "displayName": "r", ' + $Form + ', "directoryRoleAssignmentType": "Eligible", "reviewers": [ "self" ] } ] }') | ConvertFrom-Json
+            $Errors = @((Test-OERStructureSchema -Document $Doc).Errors)
+            $Errors.Count | Should -Be 1
+            $Errors[0].Path | Should -BeExactly 'accessReviews[0].directoryRoleAssignmentType'
+            $Errors[0].Message | Should -BeExactly "'directoryRoleAssignmentType' at accessReviews[0] is only valid with 'directoryRole': it selects which assignments of the directory role the review reviews."
+        }
+    }
+
+    It 'refuses a directoryRoleAssignmentType of <Case> with the enum Error' -ForEach @(
+        @{ Case = 'All'; Value = '"All"'; Got = "'All'" }
+        @{ Case = 'a number'; Value = '5'; Got = 'a value that is not a string (Int64)' }
+        @{ Case = 'an array'; Value = '[ "Eligible" ]'; Got = 'a value that is not a string (Object[])' }
+        @{ Case = 'an empty string'; Value = '""'; Got = "''" }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Value = $Value; Got = $Got } {
+            $Doc = ('{ "version": "1.0", "accessReviews": [ { "displayName": "r", "directoryRole": "Global Reader", "directoryRoleAssignmentType": ' + $Value + ', "reviewers": [ "self" ] } ] }') | ConvertFrom-Json
+            $Errors = @((Test-OERStructureSchema -Document $Doc).Errors)
+            $Errors.Count | Should -Be 1
+            $Errors[0].Path | Should -BeExactly 'accessReviews[0].directoryRoleAssignmentType'
+            $Errors[0].Message | Should -BeExactly "'directoryRoleAssignmentType' at accessReviews[0] must be one of: Eligible, Active. Got: $Got."
+        }
+    }
+
+    It 'warns about a directoryRoleAssignmentType in non-canonical casing and raises no Error' {
+        InModuleScope $script:moduleName {
+            $Doc = '{ "version": "1.0", "accessReviews": [ { "displayName": "r", "directoryRole": "Global Reader", "directoryRoleAssignmentType": "eligible", "reviewers": [ "self" ] } ] }' | ConvertFrom-Json
+            $Result = Test-OERStructureSchema -Document $Doc
+            @($Result.Errors).Count | Should -Be 1
+            $Result.Errors[0].Severity | Should -BeExactly 'Warning'
+            $Result.Errors[0].Path | Should -BeExactly 'accessReviews[0].directoryRoleAssignmentType'
+            $Result.Errors[0].Message | Should -BeExactly "'directoryRoleAssignmentType' at accessReviews[0].directoryRoleAssignmentType is 'eligible'; the canonical spelling is 'Eligible'. Invoke-OERStructure normalizes the casing before it applies the document, but schema.json declares this enum case-sensitively (draft-07), so a validator outside the module rejects it."
+        }
+    }
+
+    It 'reads an explicit null directoryRoleAssignmentType as undeclared' {
+        InModuleScope $script:moduleName {
+            $Doc = '{ "version": "1.0", "accessReviews": [ { "displayName": "r", "directoryRole": "Global Reader", "directoryRoleAssignmentType": null, "reviewers": [ "self" ] } ] }' | ConvertFrom-Json
+            @((Test-OERStructureSchema -Document $Doc).Errors).Count | Should -Be 0
+        }
+    }
+
     It 'flags a role assignment missing scope/role/principal' {
         InModuleScope $script:moduleName {
             $Doc = '{ "version": "1.0", "roleAssignments": [ { "role": "Reader" } ] }' | ConvertFrom-Json

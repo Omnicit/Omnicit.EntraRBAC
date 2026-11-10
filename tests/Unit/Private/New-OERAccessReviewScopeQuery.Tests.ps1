@@ -71,4 +71,70 @@ Describe 'New-OERAccessReviewScopeQuery' {
             { New-OERAccessReviewScopeQuery -DirectoryRoleId 'r' -GroupId 'g' } | Should -Throw
         }
     }
+
+    Context 'DirectoryRoleAssignmentType' {
+        It 'builds exactly the measured <Type> text, no version prefix' -ForEach @(
+            @{
+                Type     = 'Eligible'
+                Expected = "/roleManagement/directory/roleEligibilityScheduleInstances?`$expand=principal&`$filter=(isof(principal,'microsoft.graph.user') and roleDefinitionId eq '00000000-0000-0000-0000-000000000041')"
+            }
+            @{
+                Type     = 'Active'
+                Expected = "/roleManagement/directory/roleAssignmentScheduleInstances?`$expand=principal&`$filter=(assignmentType eq 'Assigned' and isof(principal,'microsoft.graph.user') and roleDefinitionId eq '00000000-0000-0000-0000-000000000041')"
+            }
+        ) {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ T = $Type; E = $Expected } {
+                param($T, $E)
+                $s = New-OERAccessReviewScopeQuery -DirectoryRoleId '00000000-0000-0000-0000-000000000041' -DirectoryRoleAssignmentType $T
+                $s.Keys.Count    | Should -Be 3
+                $s.'@odata.type' | Should -Be '#microsoft.graph.accessReviewQueryScope'
+                $s.queryType     | Should -Be 'MicrosoftGraph'
+                $s.query         | Should -BeExactly $E
+                $s.ContainsKey('principalScopes') | Should -BeFalse
+            }
+        }
+        It 'accepts any letter case of the value' {
+            InModuleScope Omnicit.EntraRBAC {
+                $Id = '00000000-0000-0000-0000-000000000041'
+                (New-OERAccessReviewScopeQuery -DirectoryRoleId $Id -DirectoryRoleAssignmentType eligible).query | Should -BeLike '/roleManagement/directory/roleEligibilityScheduleInstances?*'
+                (New-OERAccessReviewScopeQuery -DirectoryRoleId $Id -DirectoryRoleAssignmentType ACTIVE).query | Should -BeLike '/roleManagement/directory/roleAssignmentScheduleInstances?*'
+            }
+        }
+        It 'returns the all-assignments scope unchanged when the type is unbound' {
+            InModuleScope Omnicit.EntraRBAC {
+                $Id = '00000000-0000-0000-0000-000000000041'
+                $s = New-OERAccessReviewScopeQuery -DirectoryRoleId $Id
+                $s.'@odata.type' | Should -Be '#microsoft.graph.principalResourceMembershipsScope'
+                $s.ContainsKey('query') | Should -BeFalse
+                $s.principalScopes[0].query | Should -Be '/users'
+                $s.resourceScopes[0].query  | Should -Be "/roleManagement/directory/roleDefinitions/$Id"
+            }
+        }
+        It 'refuses a value other than Eligible or Active, and the type beside -GroupId' {
+            InModuleScope Omnicit.EntraRBAC {
+                { New-OERAccessReviewScopeQuery -DirectoryRoleId 'r' -DirectoryRoleAssignmentType All } | Should -Throw
+                { New-OERAccessReviewScopeQuery -GroupId 'g' -DirectoryRoleAssignmentType Eligible } | Should -Throw
+            }
+        }
+        It 'agrees with the classifier: <Kind> through the converter, <Prefix> prefix' -ForEach @(
+            @{ Kind = 'All'; Type = $null; Prefix = '' }
+            @{ Kind = 'Eligible'; Type = 'Eligible'; Prefix = '' }
+            @{ Kind = 'Eligible'; Type = 'Eligible'; Prefix = '/beta' }
+            @{ Kind = 'Active'; Type = 'Active'; Prefix = '' }
+            @{ Kind = 'Active'; Type = 'Active'; Prefix = '/beta' }
+        ) {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ K = $Kind; T = $Type; P = $Prefix } {
+                param($K, $T, $P)
+                $Id = '00000000-0000-0000-0000-000000000041'
+                $Args1 = @{ DirectoryRoleId = $Id }
+                if ($T) { $Args1.DirectoryRoleAssignmentType = $T }
+                $Scope = New-OERAccessReviewScopeQuery @Args1
+                if ($P) { $Scope.query = $P + $Scope.query }
+                $Def = ConvertTo-OERAccessReviewDefinition -InputObject @{ id = 'd'; scope = $Scope }
+                $R = Resolve-OERAccessReviewRoleScope -Query $Def.Scope -ScopeType $Def.ScopeType -PrincipalScope $Def.PrincipalScopes -ResourceScope $Def.ResourceScopes
+                $R.Kind | Should -Be $K
+                $R.RoleDefinitionId | Should -Be $Id.ToLowerInvariant()
+            }
+        }
+    }
 }

@@ -899,7 +899,7 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Why: docs/development/rationale.md#access-review-group-scope`
 - **`Resolve-OERAccessReviewRoleScope` is the single owner of which review scope is a review of a
   directory role's assignments the module can write back** (`All`, `Eligible`, `Active`, `OtherForm`,
-  `NotRole`). Only `All` is exported as `directoryRole`; never re-implement the role scope regex
+  `NotRole`). `All`, `Eligible` and `Active` are exported as `directoryRole`, the last two with `directoryRoleAssignmentType`; `OtherForm` is never exported; never re-implement the role scope regex
   inline.
   `Why: docs/development/rationale.md#access-review-role-scope`
 - **`Test-OERGuid` is the single GUID predicate:** never re-implement the canonical GUID regex

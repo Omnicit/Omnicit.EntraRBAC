@@ -718,3 +718,129 @@ Describe 'Get-OERAccessReviewTargetMismatch for an entry that declares directory
         $R.Out[0].Exception.Message | Should -BeLike '*does not review an access package*'
     }
 }
+
+# Sprint 14 step 4: an entry that declares directoryRoleAssignmentType (Eligible or Active) is a review of
+# only the eligible or only the active assignments to the role. The role branch compares the live Kind
+# (Resolve-OERAccessReviewRoleScope, real here) with the declared form; an entry that omits the key is
+# the every-assignment form with the message it always had.
+Describe 'Get-OERAccessReviewTargetMismatch for a directory role review in a declared form' {
+    BeforeAll {
+        $script:FmName = 'Reports Reader review'
+        $script:FmId = '00000000-0000-0000-0000-000000000041'
+        $script:FmOtherId = '00000000-0000-0000-0000-000000000042'
+        $script:FmNotUnique = 'Access review display names are not unique: give the entry or the review in the tenant another display name.'
+        $script:FmEligible = "/beta/roleManagement/directory/roleEligibilityScheduleInstances?`$expand=principal&`$filter=(isof(principal,'microsoft.graph.user') and roleDefinitionId eq '{0}')"
+        $script:FmActive = "/beta/roleManagement/directory/roleAssignmentScheduleInstances?`$expand=principal&`$filter=(assignmentType eq 'Assigned' and isof(principal,'microsoft.graph.user') and roleDefinitionId eq '{0}')"
+
+        function New-FmLive {
+            param([string]$Form, [string]$RoleId = $script:FmId)
+            $Inner = { param($Query) [PSCustomObject]@{ Query = $Query; QueryType = 'MicrosoftGraph'; QueryRoot = $null; ScopeType = '#microsoft.graph.accessReviewQueryScope' } }
+            $Scope = switch ($Form) {
+                'Eligible' { $script:FmEligible -f $RoleId }
+                'Active' { $script:FmActive -f $RoleId }
+                default { $null }
+            }
+            [PSCustomObject]@{
+                AccessReviewDefinitionId = 'cccc3333-0000-0000-0000-000000000001'
+                DisplayName              = $script:FmName
+                Scope                    = $Scope
+                ScopeType                = $(if ($Form -eq 'All') { '#microsoft.graph.principalResourceMembershipsScope' } else { '#microsoft.graph.accessReviewQueryScope' })
+                PrincipalScopes          = $(if ($Form -eq 'All') { @(& $Inner '/v1.0/users') } else { @() })
+                ResourceScopes           = $(if ($Form -eq 'All') { @(& $Inner "/beta/roleManagement/directory/roleDefinitions/$RoleId") } else { @() })
+                AccessPackageId          = $null
+                AssignmentPolicyId       = $null
+            }
+        }
+        function New-FmEntry {
+            param($Type, [switch]$OmitType)
+            $Entry = [PSCustomObject]@{ displayName = $script:FmName; directoryRole = $script:FmId; durationInDays = 21 }
+            if (-not $OmitType) { $Entry | Add-Member -NotePropertyName directoryRoleAssignmentType -NotePropertyValue $Type }
+            $Entry
+        }
+        function Invoke-FmCheck {
+            param([Parameter(Mandatory)]$Declared, [Parameter(Mandatory)]$Current)
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Declared = $Declared; Current = $Current } {
+                param($Declared, $Current)
+                $Ev = $null
+                $Out = @(Get-OERAccessReviewTargetMismatch -Declared $Declared -Current $Current -ErrorAction Continue -ErrorVariable Ev `
+                        -WarningAction SilentlyContinue)
+                [PSCustomObject]@{ Out = $Out; Errors = @($Ev) }
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { throw 'Unexpected Graph request.' }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput { throw 'Unexpected directory role lookup.' }
+    }
+
+    It 'returns nothing for a declared <Declared> form against the live <Form> review of the same role' -ForEach @(
+        @{ Form = 'Eligible'; Declared = 'Eligible' }
+        @{ Form = 'Eligible'; Declared = 'eligible' }
+        @{ Form = 'Active'; Declared = 'Active' }
+        @{ Form = 'Active'; Declared = 'ACTIVE' }
+    ) {
+        $R = Invoke-FmCheck -Declared (New-FmEntry -Type $Declared) -Current (New-FmLive -Form $Form)
+        $R.Out.Count | Should -Be 0
+        $R.Errors.Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+    }
+
+    It 'refuses a declared <Declared> form against the live <Live> review, with the new message naming the live scope' -ForEach @(
+        @{ Declared = 'Eligible'; Live = 'All'; Word = 'eligible'; Shown = "principals '/v1.0/users' and resources '/beta/roleManagement/directory/roleDefinitions/00000000-0000-0000-0000-000000000041'" }
+        @{ Declared = 'Eligible'; Live = 'Active'; Word = 'eligible'; Shown = "'/beta/roleManagement/directory/roleAssignmentScheduleInstances?`$expand=principal&`$filter=(assignmentType eq 'Assigned' and isof(principal,'microsoft.graph.user') and roleDefinitionId eq '00000000-0000-0000-0000-000000000041')'" }
+        @{ Declared = 'Active'; Live = 'Eligible'; Word = 'active'; Shown = "'/beta/roleManagement/directory/roleEligibilityScheduleInstances?`$expand=principal&`$filter=(isof(principal,'microsoft.graph.user') and roleDefinitionId eq '00000000-0000-0000-0000-000000000041')'" }
+        @{ Declared = 'Active'; Live = 'All'; Word = 'active'; Shown = "principals '/v1.0/users' and resources '/beta/roleManagement/directory/roleDefinitions/00000000-0000-0000-0000-000000000041'" }
+    ) {
+        $R = Invoke-FmCheck -Declared (New-FmEntry -Type $Declared) -Current (New-FmLive -Form $Live)
+        $R.Out.Count | Should -Be 1
+        [string]$R.Out[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewScopeMismatch'
+        $R.Out[0].CategoryInfo.Category | Should -Be 'InvalidOperation'
+        $R.Out[0].TargetObject | Should -BeExactly $script:FmName
+        $R.Out[0].Exception.Message | Should -BeExactly ("Access review 'Reports Reader review' in the tenant does not review only the $Word assignments to a directory role in the form " +
+            "this module writes (its scope is $Shown), so it is not the review this entry declares for directory " +
+            "role '00000000-0000-0000-0000-000000000041'. Nothing was written. $($script:FmNotUnique)")
+        $R.Errors.Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput -Times 0
+    }
+
+    It 'refuses an entry that omits the type against the live <Live> review with the message it always had (regression)' -ForEach @(
+        @{ Live = 'Eligible' }
+        @{ Live = 'Active' }
+    ) {
+        $R = Invoke-FmCheck -Declared (New-FmEntry -OmitType) -Current (New-FmLive -Form $Live)
+        $R.Out.Count | Should -Be 1
+        $Shown = if ($Live -eq 'Eligible') { $script:FmEligible -f $script:FmId } else { $script:FmActive -f $script:FmId }
+        $R.Out[0].Exception.Message | Should -BeExactly ("Access review 'Reports Reader review' in the tenant does not review every user's assignments to a directory role in the form " +
+            "this module writes (its scope is '$Shown'), so it is not the review this entry declares for directory " +
+            "role '00000000-0000-0000-0000-000000000041'. Nothing was written. $($script:FmNotUnique)")
+    }
+
+    It 'reads an explicit null type as the omitted key and accepts the every-assignment review' {
+        $R = Invoke-FmCheck -Declared (New-FmEntry -Type $null) -Current (New-FmLive -Form 'All')
+        $R.Out.Count | Should -Be 0
+    }
+
+    It 'refuses an unknown assignment type <Value>, naming it, before any lookup, whatever the live review is' -ForEach @(
+        @{ Value = 'All' }
+        @{ Value = 'Both' }
+        @{ Value = '' }
+    ) {
+        $R = Invoke-FmCheck -Declared (New-FmEntry -Type $Value) -Current (New-FmLive -Form 'All')
+        $R.Out.Count | Should -Be 1
+        [string]$R.Out[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewScopeMismatch'
+        $R.Out[0].CategoryInfo.Category | Should -Be 'InvalidOperation'
+        $R.Out[0].Exception.Message | Should -BeExactly ("Access review entry 'Reports Reader review' declares an unknown directory role assignment type " +
+            "('$Value'; expected Eligible or Active), so the review in the tenant with that display name cannot be shown to be the one it declares. Nothing was written.")
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput -Times 0
+    }
+
+    It 'still compares the role after the form: the right form of ANOTHER role is refused naming both roles' {
+        $R = Invoke-FmCheck -Declared (New-FmEntry -Type 'Eligible') -Current (New-FmLive -Form 'Eligible' -RoleId $script:FmOtherId)
+        $R.Out.Count | Should -Be 1
+        $R.Out[0].Exception.Message | Should -BeExactly ("Access review 'Reports Reader review' in the tenant reviews the assignments to directory role " +
+            "'00000000-0000-0000-0000-000000000042', not the directory role '00000000-0000-0000-0000-000000000041' this entry declares, " +
+            "so it is not the review this entry declares. Nothing was written. $($script:FmNotUnique)")
+    }
+}

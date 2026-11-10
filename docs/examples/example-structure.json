@@ -51,6 +51,15 @@
       "fallbackReviewers": [ "person8@example.com" ],
       "recurrence": "Quarterly",
       "durationInDays": 14
+    },
+    {
+      "displayName": "AR-IT-ReportsReaderEligible",
+      "directoryRole": "Reports Reader",
+      "directoryRoleAssignmentType": "Eligible",
+      "reviewers": [ "manager" ],
+      "fallbackReviewers": [ "person8@example.com" ],
+      "recurrence": "Quarterly",
+      "durationInDays": 14
     }
   ],
   "directoryRoleManagementPolicies": [

@@ -73,3 +73,87 @@ Describe 'Access review of a directory role, export and apply round trip (Sprint
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -and $Method -in 'POST', 'PUT', 'PATCH', 'DELETE' }
     }
 }
+
+# Sprint 14 step 4: the eligible-only and active-only forms. The same real chain as above; the live
+# review is stored in the form Graph reads back (the scope text with the /beta prefix, no principal or
+# resource scopes).
+Describe 'Access review of a directory role in one assignment form, export and apply round trip (Sprint 14 step 4, Task 4)' {
+    BeforeAll {
+        $script:RfRoleId = '00000000-0000-0000-0000-000000000031'
+        $script:RfRoleUri = 'v1.0/roleManagement/directory/roleDefinitions/00000000-0000-0000-0000-000000000031?$select=id,displayName'
+        $script:NewRfLive = {
+            param([ValidateSet('Eligible', 'Active')][string]$Form)
+            $Scope = if ($Form -eq 'Eligible') {
+                "/beta/roleManagement/directory/roleEligibilityScheduleInstances?`$expand=principal&`$filter=(isof(principal,'microsoft.graph.user') and roleDefinitionId eq '$($script:RfRoleId)')"
+            }
+            else {
+                "/beta/roleManagement/directory/roleAssignmentScheduleInstances?`$expand=principal&`$filter=(assignmentType eq 'Assigned' and isof(principal,'microsoft.graph.user') and roleDefinitionId eq '$($script:RfRoleId)')"
+            }
+            [PSCustomObject]@{
+                Id = 'ar-rf'; DisplayName = 'Role review'; Scope = $Scope
+                ScopeType = '#microsoft.graph.accessReviewQueryScope'
+                PrincipalScopes = @(); ResourceScopes = @()
+                AccessPackageId = $null; AssignmentPolicyId = $null
+                Reviewers = @(@{ query = '/users/usr-1' }); FallbackReviewers = @()
+                StageCount = 0; DurationInDays = 14
+                MailNotificationsEnabled = $false; ReminderNotificationsEnabled = $false
+                JustificationRequired = $false; RecommendationsEnabled = $false; AutoApplyDecisionsEnabled = $false
+                Settings = @{
+                    instanceDurationInDays = 14; mailNotificationsEnabled = $false; reminderNotificationsEnabled = $false
+                    justificationRequiredOnApproval = $false; recommendationsEnabled = $false; autoApplyDecisionsEnabled = $false
+                }
+                Recurrence = [PSCustomObject]@{
+                    pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 3 }
+                    range   = [PSCustomObject]@{ type = 'noEnd'; startDate = '2026-07-01' }
+                }
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        $script:RfLive = & $script:NewRfLive 'Eligible'
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition { $script:RfLive }
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{ 'usr-1' = 'person1@example.com' } }
+        Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal { 'usr-1' }
+        Mock -ModuleName $script:moduleName Resolve-OERStructureDefault { $null }
+        Mock -ModuleName $script:moduleName Set-OERAccessReviewDefinition { }
+        Mock -ModuleName $script:moduleName New-OERAccessReviewDefinition { }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected transport call: $Method $Uri" }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = $script:RfRoleId; displayName = 'Reports Reader' } } -ParameterFilter { $Uri -eq $script:RfRoleUri }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            @{ value = @(@{ id = $script:RfRoleId; displayName = 'Reports Reader' }) }
+        } -ParameterFilter { $Uri -match "^v1\.0/roleManagement/directory/roleDefinitions\?\`$filter=displayName eq 'Reports(%20| )Reader'&" }
+    }
+
+    It 'applies the export of a <Form> review with every row Unchanged and no write request' -ForEach @(
+        @{ Form = 'Eligible' }
+        @{ Form = 'Active' }
+    ) {
+        $script:RfLive = & $script:NewRfLive $Form
+        $Inv = Get-OERInventory -Include AccessReviews -ErrorAction Stop -WarningAction SilentlyContinue
+        @($Inv.AccessReviews)[0].directoryRoleAssignmentType | Should -BeExactly $Form
+        $Json = [PSCustomObject][ordered]@{ version = '1.0'; accessReviews = @($Inv.AccessReviews) } | ConvertTo-Json -Depth 12
+        $Rows = @(Invoke-OERStructure -Json $Json -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        @($Rows | Where-Object { $_.Section -eq 'accessReviews' -and $_.Item -eq 'Role review' }).Count | Should -BeGreaterThan 0
+        @($Rows | Where-Object { $_.Action -ne 'Unchanged' }) | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessReviewDefinition -Times 0 -Exactly
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessReviewDefinition -Times 0 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -and $Method -in 'POST', 'PUT', 'PATCH', 'DELETE' }
+    }
+
+    It 'refuses the export of an Eligible review applied against a live Active review of the same name, writing nothing' {
+        $script:RfLive = & $script:NewRfLive 'Eligible'
+        $Inv = Get-OERInventory -Include AccessReviews -ErrorAction Stop -WarningAction SilentlyContinue
+        $Json = [PSCustomObject][ordered]@{ version = '1.0'; accessReviews = @($Inv.AccessReviews) } | ConvertTo-Json -Depth 12
+        $script:RfLive = & $script:NewRfLive 'Active'
+        $Rows = @(Invoke-OERStructure -Json $Json -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable ApplyErr -WarningAction SilentlyContinue)
+        @($Rows | Where-Object { $_.Section -eq 'accessReviews' -and $_.Item -eq 'Role review' -and $_.Action -eq 'Failed' }).Count | Should -Be 1
+        @($ApplyErr | Where-Object { $_.FullyQualifiedErrorId -like 'AccessReviewScopeMismatch*' }).Count | Should -BeGreaterThan 0
+        @($Rows | Where-Object { $_.Action -notin 'Failed' }) | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessReviewDefinition -Times 0 -Exactly
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessReviewDefinition -Times 0 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -and $Method -in 'POST', 'PUT', 'PATCH', 'DELETE' }
+    }
+}

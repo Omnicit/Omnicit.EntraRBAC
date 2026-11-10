@@ -29,6 +29,12 @@ A Microsoft Graph page link (`@odata.nextLink`) that does not address the Micros
 cloud is now refused with `GraphPagingIncomplete` before it is requested, so the access token is never sent
 with it. Links on that address are followed as before, in every cloud.
 
+A directory role access review can cover only the eligible or only the active assignments of a role (users
+only): declare `directoryRole` with `directoryRoleAssignmentType` `Eligible` or `Active`, or pass
+`-DirectoryRoleAssignmentType` to `New-OERAccessReviewDefinition`. Omitted, it is the review of the users assigned to the role, as
+before. The export writes the key for such reviews, so they round-trip. A review found by name in another
+form is refused with `AccessReviewScopeMismatch` and nothing is written, since a review's scope cannot change.
+
 ## [1.5.0] - 2026-11-07
 
 The seven cmdlets that create, remove, activate or deactivate Azure role assignments report a

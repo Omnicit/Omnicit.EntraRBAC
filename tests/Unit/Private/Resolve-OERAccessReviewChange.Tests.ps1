@@ -1546,3 +1546,76 @@ Describe 'Resolve-OERAccessReviewChange directory role scope' {
         }
     }
 }
+
+# Sprint 14 step 4: the form of a directory role review is part of its immutable scope.
+Describe 'Resolve-OERAccessReviewChange directory role assignment type' {
+    BeforeEach {
+        $Inner = { param($Query) [PSCustomObject]@{ Query = $Query; QueryType = 'MicrosoftGraph'; QueryRoot = $null; ScopeType = '#microsoft.graph.accessReviewQueryScope' } }
+        $script:FmLive = [PSCustomObject]@{
+            Id                      = 'ar-1'
+            DisplayName             = 'Reports Reader review'
+            DescriptionForAdmins    = 'admin text'
+            DescriptionForReviewers = 'reviewer text'
+            Scope                   = ''
+            ScopeType               = '#microsoft.graph.principalResourceMembershipsScope'
+            PrincipalScopes         = @(& $Inner '/v1.0/users')
+            ResourceScopes          = @(& $Inner '/beta/roleManagement/directory/roleDefinitions/00000000-0000-0000-0000-000000000041')
+            AccessPackageId         = $null
+            AssignmentPolicyId      = $null
+            Reviewers               = @(@{ query = '/users/usr-1' })
+            FallbackReviewers       = @()
+            DurationInDays          = 14
+            Recurrence              = @{ pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }; range = @{ type = 'noEnd'; startDate = '2026-07-01' } }
+            Settings                = @{ instanceDurationInDays = 14 }
+        }
+        $script:FmEligibleLive = $script:FmLive.PSObject.Copy()
+        $script:FmEligibleLive.ScopeType = '#microsoft.graph.accessReviewQueryScope'
+        $script:FmEligibleLive.PrincipalScopes = @()
+        $script:FmEligibleLive.ResourceScopes = @()
+        $script:FmEligibleLive.Scope = "/beta/roleManagement/directory/roleEligibilityScheduleInstances?`$expand=principal&`$filter=(isof(principal,'microsoft.graph.user') and roleDefinitionId eq '00000000-0000-0000-0000-000000000041')"
+    }
+
+    It 'reports a declared <Declared> form that differs from the live <Live> scope as not applied, never in SetParams' -ForEach @(
+        @{ Declared = 'Eligible'; Canonical = 'Eligible'; Live = 'All' }
+        @{ Declared = 'active'; Canonical = 'Active'; Live = 'Eligible' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ AllLive = $script:FmLive; EligibleLive = $script:FmEligibleLive; Declared = $Declared; Canonical = $Canonical; Live = $Live } {
+            param($AllLive, $EligibleLive, $Declared, $Canonical, $Live)
+            $Current = if ($Live -eq 'All') { $AllLive } else { $EligibleLive }
+            $Change = Resolve-OERAccessReviewChange -Declared ([PSCustomObject]@{ displayName = 'Reports Reader review'; directoryRole = '00000000-0000-0000-0000-000000000041'; directoryRoleAssignmentType = $Declared }) -Current $Current
+            $Change.Changed | Should -Be $false
+            @($Change.NotApplied).Count | Should -Be 1
+            $Change.NotApplied[0] | Should -BeExactly "directoryRoleAssignmentType '$Canonical' differs from the live scope '$Live'; the review scope is immutable and was not changed"
+            $Change.SetParams.Keys | Should -Not -Contain 'DirectoryRoleAssignmentType'
+        }
+    }
+
+    It 'adds no note for a declared form equal to the live one' {
+        InModuleScope $script:moduleName -Parameters @{ EligibleLive = $script:FmEligibleLive } {
+            param($EligibleLive)
+            $Change = Resolve-OERAccessReviewChange -Declared ([PSCustomObject]@{ displayName = 'Reports Reader review'; directoryRole = '00000000-0000-0000-0000-000000000041'; directoryRoleAssignmentType = 'Eligible' }) -Current $EligibleLive
+            @($Change.NotApplied) | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'adds no note when the key is omitted or null, against an eligible-only live review (today''s behaviour)' {
+        InModuleScope $script:moduleName -Parameters @{ EligibleLive = $script:FmEligibleLive } {
+            param($EligibleLive)
+            $Omitted = Resolve-OERAccessReviewChange -Declared ([PSCustomObject]@{ displayName = 'Reports Reader review'; directoryRole = '00000000-0000-0000-0000-000000000041' }) -Current $EligibleLive
+            $NullKey = Resolve-OERAccessReviewChange -Declared ([PSCustomObject]@{ displayName = 'Reports Reader review'; directoryRole = '00000000-0000-0000-0000-000000000041'; directoryRoleAssignmentType = $null }) -Current $EligibleLive
+            @($Omitted.NotApplied) | Should -BeNullOrEmpty
+            @($NullKey.NotApplied) | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'notes the form when the role is declared by name (the form needs no GUID), and an unknown value adds no note' {
+        InModuleScope $script:moduleName -Parameters @{ AllLive = $script:FmLive } {
+            param($AllLive)
+            $Named = Resolve-OERAccessReviewChange -Declared ([PSCustomObject]@{ displayName = 'x'; directoryRole = 'Reports Reader'; directoryRoleAssignmentType = 'Active' }) -Current $AllLive
+            @($Named.NotApplied).Count | Should -Be 1
+            $Named.NotApplied[0] | Should -BeLike "directoryRoleAssignmentType 'Active' differs from the live scope 'All'*"
+            $Unknown = Resolve-OERAccessReviewChange -Declared ([PSCustomObject]@{ displayName = 'x'; directoryRole = 'Reports Reader'; directoryRoleAssignmentType = 'Both' }) -Current $AllLive
+            @($Unknown.NotApplied) | Should -BeNullOrEmpty
+        }
+    }
+}

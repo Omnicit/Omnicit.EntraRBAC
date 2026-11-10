@@ -174,10 +174,11 @@ Four areas fall outside that model, each in a different way, so treat them diffe
   being fabricated as a single-stage self review. It never appears in accessReviews.json or
   inventory.json -- its absence here is not evidence the tenant has none. Manage it directly with
   New-OERAccessReviewStage.
-- Only ACCESS-PACKAGE-SCOPED reviews, reviews of all members of one group and reviews of all
-  assignments of one directory role (written with a directoryRole key) are captured at all,
+- Only ACCESS-PACKAGE-SCOPED reviews, reviews of all members of one group and reviews of one
+  directory role (written with a directoryRole key, plus directoryRoleAssignmentType for the
+  eligible-only and active-only forms) are captured at all,
   regardless of stage count or -AccessReviewFilter. A review scoped to an application, a directory
-  role in another form (eligible only, active only, guest users only), or a group in another form
+  role in another form (guest users only, or another query), or a group in another form
   (guest-only, direct members, owners) is skipped entirely and never appears in accessReviews.json or inventory.json -- again, its absence here is
   not evidence the tenant has none.
 

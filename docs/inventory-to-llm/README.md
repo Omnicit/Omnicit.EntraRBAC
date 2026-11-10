@@ -829,8 +829,10 @@ therefore updated only when it reviews exactly what the entry declares:
   review of another group, are not that review. The group is looked up the way creation looks it up
   (an id as written, a name through the tenant).
 - A `directoryRole` entry: the review found must be the form the module writes for a review of that
-  role (all users, all assignment types). A review of only eligible or only active assignments, of guest users only, or of another
-  role, is not that review. The role is looked up the way creation looks it up (an id as written, a
+  role: the users assigned to the role, as before, when `directoryRoleAssignmentType` is omitted, only the
+  eligible assignments when it is `Eligible`, only the active assignments when it is `Active` (users
+  only; measured 2026-11-10 that Graph accepts both forms). A review in another of these forms, of
+  guest users only, or of another role, is not that review. The role is looked up the way creation looks it up (an id as written, a
   name through the tenant).
 - An `accessPackage` and `assignmentPolicy` entry: a GUID is compared as written, and a name is
   resolved the way `New-OERAccessReviewDefinition` resolves it when it creates a review.
@@ -854,12 +856,12 @@ The scope of a review cannot be changed on an existing one.
   real run report the same `Failed` row.
 
 The export captures only single-stage reviews of an access package, of all members of one group or of
-all assignments of one directory role (written with a `directoryRole` key), and only reviews whose
+one directory role (written with a `directoryRole` key, plus `directoryRoleAssignmentType` for an eligible-only or active-only review), and only reviews whose
 reviewers it can write back, so a name missing from `accessReviews.json` may still be in use by a
 review the bundle leaves out. The export skips, and counts by kind in one warning, a review of a group
 in a form it cannot write back (guest users only, direct members only, inactive users, another
-query), a review of a directory role in a form it cannot write back (eligible assignments only,
-active assignments only, guest users only, another query), a review of an application or another
+query), a review of a directory role in a form it cannot write back (guest users only, another
+query), a review of an application or another
 scope, and a review whose reviewers it cannot write back (for example the owners of a group, which the document
 has no way to name). Give a new review a display name no other review in the tenant uses.
 

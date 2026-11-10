@@ -198,8 +198,8 @@ Describe 'Get-OERInventoryPromptTemplate' {
             $T | Should -Match 'ACCESS-PACKAGE-SCOPED'
             # Sprint 13 step 4: the directory role review of all assignments is captured, the other role forms are not
             $Collapsed = $T -replace '\s+', ' '
-            $Collapsed | Should -Match ([regex]::Escape('reviews of all assignments of one directory role (written with a directoryRole key) are captured at all'))
-            $Collapsed | Should -Match ([regex]::Escape('a directory role in another form (eligible only, active only, guest users only)'))
+            $Collapsed | Should -Match ([regex]::Escape('reviews of one directory role (written with a directoryRole key, plus directoryRoleAssignmentType for the eligible-only and active-only forms) are captured at all'))
+            $Collapsed | Should -Match ([regex]::Escape('a directory role in another form (guest users only, or another query)'))
             # each area must point at the cmdlet that does manage it
             $T | Should -Match 'New-OERResourceGroup'
             $T | Should -Match 'Get-OERResource'
