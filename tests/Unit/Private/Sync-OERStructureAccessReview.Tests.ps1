@@ -6020,7 +6020,7 @@ Describe 'Sync-OERStructureAccessReview applies a review of a directory role' {
             }
         }
         function New-DrEntry {
-            param([string]$Role = 'Reports Reader', [string]$DescriptionForAdmins)
+            param([string]$Role = 'Reports Reader', [string]$DescriptionForAdmins, [string]$AssignmentType)
             $Entry = [PSCustomObject]@{
                 displayName    = $script:DrName
                 directoryRole  = $Role
@@ -6028,7 +6028,23 @@ Describe 'Sync-OERStructureAccessReview applies a review of a directory role' {
                 reviewers      = @('person1@example.com')
             }
             if ($DescriptionForAdmins) { $Entry | Add-Member -NotePropertyName descriptionForAdmins -NotePropertyValue $DescriptionForAdmins }
+            if ($AssignmentType) { $Entry | Add-Member -NotePropertyName directoryRoleAssignmentType -NotePropertyValue $AssignmentType }
             $Entry
+        }
+        # The live definition of an eligible-only or active-only role review (a plain query scope, read back
+        # with a leading /beta), in the shape New-DrLive has otherwise.
+        function New-DrFormLive {
+            param([Parameter(Mandatory)][ValidateSet('Eligible', 'Active')][string]$Form)
+            $Live = New-DrLive
+            $Live.ScopeType = '#microsoft.graph.accessReviewQueryScope'
+            $Live.PrincipalScopes = @()
+            $Live.ResourceScopes = @()
+            $Live.Scope = if ($Form -eq 'Eligible') {
+                "/beta/roleManagement/directory/roleEligibilityScheduleInstances?`$expand=principal&`$filter=(isof(principal,'microsoft.graph.user') and roleDefinitionId eq '$($script:DrRoleId)')"
+            } else {
+                "/beta/roleManagement/directory/roleAssignmentScheduleInstances?`$expand=principal&`$filter=(assignmentType eq 'Assigned' and isof(principal,'microsoft.graph.user') and roleDefinitionId eq '$($script:DrRoleId)')"
+            }
+            $Live
         }
         function Invoke-DrSync {
             param([Parameter(Mandatory)]$Item, [switch]$WhatIf)
@@ -6169,6 +6185,175 @@ Describe 'Sync-OERStructureAccessReview applies a review of a directory role' {
         }
         Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter {
             $null -ne $AccessPackage -and $null -ne $AssignmentPolicy -and $null -eq $DirectoryRole -and $null -eq $Group
+        }
+    }
+
+    # Sprint 14 step 4: directoryRoleAssignmentType (Eligible or Active) on the entry.
+    Context 'an entry that declares directoryRoleAssignmentType' {
+        It 'creates the review with the canonical form bound (<Declared> as <Canonical>), the row unchanged' -ForEach @(
+            @{ Declared = 'Eligible'; Canonical = 'Eligible' }
+            @{ Declared = 'active'; Canonical = 'Active' }
+        ) {
+            $Run = Invoke-DrSync -Item (New-DrEntry -AssignmentType $Declared)
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -Be 'Created'
+            $Run.Rows[0].Detail | Should -BeLike "created access review 'Q3 role review' (recurrence: *)"
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter {
+                $DirectoryRole -ceq 'Reports Reader' -and $DirectoryRoleAssignmentType -ceq $Canonical
+            }
+        }
+
+        It 'plans the create under -WhatIf with the same row text and no write' {
+            $Run = Invoke-DrSync -Item (New-DrEntry -AssignmentType 'Eligible') -WhatIf
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -Be 'Skipped'
+            $Run.Rows[0].Detail | Should -BeExactly "would create access review 'Q3 role review'"
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+        }
+
+        It 'does not bind the form when the key is omitted' {
+            $Run = Invoke-DrSync -Item (New-DrEntry)
+            $Run.Rows[0].Action | Should -Be 'Created'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter {
+                $DirectoryRole -ceq 'Reports Reader' -and -not $PSBoundParameters.ContainsKey('DirectoryRoleAssignmentType')
+            }
+        }
+
+        It 'does not bind the form when the key is an explicit null' {
+            $Entry = New-DrEntry
+            $Entry | Add-Member -NotePropertyName directoryRoleAssignmentType -NotePropertyValue $null
+            $Run = Invoke-DrSync -Item $Entry
+            $Run.Rows[0].Action | Should -Be 'Created'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter {
+                -not $PSBoundParameters.ContainsKey('DirectoryRoleAssignmentType')
+            }
+        }
+
+        It 'refuses a live namesake in the <Live> form for a declared <Declared> entry, in <Mode>, with nothing written' -ForEach @(
+            @{ Declared = 'Eligible'; Live = 'All'; Mode = 'a real run'; PlanOnly = $false }
+            @{ Declared = 'Eligible'; Live = 'All'; Mode = 'a plan under -WhatIf'; PlanOnly = $true }
+            @{ Declared = 'Eligible'; Live = 'Active'; Mode = 'a real run'; PlanOnly = $false }
+            @{ Declared = 'Active'; Live = 'Eligible'; Mode = 'a real run'; PlanOnly = $false }
+            @{ Declared = 'Active'; Live = 'All'; Mode = 'a plan under -WhatIf'; PlanOnly = $true }
+        ) {
+            $script:DrLiveNow = if ($Live -eq 'All') { New-DrLive } else { New-DrFormLive -Form $Live }
+            $Run = Invoke-DrSync -Item (New-DrEntry -AssignmentType $Declared) -WhatIf:$PlanOnly
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -Be 'Failed'
+            [string]$Run.Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'AccessReviewScopeMismatch*'
+            $Run.Rows[0].Detail | Should -BeLike "*does not review only the $($Declared.ToLowerInvariant()) assignments to a directory role in the form this module writes*"
+            $Run.Errors.Count | Should -Be 1
+            [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewScopeMismatch,Invoke-SyncArViaCaller'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+        }
+
+        It 'refuses an unknown assignment type with AccessReviewScopeMismatch, nothing written' {
+            $script:DrLiveNow = New-DrLive
+            $Run = Invoke-DrSync -Item (New-DrEntry -AssignmentType 'Both')
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -Be 'Failed'
+            [string]$Run.Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'AccessReviewScopeMismatch*'
+            $Run.Rows[0].Detail | Should -BeLike "*declares an unknown directory role assignment type ('Both'; expected Eligible or Active)*"
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+        }
+
+        It 'refuses an entry that omits the key against a live <Live> review with the every-user message, nothing written' -ForEach @(
+            @{ Live = 'Eligible' }
+            @{ Live = 'Active' }
+        ) {
+            $script:DrLiveNow = New-DrFormLive -Form $Live
+            $Run = Invoke-DrSync -Item (New-DrEntry)
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -Be 'Failed'
+            [string]$Run.Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'AccessReviewScopeMismatch*'
+            $Run.Rows[0].Detail | Should -BeLike "*does not review every user's assignments to a directory role in the form this module writes*"
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+        }
+
+        It 'reports the entry against the matching live <Form> review Unchanged and writes nothing (G8)' -ForEach @(
+            @{ Form = 'Eligible' }
+            @{ Form = 'Active' }
+        ) {
+            $script:DrLiveNow = New-DrFormLive -Form $Form
+            $Run = Invoke-DrSync -Item (New-DrEntry -AssignmentType $Form)
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -Be 'Unchanged'
+            $Run.Errors.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+        }
+
+        It 'updates a changed descriptionForAdmins of the matching <Form> review once, never sending the form, then reports Unchanged' -ForEach @(
+            @{ Form = 'Eligible' }
+        ) {
+            $script:DrLiveNow = New-DrFormLive -Form $Form
+            Mock -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition {
+                $script:DrLiveNow = New-DrFormLive -Form 'Eligible'
+                $script:DrLiveNow.DescriptionForAdmins = 'new text'
+                $script:DrLiveNow
+            }
+            $First = Invoke-DrSync -Item (New-DrEntry -DescriptionForAdmins 'new text' -AssignmentType $Form)
+            $First.Rows.Count | Should -Be 1
+            $First.Rows[0].Action | Should -Be 'Updated'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter {
+                $DescriptionForAdmins -ceq 'new text' -and -not $PSBoundParameters.ContainsKey('DirectoryRoleAssignmentType')
+            }
+            $Second = Invoke-DrSync -Item (New-DrEntry -DescriptionForAdmins 'new text' -AssignmentType $Form)
+            $Second.Rows[0].Action | Should -Be 'Unchanged'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 1 -Exactly
+        }
+    }
+
+    # The refusal must reach the caller through the real engine in a script with no try above it, as at a
+    # prompt: the runspace installs its own fakes in ITS copy of the module scope and logs every write.
+    Context 'the form refusal through Invoke-OERStructure in a script with no try above it' {
+        BeforeAll {
+            function New-FormRefusalScenario {
+                param([string]$Log, [string]$Declared)
+                [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Get-OERAccessReviewDefinition -Value {
+        [CmdletBinding()]
+        param([string]$Filter)
+        [pscustomobject]@{
+            Id = 'cccc3333-0000-0000-0000-000000000001'; DisplayName = 'Q3 role review'; Status = 'InProgress'
+            Scope = $null; ScopeType = '#microsoft.graph.principalResourceMembershipsScope'
+            PrincipalScopes = @([pscustomobject]@{ Query = '/v1.0/users'; QueryType = 'MicrosoftGraph'; QueryRoot = $null; ScopeType = '#microsoft.graph.accessReviewQueryScope' })
+            ResourceScopes = @([pscustomobject]@{ Query = '/beta/roleManagement/directory/roleDefinitions/00000000-0000-0000-0000-000000000041'; QueryType = 'MicrosoftGraph'; QueryRoot = $null; ScopeType = '#microsoft.graph.accessReviewQueryScope' })
+            AccessPackageId = $null; AssignmentPolicyId = $null
+            Reviewers = @(@{ query = './manager' }); FallbackReviewers = @(); DurationInDays = 14
+            DescriptionForAdmins = 'old'
+            Recurrence = @{ pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }; range = @{ type = 'noEnd'; startDate = '2026-07-01' } }
+            Settings = @{ instanceDurationInDays = 14 }
+        }
+    }
+    Set-Item -Path function:script:New-OERAccessReviewDefinition -Value { [System.IO.File]::AppendAllText('#LOG#', "NEW`n") }
+    Set-Item -Path function:script:Set-OERAccessReviewDefinition -Value { [System.IO.File]::AppendAllText('#LOG#', "SET`n") }
+}
+$Json = '{ "version": "1.0", "accessReviews": [ { "displayName": "Q3 role review", "directoryRole": "00000000-0000-0000-0000-000000000041", "directoryRoleAssignmentType": "#DECLARED#", "reviewers": ["manager"], "fallbackReviewers": ["manager"] } ] }'
+$Ev = $null
+Invoke-OERStructure -Json $Json -Confirm:$false -ErrorAction Continue -ErrorVariable Ev -WarningAction SilentlyContinue | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+foreach ($Record in @($Ev)) { if ($Record -is [System.Management.Automation.ErrorRecord]) { "EV:$($Record.FullyQualifiedErrorId)" } }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#DECLARED#', $Declared))
+            }
+        }
+
+        It 'reports the entry Failed and publishes AccessReviewScopeMismatch to -ErrorVariable, writing nothing' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-FormRefusalScenario -Log $Log -Declared 'Eligible')
+            $Run.Output[-1] | Should -BeExactly 'END'
+            $Rows = @($Run.Output | Where-Object { $_ -like 'ROW:*' })
+            $Rows.Count | Should -Be 1
+            $Rows[0] | Should -BeLike "ROW:Failed:*does not review only the eligible assignments to a directory role in the form this module writes*"
+            @($Run.Output | Where-Object { $_ -like 'EV:AccessReviewScopeMismatch*' }).Count | Should -BeGreaterOrEqual 1
+            if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log | Where-Object { $_ }) | Should -BeNullOrEmpty }
         }
     }
 }

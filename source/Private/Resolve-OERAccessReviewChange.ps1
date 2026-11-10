@@ -55,6 +55,10 @@ function Resolve-OERAccessReviewChange {
     SemiAnnually keeps the review, and Set-OERAccessReviewDefinition -Recurrence Monthly with
     -StartDate changes it on purpose. Every other transition is unaffected.
 
+    The same holds for the form of a directory role review: a declared directoryRoleAssignmentType
+    (Eligible or Active) that differs from the live scope's kind is reported in NotApplied and never
+    sent, since the scope is immutable. An entry that omits the key gets no such note.
+
     A fifth rule covers a live numbered range with fewer than one occurrence. Graph can report 0, and
     a count below 1 cannot be carried forward, since Set-OERAccessReviewDefinition takes -Occurrences
     as 1 or more. When the document declares neither endDate nor occurrences, the
@@ -596,6 +600,18 @@ function Resolve-OERAccessReviewChange {
             if ($DeclaredRoleScope -ine $LiveRoleId) {
                 $LiveRoleText = if ($LiveRoleId) { $LiveRoleId } else { 'none' }
                 $NotApplied.Add("directoryRole '$DeclaredRoleScope' differs from the live scope '$LiveRoleText'; the review scope is immutable and was not changed")
+            }
+        }
+        # The form (every assignment, only the eligible or only the active ones) is part of the scope too.
+        # Only a declared, canonical form is compared; the key omitted is today's behaviour, no note.
+        if (Test-DeclHas $Declared 'directoryRoleAssignmentType') {
+            $DeclaredForm = Resolve-OERStructureEnumCasing -EnumName 'directoryRoleAssignmentType' -Value ([string]$Declared.directoryRoleAssignmentType)
+            if ($DeclaredForm) {
+                $LiveForm = [string](Resolve-OERAccessReviewRoleScope -Query ([string]$Current.Scope) -ScopeType ([string]$Current.ScopeType) `
+                        -PrincipalScope $Current.PrincipalScopes -ResourceScope $Current.ResourceScopes).Kind
+                if ($DeclaredForm -ine $LiveForm) {
+                    $NotApplied.Add("directoryRoleAssignmentType '$DeclaredForm' differs from the live scope '$LiveForm'; the review scope is immutable and was not changed")
+                }
             }
         }
     }

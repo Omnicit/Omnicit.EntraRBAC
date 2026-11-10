@@ -89,6 +89,10 @@ function Sync-OERStructureAccessReview {
     Get-OERAccessReviewTargetMismatch: a review of another role, or of the role in a form this module
     does not write, is refused with AccessReviewScopeMismatch, and a role that cannot be resolved is a
     Failed row ("could not resolve the directory role of access review"), nothing written either way.
+    An entry that also declares directoryRoleAssignmentType (Eligible or Active) is created with
+    -DirectoryRoleAssignmentType and matches only a live review in that form: a live review of the
+    role in another form (every assignment, or the other of the two) is refused with
+    AccessReviewScopeMismatch, nothing written. The key omitted keeps the every-assignment review.
 
     An access package or assignment policy the same document renames (BL-128): the entry's
     accessPackage and assignmentPolicy are read in the run's rename map (-RenameMap) first, before any
@@ -973,6 +977,10 @@ function Sync-OERStructureAccessReview {
         # New-OERAccessReviewDefinition), or the package and policy as $TargetItem carries them.
         if ($IsRoleReview) {
             $NewParams.DirectoryRole = [string]$Item.directoryRole
+            # The form is bound only when declared: the key omitted creates the every-assignment review.
+            if (Test-OERDeclaredProperty -Node $Item -Name 'directoryRoleAssignmentType') {
+                $NewParams.DirectoryRoleAssignmentType = [string](Resolve-OERStructureEnumCasing -EnumName 'directoryRoleAssignmentType' -Value ([string]$Item.directoryRoleAssignmentType))
+            }
         } elseif ($IsGroupReview) {
             $NewParams.Group = [string]$Item.group
         } else {

@@ -15,7 +15,8 @@ function Get-OERAccessReviewTargetMismatch {
 
     Returns nothing when the live review reviews the access package AND the assignment policy the entry
     declares, or, for an entry that declares group, the members of that group, or, for an entry that
-    declares directoryRole, every user's assignments to that role. Otherwise returns ONE
+    declares directoryRole, every user's assignments to that role (or only the eligible or only the
+    active ones when it declares directoryRoleAssignmentType). Otherwise returns ONE
     ErrorRecord, which it never writes (the caller writes it). It writes no error and no warning of its
     own.
 
@@ -24,11 +25,15 @@ function Get-OERAccessReviewTargetMismatch {
     which runs before the group branch, and the first check that fails decides:
     r1. An entry that also declares group, accessPackage or assignmentPolicy, or whose directoryRole is
         empty or white space, is refused. No request.
-    r2. A live scope that Resolve-OERAccessReviewRoleScope (given the live ScopeType, PrincipalScopes and
-        ResourceScopes) does not classify as All (a package or group review, a guest filter, an
-        eligible-only or active-only review, anything else) is refused, naming the live scope: the query,
-        or for a principal resource memberships scope the principal and resource queries ('none' when
-        empty), and the scope type when it is not the plain one. No request.
+    r2. The declared form is the canonical directoryRoleAssignmentType (Eligible or Active) when the entry
+        declares one, else All. A declared value that is not a member is refused (it names the unknown
+        value), nothing written. A live scope that Resolve-OERAccessReviewRoleScope (given the live
+        ScopeType, PrincipalScopes and ResourceScopes) does not classify as the declared form (a package
+        or group review, a guest filter, another form of the role review, anything else) is refused,
+        naming the live scope: the query, or for a principal resource memberships scope the principal
+        and resource queries ('none' when empty), and the scope type when it is not the plain one. The
+        message of an entry that declares no assignment type is unchanged; an eligible-only or
+        active-only entry reads "does not review only the eligible (active) assignments". No request.
     r3. The declared role is a GUID verbatim (lower-cased), else it goes through
         Resolve-OERDirectoryRoleInput. A failure (RoleDefinitionNotFound, AmbiguousRoleName,
         RoleDefinitionReadFailed) is returned as a record with the helper's own id, category, message and
@@ -76,8 +81,9 @@ function Get-OERAccessReviewTargetMismatch {
     and never as a mismatch.
 
     .PARAMETER Declared
-    One accessReviews[] entry from the structure document. Only displayName, directoryRole, group,
-    accessPackage and assignmentPolicy are read, the last four through Test-OERDeclaredProperty.
+    One accessReviews[] entry from the structure document. Only displayName, directoryRole,
+    directoryRoleAssignmentType, group, accessPackage and assignmentPolicy are read, the last five
+    through Test-OERDeclaredProperty.
 
     .PARAMETER Current
     The live definition as returned by Get-OERAccessReviewDefinition, carrying Scope, ScopeType,
@@ -128,10 +134,20 @@ function Get-OERAccessReviewTargetMismatch {
                     'an access package or an assignment policy), or declares no role, so the review in the tenant with that display name ' +
                     'cannot be shown to be the one it declares. Nothing was written.'))
         }
-        # r2. Only the every-user form the module writes is the review this entry declares.
+        # r2. Only the form the entry declares is the review it declares: the every-user form
+        # (directoryRoleAssignmentType omitted, null) or the eligible-only or active-only form.
+        $DeclaredForm = 'All'
+        if (Test-OERDeclaredProperty -Node $Declared -Name 'directoryRoleAssignmentType') {
+            $DeclaredForm = [string](Resolve-OERStructureEnumCasing -EnumName 'directoryRoleAssignmentType' -Value ([string]$Declared.directoryRoleAssignmentType))
+            if ($DeclaredForm -notin @('Eligible', 'Active')) {
+                return (& $NewMismatch ("Access review entry '$Name' declares an unknown directory role assignment type " +
+                        "('$([string]$Declared.directoryRoleAssignmentType)'; expected Eligible or Active), so the review in the tenant with " +
+                        'that display name cannot be shown to be the one it declares. Nothing was written.'))
+            }
+        }
         $LiveRoleScope = Resolve-OERAccessReviewRoleScope -Query ([string]$Current.Scope) -ScopeType ([string]$Current.ScopeType) `
             -PrincipalScope $Current.PrincipalScopes -ResourceScope $Current.ResourceScopes
-        if ($LiveRoleScope.Kind -ne 'All') {
+        if ($LiveRoleScope.Kind -ne $DeclaredForm) {
             [string]$LiveScopeType = $Current.ScopeType
             $LiveScopeText = if ($LiveScopeType -ieq '#microsoft.graph.principalResourceMembershipsScope') {
                 $PrincipalText = (@($Current.PrincipalScopes | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_.Query }) -join ', ')
@@ -147,7 +163,8 @@ function Get-OERAccessReviewTargetMismatch {
             # The memberships type is already named by the principals and resources text above.
             $TypeText = if ($LiveScopeType -and $LiveScopeType -ine '#microsoft.graph.accessReviewQueryScope' -and
                 $LiveScopeType -ine '#microsoft.graph.principalResourceMembershipsScope') { " and its scope type is '$LiveScopeType'" } else { '' }
-            return (& $NewMismatch ("Access review '$Name' in the tenant does not review every user's assignments to a directory role in the form " +
+            $FormText = if ($DeclaredForm -eq 'All') { "every user's" } else { "only the $($DeclaredForm.ToLowerInvariant())" }
+            return (& $NewMismatch ("Access review '$Name' in the tenant does not review $FormText assignments to a directory role in the form " +
                     "this module writes (its scope is $LiveScopeText$TypeText), so it is not the review this entry declares for directory " +
                     "role '$DeclaredRole'. Nothing was written. $NotUnique"))
         }
