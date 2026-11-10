@@ -1417,8 +1417,9 @@ state to build from: without one the original Graph error is thrown after one re
 **Why.** The Graph SDK's token provider was read as built with no allowed-hosts list (in
 Microsoft.Graph.Authentication 2.40.0, not measured against a live service: see
 #arm-transport), so a `@odata.nextLink` naming another https host would be requested with the
-session's bearer token. Measured in Sprint 15 step 1 (below), the provider does carry a list: the
-Graph host of every cloud and two Microsoft test hosts. A link to another host gets no token; a link
+session's bearer token. Measured in Sprint 15 step 1 (below), the provider does carry a list (read in a
+Global session, with no `-Environment`; not read for a sovereign one): the Graph host of every cloud and
+two Microsoft test hosts. A link to another host gets no token; a link
 to another cloud's Graph host is on the list, so the SDK would not stop it (inferred from the list,
 not measured) and this check still decides. Every `-Uri` a caller passes starts with a literal
 `v1.0/` or `beta/`; only the link a response supplies can name a host, so only a link on page 2 or
@@ -1731,8 +1732,8 @@ Behaviour that follows from this design:
   starts with a literal `v1.0/` or `beta/` or with `Get-OERPimGroupsGraphPath`; only
   `@odata.nextLink` from a Graph response reaches the SDK as an absolute address, and the SDK's
   token provider was read as built with no allowed-hosts list, so the SDK itself would not limit which
-  https host gets the token (Sprint 15 step 1 measured that it does carry one: the Graph host of every
-  cloud and two Microsoft test hosts).
+  https host gets the token (Sprint 15 step 1 measured that it does carry one, in a Global session: the Graph host of
+  every cloud and two Microsoft test hosts; not read for a sovereign `-Environment`).
   Companion rule: `Remove-OERRoleAssignment` and `Set-OERRoleAssignment` anchor their `-Id` check
   at the start (`^/`), so an id with no leading slash is refused with the existing
   `InvalidRoleAssignmentId` before any request. Every id the module itself produces
@@ -1779,7 +1780,7 @@ code). Loopback listeners written in pwsh: redirectors on 127.0.0.1 answering 30
 `Location` on another port of 127.0.0.1, on 127.0.0.2 (another host) or on their own address (the same
 origin), and sinks answering 200 with an empty `value`. Each listener logged only whether an
 `Authorization` header arrived (True or False), never its value. The token was a fake carrying
-`NOT-A-REAL-TOKEN`; nothing left the loopback interface.
+`NOT-A-REAL-TOKEN`; every address requested was on 127.0.0.x.
 
 - **Azure Resource Manager.** `Invoke-WebRequest` with exactly the wrapper's parameters (`Method`,
   `Uri` as a `System.Uri`, `Headers` holding `Authorization`, `SkipHttpErrorCheck`, `ErrorAction Stop`,
@@ -1788,8 +1789,9 @@ origin), and sinks answering 200 with an empty `value`. Each listener logged onl
   its 40-byte body to the next request as well (the listener logged the body's length, never its
   content). The header reached the redirector every time and the next request never, not even on the
   same origin.
-- **Microsoft Graph.** After `Connect-MgGraph -AccessToken` the SDK's token provider carries an
-  allowed-hosts list: `graph.microsoft.com`, `graph.microsoft.us`, `dod-graph.microsoft.us`,
+- **Microsoft Graph.** After `Connect-MgGraph -AccessToken` (no `-Environment`, so a Global session;
+  the list was not read for a sovereign one) the SDK's token provider carries an allowed-hosts list:
+  `graph.microsoft.com`, `graph.microsoft.us`, `dod-graph.microsoft.us`,
   `graph.microsoft.de`, `microsoftgraph.chinacloudapi.cn`, `canary.graph.microsoft.com` and
   `graph.microsoft-ppe.com`. A request to any other host carried no token at all, the first request
   included (127.0.0.1 and 127.0.0.2). To measure the redirect itself, 127.0.0.1 was added to that list
@@ -1798,14 +1800,19 @@ origin), and sinks answering 200 with an empty `value`. Each listener logged onl
   dropped on a 302 GET to another port, a 302 GET to another host and a 307 POST to another port;
   `-SkipHttpErrorCheck` changed nothing. The SDK's handler chain runs `AuthenticationHandler` first and
   Kiota's `RedirectHandler` inside it (`MaxRedirect` 5, `AllowRedirectOnSchemeChange` false, a
-  `ScrubSensitiveHeaders` callback set), so a followed redirect does not pass the token step again (read from the order of the chain, not
-  measured on its own).
+  `ScrubSensitiveHeaders` callback set), so a followed redirect does not pass the token step again
+  (read from the order of the chain, not measured on its own). Every Graph request measured also bound
+  `-StatusCodeVariable`, which the module's plain read and write do not, and none bound
+  `-ResponseHeadersVariable`, which the module's expected-error path does; that these output-variable
+  parameters change nothing that is sent was not measured.
 
 **What follows.** On neither transport did the token follow a redirect to another host or port, so the
-transports are unchanged. What keeps it so is the parameter set: each transport's send passes exactly
-the measured parameters, and a parameter added to either send -- the ARM token moved out of
-`-Headers`, `PreserveAuthorizationOnRedirect`, a web session, `-Headers` on the Graph call -- is
-unmeasured. The tests below turn red on such a change until it has been measured.
+transports are unchanged. What keeps it so is the parameter set. The ARM send passes the measured
+parameters, and its tests pin that set. The Graph sends pass the module's own set, which the measurement
+covered except for the two output-variable parameters above, and its tests pin that set. A parameter
+added to either send -- the ARM token moved out of `-Headers`, `PreserveAuthorizationOnRedirect`, a web
+session, `-Headers` on the Graph call -- is unmeasured, and the tests below turn red on such a change
+until it has been measured.
 
 **Not measured.** A redirect from https to http (the listeners spoke http only; Kiota refuses a change
 of scheme by the option above, and `Invoke-WebRequest` documents that it refuses https to http without
@@ -1818,24 +1825,28 @@ list, not measured).
 **Recorded, not changed.** Both transports follow a redirect to another host, without the token: the
 cmdlet returned what the other host answered (the sink's 200) as its answer, so the wrapper would read
 it as the Microsoft Graph or Azure Resource Manager answer (the wrapper itself was not run against the
-listeners). On Azure Resource Manager a 307 sent a write's body to the other host again (measured on
-another port); on Microsoft Graph the 307 POST arrived at the other port as a POST, with the test host
-allowed, and whether its body arrived was not logged. Reported to the architect in the Sprint 15
-step 1 report as a finding outside the step's scope.
+listeners). On Azure Resource Manager a 307 sent a write's body to another port again; on Microsoft Graph the 307
+POST arrived at the other port as a POST, with the test host allowed, and whether its body arrived was
+not logged. Reported to the architect in the Sprint 15 step 1 report as a finding outside the step's
+scope.
 
 **Proofs.** `tests/Unit/Private/Invoke-OERArmRequest.Tests.ps1`, Describe "Invoke-OERArmRequest follows a
 redirect only without the token (Sprint 15 step 1, A3)", and
 `tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1`, Describe "Invoke-OERGraphRequest follows a
 redirect only without the token (Sprint 15 step 1, A3)": the bound parameter names of a read, a write,
-an expected-error read (Graph) and every page of an `-All` walk equal the measured set exactly, the ARM
-`Headers` hold `Authorization` alone, and no redirect or session parameter is bound.
+an expected-error read (Graph) and every page of an `-All` walk equal the pinned set exactly (for ARM
+the measured set), the Graph claims-challenge retry and the token-rejected 401 retry send the same set on
+every call, the ARM `Headers` hold `Authorization` alone, and no redirect or session parameter is
+bound.
 **Mutations** (each on a scratch copy of the built module): on the ARM send, adding
 `PreserveAuthorizationOnRedirect = $true`, moving the token from `-Headers` to
 `-Authentication Bearer -Token`, and adding `MaximumRedirection = 5` each turned all 4 ARM tests red;
 a second header beside `Authorization` turned 3 red (read, write, walk), since the "binds no
-parameter" test checks names only. On the Graph send, adding `-Headers` turned all 5 Graph tests red;
-adding `UserAgent` on the expected-error path only turned 1 red ("a read that expects an error"), since
-only that case takes the path.
+parameter" test checks names only. On the Graph send, adding `-Headers` turned all 5 Graph tests red (before the two retry cases
+existed); adding `UserAgent` on the expected-error path only turned 1 red ("a read that expects an
+error"), since only that case takes the path. With the retry cases in, adding `-UserAgent` to the first
+send turned 6 of 7 Graph tests red (the expected-error case takes another path), and adding it to the
+claims-challenge retry only, or to the 401 retry only, turned 1 red each (that retry's own test).
 
 ### CLAUDE.md text for arm-transport
 

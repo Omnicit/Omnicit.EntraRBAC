@@ -1448,11 +1448,11 @@ Describe 'Invoke-OERGraphRequest -All paging' {
 }
 
 Describe 'Invoke-OERGraphRequest -All sends a next link only to the session''s Graph host (BL-179, A10)' {
-    # The SDK requests a next link wherever it points, and its allowed-hosts list (measured in Sprint
-    # 15 step 1) NAMES the Graph host of every cloud, so the SDK does not stop a link to another
-    # cloud's Graph host; this check is what keeps a link inside the session's cloud. Page 1 is the caller's literal -Uri; only a later page
-    # is judged. The state is built by hand, the cloud as each case names it; no state reads the
-    # Global cloud.
+    # The SDK requests a next link wherever it points, and its allowed-hosts list (read in Sprint 15
+    # step 1) NAMES the Graph host of every cloud, so the SDK does not stop a link to another cloud's
+    # Graph host (inferred from the list, not measured); this check is what keeps a link inside the
+    # session's cloud. Page 1 is the caller's literal -Uri; only a later page is judged.
+    # The state is built by hand, the cloud as each case names it; no state reads the Global cloud.
     BeforeAll {
         $script:HostStateText = @'
 @{
@@ -7402,19 +7402,24 @@ Describe 'Invoke-OERGraphRequest follows a redirect only without the token (Spri
     # Measured 2026-11-10 against loopback listeners with Microsoft.Graph.Authentication 2.40.0
     # (docs/development/rationale.md, #arm-transport, "Sprint 15 step 1"): after Connect-MgGraph
     # -AccessToken the SDK attaches the token only to a host on its allowed-hosts list, and its redirect
-    # handler drops it when a redirect changes the port or the host. That was measured with exactly the
-    # parameters below. These tests pin them: a parameter added to the send (-Headers, a request session)
-    # turns them red until it has been measured too.
+    # handler drops it when a redirect changes the port or the host. These tests pin the parameter set
+    # the module's own sends bind. The measurement covered that set, except that every measured request
+    # also bound -StatusCodeVariable and none bound -ResponseHeadersVariable (output-variable
+    # parameters; that they do not change what is sent was not measured). A parameter added to a send
+    # (-Headers, a request session) turns these tests red until it has been measured too.
     BeforeEach {
         $global:OERRedirectGraphSends = [System.Collections.Generic.List[object]]::new()
     }
 
     AfterEach {
-        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            Remove-Variable -Scope Script -Name RedirectPage -ErrorAction Ignore
+        }
         Remove-Variable -Scope Global -Name OERRedirectGraphSends -ErrorAction Ignore
     }
 
-    It 'sends <Name> with exactly the measured parameters' -ForEach @(
+    It 'sends <Name> with exactly the pinned parameters' -ForEach @(
         @{ Name = 'a read'; Method = 'GET'; WithBody = $false; Expected = $null; Names = @('ErrorAction', 'Method', 'Uri', 'Verbose') }
         @{ Name = 'a write'; Method = 'POST'; WithBody = $true; Expected = $null; Names = @('Body', 'ErrorAction', 'Method', 'Uri', 'Verbose') }
         @{ Name = 'a read that expects an error'; Method = 'GET'; WithBody = $false; Expected = 'Request_ResourceNotFound'; Names = @('ErrorAction', 'Method', 'ResponseHeadersVariable', 'SkipHttpErrorCheck', 'StatusCodeVariable', 'Uri', 'Verbose') }
@@ -7436,7 +7441,7 @@ Describe 'Invoke-OERGraphRequest follows a redirect only without the token (Spri
         $global:OERRedirectGraphSends[0] | Should -Be $Names
     }
 
-    It 'sends every page of an -All walk with exactly the measured parameters' {
+    It 'sends every page of an -All walk with exactly the pinned parameters' {
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
             $script:RedirectPage = 0
@@ -7447,6 +7452,50 @@ Describe 'Invoke-OERGraphRequest follows a redirect only without the token (Spri
                 @{ value = @('p2') }
             }
             $null = Invoke-OERGraphRequest -Uri 'v1.0/groups' -All
+        }
+
+        $global:OERRedirectGraphSends.Count | Should -Be 2
+        foreach ($Send in $global:OERRedirectGraphSends) {
+            $Send | Should -Be @('ErrorAction', 'Method', 'Uri', 'Verbose')
+        }
+    }
+
+    It 'sends the claims-challenge retry with exactly the pinned parameters' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = @{ TenantId = 'contoso'; AuthMethod = 'Interactive'; ClientId = $null }
+        }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest {
+            $global:OERRedirectGraphSends.Add(@($PesterBoundParameters.Keys | Sort-Object))
+            if ($global:OERRedirectGraphSends.Count -eq 1) {
+                throw [System.Exception]::new('WWW-Authenticate: Bearer claims="eyJhY2Nlc3MiOnt9fQ"')
+            }
+            @{ value = @('after-stepup') }
+        }
+        InModuleScope $script:moduleName {
+            $null = Invoke-OERGraphRequest -Uri 'v1.0/groups'
+        }
+
+        $global:OERRedirectGraphSends.Count | Should -Be 2
+        foreach ($Send in $global:OERRedirectGraphSends) {
+            $Send | Should -Be @('ErrorAction', 'Method', 'Uri', 'Verbose')
+        }
+    }
+
+    It 'sends the token-rejected 401 retry with exactly the pinned parameters' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = @{ TenantId = 'contoso'; AuthMethod = 'Interactive'; ClientId = $null }
+        }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest {
+            $global:OERRedirectGraphSends.Add(@($PesterBoundParameters.Keys | Sort-Object))
+            if ($global:OERRedirectGraphSends.Count -eq 1) {
+                throw [System.Exception]::new('InvalidAuthenticationToken: token is expired')
+            }
+            @{ value = @('after-refresh') }
+        }
+        InModuleScope $script:moduleName {
+            $null = Invoke-OERGraphRequest -Uri 'v1.0/groups'
         }
 
         $global:OERRedirectGraphSends.Count | Should -Be 2

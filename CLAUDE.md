@@ -1284,6 +1284,10 @@ directory-role policy path is a string literal starting with `v1.0/`, routed thr
 `Invoke-OERGraphRequest`, and never through `Get-OERPimGroupsGraphPath` -- that helper owns the
 PIM-for-Groups `beta` constant only, and a directory-role call site must not borrow it.
 
+**No token follows a redirect on the Graph transport either** -- the rule is under **ARM Requests**; never change what
+`Invoke-OERGraphRequest` sends or how the SDK is connected without measuring it.
+`Why: docs/development/rationale.md#arm-transport`
+
 ---
 
 ## ARM Requests
@@ -1305,8 +1309,9 @@ object. The token is materialized only after the wrapper's last gate. `Why: docs
 Sprint 15 step 1): `Invoke-WebRequest` with the ARM wrapper's parameters, and the Graph SDK after
 `Connect-MgGraph -AccessToken`, follow a redirect without the `Authorization` header when it changes the
 host or the port. Never add a parameter to either transport's send (`PreserveAuthorizationOnRedirect`,
-a web session, the token outside `-Headers`, `-Headers` on the Graph call) without measuring it first;
-the unit tests of both wrappers pin the sets. `Why: docs/development/rationale.md#arm-transport`
+a web session, the token outside `-Headers`, `-Headers` on the Graph call, the `Connect-MgGraph` call,
+or an SDK option (`Set-MgRequestContext`, `Set-MgGraphOption`)) without measuring it first; the unit
+tests of both wrappers pin the sets, the Graph retries included. `Why: docs/development/rationale.md#arm-transport`
 
 The throttle retries (a 429, and a 503 carrying `Retry-After`; the constants and their values are
 under the Why link) are bounded at the decision to wait, never by stopping a paging loop part-way --

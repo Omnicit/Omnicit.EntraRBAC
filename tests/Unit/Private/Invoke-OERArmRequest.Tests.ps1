@@ -3447,8 +3447,9 @@ foreach ($Id in $Ids) { 'ERROR ID: {0}' -f $Id }
 Describe 'Invoke-OERArmRequest follows a redirect only without the token (Sprint 15 step 1, A3)' {
     # Measured 2026-11-10 in pwsh 7.6.9 against loopback listeners (docs/development/rationale.md,
     # #arm-transport, "Sprint 15 step 1"): Invoke-WebRequest, called with exactly the parameters below,
-    # follows a 302 or a 307 to another port, another host and the same origin, and sends the
-    # Authorization header on the first request only. That was measured for THIS parameter set. These
+    # followed a 302 to another port, another host and the same origin, and a 307 (a PUT) to another
+    # port, and sent the Authorization header on the first request only. That was measured for THIS
+    # parameter set. These
     # tests pin it: a parameter added to the send -- the token moved out of -Headers,
     # PreserveAuthorizationOnRedirect, a web session -- turns them red until it has been measured too.
     BeforeEach {
