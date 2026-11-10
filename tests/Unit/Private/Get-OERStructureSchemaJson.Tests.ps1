@@ -557,8 +557,9 @@ Describe 'Get-OERStructureSchemaJson' {
                 $Declared.Add(($Values -join ','))
             }
             # 16 since Sprint 11 step 8: administrativeUnits[].scopedRoles[].principalType is the third
-            # array of the principalType enum.
-            $Declared.Count | Should -Be 16 -Because 'the schema declares 16 enum arrays across 10 distinct enums'
+            # array of the principalType enum. 17 since Sprint 14 step 4: accessReviews[].
+            # directoryRoleAssignmentType is the second array of the directoryRoleAssignmentType enum.
+            $Declared.Count | Should -Be 17 -Because 'the schema declares 17 enum arrays across 10 distinct enums'
             $NullBearing | Should -Be 1 -Because 'accessReviews[].recurrence is the only nullable enum in the schema'
 
             $Owned = @{}
@@ -1337,10 +1338,10 @@ Describe 'Get-OERStructureSchemaJson renames of administrative units, catalogs a
             $Prev | Should -Not -BeNullOrEmpty
             $Prev.type | Should -BeExactly 'string'
             $Prev.minLength | Should -Be 1
-            $Prev.description | Should -BeExactly 'The access review''s current display name or object id, when displayName declares a new one. The name is looked up tenant-wide, as displayName is. When only this value matches a live access review, that review is renamed in place; when displayName also matches a different review, the entry fails and nothing is merged; when neither matches, the entry fails and nothing is created. The review found under either name must review the declared accessPackage and assignmentPolicy, or the entry fails and nothing is written. A name lookup can follow a rename with a delay: keep this value until the new name resolves, then remove it. Not exported by Get-OERInventory.'
+            $Prev.description | Should -BeExactly 'The access review''s current display name or object id, when displayName declares a new one. The name is looked up tenant-wide, as displayName is. When only this value matches a live access review, that review is renamed in place; when displayName also matches a different review, the entry fails and nothing is merged; when neither matches, the entry fails and nothing is created. The review found under either name must review what the entry declares (the accessPackage and assignmentPolicy, the group or the directory role and its form), or the entry fails and nothing is written. A name lookup can follow a rename with a delay: keep this value until the new name resolves, then remove it. Not exported by Get-OERInventory.'
             # The section description keeps what it said about the update and the match key, and adds the rename.
             $Reviews.description | Should -Match ([regex]::Escape('displayName is the match key: an existing review is updated in place only when it reviews the declared accessPackage and assignmentPolicy, the declared group or the declared directory role; otherwise the entry fails and nothing is written.'))
-            $Reviews.description | Should -Match ([regex]::Escape('To rename a review, declare its new name as displayName and its current name (or object id) as previousDisplayName: the name is looked up tenant-wide, as displayName is, and the review found under either name must review the declared accessPackage and assignmentPolicy, or the entry fails and nothing is written. When the same document renames the access package or the policy, name it by its new name (or object id) here.'))
+            $Reviews.description | Should -Match ([regex]::Escape('To rename a review, declare its new name as displayName and its current name (or object id) as previousDisplayName: the name is looked up tenant-wide, as displayName is, and the review found under either name must review what the entry declares (the accessPackage and assignmentPolicy, the group or the directory role and its form), or the entry fails and nothing is written. When the same document renames the access package or the policy, name it by its new name (or object id) here.'))
             # BL-147 (Sprint 11 step 6): a package the same document declares is reached through its entry.
             $Reviews.description | Should -Match ([regex]::Escape('An accessPackage named by the displayName of an accessPackages entry of the same document is the package that entry found in its catalog or created there, never one of that name in another catalog'))
             $Reviews.description | Should -Match ([regex]::Escape('When two or more accessPackages entries declare that name, as displayName or previousDisplayName, the offline validator refuses the document: name the access package by its object id.'))
@@ -1379,7 +1380,32 @@ Describe 'Get-OERStructureSchemaJson renames of administrative units, catalogs a
         }
     }
 
-    It 'validates a directory role review and rejects every mixed form (Sprint 13 step 4)' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+    It 'declares directoryRoleAssignmentType as an Eligible or Active enum that depends on directoryRole (Sprint 14 step 4)' {
+        InModuleScope $script:moduleName {
+            $Items = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.accessReviews.items
+            $Prop = $Items.properties.directoryRoleAssignmentType
+            $Prop.type | Should -BeExactly 'string'
+            @($Prop.enum) -join ',' | Should -BeExactly 'Eligible,Active'
+            $Prop.description | Should -BeExactly "Only with directoryRole. Eligible reviews only the eligible assignments of the role and Active only its active assignments, both for users only; omitted, the review covers every eligible and active assignment of the role, as before. The form is part of the review's scope, which cannot change: a review found by displayName in another form is refused and nothing is written."
+            @($Items.dependencies.directoryRoleAssignmentType) | Should -Be @('directoryRole')
+            $Reviews = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.accessReviews
+            $Reviews.description | Should -Match ([regex]::Escape('must review what the entry declares (the accessPackage and assignmentPolicy, the group or the directory role and its form)'))
+            $Items.properties.previousDisplayName.description | Should -Match ([regex]::Escape('must review what the entry declares (the accessPackage and assignmentPolicy, the group or the directory role and its form)'))
+        }
+    }
+
+    It 'validates a directory role review form and rejects a form without directoryRole or outside the enum (Sprint 14 step 4)' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson
+            $Wrap = { param($Item) '{ "version": "1.0", "accessReviews": [ ' + $Item + ' ] }' }
+            Test-Json -Json (& $Wrap '{ "displayName": "R", "directoryRole": "Global Reader", "directoryRoleAssignmentType": "Eligible" }') -Schema $Schema | Should -BeTrue
+            Test-Json -Json (& $Wrap '{ "displayName": "R", "directoryRole": "Global Reader", "directoryRoleAssignmentType": "Active" }') -Schema $Schema | Should -BeTrue
+            Test-Json -Json (& $Wrap '{ "displayName": "R", "directoryRole": "Global Reader", "directoryRoleAssignmentType": "All" }') -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+            Test-Json -Json (& $Wrap '{ "displayName": "R", "group": "G", "directoryRoleAssignmentType": "Eligible" }') -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+        }
+    }
+
+    It 'validates a directory role review and rejects every mixed form (Sprint 13 step 4)'-Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
         InModuleScope $script:moduleName {
             $Schema = Get-OERStructureSchemaJson
             $Wrap = { param($Item) '{ "version": "1.0", "accessReviews": [ ' + $Item + ' ] }' }

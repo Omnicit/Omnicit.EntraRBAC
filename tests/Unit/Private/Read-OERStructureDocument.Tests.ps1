@@ -568,6 +568,15 @@ Describe 'Read-OERStructureDocument keeps a date-and-time string as written (BL-
         }
     }
 
+    It 'rewrites directoryRoleAssignmentType to its canonical spelling and leaves an absent one absent' {
+        InModuleScope $script:moduleName {
+            $Doc = Read-OERStructureDocument -Json '{ "version": "1.0", "accessReviews": [ { "displayName": "a", "directoryRole": "Global Reader", "directoryRoleAssignmentType": "eligible" }, { "displayName": "b", "directoryRole": "Global Reader", "directoryRoleAssignmentType": "ACTIVE" }, { "displayName": "c", "directoryRole": "Global Reader" } ] }'
+            $Doc.accessReviews[0].directoryRoleAssignmentType | Should -BeExactly 'Eligible'
+            $Doc.accessReviews[1].directoryRoleAssignmentType | Should -BeExactly 'Active'
+            $Doc.accessReviews[2].PSObject.Properties.Name | Should -Not -Contain 'directoryRoleAssignmentType'
+        }
+    }
+
     It 'canonicalizes enum values as before' {
         InModuleScope $script:moduleName {
             $Doc = Read-OERStructureDocument -Json '{ "version": "1.0", "accessReviews": [ { "displayName": "ar1", "accessPackage": "ap1", "recurrence": "monthly", "startDate": "2026-03-01T00:00:00Z" } ] }'

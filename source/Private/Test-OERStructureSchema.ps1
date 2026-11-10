@@ -143,7 +143,10 @@ function Test-OERStructureSchema {
     Microsoft Entra directory role whose assignments the review reviews: a display name or role
     definition id), replaces the two required findings the same way; 'directoryRole' beside 'group',
     'accessPackage' or 'assignmentPolicy' is one Error at accessReviews[i].directoryRole, and a
-    'directoryRole' that is not a non-empty string is an Error there too. An accessReviews item validates
+    'directoryRole' that is not a non-empty string is an Error there too. 'directoryRoleAssignmentType'
+    (Eligible or Active: which assignments of the role the review reviews) is valid only beside
+    'directoryRole' (an Error at accessReviews[i].directoryRoleAssignmentType otherwise, as is a value
+    that is not one of the two; non-canonical casing is a Warning; an explicit null is undeclared). An accessReviews item validates
     reviewers/fallbackReviewers as string arrays,
     descriptionForAdmins/descriptionForReviewers as strings, the five review settings booleans
     (mailNotification, reminderNotification, requireJustification, recommendationsEnabled,
@@ -1763,6 +1766,7 @@ function Test-OERStructureSchema {
     if (Test-HasProp -Node $Document -Name 'accessReviews') {
         if (Test-SectionIsArray -SectionName 'accessReviews') {
             $ValidRecurrence = @(Resolve-OERStructureEnumCasing -EnumName 'accessReviewRecurrence' -List)
+            $ValidRoleReviewForms = @(Resolve-OERStructureEnumCasing -EnumName 'directoryRoleAssignmentType' -List)
             $ARs = @($Document.accessReviews)
             $ARSeen = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
             $ARConsequence = 'Both entries reconcile one access review, so applying the document would rewrite its settings on every run.'
@@ -1828,6 +1832,23 @@ function Test-OERStructureSchema {
                     } else {
                         Add-EnumCasingWarning -EnumName 'accessReviewRecurrence' -Key 'recurrence' -Value $AR.recurrence `
                             -Section 'accessReviews' -Item $ARItem -Path "$ARPath.recurrence"
+                    }
+                }
+
+                # The form of a directory role review: only with 'directoryRole', Eligible or Active. An
+                # explicit null is undeclared (all assignments, as before).
+                if (Test-HasProp -Node $AR -Name 'directoryRoleAssignmentType') {
+                    if (-not $ArDeclaresRole) {
+                        Add-Finding -Section 'accessReviews' -Item $ARItem `
+                            -Path "$ARPath.directoryRoleAssignmentType" `
+                            -Message "'directoryRoleAssignmentType' at $ARPath is only valid with 'directoryRole': it selects which assignments of the directory role the review reviews."
+                    } elseif ($AR.directoryRoleAssignmentType -isnot [string] -or $ValidRoleReviewForms -inotcontains $AR.directoryRoleAssignmentType) {
+                        Add-Finding -Section 'accessReviews' -Item $ARItem `
+                            -Path "$ARPath.directoryRoleAssignmentType" `
+                            -Message "'directoryRoleAssignmentType' at $ARPath must be one of: $($ValidRoleReviewForms -join ', '). Got: $(Get-FoundValueText -Value $AR.directoryRoleAssignmentType)."
+                    } else {
+                        Add-EnumCasingWarning -EnumName 'directoryRoleAssignmentType' -Key 'directoryRoleAssignmentType' -Value $AR.directoryRoleAssignmentType `
+                            -Section 'accessReviews' -Item $ARItem -Path "$ARPath.directoryRoleAssignmentType"
                     }
                 }
 
