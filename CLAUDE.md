@@ -1301,6 +1301,13 @@ session's ARM address, in `Invoke-ArmCall` after the two gates and before the to
 the parsed `[System.Uri]` it hands to `Invoke-WebRequest`; never send a string that was not that
 object. The token is materialized only after the wrapper's last gate. `Why: docs/development/rationale.md#arm-requests`
 
+**No token follows a redirect, and the parameter set is what keeps it so** (measured 2026-11-10,
+Sprint 15 step 1): `Invoke-WebRequest` with the ARM wrapper's parameters, and the Graph SDK after
+`Connect-MgGraph -AccessToken`, follow a redirect without the `Authorization` header when it changes the
+host or the port. Never add a parameter to either transport's send (`PreserveAuthorizationOnRedirect`,
+a web session, the token outside `-Headers`, `-Headers` on the Graph call) without measuring it first;
+the unit tests of both wrappers pin the sets. `Why: docs/development/rationale.md#arm-transport`
+
 The throttle retries (a 429, and a 503 carrying `Retry-After`; the constants and their values are
 under the Why link) are bounded at the decision to wait, never by stopping a paging loop part-way --
 which is also the LIMIT of what `CallDeadlineSeconds` bounds: it caps a THROTTLED call only, and a
