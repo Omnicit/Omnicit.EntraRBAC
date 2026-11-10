@@ -13471,26 +13471,57 @@ Describe 'Get-OERInventory exports a review of all assignments of a directory ro
         Should -Invoke -ModuleName $script:moduleName Resolve-OERDirectoryRoleDefinitionId -Times 0 -Exactly
     }
 
-    It 'skips an eligible-only, an active-only and a guest-only review of the role, counting each, and exports no entry' {
-        $script:RlLive = @(
-            (& $script:NewRlLive -Name 'Eligible' -Form Eligible),
-            (& $script:NewRlLive -Name 'Active' -Form Active),
-            (& $script:NewRlLive -Name 'Guests' -Form Guest)
-        )
+    It 'exports an eligible-only review as directoryRole plus directoryRoleAssignmentType Eligible, directly after it' {
+        $script:RlLive = @(& $script:NewRlLive -Name 'Eligible' -Form Eligible)
+        $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr -WarningVariable Warned -WarningAction SilentlyContinue
+        $Ar = @($Inv.AccessReviews)
+        $Ar.Count | Should -Be 1
+        $Ar[0].directoryRole | Should -BeExactly 'Reports Reader'
+        $Ar[0].directoryRoleAssignmentType | Should -BeExactly 'Eligible'
+        $Common = @('reviewers', 'recurrence', 'durationInDays', 'startDate', 'mailNotification', 'reminderNotification', 'requireJustification', 'recommendationsEnabled', 'autoApplyDecisions')
+        @($Ar[0].PSObject.Properties.Name) | Should -Be (@('displayName', 'directoryRole', 'directoryRoleAssignmentType') + $Common)
+        @($Warned).Count | Should -Be 0
+        @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+    }
+
+    It 'exports an active-only review as directoryRole plus directoryRoleAssignmentType Active' {
+        $script:RlLive = @(& $script:NewRlLive -Name 'Active' -Form Active)
+        $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -WarningVariable Warned -WarningAction SilentlyContinue
+        $Ar = @($Inv.AccessReviews)
+        $Ar.Count | Should -Be 1
+        $Ar[0].directoryRole | Should -BeExactly 'Reports Reader'
+        $Ar[0].directoryRoleAssignmentType | Should -BeExactly 'Active'
+        @($Ar[0].PSObject.Properties.Name)[1..2] | Should -Be @('directoryRole', 'directoryRoleAssignmentType')
+        @($Warned).Count | Should -Be 0
+    }
+
+    It 'writes no directoryRoleAssignmentType key for an All review, beside an Eligible and an Active one' {
+        $script:RlLive = @((& $script:NewRlLive -Name 'All'), (& $script:NewRlLive -Name 'Eligible' -Form Eligible), (& $script:NewRlLive -Name 'Active' -Form Active))
+        $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
+        $ByName = @{}
+        foreach ($E in @($Inv.AccessReviews)) { $ByName[[string]$E.displayName] = $E }
+        $ByName.Count | Should -Be 3
+        $ByName['All'].PSObject.Properties.Name | Should -Not -Contain 'directoryRoleAssignmentType'
+        $ByName['Eligible'].directoryRoleAssignmentType | Should -BeExactly 'Eligible'
+        $ByName['Active'].directoryRoleAssignmentType | Should -BeExactly 'Active'
+    }
+
+    It 'skips a guest-only review of the role, counting it with the reworded part, and exports no entry' {
+        $script:RlLive = @(& $script:NewRlLive -Name 'Guests' -Form Guest)
         $Inv = Get-OERInventory -Include AccessReviews -WarningVariable Warned -WarningAction SilentlyContinue
         @($Inv.AccessReviews).Count | Should -Be 0
         @($Warned).Count | Should -Be 1
-        [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 3 access review definition(s) the apply document cannot declare: ' +
-            '3 review(s) of a directory role in a form the module cannot write back (eligible assignments only, active assignments only, guest users only, or another query). ' +
+        [string]$Warned[0] | Should -BeExactly ('Get-OERInventory: skipped 1 access review definition(s) the apply document cannot declare: ' +
+            '1 review(s) of a directory role in a form the module cannot write back (guest users only, or another query). ' +
             'Access package reviews, reviews of all members of one group and reviews of all assignments of one directory role round-trip through Invoke-OERStructure.')
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly
     }
 
-    It 'counts two skipped role reviews as 2 review(s) of a directory role' {
-        $script:RlLive = @((& $script:NewRlLive -Name 'Eligible' -Form Eligible), (& $script:NewRlLive -Name 'Active' -Form Active), (& $script:NewRlLive -Name 'Exported'))
+    It 'counts only the guest-only review among Eligible, Active and Guest as skipped' {
+        $script:RlLive = @((& $script:NewRlLive -Name 'Eligible' -Form Eligible), (& $script:NewRlLive -Name 'Active' -Form Active), (& $script:NewRlLive -Name 'Guests' -Form Guest))
         $Inv = Get-OERInventory -Include AccessReviews -WarningVariable Warned -WarningAction SilentlyContinue
-        @($Inv.AccessReviews | ForEach-Object { $_.displayName }) | Should -Be @('Exported')
-        [string]$Warned[0] | Should -Match ([regex]::Escape('skipped 2 access review definition(s) the apply document cannot declare: 2 review(s) of a directory role in a form'))
+        @($Inv.AccessReviews | ForEach-Object { $_.displayName }) | Should -Be @('Eligible', 'Active')
+        [string]$Warned[0] | Should -Match ([regex]::Escape('skipped 1 access review definition(s) the apply document cannot declare: 1 review(s) of a directory role in a form'))
     }
 
     It 'counts a review of an application under the reworded other-scope part' {

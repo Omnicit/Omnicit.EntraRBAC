@@ -163,13 +163,16 @@ function Get-OERInventory {
     assignments of one directory role is written with a directoryRole key (the role's display name when
     the module's own role resolver finds exactly this role by it, else the role definition id; a name
     with the form of an object id is written as the id) and no group, accessPackage or assignmentPolicy.
+    A review of the eligible assignments only, or of the active assignments only, of one directory role
+    is written the same way with a directoryRoleAssignmentType key of Eligible or Active directly after
+    directoryRole; a review of all assignments writes no such key.
     A review of a role's service principals created elsewhere is stored by Graph in the same form, so
     it is read and written as a directoryRole review. Known limit: when two role definitions share a
     review's role name, the role is written by its id, and the lookup can leave an error record in a
     caller's -ErrorVariable (nothing is published as an error of the export).
     A review of guest users only, of direct members only
-    or of inactive users, an application, a directory role in a form other than all assignments (eligible
-    only, active only, guest users only or another query), another scope or a multi-stage review is
+    or of inactive users, an application, a directory role in a form other than all, eligible-only or
+    active-only assignments (guest users only or another query), another scope or a multi-stage review is
     skipped, and so is a review (of either form) with a reviewer scope the document cannot express
     (for example the owners of a group): exporting it would drop that reviewer, and applying the
     export would rewrite the live review. The skips are named in one aggregate warning, counted by
@@ -433,9 +436,9 @@ function Get-OERInventory {
     The building-block sections to read. Defaults to Groups, AdministrativeUnits, Catalogs and
     AccessPackages. AccessReviews captures only single-stage review
     definitions of an access package, of all members of one group or of all assignments of one directory
-    role (optionally narrowed by
+    role (all, eligible-only or active-only assignments; optionally narrowed by
     -AccessReviewFilter); a review of guest users only, of direct members only or of inactive users, an
-    application, a directory role in another form (eligible only, active only, guest users only), another
+    application, a directory role in another form (guest users only, another query), another
     scope, a multi-stage review, or a review with a reviewer
     scope the document cannot express (a group's owners, for example) is skipped with a warning,
     counted by kind; a skipped review still makes its namesake a shared name, so the exported one is
@@ -2388,19 +2391,21 @@ function Get-OERInventory {
                 $GroupScope = $null
                 $RoleScope = $null
                 if (-not $IsPackageReview) {
-                    # Sprint 13 step 4: a review of ALL assignments of one directory role is exported as
-                    # directoryRole (Resolve-OERAccessReviewRoleScope owns which scope that is, asked FIRST).
-                    # The eligible-only, active-only and other role forms cannot be written back and are
-                    # skipped and counted; anything that is no role review goes on to the group check.
+                    # Sprint 13 step 4 and Sprint 14 step 4: a review of the assignments of one directory
+                    # role is exported as directoryRole (Resolve-OERAccessReviewRoleScope owns which scope
+                    # that is, asked FIRST); an eligible-only or active-only review also carries
+                    # directoryRoleAssignmentType. Any other role form (guest users only, another query)
+                    # cannot be written back and is skipped and counted; anything that is no role review
+                    # goes on to the group check.
                     $RoleScope = Resolve-OERAccessReviewRoleScope -Query ([string]$Ar.Scope) -ScopeType ([string]$Ar.ScopeType) `
                         -PrincipalScope @($Ar.PrincipalScopes) -ResourceScope @($Ar.ResourceScopes)
-                    if ($RoleScope.Kind -in 'Eligible', 'Active', 'OtherForm') {
+                    if ($RoleScope.Kind -eq 'OtherForm') {
                         Write-Verbose "Skipping access review '$($Ar.DisplayName)': a directory role review in a form the module cannot write back (does not round-trip)."
                         $SkippedRoleFormCount++
                         continue
                     }
                 }
-                if (-not $IsPackageReview -and $RoleScope.Kind -ne 'All') {
+                if (-not $IsPackageReview -and $RoleScope.Kind -notin 'All', 'Eligible', 'Active') {
                     $GroupScope = Resolve-OERAccessReviewGroupScope -Query ([string]$Ar.Scope) -ScopeType ([string]$Ar.ScopeType)
                     if ($GroupScope.Kind -ne 'Members') {
                         if ($GroupScope.Kind -eq 'OtherForm') {
@@ -2455,11 +2460,16 @@ function Get-OERInventory {
                 }
 
                 $Proj = [ordered]@{ displayName = $Ar.DisplayName }
-                if (-not $IsPackageReview -and $RoleScope.Kind -eq 'All') {
+                if (-not $IsPackageReview -and $RoleScope.Kind -in 'All', 'Eligible', 'Active') {
                     # directoryRole: the role whose assignments the review covers (see
                     # Get-AccessReviewDirectoryRoleReference for the name rule).
                     $Proj.directoryRole = Get-AccessReviewDirectoryRoleReference -Id ([string]$RoleScope.RoleDefinitionId) `
                         -ReviewName ([string]$Ar.DisplayName) -Cache $ArRoleNameLookup
+                    # directoryRoleAssignmentType: only an eligible-only or active-only review names its
+                    # form; a review of all assignments writes no key (omitted means all assignments).
+                    if ($RoleScope.Kind -in 'Eligible', 'Active') {
+                        $Proj.directoryRoleAssignmentType = [string]$RoleScope.Kind
+                    }
                 }
                 elseif (-not $IsPackageReview) {
                     # group: the name of the group whose members the review covers, written under the
@@ -2674,7 +2684,7 @@ function Get-OERInventory {
                     $SkippedParts.Add("$SkippedGroupFormCount review(s) of a group in a form the module cannot write back (guest users only, direct members only, or another query)")
                 }
                 if ($SkippedRoleFormCount -gt 0) {
-                    $SkippedParts.Add("$SkippedRoleFormCount review(s) of a directory role in a form the module cannot write back (eligible assignments only, active assignments only, guest users only, or another query)")
+                    $SkippedParts.Add("$SkippedRoleFormCount review(s) of a directory role in a form the module cannot write back (guest users only, or another query)")
                 }
                 if ($SkippedReviewCount -gt 0) {
                     $SkippedParts.Add("$SkippedReviewCount review(s) of an application or another scope")
