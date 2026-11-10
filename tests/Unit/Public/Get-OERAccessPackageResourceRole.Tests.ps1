@@ -181,7 +181,7 @@ Describe 'Get-OERAccessPackageResourceRole' {
             $Own[0].Exception.Message | Should -BeExactly "Access package 'AP-Sales' not found."
         }
 
-        It 'publishes a AccessPackageNotInCatalog refusal as itself, with no write request and no read' {
+        It 'publishes an AccessPackageNotInCatalog refusal as itself, with no write request and no read' {
             Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId {
                 throw [System.Management.Automation.ErrorRecord]::new(
                     [System.Exception]::new('refused'),
@@ -197,7 +197,7 @@ Describe 'Get-OERAccessPackageResourceRole' {
             @($Err | Where-Object { $_.FullyQualifiedErrorId -match '^AmbiguousAccessPackageName' }).Count | Should -Be 0
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
         }
-        It 'publishes a AmbiguousCatalogName refusal as itself, with no write request and no read' {
+        It 'publishes an AmbiguousCatalogName refusal as itself, with no write request and no read' {
             Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId {
                 throw [System.Management.Automation.ErrorRecord]::new(
                     [System.Exception]::new('refused'),

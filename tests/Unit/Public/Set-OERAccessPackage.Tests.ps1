@@ -194,7 +194,7 @@ Describe 'Set-OERAccessPackage' {
             $Own[0].Exception.Message | Should -BeExactly "Access package not found."
         }
 
-        It 'publishes a AccessPackageNotInCatalog refusal as itself, with no write request and no ShouldProcess' {
+        It 'publishes an AccessPackageNotInCatalog refusal as itself, with no write request' {
             Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId {
                 throw [System.Management.Automation.ErrorRecord]::new(
                     [System.Exception]::new('refused'),
@@ -210,7 +210,7 @@ Describe 'Set-OERAccessPackage' {
             @($Err | Where-Object { $_.FullyQualifiedErrorId -match '^AmbiguousAccessPackageName' }).Count | Should -Be 0
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
         }
-        It 'publishes a AmbiguousCatalogName refusal as itself, with no write request and no ShouldProcess' {
+        It 'publishes an AmbiguousCatalogName refusal as itself, with no write request' {
             Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId {
                 throw [System.Management.Automation.ErrorRecord]::new(
                     [System.Exception]::new('refused'),
@@ -226,7 +226,7 @@ Describe 'Set-OERAccessPackage' {
             @($Err | Where-Object { $_.FullyQualifiedErrorId -match '^AmbiguousAccessPackageName' }).Count | Should -Be 0
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
         }
-        It 'publishes a CatalogNotFound refusal as itself, with no write request and no ShouldProcess' {
+        It 'publishes a CatalogNotFound refusal as itself, with no write request' {
             Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId {
                 throw [System.Management.Automation.ErrorRecord]::new(
                     [System.Exception]::new('refused'),
@@ -260,7 +260,8 @@ Describe 'Set-OERAccessPackage' {
             { Set-OERAccessPackage -Id 'ap-1' -Catalog 'CAT-IT-Core' -Description 'x' -ErrorAction Stop } | Should -Throw
             Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
-        }    }
+        }
+    }
 }
 
 Describe 'Set-OERAccessPackage -- a failed resolver read is not a not-found (issue #71, fix round 1)' {
