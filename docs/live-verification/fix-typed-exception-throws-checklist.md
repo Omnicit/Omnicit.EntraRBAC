@@ -58,7 +58,7 @@ helpers block H.1** (the runner prepends H.1 to every block).
 
 ### H.1. The helpers every check uses
 
-- [ ] **H.1** The helpers load; nothing is printed and nothing is sent. #type/subtask
+- [x] **H.1** The helpers load; nothing is printed and nothing is sent. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -121,11 +121,15 @@ function Get-S143Refusal {
 **Expect:** nothing printed.
 **Failure looks like:** a parse error -- fix the block before any check runs.
 
-Result:
+Result: 2026-11-10 01:01 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The helpers parse and load in every check (the runner prepends them); nothing is printed by them and nothing is sent.
+```
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and nothing with the prefix exists. #type/subtask
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and nothing with the prefix exists. #type/subtask
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -149,13 +153,37 @@ Write-OerLiveStep "Objects with the prefix before the run: $($Before.Count)"
 prefix.
 **Failure looks like:** `False` on a marker (rebuild the worktree), or the main clone named.
 
-Result:
+Result: 2026-11-10 01:01 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The module loads from the step worktree's build at the branch tip; the four markers (A, the two typed internal ids, the rename id) are present; 0 tracked changes; no object with the prefix exists before the run.
+
+[oer-s143] Configuration files loaded: True; worktree exists: True
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s143] The module loads from a worktree that is not the main clone: True
+[oer-s143] Worktree: branch fix/typed-exception-throws; HEAD 4d65500 docs: show which build each run of check 2.1 loads; tracked changes: 0
+[oer-s143] The build carries A: True
+[oer-s143] The build carries B (tenant lookup): True
+[oer-s143] The build carries B (role name map): True
+[oer-s143] The build carries B (rename registration): True
+[oer-s143] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg3\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s143] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s143] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s143] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s143] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s143] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s143] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s143] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s143] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s143-' is left.
+[oer-s143] Objects with the prefix before the run: 0
+```
 
 ## 1. A paged read follows Microsoft Graph's next links as before (A)
 
 ### 1.1. A v1.0 walk of many pages
 
-- [ ] **1.1** `Invoke-OERGraphRequest -Uri 'v1.0/groups?$top=5&$select=id' -All` follows every page, returns as many groups as an independent read, and every next link it followed is absolute https on the session's Graph host. #type/subtask
+- [x] **1.1** `Invoke-OERGraphRequest -Uri 'v1.0/groups?$top=5&$select=id' -All` follows every page, returns as many groups as an independent read, and every next link it followed is absolute https on the session's Graph host. #type/subtask
 
 ```powershell
 Connect-S143
@@ -169,11 +197,36 @@ later link `True`; 0 writes and 0 token requests.
 **Failure looks like:** `GraphPagingIncomplete` (a link Microsoft Graph handed out was refused), a
 count that differs, or a link off the host.
 
-Result:
+Result: 2026-11-10 01:01 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The v1.0 walk followed 20 pages and returned 99 groups, the same as an independent read; page 1 went as a relative path and every one of the 19 next links Microsoft Graph handed out was absolute https on the session's Graph host; 0 writes, 0 token requests.
+
+[oer-s143] Configuration files loaded: True; worktree exists: True
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s143] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg3\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s143] The module is the worktree's build: True
+[oer-s143] Token fence in place: True
+[oer-s143] Request fence and page recorder in place: True
+[oer-s143] v1.0 groups: pages 20; items 99; equal to the independent read (99): True
+[oer-s143] v1.0 groups: page 1 sent as a relative path: True
+[oer-s143] v1.0 groups: every next link absolute https on the session's Graph host: True
+[oer-s143] v1.0 groups: writes 0; token requests after the sign-in 0
+```
 
 ### 1.2. A beta walk of many pages
 
-- [ ] **1.2** The same walk on the `beta` endpoint (`beta/groups?$top=5&$select=id`) gives the same answer. #type/subtask
+- [x] **1.2** The same walk on the `beta` endpoint (`beta/groups?$top=5&$select=id`) gives the same answer. #type/subtask
 
 ```powershell
 Connect-S143
@@ -185,13 +238,38 @@ Show-S143Walk -Label 'beta groups' -Result $Walk -Expected $Independent
 **Expect:** as 1.1.
 **Failure looks like:** as 1.1.
 
-Result:
+Result: 2026-11-10 01:01 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The beta walk followed 20 pages and returned 99 groups, the same as an independent read; every next link absolute https on the session's Graph host; 0 writes, 0 token requests.
+
+[oer-s143] Configuration files loaded: True; worktree exists: True
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s143] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg3\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s143] The module is the worktree's build: True
+[oer-s143] Token fence in place: True
+[oer-s143] Request fence and page recorder in place: True
+[oer-s143] beta groups: pages 20; items 99; equal to the independent read (99): True
+[oer-s143] beta groups: page 1 sent as a relative path: True
+[oer-s143] beta groups: every next link absolute https on the session's Graph host: True
+[oer-s143] beta groups: writes 0; token requests after the sign-in 0
+```
 
 ## 2. A tenant named by a domain that does not exist (B)
 
 ### 2.1. TenantResolutionFailed, the same record as on main, and no token request
 
-- [ ] **2.1** `Connect-OER -TenantId oer-s143-missing.invalid` with the certificate identity is refused with `TenantResolutionFailed` before any token request, and the published record is the same as the one the base commit publishes. #type/subtask
+- [x] **2.1** `Connect-OER -TenantId oer-s143-missing.invalid` with the certificate identity is refused with `TenantResolutionFailed` before any token request, and the published record is the same as the one the base commit publishes. #type/subtask
 
 ```powershell
 Disconnect-OerLive
@@ -235,13 +313,32 @@ Remove-Item -LiteralPath (Join-Path ([System.IO.Path]::GetTempPath()) 'oer-s143-
 the comparison line `True`.
 **Failure looks like:** a token request, another id, or a message that differs between the builds.
 
-Result:
+Result: 2026-11-10 01:01 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Both the branch build and main's source (each shown loading from its own place) publish TenantResolutionFailed, AuthenticationError, the domain as target and an InvalidOperationException inside, with the identical message naming the authority's refusal (400, invalid_tenant, AADSTS90002); 0 token requests in either run.
+
+[oer-s143] Configuration files loaded: True; worktree exists: True
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s143] branch: the module loads from the worktree build: True
+[oer-s143] Token fence in place: True
+[oer-s143] Request fence and page recorder in place: True
+[oer-s143] base: the module loads from the base source: True
+[oer-s143] Token fence in place: True
+[oer-s143] Request fence and page recorder in place: True
+[oer-s143] branch: id TenantResolutionFailed; category AuthenticationError; target is the domain True; inner System.InvalidOperationException; token requests 0
+[oer-s143] branch: message: Could not resolve tenant 'oer-s143-missing.invalid' to its tenant ID: The Microsoft Entra ID authority 'https://login.microsoftonline.com/' did not resolve 'oer-s143-missing.invalid' to a tenant: Response status code does not indicate success: 400 (Bad Request). (invalid_tenant, AADSTS90002) Omnicit.EntraRBAC checks the tenant every token is issued for, and a tenant named by domain is checked through its tenant ID, so no token was requested. Check the domain and the cloud (-Environment), or name the tenant by its tenant ID (a GUID).
+[oer-s143] base: id TenantResolutionFailed; category AuthenticationError; target is the domain True; inner System.InvalidOperationException; token requests 0
+[oer-s143] base: message: Could not resolve tenant 'oer-s143-missing.invalid' to its tenant ID: The Microsoft Entra ID authority 'https://login.microsoftonline.com/' did not resolve 'oer-s143-missing.invalid' to a tenant: Response status code does not indicate success: 400 (Bad Request). (invalid_tenant, AADSTS90002) Omnicit.EntraRBAC checks the tenant every token is issued for, and a tenant named by domain is checked through its tenant ID, so no token was requested. Check the domain and the cloud (-Environment), or name the tenant by its tenant ID (a GUID).
+[oer-s143] Branch and base publish the same id, category, target, message and inner exception: True
+```
 
 ## 3. The directory role name map (B)
 
 ### 3.1. The map reads as oer-live-cc
 
-- [ ] **3.1** `Get-OERDirectoryRoleNameMap -ThrowOnFailure` (in the module's scope) returns a map of the activated directory roles, read only. #type/subtask
+- [x] **3.1** `Get-OERDirectoryRoleNameMap -ThrowOnFailure` (in the module's scope) returns a map of the activated directory roles, read only. #type/subtask
 
 ```powershell
 Connect-S143
@@ -255,11 +352,35 @@ Write-OerLiveStep "Requests: $(@(& $script:S143Module { $script:S143Pages }).Cou
 **Failure looks like:** a `DirectoryRoleNameMapUnread` record (the read failed), or an
 empty map.
 
-Result:
+Result: 2026-11-10 01:01 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Get-OERDirectoryRoleNameMap -ThrowOnFailure reads the activated directory roles as oer-live-cc: 78 entries, every one a name; 1 read, 0 writes, 0 token requests.
+
+[oer-s143] Configuration files loaded: True; worktree exists: True
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s143] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg3\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s143] The module is the worktree's build: True
+[oer-s143] Token fence in place: True
+[oer-s143] Request fence and page recorder in place: True
+[oer-s143] The map holds entries: True; entries 78
+[oer-s143] Every entry names a role: True
+[oer-s143] Requests: 1 read(s), 0 write(s); token requests 0
+```
 
 ### 3.2. A refused read is the typed record, as oer-live-cc-noperm
 
-- [ ] **3.2** As `oer-live-cc-noperm` the same read is refused and the helper throws the internal `DirectoryRoleNameMapUnread` (ReadError, target the read) whose message names the read and whose inner exception is the refusal. #type/subtask
+- [x] **3.2** As `oer-live-cc-noperm` the same read is refused and the helper throws the internal `DirectoryRoleNameMapUnread` (ReadError, target the read) whose message names the read and whose inner exception is the refusal. #type/subtask
 
 ```powershell
 Connect-S143 -NoPerm
@@ -278,13 +399,37 @@ writes and 0 token requests. If noperm CAN read the directory roles, the check r
 the refusal stays class B (unit tests).
 **Failure looks like:** another id, a message that does not name the read, or a token request.
 
-Result:
+Result: 2026-11-10 01:01 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. As oer-live-cc-noperm the read is refused and the helper throws DirectoryRoleNameMapUnread (ReadError, target v1.0/directoryRoles) with the message naming the read and the authorization refusal inside its System.Exception; 0 writes, 0 token requests.
+
+[oer-s143] Configuration files loaded: True; worktree exists: True
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s143] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg3\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s143] Azure Resource Manager sign-in as oer-live-cc-noperm: identity check passed: True
+[oer-s143] The module is the worktree's build: True
+[oer-s143] Token fence in place: True
+[oer-s143] Request fence and page recorder in place: True
+[oer-s143] Refused: True
+[oer-s143] id DirectoryRoleNameMapUnread; category ReadError; target v1.0/directoryRoles
+[oer-s143] The message names the read: True
+[oer-s143] Exception type System.Exception; inner exception present: True
+[oer-s143] The inner refusal names an authorization failure: True
+[oer-s143] Writes 0; token requests 0
+```
 
 ## Teardown
 
 ### T.1. Nothing was created
 
-- [ ] **T.1** The sweep finds no object with the prefix, and the session is ended. #type/subtask
+- [x] **T.1** The sweep finds no object with the prefix, and the session is ended. #type/subtask
 
 ```powershell
 Connect-OerLive -Graph
@@ -296,4 +441,22 @@ Disconnect-OerLive
 **Expect:** 0 objects with the prefix.
 **Failure looks like:** any object with the prefix (none was created by this file).
 
-Result:
+Result: 2026-11-10 01:01 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Nothing was created: the sweep finds 0 objects with the prefix after the run, as before it; the session is ended.
+
+[oer-s143] Configuration files loaded: True; worktree exists: True
+[OerLive] OerLive 1.1.0; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s143] Omnicit.EntraRBAC 1.5.1 loaded from REPO\.claude\worktrees\s14-steg3\output\module\Omnicit.EntraRBAC\1.5.1.
+[oer-s143] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s143] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s143] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s143] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s143] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s143] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s143] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s143] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s143-' is left.
+[oer-s143] Objects with the prefix after the run: 0
+```
