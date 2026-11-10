@@ -525,6 +525,8 @@ foreach ($Build in 'base', 'branch') {
         Write-OerLiveStep "The base source is loaded: $($script:S144Module.ModuleBase.StartsWith($env:OER_BASE_SOURCE, [System.StringComparison]::OrdinalIgnoreCase)); it lacks the parameter: $(-not (Get-Command New-OERAccessReviewDefinition).Parameters.ContainsKey('DirectoryRoleAssignmentType'))"
         Install-S144Fence
     } else {
+        # The base phase's token fence would refuse this sign-in: remove it first (unqualified, from this scope).
+        Remove-Item -Path function:Get-AzToken -ErrorAction SilentlyContinue
         Remove-Module Omnicit.EntraRBAC -Force
         Connect-S144
     }
