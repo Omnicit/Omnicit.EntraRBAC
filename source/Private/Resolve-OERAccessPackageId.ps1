@@ -224,7 +224,7 @@ function Resolve-OERAccessPackageId {
                 throw [System.Management.Automation.ErrorRecord]::new(
                     [System.Exception]::new(
                         "Access package '$DisplayName' was found, but the read did not show its catalog, so it " +
-                        "cannot be confirmed to be in catalog '$Catalog' ($CatalogId). Nothing was read or written for it."),
+                        "cannot be confirmed to be in catalog '$Catalog' ($CatalogId). Nothing was written to it."),
                     'AccessPackageNotInCatalog',
                     [System.Management.Automation.ErrorCategory]::InvalidArgument,
                     $DisplayName)
@@ -233,7 +233,7 @@ function Resolve-OERAccessPackageId {
                 throw [System.Management.Automation.ErrorRecord]::new(
                     [System.Exception]::new(
                         "Access package '$DisplayName' is not in catalog '$Catalog' ($CatalogId): it belongs to " +
-                        "catalog $ProbeCatalogId. Nothing was read or written for it. Name the access package's " +
+                        "catalog $ProbeCatalogId. Nothing was written to it. Name the access package's " +
                         'own catalog, or omit -Catalog.'),
                     'AccessPackageNotInCatalog',
                     [System.Management.Automation.ErrorCategory]::InvalidArgument,

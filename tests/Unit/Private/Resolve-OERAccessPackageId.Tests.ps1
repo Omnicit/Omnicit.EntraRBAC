@@ -385,7 +385,7 @@ Describe 'Resolve-OERAccessPackageId -Catalog' {
         $Caught.FullyQualifiedErrorId | Should -BeExactly 'AccessPackageNotInCatalog'
         $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
         $Caught.TargetObject | Should -Be $script:ApGuid
-        $Caught.Exception.Message | Should -BeExactly "Access package '$($script:ApGuid)' is not in catalog 'CAT-One' ($($script:CatGuid)): it belongs to catalog $($script:OtherCatGuid). Nothing was read or written for it. Name the access package's own catalog, or omit -Catalog."
+        $Caught.Exception.Message | Should -BeExactly "Access package '$($script:ApGuid)' is not in catalog 'CAT-One' ($($script:CatGuid)): it belongs to catalog $($script:OtherCatGuid). Nothing was written to it. Name the access package's own catalog, or omit -Catalog."
     }
 
     It 'refuses an answer that carries no catalog with AccessPackageNotInCatalog' {
