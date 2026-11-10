@@ -691,7 +691,7 @@ Describe 'New-OERAccessReviewDefinition -Group (a review of a group''s members)'
             @{ Name = 'Group'; Sets = 'GroupMultiStage,GroupSingleStage'; Mandatory = 'GroupMultiStage,GroupSingleStage' }
             @{ Name = 'DirectoryRole'; Sets = 'DirectoryRoleMultiStage,DirectoryRoleSingleStage'; Mandatory = 'DirectoryRoleMultiStage,DirectoryRoleSingleStage' }
             @{ Name = 'DirectoryRoleAssignmentType'; Sets = 'DirectoryRoleMultiStage,DirectoryRoleSingleStage'; Mandatory = '' }
-            @{ Name = 'Stage'; Sets = 'DirectoryRoleMultiStage,GroupMultiStage,MultiStage';Mandatory = 'DirectoryRoleMultiStage,GroupMultiStage,MultiStage' }
+            @{ Name = 'Stage'; Sets = 'DirectoryRoleMultiStage,GroupMultiStage,MultiStage'; Mandatory = 'DirectoryRoleMultiStage,GroupMultiStage,MultiStage' }
             @{ Name = 'Reviewer'; Sets = 'DirectoryRoleSingleStage,GroupSingleStage,SingleStage'; Mandatory = '' }
             @{ Name = 'ReviewerGroup'; Sets = 'DirectoryRoleSingleStage,GroupSingleStage,SingleStage'; Mandatory = '' }
             @{ Name = 'Manager'; Sets = 'DirectoryRoleSingleStage,GroupSingleStage,SingleStage'; Mandatory = '' }

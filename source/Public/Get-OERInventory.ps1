@@ -165,7 +165,7 @@ function Get-OERInventory {
     with the form of an object id is written as the id) and no group, accessPackage or assignmentPolicy.
     A review of the eligible assignments only, or of the active assignments only, of one directory role
     is written the same way with a directoryRoleAssignmentType key of Eligible or Active directly after
-    directoryRole; a review of all assignments writes no such key.
+    directoryRole; the review of the users assigned to the role (the form before this option) writes no such key.
     A review of a role's service principals created elsewhere is stored by Graph in the same form, so
     it is read and written as a directoryRole review. Known limit: when two role definitions share a
     review's role name, the role is written by its id, and the lookup can leave an error record in a
@@ -435,8 +435,8 @@ function Get-OERInventory {
     .PARAMETER Include
     The building-block sections to read. Defaults to Groups, AdministrativeUnits, Catalogs and
     AccessPackages. AccessReviews captures only single-stage review
-    definitions of an access package, of all members of one group or of all assignments of one directory
-    role (all, eligible-only or active-only assignments; optionally narrowed by
+    definitions of an access package, of all members of one group or of the assignments of one directory
+    role (all, eligible-only or active-only; optionally narrowed by
     -AccessReviewFilter); a review of guest users only, of direct members only or of inactive users, an
     application, a directory role in another form (guest users only, another query), another
     scope, a multi-stage review, or a review with a reviewer
@@ -2380,7 +2380,7 @@ function Get-OERInventory {
             }
             foreach ($Ar in $ArItems) {
                 # Three review forms round-trip: an access package review (the apply schema requires both
-                # accessPackage and assignmentPolicy), a review of ALL assignments of one directory role
+                # accessPackage and assignmentPolicy), a review of one directory role (all, eligible-only or active-only)
                 # (directoryRole) and a review of ALL members of one group (group;
                 # Resolve-OERAccessReviewGroupScope owns which query that is). A review of a group in a
                 # form the module cannot write back (guest users only, direct members only, another
@@ -2466,7 +2466,7 @@ function Get-OERInventory {
                     $Proj.directoryRole = Get-AccessReviewDirectoryRoleReference -Id ([string]$RoleScope.RoleDefinitionId) `
                         -ReviewName ([string]$Ar.DisplayName) -Cache $ArRoleNameLookup
                     # directoryRoleAssignmentType: only an eligible-only or active-only review names its
-                    # form; a review of all assignments writes no key (omitted means all assignments).
+                    # form; the review of the users assigned to the role writes no key (omitted means that form).
                     if ($RoleScope.Kind -in 'Eligible', 'Active') {
                         $Proj.directoryRoleAssignmentType = [string]$RoleScope.Kind
                     }
@@ -2692,7 +2692,7 @@ function Get-OERInventory {
                 if ($SkippedReviewerCount -gt 0) {
                     $SkippedParts.Add("$SkippedReviewerCount review(s) whose reviewers the module cannot write back (for example a group's owners)")
                 }
-                Write-Warning "Get-OERInventory: skipped $SkippedAllCount access review definition(s) the apply document cannot declare: $($SkippedParts -join ', '). Access package reviews, reviews of all members of one group and reviews of one directory role (every assignment, eligible only or active only) round-trip through Invoke-OERStructure."
+                Write-Warning "Get-OERInventory: skipped $SkippedAllCount access review definition(s) the apply document cannot declare: $($SkippedParts -join ', '). Access package reviews, reviews of all members of one group and reviews of one directory role (all, eligible only or active only) round-trip through Invoke-OERStructure."
             }
         }
 

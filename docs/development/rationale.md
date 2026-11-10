@@ -12575,7 +12575,7 @@ both of the plain type with an empty `queryRoot`. `Eligible` and `Active`: the w
 12.2 text. `OtherForm`: a GUID role with any other shape (guest principal scope, second principal scope, a
 `queryRoot`, a trailing slash, an inner scope of another type). `NotRole`: everything else.
 
-**Why OtherForm, Eligible and Active are never written back.** The only scope the module writes for
+**Why OtherForm, Eligible and Active are never written back (Sprint 13; superseded for Eligible and Active by Sprint 14 step 4 below).** The only scope the module writes for
 `directoryRole` is the All form. Exporting a guest-only review as `directoryRole` would widen it when the document
 is applied: a change of who is reviewed, made by an export. So the export
 skips every kind but `All`, counts the skips, and the target check refuses a document entry against such a
@@ -12640,8 +12640,8 @@ objects outside this step. No text of the module claims who Graph asks to review
 - **R-1, the key and the parameter.** `directoryRoleAssignmentType` (document) and
   `-DirectoryRoleAssignmentType` (`New-OERAccessReviewDefinition`, the two directory role parameter sets
   only), values `Eligible` and `Active`, the existing enum of the same name reused (the
-  `directoryRoleAssignments` section's `assignmentType` uses it). There is no `All` value: omitted means every
-  eligible and active assignment, as before, so every existing document and call gives the same result. If
+  `directoryRoleAssignments` section's `assignmentType` uses it). There is no `All` value: omitted means the review of the
+  users assigned to the role, as before, so every existing document and call gives the same result. If
   wrong: rename before 1.6.0; no stable release carries it yet.
 - **R-2, the export writes the key.** An `Eligible` or `Active` review is exported as `directoryRole` plus
   the key; `All` carries no key (exports of such reviews are unchanged); `OtherForm` is still skipped and
@@ -12660,6 +12660,7 @@ objects outside this step. No text of the module claims who Graph asks to review
   If wrong: a caller wanting a form-specific id gets the scope id.
 - **R-6, no new permission and no new Graph path.** The create posts to the same definitions endpoint, so
   `Get-OERRequiredScopeMap` is unchanged. If wrong: the requiredscope gate names it.
+
 ## policy-update-keeps-custom-extensions
 
 Sprint 11 step 3 made `Set-OERAccessPackageAssignmentPolicy` stop dropping what Microsoft Graph

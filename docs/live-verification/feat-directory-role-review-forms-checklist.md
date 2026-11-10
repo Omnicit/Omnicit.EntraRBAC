@@ -10,8 +10,8 @@ not leave it blank and do not tick it. A check that could not run for a stated r
 only of the two low-risk directory roles Reports Reader and Message Center Reader. The measurement
 (`Initialize-OerS144Prereq.ps1 -Measure`) created `oer-s144-m-elig` and `oer-s144-m-active`; the
 prerequisite script creates three more: `oer-s144-elig` (the eligible assignments of Reports Reader),
-`oer-s144-act` (the active assignments of Message Center Reader) and `oer-s144-all` (every eligible
-and active assignment of Reports Reader, the form written before this branch). The checks create
+`oer-s144-act` (the active assignments of Message Center Reader) and `oer-s144-all` (the users assigned to
+Reports Reader, the form written before this branch). The checks create
 `oer-s144-del`, `oer-s144-dact`, `oer-s144-cel` and `oer-s144-cact`. Every review is a one-time
 self-review that starts seven days ahead and sends no mail, so no instance starts while it exists.
 Every check runs with a request fence in the module's scope that refuses a write whose target is not
@@ -24,7 +24,7 @@ before it merges.
 
 - **A. A new document key, `directoryRoleAssignmentType`** (`Eligible` or `Active`) beside
   `directoryRole`: a review of only the eligible or only the active assignments of the role. Omitted
-  means every eligible and active assignment, as before.
+  means the review of the users assigned to the role, as before.
 - **B. `New-OERAccessReviewDefinition -DirectoryRoleAssignmentType`** (in the two directory role
   parameter sets only) creates such a review.
 - **C. The target check** refuses a live review found by the entry's name in another form of the role
@@ -488,7 +488,7 @@ Result:
 
 ### 4.3. A live every-assignment review declared as eligible-only
 
-- [ ] **4.3** An entry `oer-s144-all` declaring `directoryRole: Reports Reader`, `directoryRoleAssignmentType: Eligible` (the live review reviews every eligible and active assignment) is refused with `AccessReviewScopeMismatch`, nothing written. #type/subtask
+- [ ] **4.3** An entry `oer-s144-all` declaring `directoryRole: Reports Reader`, `directoryRoleAssignmentType: Eligible` (the live review is of the form written before this branch) is refused with `AccessReviewScopeMismatch`, nothing written. #type/subtask
 
 ```powershell
 Connect-S144

@@ -1836,7 +1836,7 @@ function Test-OERStructureSchema {
                 }
 
                 # The form of a directory role review: only with 'directoryRole', Eligible or Active. An
-                # explicit null is undeclared (all assignments, as before).
+                # explicit null is undeclared (the form written before this option).
                 if (Test-HasProp -Node $AR -Name 'directoryRoleAssignmentType') {
                     if (-not $ArDeclaresRole) {
                         Add-Finding -Section 'accessReviews' -Item $ARItem `

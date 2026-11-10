@@ -950,7 +950,7 @@ and assignment policy the entry declares (a GUID compared as written, a name res
 `New-OERAccessReviewDefinition` resolves it). An entry declares either `group` (a name or an id) for a review
 of all members of a group, `directoryRole` (a role name or id) for a review of the users assigned to one Microsoft Entra directory role
 (with `directoryRoleAssignmentType` `Eligible` or `Active`, of only the eligible or only the active assignments;
-omitted, of every eligible and active assignment),
+omitted, the review of the users assigned to the role, as before),
 or `accessPackage` with `assignmentPolicy`, never
 two of them; the export writes all three forms and skips a guest-only, direct-member or other group review, and
 a role review in another form (guest users only, or another query), counting them, so it

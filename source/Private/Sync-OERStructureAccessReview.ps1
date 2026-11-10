@@ -91,8 +91,8 @@ function Sync-OERStructureAccessReview {
     Failed row ("could not resolve the directory role of access review"), nothing written either way.
     An entry that also declares directoryRoleAssignmentType (Eligible or Active) is created with
     -DirectoryRoleAssignmentType and matches only a live review in that form: a live review of the
-    role in another form (every assignment, or the other of the two) is refused with
-    AccessReviewScopeMismatch, nothing written. The key omitted keeps the every-assignment review.
+    role in another form (the form written before this option, or the other of the two) is refused with
+    AccessReviewScopeMismatch, nothing written. The key omitted keeps the review of the users assigned to the role.
 
     An access package or assignment policy the same document renames (BL-128): the entry's
     accessPackage and assignmentPolicy are read in the run's rename map (-RenameMap) first, before any

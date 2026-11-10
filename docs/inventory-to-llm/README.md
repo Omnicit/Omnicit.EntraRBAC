@@ -829,7 +829,7 @@ therefore updated only when it reviews exactly what the entry declares:
   review of another group, are not that review. The group is looked up the way creation looks it up
   (an id as written, a name through the tenant).
 - A `directoryRole` entry: the review found must be the form the module writes for a review of that
-  role: all users and all assignment types when `directoryRoleAssignmentType` is omitted, only the
+  role: the users assigned to the role, as before, when `directoryRoleAssignmentType` is omitted, only the
   eligible assignments when it is `Eligible`, only the active assignments when it is `Active` (users
   only; measured 2026-11-10 that Graph accepts both forms). A review in another of these forms, of
   guest users only, or of another role, is not that review. The role is looked up the way creation looks it up (an id as written, a

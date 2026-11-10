@@ -31,7 +31,7 @@ with it. Links on that address are followed as before, in every cloud.
 
 A directory role access review can cover only the eligible or only the active assignments of a role (users
 only): declare `directoryRole` with `directoryRoleAssignmentType` `Eligible` or `Active`, or pass
-`-DirectoryRoleAssignmentType` to `New-OERAccessReviewDefinition`. Omitted, it is every assignment, as
+`-DirectoryRoleAssignmentType` to `New-OERAccessReviewDefinition`. Omitted, it is the review of the users assigned to the role, as
 before. The export writes the key for such reviews, so they round-trip. A review found by name in another
 form is refused with `AccessReviewScopeMismatch` and nothing is written, since a review's scope cannot change.
 

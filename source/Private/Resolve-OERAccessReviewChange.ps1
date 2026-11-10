@@ -602,7 +602,7 @@ function Resolve-OERAccessReviewChange {
                 $NotApplied.Add("directoryRole '$DeclaredRoleScope' differs from the live scope '$LiveRoleText'; the review scope is immutable and was not changed")
             }
         }
-        # The form (every assignment, only the eligible or only the active ones) is part of the scope too.
+        # The form (the users assigned to the role, only the eligible or only the active ones) is part of the scope too.
         # Only a declared, canonical form is compared; the key omitted is today's behaviour, no note.
         if (Test-DeclHas $Declared 'directoryRoleAssignmentType') {
             $DeclaredForm = Resolve-OERStructureEnumCasing -EnumName 'directoryRoleAssignmentType' -Value ([string]$Declared.directoryRoleAssignmentType)

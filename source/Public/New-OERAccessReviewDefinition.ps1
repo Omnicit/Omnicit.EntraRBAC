@@ -52,7 +52,7 @@ function New-OERAccessReviewDefinition {
 
     .PARAMETER DirectoryRoleAssignmentType
     Eligible or Active, with -DirectoryRole only (both DirectoryRole parameter sets). Omitted, the review
-    covers every eligible and active assignment of the role, as before. Eligible reviews only the
+    is of the users assigned to the role, as before (the form written before this option). Eligible reviews only the
     eligible assignments of the role; Active reviews only its active (assigned) assignments. In both
     new forms the review covers users only, since the scope query filters on user principals. The
     scope cannot change after creation. Microsoft Graph accepted both forms (measured 2026-11-10);

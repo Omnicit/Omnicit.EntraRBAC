@@ -403,7 +403,7 @@ function Invoke-OERStructure {
     only when the live review is exactly that form for the same role (ids compared without regard to
     letter case); an entry that also declares directoryRoleAssignmentType (Eligible or Active) is a
     review of only the eligible or only the active assignments of the role (users only), and one that
-    omits it is a review of every eligible and active assignment; a review of another role, in
+    omits it is a review of the users assigned to the role, as before; a review of another role, in
     another of these forms, a guest-only scope, a group or a package is refused with the same error
     (the scope of a review cannot change, so create a new review). A name compared as the map's id is named by that id in the error the
     check publishes, and the Failed row says which declared name was read as which id. A name that

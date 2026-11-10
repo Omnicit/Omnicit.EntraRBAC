@@ -1386,7 +1386,7 @@ Describe 'Get-OERStructureSchemaJson renames of administrative units, catalogs a
             $Prop = $Items.properties.directoryRoleAssignmentType
             $Prop.type | Should -BeExactly 'string'
             @($Prop.enum) -join ',' | Should -BeExactly 'Eligible,Active'
-            $Prop.description | Should -BeExactly "Only with directoryRole. Eligible reviews only the eligible assignments of the role and Active only its active assignments, both for users only; omitted, the review covers every eligible and active assignment of the role, as before. The form is part of the review's scope, which cannot change: a review found by displayName in another form is refused and nothing is written."
+            $Prop.description | Should -BeExactly "Only with directoryRole. Eligible reviews only the eligible assignments of the role and Active only its active assignments, both for users only; omitted, the review is of the users assigned to the role, as before. The form is part of the review's scope, which cannot change: a review found by displayName in another form is refused and nothing is written."
             @($Items.dependencies.directoryRoleAssignmentType) | Should -Be @('directoryRole')
             $Reviews = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.accessReviews
             $Reviews.description | Should -Match ([regex]::Escape('must review what the entry declares (the accessPackage and assignmentPolicy, the group or the directory role and its form)'))

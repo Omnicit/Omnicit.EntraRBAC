@@ -28,8 +28,9 @@ function Resolve-OERAccessReviewRoleScope {
     - 'All': the scope type is the principal resource memberships scope, there is no top-level query,
       exactly one principal scope ('/users') and exactly one resource scope (the role definition), both
       of the plain type with an empty queryRoot and a queryType of MicrosoftGraph or empty. This is the
-      only form that may be exported as a declared 'directoryRole'.
-    - 'Eligible' and 'Active': the whole top-level query is the measured example 12.2 text under the
+      form exported as a declared 'directoryRole' without a form key (see Eligible and Active).
+    - 'Eligible' and 'Active' (exported with directoryRoleAssignmentType; OtherForm never is): the whole
+      top-level query is the measured example 12.2 text under the
       plain scope type.
     - 'OtherForm': the scope names a role definition with a GUID id but is none of the above -- a
       guest principal scope, two principal scopes, a queryRoot, a trailing slash, an inner scope of
