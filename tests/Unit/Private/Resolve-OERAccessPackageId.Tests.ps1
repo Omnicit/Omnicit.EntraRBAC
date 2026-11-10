@@ -291,3 +291,214 @@ Describe 'Resolve-OERAccessPackageId typed error records' {
         $Caught.Exception.Message | Should -BeExactly 'Resolve-OERAccessPackageId requires either -Id or -DisplayName.'
     }
 }
+
+Describe 'Resolve-OERAccessPackageId -Catalog' {
+    BeforeAll {
+        $script:ApGuid = '00000000-0000-0000-0000-000000000067'
+        $script:CatGuid = '00000000-0000-0000-0000-000000000068'
+        $script:OtherCatGuid = '00000000-0000-0000-0000-000000000069'
+    }
+
+    It 'looks a name up within the catalog: one catalog lookup, one package request with both filter terms' {
+        InModuleScope $script:moduleName {
+            Mock Resolve-OERCatalogId { 'cat-1' }
+            Mock Invoke-OERGraphRequest { @{ value = @(@{ id = 'ap-9'; displayName = 'AP-Sales' }) } }
+            Resolve-OERAccessPackageId -DisplayName 'AP-Sales' -Catalog 'CAT-One' | Should -Be 'ap-9'
+            Should -Invoke Resolve-OERCatalogId -Times 1 -Exactly -ParameterFilter { $DisplayName -ceq 'CAT-One' }
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -ceq "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-Sales' and catalog/id eq 'cat-1'&`$select=id,displayName"
+            }
+        }
+    }
+
+    It 'escapes a quote in both the package name and the catalog id' {
+        InModuleScope $script:moduleName {
+            Mock Resolve-OERCatalogId { "c'1" }
+            Mock Invoke-OERGraphRequest { @{ value = @() } }
+            Resolve-OERAccessPackageId -DisplayName "O'Brien" -Catalog 'CAT-One' | Out-Null
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -like "*displayName eq 'O%27%27Brien' and catalog/id eq 'c%27%271'*"
+            }
+        }
+    }
+
+    It 'throws AmbiguousName naming both ids and the catalog when two packages in the catalog share the name' {
+        $Caught = InModuleScope $script:moduleName {
+            Mock Resolve-OERCatalogId { 'cat-1' }
+            Mock Invoke-OERGraphRequest {
+                @{ value = @(@{ id = 'ap-a'; displayName = 'Dup' }, @{ id = 'ap-b'; displayName = 'Dup' }) }
+            }
+            $Result = $null
+            try { Resolve-OERAccessPackageId -DisplayName 'Dup' -Catalog 'CAT-One' } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'AmbiguousName'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject | Should -Be 'Dup'
+        $Caught.Exception.Message | Should -BeExactly "Access package display name 'Dup' matches 2 access packages in catalog 'CAT-One' (ap-a, ap-b). Entitlement management should keep access package display names unique within a catalog, so this name cannot identify a single access package. Re-run with the access package id instead of the display name."
+    }
+
+    It 'returns $null when the catalog holds no package of that name' {
+        InModuleScope $script:moduleName {
+            Mock Resolve-OERCatalogId { 'cat-1' }
+            Mock Invoke-OERGraphRequest { @{ value = @() } }
+            Resolve-OERAccessPackageId -DisplayName 'nope' -Catalog 'CAT-One' | Should -Be $null
+        }
+    }
+
+    It 'returns the GUID when the package is in the catalog (case differs)' {
+        $Resolved = InModuleScope $script:moduleName -Parameters @{ Ap = $script:ApGuid } {
+            param($Ap)
+            Mock Resolve-OERCatalogId { 'CAT-Id-One' }
+            Mock Invoke-OERGraphRequest { @{ id = $Ap; catalog = @{ id = 'cat-id-one' } } }
+            Resolve-OERAccessPackageId -DisplayName $Ap -Catalog 'CAT-One'
+        }
+        $Resolved | Should -Be $script:ApGuid
+    }
+
+    It 'sends the expand-catalog probe URI with the same expected codes' {
+        InModuleScope $script:moduleName -Parameters @{ Ap = $script:ApGuid; Cat = $script:CatGuid } {
+            param($Ap, $Cat)
+            Mock Resolve-OERCatalogId { $Cat }
+            Mock Invoke-OERGraphRequest { @{ id = $Ap; catalog = @{ id = $Cat } } }
+            Resolve-OERAccessPackageId -DisplayName $Ap -Catalog $Cat | Out-Null
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -ceq "v1.0/identityGovernance/entitlementManagement/accessPackages/00000000-0000-0000-0000-000000000067?`$expand=catalog" -and
+                @($ExpectedErrorCode).Count -eq 2 -and
+                @($ExpectedErrorCode) -contains 'AccessPackageNotFound' -and
+                @($ExpectedErrorCode) -contains 'NotFound'
+            }
+        }
+    }
+
+    It 'refuses a package id that is in another catalog with AccessPackageNotInCatalog and sends no second request' {
+        $Caught = InModuleScope $script:moduleName -Parameters @{ Ap = $script:ApGuid; Cat = $script:CatGuid; Other = $script:OtherCatGuid } {
+            param($Ap, $Cat, $Other)
+            Mock Resolve-OERCatalogId { $Cat }
+            Mock Invoke-OERGraphRequest { @{ id = $Ap; catalog = @{ id = $Other } } }
+            $Result = $null
+            try { Resolve-OERAccessPackageId -DisplayName $Ap -Catalog 'CAT-One' } catch { $Result = $PSItem }
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly
+            $Result
+        }
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'AccessPackageNotInCatalog'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject | Should -Be $script:ApGuid
+        $Caught.Exception.Message | Should -BeExactly "Access package '$($script:ApGuid)' is not in catalog 'CAT-One' ($($script:CatGuid)): it belongs to catalog $($script:OtherCatGuid). Nothing was read or written for it. Name the access package's own catalog, or omit -Catalog."
+    }
+
+    It 'refuses an answer that carries no catalog with AccessPackageNotInCatalog' {
+        $Caught = InModuleScope $script:moduleName -Parameters @{ Ap = $script:ApGuid; Cat = $script:CatGuid } {
+            param($Ap, $Cat)
+            Mock Resolve-OERCatalogId { $Cat }
+            Mock Invoke-OERGraphRequest { @{ id = $Ap } }
+            $Result = $null
+            try { Resolve-OERAccessPackageId -DisplayName $Ap -Catalog 'CAT-One' } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'AccessPackageNotInCatalog'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.Exception.Message | Should -BeLike '*the read did not show its catalog*'
+    }
+
+    It 'publishes AccessPackageNotFound as today for a GUID that does not exist, with a catalog' {
+        $Caught = InModuleScope $script:moduleName -Parameters @{ Ap = $script:ApGuid; Cat = $script:CatGuid } {
+            param($Ap, $Cat)
+            Mock Resolve-OERCatalogId { $Cat }
+            Mock Invoke-OERGraphRequest {
+                $Marker = [PSCustomObject]@{ ExpectedErrorCode = 'AccessPackageNotFound'; StatusCode = 404; Message = 'x'; Uri = 'y' }
+                $Marker.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GraphExpectedError')
+                $Marker
+            }
+            $Result = $null
+            try { Resolve-OERAccessPackageId -DisplayName $Ap -Catalog 'CAT-One' } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'AccessPackageNotFound'
+        $Caught.CategoryInfo.Category | Should -Be 'ObjectNotFound'
+        $Caught.Exception.Message | Should -BeLike "The access package id '$($script:ApGuid)' does not resolve to an access package in this tenant.*"
+    }
+
+    It 're-throws an ambiguous catalog name as AmbiguousCatalogName and sends no package request' {
+        $Caught = InModuleScope $script:moduleName {
+            Mock Resolve-OERCatalogId {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("Catalog display name 'CAT-Dup' matches 2 catalogs (c-1, c-2)."),
+                    'AmbiguousName',
+                    [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                    'CAT-Dup')
+            }
+            Mock Invoke-OERGraphRequest {}
+            $Result = $null
+            try { Resolve-OERAccessPackageId -DisplayName 'AP-Sales' -Catalog 'CAT-Dup' } catch { $Result = $PSItem }
+            Should -Invoke Invoke-OERGraphRequest -Times 0 -Exactly
+            $Result
+        }
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'AmbiguousCatalogName'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.TargetObject | Should -Be 'CAT-Dup'
+        $Caught.Exception.Message | Should -Be "Catalog display name 'CAT-Dup' matches 2 catalogs (c-1, c-2)."
+    }
+
+    It 'refuses a catalog that matches nothing with CatalogNotFound and sends no package request' {
+        $Caught = InModuleScope $script:moduleName {
+            Mock Resolve-OERCatalogId { $null }
+            Mock Invoke-OERGraphRequest {}
+            $Result = $null
+            try { Resolve-OERAccessPackageId -DisplayName 'AP-Sales' -Catalog 'CAT-Gone' } catch { $Result = $PSItem }
+            Should -Invoke Invoke-OERGraphRequest -Times 0 -Exactly
+            $Result
+        }
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'CatalogNotFound'
+        $Caught.CategoryInfo.Category | Should -Be 'ObjectNotFound'
+        $Caught.TargetObject | Should -Be 'CAT-Gone'
+        $Caught.Exception.Message | Should -BeExactly "Catalog 'CAT-Gone' not found."
+    }
+
+    It 'publishes a failed catalog lookup as itself and sends no package request' {
+        $Caught = InModuleScope $script:moduleName {
+            Mock Resolve-OERCatalogId {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges.'),
+                    'Authorization_RequestDenied',
+                    [System.Management.Automation.ErrorCategory]::PermissionDenied,
+                    $null)
+            }
+            Mock Invoke-OERGraphRequest {}
+            $Result = $null
+            try { Resolve-OERAccessPackageId -DisplayName 'AP-Sales' -Catalog 'CAT-One' } catch { $Result = $PSItem }
+            Should -Invoke Invoke-OERGraphRequest -Times 0 -Exactly
+            $Result
+        }
+        $Caught.FullyQualifiedErrorId | Should -Match '^Authorization_RequestDenied'
+        $Caught.FullyQualifiedErrorId | Should -Not -Match 'CatalogNotFound|AmbiguousCatalogName'
+    }
+
+    It 'without -Catalog never resolves a catalog and sends the byte-identical name and GUID requests' {
+        InModuleScope $script:moduleName -Parameters @{ Ap = $script:ApGuid } {
+            param($Ap)
+            Mock Resolve-OERCatalogId { 'cat-x' }
+            Mock Invoke-OERGraphRequest { @{ value = @(); id = $Ap } }
+            Resolve-OERAccessPackageId -DisplayName 'AP-Sales' | Out-Null
+            Resolve-OERAccessPackageId -DisplayName $Ap | Out-Null
+            Should -Invoke Resolve-OERCatalogId -Times 0 -Exactly
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -ceq "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-Sales'&`$select=id,displayName"
+            }
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -ceq "v1.0/identityGovernance/entitlementManagement/accessPackages/00000000-0000-0000-0000-000000000067?`$select=id"
+            }
+        }
+    }
+
+    It 'returns -Id verbatim with no request whatever -Catalog holds' {
+        InModuleScope $script:moduleName {
+            Mock Resolve-OERCatalogId { 'cat-1' }
+            Mock Invoke-OERGraphRequest {}
+            Resolve-OERAccessPackageId -Id 'ap-1' -Catalog 'CAT-One' | Should -Be 'ap-1'
+            Should -Invoke Invoke-OERGraphRequest -Times 0 -Exactly
+            Should -Invoke Resolve-OERCatalogId -Times 0 -Exactly
+        }
+    }
+}

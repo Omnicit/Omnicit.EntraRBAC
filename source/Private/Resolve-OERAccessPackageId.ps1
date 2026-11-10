@@ -81,6 +81,19 @@ function Resolve-OERAccessPackageId {
     so reserved characters survive transport. This private helper is the single access-package-lookup
     entry point used by the access-package cmdlets.
 
+    With -Catalog (a catalog name or id) this helper is the single owner of looking up an access
+    package named by a caller's argument WITHIN a catalog, since an access package name is unique
+    only within its catalog. The catalog is resolved first through Resolve-OERCatalogId. A package
+    NAME is then looked up with one request that adds 'and catalog/id eq ...' to the filter, so a
+    same-named package in another catalog is never a candidate; Graph compares the name
+    case-insensitively. A package ID (a GUID) is confirmed with a read that expands the catalog,
+    and one that is not in the named catalog is refused with 'AccessPackageNotInCatalog' (also when
+    the answer does not show its catalog). An ambiguous catalog name is re-thrown as
+    'AmbiguousCatalogName', a catalog name that matches nothing as 'CatalogNotFound', and any other
+    catalog lookup failure as itself, each before any package request. The apply engine's
+    accessPackages[] handler does not use this path: it lists the declared catalog whole and
+    reconciles the entry against that list.
+
     .PARAMETER Id
     The access package id (GUID) to return verbatim. Takes precedence over -DisplayName; no Graph call is made.
 
@@ -90,9 +103,22 @@ function Resolve-OERAccessPackageId {
     throws 'AccessPackageNotFound' when the package does not exist rather than handing the bad id on
     to the caller.
 
+    .PARAMETER Catalog
+    A catalog name or id, resolved with Resolve-OERCatalogId (a GUID is taken verbatim, no request).
+    Applies to the -DisplayName path only; -Id is returned verbatim whatever -Catalog holds. For a
+    name, the lookup is limited to that catalog. For an id, the package must be in that catalog or
+    the call is refused with 'AccessPackageNotInCatalog'. The refusals are 'AmbiguousCatalogName',
+    'CatalogNotFound', 'AccessPackageNotInCatalog' and, for a name matching more than one package in
+    the catalog, 'AmbiguousName'. Without -Catalog the lookup is tenant-wide, exactly as before.
+
     .EXAMPLE
     Resolve-OERAccessPackageId -DisplayName 'AP-Sales'
     Returns the id of the access package with that display name, or $null when it does not exist.
+
+    .EXAMPLE
+    Resolve-OERAccessPackageId -DisplayName 'AP-Sales' -Catalog 'CAT-IT-Core'
+    Returns the id of the access package named AP-Sales in that catalog only, or $null when that
+    catalog has none.
 
     .EXAMPLE
     Resolve-OERAccessPackageId -DisplayName '22222222-2222-2222-2222-222222222222'
@@ -102,7 +128,8 @@ function Resolve-OERAccessPackageId {
     [CmdletBinding()]
     param(
         [string]$Id,
-        [string]$DisplayName
+        [string]$DisplayName,
+        [string]$Catalog
     )
     if ($Id) { return $Id }
     if (-not $DisplayName) {
@@ -111,6 +138,29 @@ function Resolve-OERAccessPackageId {
             'ResolverInputMissing',
             [System.Management.Automation.ErrorCategory]::InvalidArgument,
             $null)
+    }
+    $CatalogId = $null
+    if ($Catalog) {
+        try {
+            $CatalogId = Resolve-OERCatalogId -DisplayName $Catalog
+        } catch {
+            Remove-OERErrorRecord -Record $PSItem
+            if (Test-OERAmbiguousNameError -Record $PSItem) {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new($PSItem.Exception.Message),
+                    'AmbiguousCatalogName',
+                    [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                    $Catalog)
+            }
+            throw $PSItem
+        }
+        if (-not $CatalogId) {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new("Catalog '$Catalog' not found."),
+                'CatalogNotFound',
+                [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                $Catalog)
+        }
     }
     if (Test-OERGuid -Value $DisplayName) {
         # The declared codes are MEASURED, not guessed. A live run on 2026-09-11 issued exactly this
@@ -141,6 +191,9 @@ function Resolve-OERAccessPackageId {
         # of the tailored one: still loud, still no silent empty answer, which is the safe direction
         # to be wrong in -- exactly how the old superset's wrong guess surfaced.
         $ExistsUri = ('v1.0/identityGovernance/entitlementManagement/accessPackages/{0}?$select=id' -f $DisplayName)
+        if ($CatalogId) {
+            $ExistsUri = ('v1.0/identityGovernance/entitlementManagement/accessPackages/{0}?$expand=catalog' -f $DisplayName)
+        }
         $Probe = Invoke-OERGraphRequest -Uri $ExistsUri -ExpectedErrorCode 'AccessPackageNotFound', 'NotFound'
         if (@($Probe.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError') {
             # THE MESSAGE'S THREE REASONS ARE NOT EXHAUSTIVE: there is a fourth, a READ-YOUR-WRITE
@@ -165,6 +218,28 @@ function Resolve-OERAccessPackageId {
                 [System.Management.Automation.ErrorCategory]::ObjectNotFound,
                 $DisplayName)
         }
+        if ($CatalogId) {
+            $ProbeCatalogId = [string]$Probe.catalog.id
+            if (-not $ProbeCatalogId) {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new(
+                        "Access package '$DisplayName' was found, but the read did not show its catalog, so it " +
+                        "cannot be confirmed to be in catalog '$Catalog' ($CatalogId). Nothing was read or written for it."),
+                    'AccessPackageNotInCatalog',
+                    [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                    $DisplayName)
+            }
+            if (-not [string]::Equals($ProbeCatalogId, $CatalogId, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new(
+                        "Access package '$DisplayName' is not in catalog '$Catalog' ($CatalogId): it belongs to " +
+                        "catalog $ProbeCatalogId. Nothing was read or written for it. Name the access package's " +
+                        'own catalog, or omit -Catalog.'),
+                    'AccessPackageNotInCatalog',
+                    [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                    $DisplayName)
+            }
+        }
         # The CALLER's GUID is returned, not $Probe.id. $select=id makes them the same value, but a
         # response that unexpectedly carried no id would turn this into a $null return -- and $null
         # from this helper means "this name is free", the one answer a stale id must never produce.
@@ -172,8 +247,24 @@ function Resolve-OERAccessPackageId {
     }
     $Escaped = ConvertTo-OERODataFilterValue -Value $DisplayName
     $Uri = "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq '$Escaped'&`$select=id,displayName"
+    if ($CatalogId) {
+        $EscapedCatalogId = ConvertTo-OERODataFilterValue -Value $CatalogId
+        $Uri = "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq '$Escaped' and catalog/id eq '$EscapedCatalogId'&`$select=id,displayName"
+    }
     $Response = Invoke-OERGraphRequest -Uri $Uri
     $Candidates = @($Response.value | Where-Object { $null -ne $_ })
+    if ($Candidates.Count -gt 1 -and $CatalogId) {
+        $Ids = ($Candidates | ForEach-Object { [string]$_.id }) -join ', '
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new(
+                "Access package display name '$DisplayName' matches $($Candidates.Count) access packages in catalog '$Catalog' ($Ids). " +
+                'Entitlement management should keep access package display names unique within a catalog, ' +
+                'so this name cannot identify a single access package. Re-run with the access package id ' +
+                'instead of the display name.'),
+            'AmbiguousName',
+            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+            $DisplayName)
+    }
     if ($Candidates.Count -gt 1) {
         $Ids = ($Candidates | ForEach-Object { [string]$_.id }) -join ', '
         throw [System.Management.Automation.ErrorRecord]::new(

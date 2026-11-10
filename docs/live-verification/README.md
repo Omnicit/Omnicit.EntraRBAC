@@ -98,7 +98,10 @@ Naming the object in clear text would rebuild the mapping this file just forbade
 | `...064` | a tenant id inside a directory-role policy id (the second segment of DirectoryRole_tenantId_policyGuid), in the directory-role PIM policy cmdlets' help examples | taken |
 | `...065` | a policy guid inside a directory-role policy id (the third segment of DirectoryRole_tenantId_policyGuid), in the directory-role PIM policy cmdlets' help examples | taken |
 | `...066` | a group display name shaped like an object id, inventory group reader tests | taken |
-| `...067` and up | -- | **FREE. Allocate from here.** |
+| `...067` | an access package id, access-package resolver catalog-mode tests | taken |
+| `...068` | a catalog id, access-package resolver catalog-mode tests | taken |
+| `...069` | a second catalog id (the one a package belongs to instead), access-package resolver catalog-mode tests | taken |
+| `...070` and up | -- | **FREE. Allocate from here.** |
 | `...099` | a deliberately non-existent object id, used in a checklist to prove a not-found path | taken |
 | `...0aa` | an assignment target principal id, access-package assignment tests | taken |
 | `...abc` | an administrative unit id, group-creation tests | taken |
@@ -112,7 +115,7 @@ Addresses follow the same global rule outside the checklists:
 | `person46` and up | -- | **FREE. Allocate from here.** |
 
 `...0aa`, `...abc` and `...099` sit outside the counting sequence for historical reasons and are
-listed so they are not handed out twice. Allocate new object ids from `...067` and new addresses
+listed so they are not handed out twice. Allocate new object ids from `...070` and new addresses
 from `person46`, and add a row here in the same commit that uses them -- a placeholder that is used
 but not registered is exactly the state the next person allocates over.
 
