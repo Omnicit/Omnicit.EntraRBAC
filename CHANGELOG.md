@@ -15,7 +15,11 @@ anything is written. `New-OERAccessPackage`, and through it `Invoke-OERStructure
 when another catalog holds the name.
 Without `-Catalog` nothing changes.
 
-A structure document that declares a one-element array where one value is expected (an enum key, or an access package's `catalog`) is now refused by `Test-OERStructure` and `Invoke-OERStructure`. `Get-OERRoleDefinition -Role` reads a value as a role definition id only when it begins with `/`, and `Remove-` and `Set-OERRoleAssignment` refuse an `-Id` ending in a line break. An access package piped from `Get-OERAccessPackage` binds its own catalog in `New-OERAccessPackage` and is resolved by its own id in `Get-OERAccessPackageAssignmentPolicy` and `New-OERAccessPackageAssignment`.
+A structure document with a one-element array where one value is expected (an enum key or an access
+package's `catalog`) is refused. `Get-OERRoleDefinition -Role` reads a value as a role definition id
+only when it begins with `/`, and `Remove-`/`Set-OERRoleAssignment` refuse an `-Id` with a line break. An
+access package piped from `Get-OERAccessPackage` binds its own catalog in `New-OERAccessPackage` and its
+own id in `Get-OERAccessPackageAssignmentPolicy` and `New-OERAccessPackageAssignment`.
 
 ## [1.6.0] - 2026-11-10
 
