@@ -3871,6 +3871,12 @@ Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
         [CmdletBinding()]
         param([string]$Filter)
         [System.IO.File]::AppendAllText('#LOG#', "READ reviews $Filter`n")
+        if ($Filter -ne "displayName eq 'R-Old'") {
+            # Nothing carries the new name: the answer the real cmdlet publishes.
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new([System.Exception]::new('No access review definition found for the ByFilter query.'),
+                    'AccessReviewDefinitionNotFound', [System.Management.Automation.ErrorCategory]::ObjectNotFound, 'ByFilter'))
+            return
+        }
         [pscustomobject]@{
             Id = 'cccc3333-0000-0000-0000-000000000041'; DisplayName = 'R-Old'; Status = 'InProgress'
             Scope = 'another access package'; AccessPackageId = 'aaaa1111-0000-0000-0000-000000000049'; AssignmentPolicyId = 'bbbb2222-0000-0000-0000-000000000049'
@@ -4018,7 +4024,20 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
         Mock -ModuleName $script:moduleName Set-OERAccessPackageAssignmentPolicy { }
         Mock -ModuleName $script:moduleName New-OERAccessPackage { throw 'unexpected access package create' }
         Mock -ModuleName $script:moduleName New-OERAccessPackageAssignmentPolicy { throw 'unexpected assignment policy create' }
-        Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition { $script:RvState.Review }
+        Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+            if ($null -ne $script:RvState.Review) { return $script:RvState.Review }
+            # No review: the answer the real cmdlet publishes for a name nothing carries (a mock that returned
+            # nothing and published nothing would be an unanswered read, which the engine refuses to create on).
+            function Get-OERAccessReviewDefinition {
+                [CmdletBinding()]
+                param()
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('No access review definition found for the ByFilter query.'),
+                        'AccessReviewDefinitionNotFound',
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound, 'ByFilter'))
+            }
+            & (Get-Item -LiteralPath 'function:Get-OERAccessReviewDefinition') -ErrorAction SilentlyContinue
+        }
         # Graph's tenant-wide name lookups in the run that renames: the names nothing renames resolve to
         # the objects the document means; the new names to OTHER objects that carry them.
         Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId {
@@ -4403,7 +4422,20 @@ Describe 'Invoke-OERStructure: an access review reaches the access package its a
             if ($DisplayName -eq 'CAT-A') { return 'eeee5555-0000-0000-0000-000000000061' }
             throw "unexpected catalog lookup: $DisplayName"
         }
-        Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition { $script:TwState.Review }
+        Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+            if ($null -ne $script:TwState.Review) { return $script:TwState.Review }
+            # No review: the answer the real cmdlet publishes for a name nothing carries (a mock that returned
+            # nothing and published nothing would be an unanswered read, which the engine refuses to create on).
+            function Get-OERAccessReviewDefinition {
+                [CmdletBinding()]
+                param()
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('No access review definition found for the ByFilter query.'),
+                        'AccessReviewDefinitionNotFound',
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound, 'ByFilter'))
+            }
+            & (Get-Item -LiteralPath 'function:Get-OERAccessReviewDefinition') -ErrorAction SilentlyContinue
+        }
         # The tenant-wide name lookups: AP-Twin is found -- in catalog CAT-B. An id is taken as it is.
         Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId {
             if ($DisplayName -eq 'AP-Twin') { return 'aaaa1111-0000-0000-0000-000000000062' }
