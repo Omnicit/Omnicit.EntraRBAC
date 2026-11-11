@@ -585,8 +585,8 @@ function Sync-OERStructureAccessReview {
             }
 
             # -- Unanswered lookup -> refuse -----------------------------------------------------
-            # Outside the try for the same reason as the ambiguous refusal: under -ErrorAction Stop
-            # the WriteError throws, and the read's catch would publish the record a second time.
+            # Outside the try, as the ambiguous refusal is, so a WriteError that throws could not be
+            # taken by the read's catch and published twice (a precaution: it was measured not to throw here).
             if ($Unanswered) {
                 $UnansweredMessage = "The read of access review definitions named '$LookupName' returned no definition of that name and no answer that none exists, so it does not show that the review is absent. " +
                     'Nothing was created or changed; apply the document again.'

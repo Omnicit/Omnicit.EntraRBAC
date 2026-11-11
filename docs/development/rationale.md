@@ -9532,7 +9532,7 @@ at all.
 twice for each entry: once in the section-wide prune pass, which resolves every declared entry to
 decide which live rows are managed, and once when the entry itself is processed; entries that name
 the same role or principal repeated both. Each lookup is a Graph read. With two entries sharing a role and a principal,
-the handler sent four role definition reads and four user reads.
+the handler sent four role definition reads and four user reads, with or without `-Prune`.
 
 **The cache (per run, engine-owned).** `Invoke-OERStructure` creates one
 `Dictionary[string, string]` with Ordinal comparison per document (`$DraLookupCache`, next to
@@ -12604,7 +12604,7 @@ captures describe Sprint 11.
 
 ## access-review-proven-absence
 
-Sprint 15 step 4 (BL-159a, A7) made `Sync-OERStructureAccessReview` create an access review only when
+Sprint 15 step 4 (BL-159a, A6; the new ErrorId under A7) made `Sync-OERStructureAccessReview` create an access review only when
 the read of its display name PROVED that none exists. The lookup is the local `Find-ReviewDefinitionByName`,
 which serves the entry's `displayName` and its `previousDisplayName` alike, so the rule holds for both.
 
@@ -12626,9 +12626,11 @@ comma-separated segment of its id, as the failure filter already required. `-Err
 records raised inside nested calls even when an inner catch swallowed them, so a bare NotFound record
 that no cmdlet published is not an answer. Without the publisher segment the read is unanswered.
 
-**The unanswered read.** The refusal is raised after the ambiguous refusal and outside the `try`, for
-the same reason: under a caller's `-ErrorAction Stop` the `WriteError` throws, and inside the `try` the
-catch would scrub and publish the record a second time. It writes the record through
+**The unanswered read.** The refusal is raised after the ambiguous refusal and outside the `try`, as
+the ambiguous refusal is, so that a `WriteError` that throws could not be taken by the read's own catch
+and published a second time. In the handler that `WriteError` was measured not to throw under
+`-ErrorAction Stop` or a global Stop preference, so the placement is a precaution, held by a regression
+test that cannot tell the two placements apart. It writes the record through
 `$Caller.WriteError`, reports one `Failed` row (`could not read access review definitions: ...`) with
 the record attached, and creates nothing, under `-WhatIf` too, since a plan that says `would create` on
 no evidence is a wrong plan. A previous-name entry is refused at whichever read gave no answer: both
