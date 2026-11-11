@@ -87,7 +87,7 @@ function Set-OERRoleAssignment {
         Initialize-OERAuth @AuthParams -IncludeARM
     }
     process {
-        if ($Id -notmatch '(?i)^/(?:.*/)?providers/Microsoft\.Authorization/roleAssignments/[^/]+$') {
+        if ($Id -notmatch '(?i)^/(?:.*/)?providers/Microsoft\.Authorization/roleAssignments/[^/\r\n]+\z') {
             Write-CmdletError `
                 -Message ([System.Exception]::new("'$Id' is not an Azure role assignment resource id ({scope}/providers/Microsoft.Authorization/roleAssignments/{guid}).")) `
                 -ErrorId 'InvalidRoleAssignmentId' -Category InvalidArgument -TargetObject $Id -Cmdlet $PSCmdlet

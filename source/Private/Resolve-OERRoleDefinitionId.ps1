@@ -6,7 +6,8 @@ function Resolve-OERRoleDefinitionId {
     .DESCRIPTION
     Azure role assignment bodies require roleDefinitionId to be the FULL ARM resource id, never a
     bare GUID. This helper accepts the three input forms the public cmdlets allow on -Role: a full
-    ARM id (contains '/providers/Microsoft.Authorization/roleDefinitions/') is passed through; a
+    ARM id (begins with '/' and contains '/providers/Microsoft.Authorization/roleDefinitions/') is
+    passed through; a
     bare GUID is expanded to '{scope}/providers/Microsoft.Authorization/roleDefinitions/{guid}'
     without a network call; anything else is treated as the exact role display name and resolved via
     the documented $filter=roleName eq '...' list call at the target scope (single quotes doubled,
@@ -54,7 +55,7 @@ function Resolve-OERRoleDefinitionId {
         [switch]$ThrowUnresolved
     )
 
-    if ($Role -like '*/providers/Microsoft.Authorization/roleDefinitions/*') {
+    if ($Role.StartsWith('/', [System.StringComparison]::Ordinal) -and $Role -like '*/providers/Microsoft.Authorization/roleDefinitions/*') {
         return $Role
     }
     if (Test-OERGuid -Value $Role) {
