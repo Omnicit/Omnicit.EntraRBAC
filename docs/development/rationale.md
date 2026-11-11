@@ -9531,8 +9531,9 @@ at all.
 **What was duplicated.** `Sync-OERStructureDirectoryRoleAssignment` resolved a role name and a principal
 twice for each entry: once in the section-wide prune pass, which resolves every declared entry to
 decide which live rows are managed, and once when the entry itself is processed; entries that name
-the same role or principal repeated both. Each lookup is a Graph read. With two entries sharing a role and a principal,
-the handler sent four role definition reads and four user reads, with or without `-Prune`.
+the same role or principal repeated both. Each lookup is a Graph read. With two entries naming the same role
+and two different principals (the measured document), the handler sent four role definition reads and four
+user reads, with or without `-Prune`.
 
 **The cache (per run, engine-owned).** `Invoke-OERStructure` creates one
 `Dictionary[string, string]` with Ordinal comparison per document (`$DraLookupCache`, next to
@@ -9542,8 +9543,9 @@ makes its own. Keys are `role|<name as written>` and `principal|<type>|<referenc
 different spelling is a different question. A principal type outside User, Group and ServicePrincipal
 yields no key, so it bypasses the cache and reaches the resolver, which refuses it as before. The
 dictionary is a local of the call, never module scope, and is dropped with the document: a second
-document, or a second call, asks again. If wrong: a role renamed in the tenant between two documents
-is still looked up fresh for each.
+document, or a second call, asks again. If wrong: an answer reused inside one run could be stale (a role
+or principal renamed or deleted between two entries of the same document), so a write could name an object
+that no longer matches; the cost of a wider cache is that one stale answer, and the per-call scope bounds it.
 
 **Only a successful answer is stored; a failure is never cached.** The four sites keep their resolver
 call, `try`/`catch`, scrub, `WriteError` and rows exactly, and store a non-empty string only after a
@@ -12604,7 +12606,7 @@ captures describe Sprint 11.
 
 ## access-review-proven-absence
 
-Sprint 15 step 4 (BL-159a, A6; the new ErrorId under A7) made `Sync-OERStructureAccessReview` create an access review only when
+Sprint 15 step 4 (BL-159a of Sprint 15, the first point of BL-159; not the BL-159a of Sprint 12 step 4; A6; the new ErrorId under A7) made `Sync-OERStructureAccessReview` create an access review only when
 the read of its display name PROVED that none exists. The lookup is the local `Find-ReviewDefinitionByName`,
 which serves the entry's `displayName` and its `previousDisplayName` alike, so the rule holds for both.
 
@@ -12624,7 +12626,15 @@ no create. The same test replaces the `-like` in the catch branch for a terminat
 **The publisher test.** The proven-empty record must also carry `Get-OERAccessReviewDefinition` as a
 comma-separated segment of its id, as the failure filter already required. `-ErrorVariable` collects
 records raised inside nested calls even when an inner catch swallowed them, so a bare NotFound record
-that no cmdlet published is not an answer. Without the publisher segment the read is unanswered.
+that no cmdlet published is not an answer. Without the publisher segment the read is unanswered. The
+one exception is a THROWN record (the catch branch): its id is compared on the first segment only, with no
+publisher test, since a thrown record is the read's own failure and not a stray collected beside it.
+
+**The value-less first page.** The `-Filter` read of `Get-OERAccessReviewDefinition`, which the handler
+uses, passes `-RequireValue`, so a first page that is empty, JSON null or has no `value` member is refused
+by the transport as `GraphPagingIncomplete` and published by the cmdlet as itself; the handler reports
+`Failed` with that id and creates nothing. Only an answer with a `value` member (empty or not) is a
+reading of the tenant. Before this the same page ended in `AccessReviewDefinitionNotFound` and a create.
 
 **The unanswered read.** The refusal is raised after the ambiguous refusal and outside the `try`, as
 the ambiguous refusal is, so that a `WriteError` that throws could not be taken by the read's own catch
@@ -12649,6 +12659,8 @@ stable release; nothing depends on it but the record.
 | Returns nothing and publishes nothing | `Failed`, `AccessReviewAbsenceUnproven` |
 | Returns definitions, none with the exact name | `Failed`, `AccessReviewAbsenceUnproven` |
 | NotFound record without the publisher segment | `Failed`, `AccessReviewAbsenceUnproven` |
+| Thrown record whose id is exactly `AccessReviewDefinitionNotFound` (catch; first segment only, no publisher test) | create |
+| First page with no `value` member, empty or JSON null | `Failed`, `GraphPagingIncomplete` as itself |
 | Id `AccessReviewDefinitionNotFoundX` or another letter case, published or thrown | `Failed` as itself |
 | Any other published or thrown failure | `Failed` as itself, as before |
 

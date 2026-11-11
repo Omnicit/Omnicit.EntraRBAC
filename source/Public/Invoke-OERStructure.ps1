@@ -415,7 +415,10 @@ function Invoke-OERStructure {
     names the package or the policy by id. Get-OERInventory exports either by id whenever this lookup
     would not find that package or policy alone, so an exported entry applies. The check runs
     before the reviewer lookups and before any ShouldProcess, so -WhatIf and a real run report the
-    same Failed row. Under -ErrorAction Stop the error stops the command, as any error does.
+    same Failed row. Under -ErrorAction Stop the error stops the command, as any error does. An
+    access review is created only when the read of its display name answered that none exists: a read
+    that failed is reported Failed as itself, a read that gave no answer at all is reported Failed with
+    AccessReviewAbsenceUnproven, in a -WhatIf plan too, and nothing is created.
 
     DirectoryRoleAssignments section pass: the engine passes every directoryRoleAssignments entry to
     each invocation of its handler and sets -ReconcileSection on the first item only, so the handler

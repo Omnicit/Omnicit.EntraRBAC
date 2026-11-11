@@ -28,8 +28,8 @@ the session stays the first account's. App-only sign-ins and other clouds are un
 
 `Invoke-OERStructure` looks a directory role and a principal up once per run in `directoryRoleAssignments`,
 with the same rows and errors as before. It creates an access review only when the read of its name
-answered that none exists: a read that gave no answer is `Failed` with `AccessReviewAbsenceUnproven`,
-and nothing is created.
+answered that none exists: a read that failed, or came back without a value list, is `Failed` as itself,
+a read that gave no answer is `Failed` with `AccessReviewAbsenceUnproven`, and nothing is created.
 
 ## [1.6.0] - 2026-11-10
 
