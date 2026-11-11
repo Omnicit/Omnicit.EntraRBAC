@@ -424,6 +424,8 @@ function Invoke-OERStructure {
     eligible and an active assignment of a directory role and the engine updates one of them,
     Microsoft Graph may remove the other by itself (measured live); the next run creates it again, so
     a document that declares both kinds for one principal and role can need two runs to converge.
+    Each role and principal of a document is looked up once, the pass and every entry sharing the
+    answer; only a successful lookup is reused, so a failed one is made again and reports as before.
 
     Returns zero or more tagged Omnicit.EntraRBAC.StructureResult records, one per reconcile
     action. A one-line verbose summary of counts per Action is written after all sections.
@@ -799,6 +801,9 @@ function Invoke-OERStructure {
 
         # The DirectoryRoleAssignments prune pass is section-wide: it runs once, on the first item.
         $DraReconciled = $false
+        # One lookup cache per document, filled only by the directoryRoleAssignments handler and
+        # holding only successful role and principal lookups.
+        $DraLookupCache = [System.Collections.Generic.Dictionary[string, string]]::new([System.StringComparer]::Ordinal)
 
         # BL-07: the administrative unit memberships this run creates. Sync-OERStructureGroup adds a
         # record for every group it creates INTO a unit (administrativeUnit never round-trips), and
@@ -1065,6 +1070,7 @@ function Invoke-OERStructure {
                     $ExtraParams.DeclaredInSection = $Items
                     $ExtraParams.ReconcileSection  = -not $DraReconciled
                     $DraReconciled = $true
+                    $ExtraParams.LookupCache       = $DraLookupCache
                 }
                 # Groups record the unit memberships they create; AdministrativeUnits withhold their
                 # prune. Both get the same list.

@@ -7462,3 +7462,142 @@ Describe 'Invoke-OERStructure and an access package left out of the export (Spri
         }
     }
 }
+
+Describe 'Invoke-OERStructure looks each directory role and principal up once per run (BL-23)' {
+    # The real engine, handler and resolvers run; Invoke-OERGraphRequest answers from a URI router that
+    # counts role definition lookups and user lookups separately, and the directory role cmdlets are
+    # mocked over a stable tenant. The row and record assertions hold on the code before BL-23 too;
+    # only the lookup counts moved. No id below is version-4 shaped.
+    BeforeAll {
+        $script:LoRole = '44444444-0000-0000-0000-000000000001'
+        $script:LoUser = @{ 'person1@example.com' = '55555555-0000-0000-0000-000000000001'; 'person2@example.com' = '55555555-0000-0000-0000-000000000002' }
+        $script:LoOther = '55555555-0000-0000-0000-000000000009'
+        $script:LoDoc = '{ "version": "1.0", "directoryRoleAssignments": [ ' +
+            '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible" }, ' +
+            '{ "role": "Reports Reader", "principal": "person2@example.com", "assignmentType": "Eligible" } ] }'
+        $script:LoTwinDoc = '{ "version": "1.0", "directoryRoleAssignments": [ ' +
+            '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible" }, ' +
+            '{ "role": "Twin Role", "principal": "person1@example.com", "assignmentType": "Eligible" } ] }'
+        $script:LoCaseDoc = '{ "version": "1.0", "directoryRoleAssignments": [ ' +
+            '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible" }, ' +
+            '{ "role": "reports reader", "principal": "person2@example.com", "assignmentType": "Eligible" } ] }'
+        function script:New-LoRow {
+            param([string]$PrincipalId)
+            [PSCustomObject]@{
+                ScheduleId = "schedule-$PrincipalId"; RoleDefinitionId = $script:LoRole; RoleName = 'Reports Reader'
+                PrincipalId = $PrincipalId; PrincipalDisplayName = 'fixture'; PrincipalType = 'User'
+                DirectoryScopeId = '/'; MemberType = 'Direct'; Status = 'Provisioned'
+                StartDateTime = '2026-01-01T00:00:00Z'; EndDateTime = $null; ExpirationType = 'noExpiration'; DurationDays = $null
+            }
+        }
+        function script:ConvertTo-LoRowLine {
+            param([object[]]$Row)
+            @($Row | ForEach-Object { '{0}|{1}|{2}|{3}' -f $_.Section, $_.Item, $_.Action, $_.Detail })
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        $script:LoCount = @{ Role = 0; User = 0; Other = 0 }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { [PSCustomObject]@{ Scope = $null; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null } }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            $Plain = [uri]::UnescapeDataString($Uri)
+            if ($Uri -like 'v1.0/roleManagement/directory/roleDefinitions?*') {
+                $script:LoCount.Role++
+                if ($Plain -clike "*displayName eq 'Reports Reader'*") { return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = $script:LoRole; displayName = 'Reports Reader' }) } }
+                if ($Plain -clike "*displayName eq 'Twin Role'*") {
+                    return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = '44444444-0000-0000-0000-000000000002'; displayName = 'Twin Role' }, [PSCustomObject]@{ id = '44444444-0000-0000-0000-000000000003'; displayName = 'Twin Role' }) }
+                }
+                # The whole-list read of the case-insensitive second step.
+                if ($Plain -notlike '*$filter*') { return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = $script:LoRole; displayName = 'Reports Reader' }) } }
+                return [PSCustomObject]@{ value = @() }
+            }
+            if ($Uri -like 'v1.0/users?*') {
+                $script:LoCount.User++
+                $Upn = ([regex]::Match([uri]::UnescapeDataString($Uri), "userPrincipalName eq '([^']+)'")).Groups[1].Value
+                if ($script:LoUser.ContainsKey($Upn)) { return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = $script:LoUser[$Upn]; userPrincipalName = $Upn }) } }
+                return [PSCustomObject]@{ value = @() }
+            }
+            $script:LoCount.Other++
+            throw "unexpected Graph request: $Uri"
+        }
+        # A stable tenant: both declared principals hold the role, and one undeclared principal too.
+        $script:LoLive = @((New-LoRow -PrincipalId $script:LoUser['person1@example.com']), (New-LoRow -PrincipalId $script:LoUser['person2@example.com']), (New-LoRow -PrincipalId $script:LoOther))
+        Mock -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment {
+            @($script:LoLive | Where-Object { (-not $Role -or $_.RoleDefinitionId -eq $Role) -and (-not $PrincipalId -or $_.PrincipalId -eq $PrincipalId) })
+        }
+        Mock -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment { @() }
+        Mock -ModuleName $script:moduleName New-OEREligibleDirectoryRoleAssignment { }
+        Mock -ModuleName $script:moduleName New-OERActiveDirectoryRoleAssignment { }
+        Mock -ModuleName $script:moduleName Remove-OEREligibleDirectoryRoleAssignment { }
+        Mock -ModuleName $script:moduleName Remove-OERActiveDirectoryRoleAssignment { }
+        Mock -ModuleName $script:moduleName Get-OERSignedInObjectId { '55555555-0000-0000-0000-0000000000ff' }
+        Mock -ModuleName $script:moduleName Get-OERMemberGroupId { @() }
+    }
+
+    It 'looks the shared role and each principal up once without -Prune, and the rows and records are what they were' {
+        $Rows = @(Invoke-OERStructure -Json $script:LoDoc -Include DirectoryRoleAssignments -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Errs -WarningAction SilentlyContinue)
+        @(ConvertTo-LoRowLine -Row $Rows) | Should -Be @(
+            "directoryRoleAssignments|Reports Reader -> $($script:LoOther) (Eligible)|Extra|undeclared eligible assignment of directory role 'Reports Reader' for principal '$($script:LoOther)' (use -Prune to remove)"
+            'directoryRoleAssignments|Reports Reader -> person1@example.com (Eligible)|Unchanged|assignment matches'
+            'directoryRoleAssignments|Reports Reader -> person2@example.com (Eligible)|Unchanged|assignment matches'
+        )
+        @($Errs | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' }).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName New-OEREligibleDirectoryRoleAssignment -Times 0
+        Should -Invoke -ModuleName $script:moduleName Remove-OEREligibleDirectoryRoleAssignment -Times 0
+        $script:LoCount.Other | Should -Be 0
+        $script:LoCount.Role | Should -Be 1
+        $script:LoCount.User | Should -Be 2
+    }
+
+    It 'looks them up once with -Prune too, and removes the one undeclared assignment' {
+        $Rows = @(Invoke-OERStructure -Json $script:LoDoc -Include DirectoryRoleAssignments -Prune -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Errs -WarningAction SilentlyContinue)
+        @($Rows).Action | Should -Be @('Removed', 'Unchanged', 'Unchanged')
+        $Rows[0].Item | Should -BeExactly "Reports Reader -> $($script:LoOther) (Eligible)"
+        $Rows[0].Detail | Should -BeExactly "removed undeclared eligible assignment of directory role 'Reports Reader' for principal '$($script:LoOther)'"
+        $Rows[1].Item | Should -BeExactly 'Reports Reader -> person1@example.com (Eligible)'
+        $Rows[1].Detail | Should -BeExactly 'assignment matches'
+        $Rows[2].Detail | Should -BeExactly 'assignment matches'
+        $Rows[2].Item | Should -BeExactly 'Reports Reader -> person2@example.com (Eligible)'
+        @($Errs | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' }).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Remove-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly -ParameterFilter { $Role -eq $script:LoRole -and $PrincipalId -eq $script:LoOther }
+        $script:LoCount.Other | Should -Be 0
+        $script:LoCount.Role | Should -Be 1
+        $script:LoCount.User | Should -Be 2
+    }
+
+    It 'makes a failed role lookup again where it is next needed: the item writes its own record and the Failed row, and the good role is looked up once' {
+        $Rows = @(Invoke-OERStructure -Json $script:LoTwinDoc -Include DirectoryRoleAssignments -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Errs -WarningAction SilentlyContinue)
+        $Failed = @($Rows | Where-Object { $_.Action -eq 'Failed' })
+        $Failed.Count | Should -Be 1
+        $Failed[0].Item | Should -BeExactly 'Twin Role -> person1@example.com (Eligible)'
+        $Failed[0].Detail | Should -BeLike "could not resolve directory role 'Twin Role': Directory role name 'Twin Role' matches 2 role definitions (*)*"
+        @($Errs | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -eq 'AmbiguousName,Invoke-OERStructure' }).Count | Should -Be 1
+        # The pass withholds the prune of the pair for the unresolved entry; nothing is removed.
+        Should -Invoke -ModuleName $script:moduleName Remove-OEREligibleDirectoryRoleAssignment -Times 0
+        $script:LoCount.Other | Should -Be 0
+        # 'Reports Reader' once (shared), 'Twin Role' twice (pass, then the item; a failure is never cached).
+        $script:LoCount.Role | Should -Be 3
+        $script:LoCount.User | Should -Be 1
+    }
+
+    It 'does not let the cache outlive its document: a second call looks everything up again, and no module variable holds a cache' {
+        $null = @(Invoke-OERStructure -Json $script:LoDoc -Include DirectoryRoleAssignments -Confirm:$false -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+        $script:LoCount.Role | Should -Be 1
+        $script:LoCount.User | Should -Be 2
+        $null = @(Invoke-OERStructure -Json $script:LoDoc -Include DirectoryRoleAssignments -Confirm:$false -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+        $script:LoCount.Role | Should -Be 2
+        $script:LoCount.User | Should -Be 4
+        InModuleScope $script:moduleName {
+            @(Get-Variable -Scope Script | Where-Object { $_.Value -is [System.Collections.Generic.Dictionary[string, string]] }).Count | Should -Be 0
+        }
+    }
+    It 'keys a role name case-sensitively across the run: two spellings are two lookups, never one cached answer' {
+        $Rows = @(Invoke-OERStructure -Json $script:LoCaseDoc -Include DirectoryRoleAssignments -Confirm:$false -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+        @($Rows).Action | Should -Be @('Extra', 'Unchanged', 'Unchanged')
+        # 'Reports Reader': one exact-case request. 'reports reader': the exact-case request, then the whole list.
+        $script:LoCount.Role | Should -Be 3
+        $script:LoCount.User | Should -Be 2
+    }
+}
