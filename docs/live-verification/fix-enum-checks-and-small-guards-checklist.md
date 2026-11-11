@@ -66,7 +66,7 @@ enabled for the run; this branch built in the step's own worktree (`./build.ps1 
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -91,13 +91,22 @@ tracked changes; `A: True; B: True; D: True`.
 **Failure looks like:** `False` on the first line (`OER_LIVE_REPO` unset), or on the last (build the
 worktree first, never while the gate runs).
 
-Result:
+Result: 2026-11-11 09:27 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The session's Repo is the step's own worktree, not the main clone; the main clone is on main; the worktree on fix/enum-checks-and-small-guards at a3a2125 with 0 tracked changes; the build carries A, B and D.
+
+[oer-s152] The module loads from a worktree that is not the main clone: True
+[oer-s152] Main clone: branch main
+[oer-s152] Worktree: branch fix/enum-checks-and-small-guards; HEAD a3a2125 docs: correct the texts the final review of step 2 named; tracked changes: 0
+[oer-s152] The worktree's build carries A: True; B: True; D: True
+```
 
 ### 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -113,11 +122,27 @@ Disconnect-OerLive
 **Expect:** every identity line `True`, `identity check passed: True`, `The module is the worktree's build: True`.
 **Failure looks like:** any `False`, or `application is disabled` -- STOP; never sign in another way.
 
-Result:
+Result: 2026-11-11 09:28 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Every identity line True for the module session; identity check passed; the module is the worktree's build (1.6.1).
+
+[oer-s152] Omnicit.EntraRBAC 1.6.1 loaded from REPO\.claude\worktrees\s15-steg2\output\module\Omnicit.EntraRBAC\1.6.1.
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s152] The module is the worktree's build: True
+```
 
 ### 0.2. The prerequisite script's plan
 
-- [ ] **0.2** `-WhatIf` plans only `oer-s152-` objects.
+- [x] **0.2** `-WhatIf` plans only `oer-s152-` objects.
 
 ```powershell
 Set-Location $env:OER_LIVE_DIR
@@ -127,11 +152,33 @@ pwsh -NoProfile -File .\Initialize-OerS152Prereq.ps1 -WhatIf
 **Expect:** every `What if` line names an `oer-s152-` object (or, on a re-run, none: the objects exist).
 **Failure looks like:** a target without the prefix -- STOP.
 
-Result:
+Result: 2026-11-11 09:28 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Every What if line for an object names an oer-s152- object (the two catalogs); the packages and policies are not planned under -WhatIf, since they need the catalogs' ids; the baseline sweep is 0 objects with the prefix.
+
+What if: Performing the operation "Create Directory" on target "Destination: REPO\docs\live-verification\raw\s152".
+What if: Performing the operation "Start the redacted transcript" on target "raw\s152\prereq-20261111-092810Z.log".
+[oer-s152] Omnicit.EntraRBAC 1.6.1 loaded from REPO\.claude\worktrees\s15-steg2\output\module\Omnicit.EntraRBAC\1.6.1.
+[oer-s152] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s152] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s152] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s152] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s152] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s152] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s152] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s152] Residue: raw\residue.json holds 5 row(s); 0 carry the prefix 'oer-s152-', the other 5 are left untouched.
+[oer-s152] Permission held: EntitlementManagement.ReadWrite.All: True
+[oer-s152] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s152-' is left.
+What if: Performing the operation "Write the baseline" on target "raw\s152\baseline-prereq.json".
+[oer-s152] Baseline sweep: 0 object(s) with the prefix before this run.
+What if: Performing the operation "Create catalog" on target "oer-s152-cat-a".
+What if: Performing the operation "Create catalog" on target "oer-s152-cat-b".
+```
 
 ### 0.3. The prerequisite script, for real
 
-- [ ] **0.3** The test objects exist, each package in its own catalog.
+- [x] **0.3** The test objects exist, each package in its own catalog.
 
 ```powershell
 Set-Location $env:OER_LIVE_DIR
@@ -141,13 +188,43 @@ pwsh -NoProfile -File .\Initialize-OerS152Prereq.ps1 -Unattended
 **Expect:** every `Read back` line `True`, among them `package apA in its catalog: True` and `package apB in its catalog: True`.
 **Failure looks like:** a `False`, or `STOP` -- stop the run.
 
-Result:
+Result: 2026-11-11 09:28 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Every Read back line True: both catalogs, both packages named oer-s152-ap each in its own catalog, both policies. Graph accepted the second package of the same name in the other catalog.
+
+[oer-s152] Transcript (redacted): raw\s152\prereq-20261111-092829Z.log; OerLive 1.1.0.
+[oer-s152] Omnicit.EntraRBAC 1.6.1 loaded from REPO\.claude\worktrees\s15-steg2\output\module\Omnicit.EntraRBAC\1.6.1.
+[oer-s152] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s152] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s152] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s152] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s152] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s152] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s152] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s152] Residue: raw\residue.json holds 5 row(s); 0 carry the prefix 'oer-s152-', the other 5 are left untouched.
+[oer-s152] Permission held: EntitlementManagement.ReadWrite.All: True
+[oer-s152] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s152-' is left.
+[oer-s152] Baseline sweep: 0 object(s) with the prefix before this run.
+[oer-s152] Created catalog oer-s152-cat-a.
+[oer-s152] Created catalog oer-s152-cat-b.
+[oer-s152] Created access package oer-s152-ap (apA).
+[oer-s152] Created access package oer-s152-ap (apB).
+[oer-s152] Created assignment policy oer-s152-pol (polA).
+[oer-s152] Created assignment policy oer-s152-pol (polB).
+[oer-s152] Read back catalog cat-a: True
+[oer-s152] Read back catalog cat-b: True
+[oer-s152] Read back package apA in its catalog: True
+[oer-s152] Read back package apB in its catalog: True
+[oer-s152] Read back policy polA: True
+[oer-s152] Read back policy polB: True
+```
 
 ## 1. The validator (A)
 
 ### 1.1. A one-element array in two enum fields and in the catalog is an Error, offline
 
-- [ ] **1.1** `Test-OERStructure` reports an Error at each array, and the same document with strings has none there; nothing signs in.
+- [x] **1.1** `Test-OERStructure` reports an Error at each array, and the same document with strings has none there; nothing signs in.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -155,8 +232,8 @@ Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
 $Cfg = Import-OerLiveConfig -Prefix 'oer-s152-' -ConfigDirectory $VaultDir
 if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
 $Raw = Join-Path (& (Get-Module OerLive) { $script:OerLive.RawRoot }) 's152'
-$Psd1 = Get-ChildItem -Path (Join-Path $Cfg.Repo 'output\module\Omnicit.EntraRBAC\*\Omnicit.EntraRBAC.psd1') | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-Import-Module $Psd1.FullName -Force
+# The library's own loader: the newest build of the worktree, with its RequiredModules in front of PSModulePath. No sign-in.
+& (Get-Module OerLive) { Import-OerLiveModule }
 Write-OerLiveStep "The module is the worktree's build: $((Get-Module Omnicit.EntraRBAC).ModuleBase.StartsWith((Join-Path $Cfg.Repo 'output\module'), [System.StringComparison]::OrdinalIgnoreCase))"
 $Paths = 'groups[0].membershipRuleProcessingState', 'directoryRoleAssignments[0].assignmentType', 'accessPackages[0].catalog'
 foreach ($Form in 'array', 'string') {
@@ -186,11 +263,27 @@ expected and not counted); `A session exists: False`.
 **Failure looks like:** 0 Errors at a path for the array form (the array is still accepted), or an
 Error there for the string form.
 
-Result:
+Result: 2026-11-11 09:29 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Array form: exactly one Error at each of the three paths (the two existing 'must be one of' messages, which render the array as its element, and the new catalog message), Valid False; string form: 0 Errors at each path, Valid True; no session. Fix round of the check (not of the code): the first run of this block imported the build without its RequiredModules and tested nothing; the block now loads the build with OerLive's own loader, and was run again.
+
+[oer-s152] Omnicit.EntraRBAC 1.6.1 loaded from REPO\.claude\worktrees\s15-steg2\output\module\Omnicit.EntraRBAC\1.6.1.
+[oer-s152] The module is the worktree's build: True
+[oer-s152] array: Errors (Severity Error) at groups[0].membershipRuleProcessingState: 1 | 'membershipRuleProcessingState' at groups[0] must be one of: On, Paused. Got: 'Paused'.
+[oer-s152] array: Errors (Severity Error) at directoryRoleAssignments[0].assignmentType: 1 | 'assignmentType' at directoryRoleAssignments[0] must be one of: Eligible, Active. Got: 'Eligible'.
+[oer-s152] array: Errors (Severity Error) at accessPackages[0].catalog: 1 | 'catalog' at accessPackages[0] must be a string.
+[oer-s152] array: Valid False
+[oer-s152] string: Errors (Severity Error) at groups[0].membershipRuleProcessingState: 0
+[oer-s152] string: Errors (Severity Error) at directoryRoleAssignments[0].assignmentType: 0
+[oer-s152] string: Errors (Severity Error) at accessPackages[0].catalog: 0
+[oer-s152] string: Valid True
+[oer-s152] A session exists: False
+```
 
 ### 1.2. The apply engine refuses the array document and converges on the string one (G8)
 
-- [ ] **1.2** `Invoke-OERStructure` refuses the array form with nothing written; the string form creates `oer-s152-new` in `catA`, and a second run is `Unchanged`.
+- [x] **1.2** `Invoke-OERStructure` refuses the array form with nothing written; the string form creates `oer-s152-new` in `catA`, and a second run is `Unchanged`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -226,20 +319,42 @@ package named `oer-s152-new`; `string plan`: `accessPackages oer-s152-new Skippe
 `Created`; `string second` `Unchanged`; `string, after`: one package (`another id`) in `catA`.
 **Failure looks like:** a row or a package after the array run, or a second create.
 
-Result:
+Result: 2026-11-11 09:30 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The array form was refused with StructureValidationFailed, with no row and no package named oer-s152-new afterwards; the string form planned Skipped (would create), created the package on the first run and was Unchanged on the second (G8); one package named oer-s152-new, in catA.
+
+[oer-s152] Omnicit.EntraRBAC 1.6.1 loaded from REPO\.claude\worktrees\s15-steg2\output\module\Omnicit.EntraRBAC\1.6.1.
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s152] array first: own errors: StructureValidationFailed; rows: 
+[oer-s152] array, after: packages named oer-s152-new: 
+What if: Performing the operation "Create access package" on target "oer-s152-new".
+[oer-s152] string plan: own errors: ; rows: accessPackages oer-s152-new Skipped
+[oer-s152] string first: own errors: ; rows: accessPackages oer-s152-new Created
+[oer-s152] string second: own errors: ; rows: accessPackages oer-s152-new Unchanged
+[oer-s152] string, after: packages named oer-s152-new: another id in catA
+```
 
 ## 2. Role definition ids and role assignment ids (B)
 
 ### 2.1. A host-shaped -Role is looked up as a name and never sent as a path
 
-- [ ] **2.1** `Get-OERRoleDefinition -Role` with a value that does not begin with `/` sends one name lookup on the Azure Resource Manager host and reports `RoleDefinitionNotFound`; a `/`-leading id is still read as a path.
+- [x] **2.1** `Get-OERRoleDefinition -Role` with a value that does not begin with `/` sends one name lookup on the Azure Resource Manager host and reports `RoleDefinitionNotFound`; a `/`-leading id is still read as a path.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
 Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
 $Cfg = Import-OerLiveConfig -Prefix 'oer-s152-' -ConfigDirectory $VaultDir
 if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
-function Req($Out) { @($Out | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] -and $_.Message -like '`[Invoke-OERArmRequest`] GET *' } | ForEach-Object { $_.Message -replace '^\[Invoke-OERArmRequest\] ', '' }) }
+function Req($Out) { @($Out | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] -and $_.Message -like '`[Invoke-OERArmRequest`] GET *' } | ForEach-Object { $_.Message -replace '^\[Invoke-OERArmRequest\] GET ', '' }) }
 Connect-OerLive -Arm
 $Reader = @(Get-OERRoleDefinition -Role 'Reader')[0]
 $Tail = ([string]$Reader.RoleDefinitionId).Substring(([string]$Reader.RoleDefinitionId).IndexOf('/providers/'))
@@ -269,11 +384,31 @@ own errors: RoleDefinitionNotFound`.
 **Failure looks like:** `ArmRequestOutsideCloudHost` (the value was still used as a path), a request
 starting with the shape, or the control by id no longer read as a path.
 
-Result:
+Result: 2026-11-11 09:31 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Control: Reader found by name, and its id (beginning with /) read as the id path with no error; each host-shaped value (host suffix, at sign, scheme and host) made exactly one request, a roleName filter on the Azure Resource Manager host with the value URL-escaped inside it, sent nothing as the value's path, returned nothing and reported RoleDefinitionNotFound. Azure Resource Manager answered the filtered list with an empty value (measured). Fix round of the check (not of the code): the first run's request comparison did not strip the logged method word GET and printed False for the control and the three shapes; the logged lines were printed through the redactor, showed the requests as designed, and the helper was corrected and the block run again.
+
+[oer-s152] Omnicit.EntraRBAC 1.6.1 loaded from REPO\.claude\worktrees\s15-steg2\output\module\Omnicit.EntraRBAC\1.6.1.
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s152] Control, by name: one role named Reader; its id begins with /providers/Microsoft.Authorization/roleDefinitions/: True
+[oer-s152] Control, by id: role Reader; errors 0; request is the id path: True
+[oer-s152] a host suffix: requests 1; one name lookup on the ARM host: True; requests sent as the value's path: 0; output 0; own errors: RoleDefinitionNotFound
+[oer-s152] an at sign: requests 1; one name lookup on the ARM host: True; requests sent as the value's path: 0; output 0; own errors: RoleDefinitionNotFound
+[oer-s152] a scheme and host: requests 1; one name lookup on the ARM host: True; requests sent as the value's path: 0; output 0; own errors: RoleDefinitionNotFound
+```
 
 ### 2.2. A role assignment id with a trailing line break is refused before any request
 
-- [ ] **2.2** `Remove-OERRoleAssignment -WhatIf` refuses an `-Id` ending in a line feed, and accepts the same id without it.
+- [x] **2.2** `Remove-OERRoleAssignment -WhatIf` refuses an `-Id` ending in a line feed, and accepts the same id without it.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -298,13 +433,31 @@ InvalidRoleAssignmentId`; `without it: ARM requests 0; deletion warnings 1; own 
 `-WhatIf` gate stops it after the warning).
 **Failure looks like:** no `InvalidRoleAssignmentId` for the line feed, or a warning for it.
 
-Result:
+Result: 2026-11-11 09:31 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. With a trailing line feed: InvalidRoleAssignmentId, no Azure Resource Manager request and no deletion warning; the same id without it: the deletion warning and the What if line, no request, no error.
+
+[oer-s152] Omnicit.EntraRBAC 1.6.1 loaded from REPO\.claude\worktrees\s15-steg2\output\module\Omnicit.EntraRBAC\1.6.1.
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s152] with a trailing line feed: ARM requests 0; deletion warnings 0; own errors: InvalidRoleAssignmentId
+What if: Performing the operation "Delete Azure role assignment" on target "/subscriptions/00000000-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-000000000002".
+[oer-s152] without it: ARM requests 0; deletion warnings 1; own errors:
+```
 
 ## 3. The pipeline (D)
 
 ### 3.1. A piped package reaches its own policies without -Catalog
 
-- [ ] **3.1** `apB` piped from `Get-OERAccessPackage` reaches its policy in `Get-OERAccessPackageAssignmentPolicy` and `New-OERAccessPackageAssignment -WhatIf` without `-Catalog`, while the typed shared name is still refused as ambiguous.
+- [x] **3.1** `apB` piped from `Get-OERAccessPackage` reaches its policy in `Get-OERAccessPackageAssignmentPolicy` and `New-OERAccessPackageAssignment -WhatIf` without `-Catalog`, while the typed shared name is still refused as ambiguous.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -337,11 +490,32 @@ Disconnect-OerLive
 (`Assign to access package ...`) and no own error.
 **Failure looks like:** `AmbiguousAccessPackageName` for a piped call, or `apA` anywhere.
 
-Result:
+Result: 2026-11-11 09:31 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Piped apB from catB; without -Catalog its policies are polB of apB with no error (the piped object's own id, not the shared name); the typed shared name without -Catalog is still refused with AmbiguousAccessPackageName; the piped New-OERAccessPackageAssignment -WhatIf names the placeholder the Keys line gives apB, with no error.
+
+[oer-s152] Omnicit.EntraRBAC 1.6.1 loaded from REPO\.claude\worktrees\s15-steg2\output\module\Omnicit.EntraRBAC\1.6.1.
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s152] Piped from catB: apB
+[oer-s152] | Get-OERAccessPackageAssignmentPolicy: own errors: ; policies: polB of apB
+[oer-s152] Typed name, no -Catalog: policies 0; own errors: AmbiguousAccessPackageName
+[oer-s152] Keys: apA is 00000000-0000-0000-0000-000000000003; apB is 00000000-0000-0000-0000-000000000004
+What if: Performing the operation "Assign to access package 00000000-0000-0000-0000-000000000004" on target "00000000-0000-0000-0000-000000000000".
+[oer-s152] | New-OERAccessPackageAssignment -WhatIf: own errors:
+```
 
 ### 3.2. New-OERAccessPackage takes a piped package's catalog, not its id
 
-- [ ] **3.2** `apB | New-OERAccessPackage -DisplayName oer-s152-new2 -WhatIf` looks the name up in `catB` and plans the create there.
+- [x] **3.2** `apB | New-OERAccessPackage -DisplayName oer-s152-new2 -WhatIf` looks the name up in `catB` and plans the create there.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -370,13 +544,32 @@ Disconnect-OerLive
 `oer-s152-new2`; 0 packages named `oer-s152-new2`.
 **Failure looks like:** `catalog/id eq 'apB'` (the package's own id taken as its catalog).
 
-Result:
+Result: 2026-11-11 09:32 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Piped apB with CatalogId catB; New-OERAccessPackage -WhatIf took catB as the catalog (its only request filters on catalog/id eq 'catB', never on apB), planned Create access package on oer-s152-new2 with no error, and no package of that name exists afterwards.
+
+[oer-s152] Omnicit.EntraRBAC 1.6.1 loaded from REPO\.claude\worktrees\s15-steg2\output\module\Omnicit.EntraRBAC\1.6.1.
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s152] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s152] Piped from catB: apB; its CatalogId: catB
+What if: Performing the operation "Create access package" on target "oer-s152-new2".
+[oer-s152] | New-OERAccessPackage -WhatIf: own errors: 0; requests: GET v1.0/identityGovernance/entitlementManagement/accessPackages?$filter=displayName eq 'oer-s152-new2' and catalog/id eq 'catB'&$select=id,displayName
+[oer-s152] Packages named oer-s152-new2 after the -WhatIf: 0
+```
 
 ## T. Teardown
 
 ### T.1. Every prefixed object is removed
 
-- [ ] **T.1** The teardown removes every `oer-s152-` object and the sweep is 0.
+- [x] **T.1** The teardown removes every `oer-s152-` object and the sweep is 0.
 
 ```powershell
 Set-Location $env:OER_LIVE_DIR
@@ -386,4 +579,39 @@ pwsh -NoProfile -File .\Initialize-OerS152Prereq.ps1 -Teardown -Unattended
 **Expect:** `Teardown complete: the sweep is 0.`
 **Failure looks like:** `Left:` lines -- run it again later, and name every remainder in the report.
 
-Result:
+Result: 2026-11-11 09:32 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Removed 7 (three access packages with their two policies, two catalogs), residue 0, unreadable 0; the sweep is 0.
+
+[oer-s152] Transcript (redacted): raw\s152\prereq-teardown-20261111-093206Z.log; OerLive 1.1.0.
+[oer-s152] Omnicit.EntraRBAC 1.6.1 loaded from REPO\.claude\worktrees\s15-steg2\output\module\Omnicit.EntraRBAC\1.6.1.
+[oer-s152] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s152] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s152] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s152] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s152] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s152] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s152] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s152] Residue: raw\residue.json holds 5 row(s); 0 carry the prefix 'oer-s152-', the other 5 are left untouched.
+[oer-s152] Teardown: Remove-OerLiveTestObjects for the prefix with the recorded ids.
+[oer-s152] Teardown of 'oer-s152-': users 0, groups 0, access packages 3, access review definitions 0, catalogs 2; administrative units 0 and app registrations 0 are reported only.
+[oer-s152] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s152] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s152] Teardown 3/6: access review definitions, access package resource roles, access packages, catalog resources, catalogs.
+[oer-s152] Deleted: access package oer-s152-new (204, 1 attempt(s)).
+[oer-s152] Deleted: oer-s152-ap: assignment policy 'oer-s152-pol' (204).
+[oer-s152] Deleted: access package oer-s152-ap (204, 1 attempt(s)).
+[oer-s152] Deleted: oer-s152-ap: assignment policy 'oer-s152-pol' (204).
+[oer-s152] Deleted: access package oer-s152-ap (204, 1 attempt(s)).
+[oer-s152] Deleted: catalog oer-s152-cat-b (204, 1 attempt(s)).
+[oer-s152] Deleted: catalog oer-s152-cat-a (204, 1 attempt(s)).
+[oer-s152] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s152] Teardown 5/6: the prefixed groups.
+[oer-s152] Teardown 6/6: the prefixed users.
+[oer-s152] Teardown of 'oer-s152-': removed 7, residue 0, unreadable 0, already gone 0, skipped 0.
+[oer-s152] Teardown summary: Removed 7, Residue 0, Unreadable 0, Unread 0, AlreadyGone 0, Skipped 0
+[oer-s152] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s152-' is left.
+[oer-s152] Sweep: 0 object(s) with the prefix, 0 unread kind(s).
+[oer-s152] Teardown complete: the sweep is 0.
+```
