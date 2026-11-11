@@ -16019,6 +16019,17 @@ package by `-Id`, a set without `-Catalog` (a pipeline with `-Catalog` fails at 
 let any piped object choose the catalog. The existing pipeline binding of
 `New-OERAccessPackage -Catalog` is unchanged, and no alias is added, so the alias order rule is untouched.
 
+**Sprint 15 step 2 (BL-186, A10).** `New-OERAccessPackage -Catalog` now declares `[Alias('CatalogId',
+'Id')]`, following the alias declaration order rule (the specific `<Noun>Id` before the generic `Id`;
+the first match in declaration order wins): a piped access package binds its own `CatalogId`, never its
+own `Id` as a catalog, and a piped catalog still binds its `Id`, since `CatalogId` is an alias of `Id`
+on a catalog object. `Get-OERPipedAccessPackageId` no longer takes `-CatalogBound`: the piped object's
+own id is used with or without `-Catalog`, so a name two catalogs share no longer refuses an
+unambiguous piped object, and with `-Catalog` the id path still checks the package against that
+catalog. A typed `-AccessPackage` name, and a piped object not tagged as an access package, resolve by
+name as before (a shared typed name is still `AmbiguousAccessPackageName`). The cost: a piped call now
+costs the id existence read of the resolver's GUID path instead of the name filter read.
+
 **R-4 (catalog failures).** In catalog mode the resolver resolves the catalog with
 `Resolve-OERCatalogId` (a GUID is taken verbatim, no request). An ambiguous catalog name is re-thrown as
 a typed `AmbiguousCatalogName`, a name matching no catalog as `CatalogNotFound`, any other failure as

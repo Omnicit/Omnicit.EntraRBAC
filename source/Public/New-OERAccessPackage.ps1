@@ -41,7 +41,9 @@ function New-OERAccessPackage {
 
     .PARAMETER Catalog
     The catalog id or catalog GUID the access package is created in. Accepts pipeline input by property
-    name: a piped Omnicit.EntraRBAC.Catalog object binds via its Id or CatalogId property.
+    name: a piped Omnicit.EntraRBAC.AccessPackage object binds its CatalogId (the catalog it is in,
+    never its own Id), and a piped Omnicit.EntraRBAC.Catalog object its Id (CatalogId is an alias of Id
+    on a catalog).
 
     .PARAMETER Description
     Optional description stored on the access package.
@@ -76,7 +78,7 @@ function New-OERAccessPackage {
         [string]$Prefix,
 
         [Parameter(Mandatory, ValueFromPipelineByPropertyName)]
-        [Alias('Id', 'CatalogId')]
+        [Alias('CatalogId', 'Id')]
         [string]$Catalog,
 
         [string]$Description,

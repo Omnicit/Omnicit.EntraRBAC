@@ -352,7 +352,7 @@ Describe 'New-OERAccessPackageAssignment' {
         }
     }
 
-    Context 'a piped access package with -Catalog is resolved by its own id' {
+    Context 'a piped access package is resolved by its own id, with or without -Catalog' {
         BeforeEach {
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } }
             $script:PipedAp = [pscustomobject]@{ Id = '00000000-0000-0000-0000-000000000031'; DisplayName = 'AP'; CatalogId = '00000000-0000-0000-0000-000000000032' }
@@ -366,11 +366,39 @@ Describe 'New-OERAccessPackageAssignment' {
             }
         }
 
-        It 'resolves the name as before when -Catalog is not bound' {
+        It 'resolves by the piped object''s own id when -Catalog is not bound' {
             $script:PipedAp | New-OERAccessPackageAssignment -Policy '00000000-0000-0000-0000-000000000021' -TargetId '00000000-0000-0000-0000-000000000022' -WhatIf -ErrorAction SilentlyContinue | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter {
+                -not $PesterBoundParameters.ContainsKey('Catalog') -and $DisplayName -eq '00000000-0000-0000-0000-000000000031'
+            }
+        }
+
+        It 'resolves a piped object not tagged as an access package by its name' {
+            $Plain = [pscustomobject]@{ Id = '00000000-0000-0000-0000-000000000031'; DisplayName = 'AP' }
+            $Plain | New-OERAccessPackageAssignment -Policy '00000000-0000-0000-0000-000000000021' -TargetId '00000000-0000-0000-0000-000000000022' -WhatIf -ErrorAction SilentlyContinue | Out-Null
             Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter {
                 -not $PesterBoundParameters.ContainsKey('Catalog') -and $DisplayName -eq 'AP'
             }
+        }
+
+        It 'resolves a typed -AccessPackage name by the name without -Catalog' {
+            New-OERAccessPackageAssignment -AccessPackage 'AP-Shared' -Policy '00000000-0000-0000-0000-000000000021' -TargetId '00000000-0000-0000-0000-000000000022' -WhatIf -ErrorAction SilentlyContinue | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter {
+                -not $PesterBoundParameters.ContainsKey('Catalog') -and $DisplayName -eq 'AP-Shared'
+            }
+        }
+
+        It 'still publishes AmbiguousAccessPackageName for a typed shared name' {
+            Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Access package name is ambiguous.'),
+                    'AmbiguousName',
+                    [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                    'x')
+            }
+            $Err = $null
+            New-OERAccessPackageAssignment -AccessPackage 'AP-Shared' -Policy '00000000-0000-0000-0000-000000000021' -TargetId '00000000-0000-0000-0000-000000000022' -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AmbiguousAccessPackageName,New-OERAccessPackageAssignment' }).Count | Should -Be 1
         }
 
         It 'keeps an explicit -AccessPackage name with -Catalog when nothing is piped' {

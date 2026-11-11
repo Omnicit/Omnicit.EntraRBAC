@@ -15,7 +15,9 @@ function Get-OERAccessPackageAssignmentPolicy {
     The access package id or display name whose policies are listed. Accepts pipeline input by
     property name from Get-OERAccessPackage (binds DisplayName or AccessPackageId; the Id alias is
     not used here because this cmdlet has its own -Id parameter for the ById set). An access package
-    name is unique only within its catalog: use -Catalog for a name several catalogs share.
+    name is unique only within its catalog: use -Catalog for a name several catalogs share. An access
+    package piped from Get-OERAccessPackage is resolved by its own id, and with -Catalog checked
+    against that catalog.
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
@@ -24,8 +26,8 @@ function Get-OERAccessPackageAssignmentPolicy {
     A catalog name or id (ByPackage set only). With it the -AccessPackage name is looked up only in
     that catalog, and an access package id that is not in it is refused with AccessPackageNotInCatalog
     before its policies are read. An ambiguous catalog name is AmbiguousCatalogName and an unknown one
-    CatalogNotFound. Does not bind from the pipeline. With -Catalog, an access package piped from
-    Get-OERAccessPackage is checked by its own id.
+    CatalogNotFound. Does not bind from the pipeline. An access package piped from Get-OERAccessPackage is
+    resolved by its own id, and with -Catalog checked against that catalog.
 
     .EXAMPLE
     Get-OERAccessPackageAssignmentPolicy -Id '00000000-0000-0000-0000-000000000001'
@@ -83,14 +85,13 @@ function Get-OERAccessPackageAssignmentPolicy {
         # $null return (a display name that matched nothing) reaches the not-found branch.
         $PackageId = $null
         $ResolveParams = @{ DisplayName = $AccessPackage }
-        if ($PSBoundParameters.ContainsKey('Catalog')) {
-            $ResolveParams.Catalog = $Catalog
-            # A piped access package binds by its DisplayName; with -Catalog its own id is used so
-            # the resolver checks it against the catalog rather than looking the name up again there.
-            $PipedId = Get-OERPipedAccessPackageId -InputObject $PSItem -AccessPackage $AccessPackage `
-                -CatalogBound -Expecting:$MyInvocation.ExpectingInput
-            if ($PipedId) { $ResolveParams.DisplayName = $PipedId }
-        }
+        # A piped access package binds by its DisplayName, which is unique only within its catalog;
+        # its own id is used instead, with or without -Catalog (with it the resolver checks the
+        # package against the catalog rather than looking the name up again there).
+        $PipedId = Get-OERPipedAccessPackageId -InputObject $PSItem -AccessPackage $AccessPackage `
+            -Expecting:$MyInvocation.ExpectingInput
+        if ($PipedId) { $ResolveParams.DisplayName = $PipedId }
+        if ($PSBoundParameters.ContainsKey('Catalog')) { $ResolveParams.Catalog = $Catalog }
         try {
             $PackageId = Resolve-OERAccessPackageId @ResolveParams
         } catch {

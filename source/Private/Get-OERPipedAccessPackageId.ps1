@@ -1,19 +1,17 @@
 function Get-OERPipedAccessPackageId {
     <#
     .SYNOPSIS
-    Returns the id of an access package piped from Get-OERAccessPackage when -Catalog is in use,
-    else $null.
+    Returns the id of an access package piped from Get-OERAccessPackage, else $null.
 
     .DESCRIPTION
     Get-OERAccessPackageAssignmentPolicy and New-OERAccessPackageAssignment bind a piped access
     package by its DisplayName, since the object carries no AccessPackageId. A display name is unique
-    only within its catalog, so with -Catalog the name would be looked up in the named catalog and the
-    call could land on another catalog's package of the same name. This helper is the single owner of
+    only within its catalog, so a name two catalogs share would be refused as ambiguous, or with
+    -Catalog land on another catalog's package of the same name. This helper is the single owner of
     that decision: when every one of these holds it returns the piped object's own Id, which the
-    caller passes to Resolve-OERAccessPackageId so the id path checks the package against -Catalog
-    (AccessPackageNotInCatalog for one of another catalog):
+    caller passes to Resolve-OERAccessPackageId whether or not -Catalog is bound (with -Catalog the id
+    path checks the package against it: AccessPackageNotInCatalog for one of another catalog):
 
-      * -CatalogBound is set (the caller's -Catalog was bound);
       * -Expecting is set (the caller's $MyInvocation.ExpectingInput: the command itself receives
         pipeline input);
       * the piped object is tagged Omnicit.EntraRBAC.AccessPackage;
@@ -29,14 +27,11 @@ function Get-OERPipedAccessPackageId {
     .PARAMETER AccessPackage
     The caller's bound -AccessPackage value, a display name or an id.
 
-    .PARAMETER CatalogBound
-    Set when the caller's -Catalog parameter was bound on the call.
-
     .PARAMETER Expecting
     The caller's $MyInvocation.ExpectingInput value, true when it receives pipeline input.
 
     .EXAMPLE
-    Get-OERPipedAccessPackageId -InputObject $PSItem -AccessPackage $AccessPackage -CatalogBound:$Bound -Expecting:$MyInvocation.ExpectingInput
+    Get-OERPipedAccessPackageId -InputObject $PSItem -AccessPackage $AccessPackage -Expecting:$MyInvocation.ExpectingInput
     Returns the piped package's id, or $null when the value should be resolved as given.
     #>
     [OutputType([string])]
@@ -47,11 +42,9 @@ function Get-OERPipedAccessPackageId {
 
         [string]$AccessPackage,
 
-        [switch]$CatalogBound,
-
         [switch]$Expecting
     )
-    if (-not $CatalogBound -or -not $Expecting -or $null -eq $InputObject) { return $null }
+    if (-not $Expecting -or $null -eq $InputObject) { return $null }
     if (@($InputObject.PSObject.TypeNames) -notcontains 'Omnicit.EntraRBAC.AccessPackage') { return $null }
     $PipedId = [string]$InputObject.Id
     if (-not (Test-OERGuid -Value $PipedId)) { return $null }
