@@ -121,11 +121,13 @@ function Initialize-OERAuth {
     session's SignedInObjectId, after the TenantMismatch check and before Connect-MgGraph; a token without
     an oid, on either side, proves nothing and never refuses, and neither does a token whose tenant is
     not a tenant ID (relabelled sign-in only). A command that names the tenant by another label inherits
-    nothing from the session (Test-OERSessionUsable compares labels), so unless it passes the session's
-    own -AuthMethod, -ClientId and -Environment it signs in as Interactive, with the default application,
-    in the Global cloud: it is compared only when the session is that kind of sign-in, and after a
-    device code sign-in, an own -ClientId or another cloud it is another session and is not compared.
-    When both oids are GUIDs and differ, the caller is
+    nothing from the session (Test-OERSessionUsable compares labels), so it signs in as Interactive, with
+    the default application, in the Global cloud, unless it passes the session's own values. It is
+    compared when the session's method and its own are both a user flow (Interactive or DeviceCode), with
+    any client, in the same cloud and for the same tenant ID (A5), or when it passes the session's own
+    method, client and cloud. A switch between an app identity and a user, another cloud, and a token
+    without an oid are not compared, and the comparison never changes what such a sign-in records when it
+    is not refused. When both oids are GUIDs and differ, the caller is
     refused with a terminating SignInSuperseded (New-OERSignInSupersededError -AccountChanged) before
     Connect-MgGraph and before the state is rebuilt: the token is not used, and the session stays the
     account it was -- the state, the Graph SDK session, the cached Azure Resource Manager token, the
@@ -143,7 +145,7 @@ function Initialize-OERAuth {
     continuation carries it over, and any other sign-in sets it to the new token's oid when that is a
     GUID. Every Azure Resource Manager token is held to the session's account (SignedInObjectId): one
     that is another account's (both object ids GUIDs and different) is refused before it is cached,
-    by a renewal or a continuation with SignInSuperseded as above, by any other sign-in with a
+    by a renewal or a continuation, A5's included, with SignInSuperseded as above, by any other sign-in with a
     terminating ArmAccountMismatch; the
     Microsoft Graph half of such a sign-in stands, the caller stays latched and the session uncertain,
     and no Azure Resource Manager request is sent with that token. The silent renewal (A22) is unchanged; its own
@@ -1239,6 +1241,11 @@ function Initialize-OERAuth {
         # check of an ARM-only acquisition reads: a cached Graph token means the tenant label matched.
         [bool]$ContinuesSession = $RenewsSession
 
+        # SEC (A5, Sprint 15 step 3): whether this sign-in names the session's tenant by ANOTHER label as
+        # a user while the session is a user's too. Decided in the Graph branch; $false until then and when
+        # the Graph token is cached (a cache hit needs the same label, so it is never such a sign-in).
+        [bool]$ContinuesUserSession = $false
+
         # -- Graph token --
         if (-not $GraphCached) {
             # M6: Clone() is a shallow clone - only top-level keys are mutated per-resource call,
@@ -1482,7 +1489,34 @@ function Initialize-OERAuth {
                 (Test-OERGuid -Value $GrantedTenant) -and
                 $GrantedTenant -eq $script:_OERAuthState.TokenTenantId)
 
-            $AccountChanged = $ContinuesSession -and
+            # SEC (A5, Sprint 15 step 3): the D4 limit closed. A command that names the session's tenant by
+            # another label inherits nothing from the session, so it signs in as Interactive with the default
+            # application in the Global cloud; after a device code sign-in, or an own -ClientId, the check
+            # above (the session's own method AND client) never applied to it. A user's sign-in is compared
+            # all the same when the session is a user's too (Interactive or DeviceCode, whatever the client),
+            # in the same cloud, for the same tenant ID. Every term on its own line and independently
+            # deletable:
+            #   - the label term keeps a same-label switch of user method (reachable from the public
+            #     commands only through Connect-OER, which is exempt anyway) a new sign-in as before;
+            #   - the state term is implied by the session-method term (an equivalent mutant, kept so the
+            #     invariant reads here);
+            #   - the two method terms leave an app identity <-> user switch uncompared;
+            #   - the cloud term and the tenant terms leave another cloud and another tenant uncompared.
+            # This term decides ONLY the refusal below and the ARM refusal, never the carry-over: a sign-in
+            # it covers that is not refused (the same account, or a token without an oid) is recorded as a
+            # new session, exactly as before ($NewAccountId, $NewSignedInObjectId and $ArmTokenKept do not
+            # read it). A token without an oid never refuses. Connect-OER (-ReclaimGraphSession) is never
+            # refused by it.
+            $ContinuesUserSession = $script:_OERAuthState -and
+                -not $ReclaimGraphSession -and
+                $script:_OERAuthState.TenantId -ne $EffectiveTenant -and
+                $script:_OERAuthState.AuthMethod -in 'Interactive', 'DeviceCode' -and
+                $EffectiveMethod -in 'Interactive', 'DeviceCode' -and
+                $script:_OERAuthState.Environment -eq $EffectiveEnvironment -and
+                (Test-OERGuid -Value $GrantedTenant) -and
+                $GrantedTenant -eq $script:_OERAuthState.TokenTenantId
+
+            $AccountChanged = ($ContinuesSession -or $ContinuesUserSession) -and
                 (Test-OERGuid -Value $NewObjectId) -and
                 (Test-OERGuid -Value $script:_OERAuthState.SignedInObjectId) -and
                 $NewObjectId -ne $script:_OERAuthState.SignedInObjectId
@@ -1812,7 +1846,7 @@ function Initialize-OERAuth {
                 (Test-OERGuid -Value $script:_OERAuthState.SignedInObjectId) -and
                 $ArmObjectId -ne $script:_OERAuthState.SignedInObjectId
             if ($ArmAccountDiffers -and
-                $ContinuesSession) {
+                ($ContinuesSession -or $ContinuesUserSession)) {
                 [string]$ArmChangedCaller = if ($SignInCaller -and $SignInCaller.MyCommand.Name) { $SignInCaller.MyCommand.Name } else { 'a script block' }
                 Write-CmdletError -ErrorRecord (New-OERSignInSupersededError -Command $ArmChangedCaller -AccountChanged) -Cmdlet $PSCmdlet -Terminating
                 return
