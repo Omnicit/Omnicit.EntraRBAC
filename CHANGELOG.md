@@ -21,7 +21,10 @@ as a role definition id only if it begins with `/`, and `Remove-`/`Set-OERRoleAs
 `-Id` that ends in a line break. A piped access package binds its catalog in `New-OERAccessPackage`
 and its id in `Get-OERAccessPackageAssignmentPolicy` and `New-OERAccessPackageAssignment`.
 
-A command that names the session's tenant another way (its domain against its tenant ID, or any tenant after a sign-in that named none) is now held to the session's account after a device code sign-in or one with your own `-ClientId` too: another account picked at sign-in is refused with `SignInSuperseded` and the session stays the first account's. App-only sign-ins and other clouds are unchanged.
+A command that names the session's tenant another way (its domain against its tenant ID, or any tenant
+after a sign-in that named none) is now held to the session's account after a device code sign-in or one
+with your own `-ClientId` too: another account picked at sign-in is refused with `SignInSuperseded` and
+the session stays the first account's. App-only sign-ins and other clouds are unchanged.
 
 ## [1.6.0] - 2026-11-10
 

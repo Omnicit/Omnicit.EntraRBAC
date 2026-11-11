@@ -138,15 +138,16 @@ function Initialize-OERAuth {
     names it by another label signs in as a continuation (D4) and is compared the same way, and a
     renewal answered by the other account again is refused again. No outer command is superseded by this refusal, since the
     sign-in identity does not move. Only Connect-OER (-ReclaimGraphSession, never a continuation) can
-    make the session another account's. A renewal, or a sign-in continuing the session, whose new token
-    carries no oid never replaces the session's SignedInObjectId: it is carried over, so the next one is
-    still compared with the known account; any other sign-in records its own token's oid.
+    make the session another account's. A renewal, or a D4 continuation (the session's own method,
+    client and cloud under another label), whose new token carries no oid never replaces the session's
+    SignedInObjectId: it is carried over, so the next one is still compared with the known account; any
+    other sign-in, an A5 sign-in included, records its own token's oid, as any other new sign-in does.
     SignInAccountId is the fifth term of the sign-in identity (Get-OERSignInIdentity); a renewal or a
-    continuation carries it over, and any other sign-in sets it to the new token's oid when that is a
-    GUID. Every Azure Resource Manager token is held to the session's account (SignedInObjectId): one
-    that is another account's (both object ids GUIDs and different) is refused before it is cached,
-    by a renewal or a continuation, A5's included, with SignInSuperseded as above, by any other sign-in with a
-    terminating ArmAccountMismatch; the
+    D4 continuation carries it over, and any other sign-in, an A5 sign-in included, sets it to the new
+    token's oid when that is a GUID. Every Azure Resource Manager token is held to the session's
+    account (SignedInObjectId): one that is another account's (both object ids GUIDs and different) is
+    refused before it is cached, by a renewal, a D4 continuation or an A5 sign-in with
+    SignInSuperseded as above, by any other sign-in with a terminating ArmAccountMismatch; the
     Microsoft Graph half of such a sign-in stands, the caller stays latched and the session uncertain,
     and no Azure Resource Manager request is sent with that token. The silent renewal (A22) is unchanged; its own
     check of the object id still comes first.

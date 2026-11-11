@@ -6336,11 +6336,13 @@ silent-renewal predicates and every cache predicate are unchanged, and the refus
 `Connect-MgGraph`. The tenant is the same tenant and the application and method are the session's, so
 the token continues the session; another account there is the case BL-119 refuses, and a deliberate
 switch of account goes through `Connect-OER`. The false-refusal controls, each a test: a sign-in for
-ANOTHER tenant (a tenant switch), with another `-ClientId`, in another cloud or with another method,
+ANOTHER tenant (a tenant switch), with another `-ClientId` (for a user method, until A5 below),
+in another cloud or with another method (for a user method, until A5 below),
 and `Connect-OER` itself (`-ReclaimGraphSession`) with the other label, all answered by another
 account, are accepted. The sign-in method is compared as the sign-in resolves it: a command that names
 another tenant label inherits nothing, so a bare command after a device code session labelled
-`organizations` signs in as `Interactive` and is another method, not a continuation. If wrong: an
+`organizations` signs in as `Interactive` and is another method, not a continuation (A5 below now
+compares it). If wrong: an
 operator in session A who names the same tenant by another label and deliberately picks account B is
 refused and must run `Connect-OER`, the safer direction.
 
