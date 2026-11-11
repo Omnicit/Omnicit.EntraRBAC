@@ -9526,6 +9526,44 @@ refusal would fail the read and keep the original error; and step 4 measured tha
 inherited row in the per-role read (check 4.4), so the group case may not occur for these schedules
 at all.
 
+### Sprint 15 step 4: each name is looked up once per run (BL-23, A6)
+
+**What was duplicated.** `Sync-OERStructureDirectoryRoleAssignment` resolved a role name and a principal
+twice for each entry: once in the section-wide prune pass, which resolves every declared entry to
+decide which live rows are managed, and once when the entry itself is processed; entries that name
+the same role or principal repeated both. Each lookup is a Graph read. With two entries sharing a role and a principal,
+the handler sent four role definition reads and four user reads.
+
+**The cache (per run, engine-owned).** `Invoke-OERStructure` creates one
+`Dictionary[string, string]` with Ordinal comparison per document (`$DraLookupCache`, next to
+`$DraReconciled`) and hands it to the handler as the private `-LookupCache`; a handler called directly
+makes its own. Keys are `role|<name as written>` and `principal|<type>|<reference as written>`, so
+`Reports Reader` and `reports reader` are two keys, since the resolvers decide letter case and a
+different spelling is a different question. A principal type outside User, Group and ServicePrincipal
+yields no key, so it bypasses the cache and reaches the resolver, which refuses it as before. The
+dictionary is a local of the call, never module scope, and is dropped with the document: a second
+document, or a second call, asks again. If wrong: a role renamed in the tenant between two documents
+is still looked up fresh for each.
+
+**Only a successful answer is stored; a failure is never cached.** The four sites keep their resolver
+call, `try`/`catch`, scrub, `WriteError` and rows exactly, and store a non-empty string only after a
+call that did not throw. A role that is ambiguous, a principal that matches nothing, a 403 or a 429
+is asked again by the next entry that names it, so each entry publishes its own error record and its
+own `Failed` row, byte for byte as before. Caching the failure would have saved a request on an
+unhealthy tenant and merged records that today are one per entry. No published row or error record
+changes on a stable tenant.
+
+**Measured offline in the unit tests** (real resolvers, mocked Graph routed by URI; counts of role
+definition and user requests): two entries without `-Prune` went from 4 and 4 to 1 and 2; with
+`-Prune` and one removal the same; two calls of that document from 8 and 8 to 2 and 4 (one cache per
+call); one valid role plus one ambiguous role from 4 and 2 to 3 and 1 (the ambiguous role is asked
+twice, the valid one once). No other Graph request was sent in any case. Live counts are not part of
+this record yet.
+
+**What it does not cover.** The six public directory role assignment cmdlets are given ids and look
+nothing up, so they have no duplicate to remove. Another section's lookups (groups, administrative
+units, catalogs, access packages) are untouched; each has its own owner and its own cache question.
+
 ### CLAUDE.md text for directory-role-assignments
 
 What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
@@ -12563,6 +12601,65 @@ when the review is applied. If wrong: a review of a just-created or just-renamed
 once and applies on the next run. The export now also captures Members-form group reviews (see
 [#access-review-group-scope](#access-review-group-scope)); the sentences above about what the export
 captures describe Sprint 11.
+
+## access-review-proven-absence
+
+Sprint 15 step 4 (BL-159a, A7) made `Sync-OERStructureAccessReview` create an access review only when
+the read of its display name PROVED that none exists. The lookup is the local `Find-ReviewDefinitionByName`,
+which serves the entry's `displayName` and its `previousDisplayName` alike, so the rule holds for both.
+
+**The rule.** A review is created only when the read answered empty: it returned no definition of that
+name AND the cmdlet published `AccessReviewDefinitionNotFound` for it. A read that returned nothing and
+published no such answer shows nothing about the tenant, and a create on it could duplicate a review that
+exists. Before this step that case, and a read that returned only definitions of other names, fell
+through to a create. Cost if wrong: an entry whose read is healthy but unusual is reported `Failed` once
+and applies on the next run; nothing is ever created on a guess.
+
+**The segment comparison.** The id is compared as a whole: the first comma-separated segment of
+`FullyQualifiedErrorId`, untrimmed, with `[string]::Equals` and Ordinal comparison. The earlier
+`-like 'AccessReviewDefinitionNotFound*'` accepted `AccessReviewDefinitionNotFoundX` and, being
+case-insensitive, a lower-case spelling; both are now a read failure, republished as themselves, with
+no create. The same test replaces the `-like` in the catch branch for a terminating record.
+
+**The publisher test.** The proven-empty record must also carry `Get-OERAccessReviewDefinition` as a
+comma-separated segment of its id, as the failure filter already required. `-ErrorVariable` collects
+records raised inside nested calls even when an inner catch swallowed them, so a bare NotFound record
+that no cmdlet published is not an answer. Without the publisher segment the read is unanswered.
+
+**The unanswered read.** The refusal is raised after the ambiguous refusal and outside the `try`, for
+the same reason: under a caller's `-ErrorAction Stop` the `WriteError` throws, and inside the `try` the
+catch would scrub and publish the record a second time. It writes the record through
+`$Caller.WriteError`, reports one `Failed` row (`could not read access review definitions: ...`) with
+the record attached, and creates nothing, under `-WhatIf` too, since a plan that says `would create` on
+no evidence is a wrong plan. A previous-name entry is refused at whichever read gave no answer: both
+unanswered fail at the new name, only the previous-name read unanswered fails at the previous name.
+
+**The id (A7).** `AccessReviewAbsenceUnproven`, category `ReadError`, target the looked-up name, is a new
+ErrorId published only for a refusal in the safer direction: where the module used to create, it now
+refuses. No published id, parameter or output type is removed or renamed. If wrong: rename it before the
+stable release; nothing depends on it but the record.
+
+**The cases in short.**
+
+| Read answer | Outcome |
+|---|---|
+| Publishes `AccessReviewDefinitionNotFound` (publisher segment present) | create, as before |
+| Returns nothing and publishes nothing | `Failed`, `AccessReviewAbsenceUnproven` |
+| Returns definitions, none with the exact name | `Failed`, `AccessReviewAbsenceUnproven` |
+| NotFound record without the publisher segment | `Failed`, `AccessReviewAbsenceUnproven` |
+| Id `AccessReviewDefinitionNotFoundX` or another letter case, published or thrown | `Failed` as itself |
+| Any other published or thrown failure | `Failed` as itself, as before |
+
+**Testing note.** A mock of `Get-OERAccessReviewDefinition` that means "the review does not exist" must
+publish the cmdlet's own answer, `AccessReviewDefinitionNotFound,Get-OERAccessReviewDefinition`, with
+`-ErrorAction SilentlyContinue` on the inner write (without it the record leaks into the caller's
+`-ErrorVariable`), through a `global:` helper, since a script-scoped function is not visible to a
+`Mock -ModuleName` body. A mock returning an empty list now means "no answer". The mocked
+case without the publisher segment is a non-`-ModuleName` `Mock` inside `InModuleScope`, since a
+`-ModuleName` mock's own `WriteError` is given the publisher segment. Measured offline; not measured
+live. The refusal's placement outside the `try` is held by a regression test only: a caller's `-ErrorAction
+Stop` and a global Stop preference both left `$Caller.WriteError` non-throwing in the handler, so the test
+cannot tell the two placements apart.
 
 ## access-review-one-time-duration
 
