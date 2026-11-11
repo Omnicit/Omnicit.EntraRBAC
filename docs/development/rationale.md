@@ -1745,8 +1745,8 @@ Behaviour that follows from this design:
   order tests, counting token reads (zero on every refusal); "... refuses another host and stops,
   outside any try (BL-177, A9)" runs a runspace with no `try` (probe H1: no request; H2: an ordinary
   path in the same runspace is sent once, as a `System.Uri`), and
-  `tests/Unit/Public/Get-OERRoleDefinition.Tests.ps1` holds a no-`try` runspace test through a
-  cmdlet. The two role assignment test files drive five refused ids, a positive control, the five
+  the transport's own probes hold the host refusal (since Sprint 15 step 2 the no-`try` probe of
+  `tests/Unit/Public/Get-OERRoleDefinition.Tests.ps1` holds the role name lookup instead). The two role assignment test files drive five refused ids, a positive control, the five
   issued id shapes and a no-`try` probe. **Mutations**, each on a saved copy of the built module:
   deleting the whole guard turned 22 tests of the ARM file and the cmdlet runspace test red;
   deleting only the `return` turned probe H1 red and nothing else (the cmdlet's own `try` hides it,
@@ -1758,6 +1758,16 @@ Behaviour that follows from this design:
   the first `TryCreate` term true changes nothing, since a failed parse leaves `$SendUri` null and
   the other terms refuse. For the `-Id` check, unanchoring the pattern, `^/?`, and `^/.*/providers`
   each turned red the tests of their own cmdlet only (5, 6 and 2 respectively).
+
+**Sprint 15 step 2 (BL-180, A4).** (R-2) A `Get-OERRoleDefinition -Role` value that does not begin
+with `/` is looked up as a role name (one filtered GET on the cloud's own ARM host; no match is
+`RoleDefinitionNotFound`, the resolver's no-match), never sent as a path. (R-3) The role assignment `-Id`
+pattern of `Remove-OERRoleAssignment` and `Set-OERRoleAssignment` ends `[^/\r\n]+\z`: replacing `$` with
+`\z` alone was an equivalent mutant, since `[^/]+` consumes a trailing line feed; a line break in or after
+the last segment is refused with `InvalidRoleAssignmentId`. Not covered: a lone CR in the scope part and
+U+2028 or U+0085 (ARM never issues such an id). **Proofs:** the Describes in
+`tests/Unit/Public/Get-OERRoleDefinition.Tests.ps1`, `tests/Unit/Private/Resolve-OERRoleDefinitionId.Tests.ps1`,
+`tests/Unit/Public/Remove-OERRoleAssignment.Tests.ps1` and `tests/Unit/Public/Set-OERRoleAssignment.Tests.ps1`.
 
 Verified 2026-10-15 by grepping the whole tree (`git grep -no 'api-version=[0-9-]*' -- source/`, 48 hits):
 managementGroups 5 real call sites, Entities - List (getEntities) 1, the Azure PIM surface 13,
@@ -16017,7 +16027,8 @@ package by `-Id`, a set without `-Catalog` (a pipeline with `-Catalog` fails at 
 `Remove-OERAccessPackageResourceRole` binds `AccessPackageId` (from a resource role binding, an id). Binding
 `-Catalog` from a piped object's `CatalogId` would change the requests every piped call sends and would
 let any piped object choose the catalog. The existing pipeline binding of
-`New-OERAccessPackage -Catalog` is unchanged, and no alias is added, so the alias order rule is untouched.
+`New-OERAccessPackage -Catalog` is unchanged, and no alias is added, so the alias order rule is untouched. (Superseded in Sprint 15 step 2, below: the piped object's own id
+is now used with or without `-Catalog`, and `New-OERAccessPackage -Catalog` lists `CatalogId` before `Id`.)
 
 **Sprint 15 step 2 (BL-186, A10).** `New-OERAccessPackage -Catalog` now declares `[Alias('CatalogId',
 'Id')]`, following the alias declaration order rule (the specific `<Noun>Id` before the generic `Id`;

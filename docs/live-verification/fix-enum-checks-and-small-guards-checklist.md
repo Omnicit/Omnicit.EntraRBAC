@@ -171,17 +171,18 @@ foreach ($Form in 'array', 'string') {
     $Doc | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $File -Encoding utf8NoBOM
     $R = Test-OERStructure -Path $File
     foreach ($P in $Paths) {
-        $Hit = @($R.Errors | Where-Object { $_.Path -eq $P })
-        Write-OerLiveStep "${Form}: Errors at ${P}: $($Hit.Count)$(@($Hit) | ForEach-Object { ' | ' + $_.Message })"
+        $Hit = @($R.Errors | Where-Object { $_.Path -eq $P -and $_.Severity -eq 'Error' })
+        Write-OerLiveStep "${Form}: Errors (Severity Error) at ${P}: $($Hit.Count)$(@($Hit) | ForEach-Object { ' | ' + $_.Message })"
     }
     Write-OerLiveStep "${Form}: Valid $($R.Valid)"
 }
 Write-OerLiveStep "A session exists: $($null -ne (& (Get-Module Omnicit.EntraRBAC) { $script:_OERAuthState }))"
 ```
 
-**Expect:** `array`: exactly one Error at each of the three paths, the first two with the existing
-"must be one of" message, the third `'catalog' at accessPackages[0] must be a string.`, and `Valid
-False`; `string`: 0 Errors at each path; `A session exists: False`.
+**Expect:** `array`: exactly one Errors (Severity Error) entry at each of the three paths, the first two
+with the existing "must be one of" message, the third `'catalog' at accessPackages[0] must be a string.`,
+and `Valid False`; `string`: 0 Errors (Severity Error) at each path (a Warning at the catalog path is
+expected and not counted); `A session exists: False`.
 **Failure looks like:** 0 Errors at a path for the array form (the array is still accepted), or an
 Error there for the string form.
 
