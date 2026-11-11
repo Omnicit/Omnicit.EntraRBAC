@@ -335,11 +335,14 @@ application, sign-in method and cloud, and a token issued for the tenant the ses
 however the command named it (a tenant ID against a domain, or a tenant named after a sign-in that
 named none: a bare `Connect-OER`, or any command run without `-TenantId`, labels the session
 `organizations` when no session is held). A command that names the tenant by another label is
-compared only when the session is an interactive sign-in with the default application in the global
-cloud: after a device code sign-in, your own `-ClientId` or another cloud it signs in again with the
-default application and is not compared, so name the tenant the same way on every command. When the
-two accounts differ -- you picked another account in the picker -- the command that asked is
-refused with `SignInSuperseded` and the token is not used. The session stays the account it was, so
+also compared when the session and the command's own sign-in are both a user sign-in -- interactive
+or device code, with the default application or your own `-ClientId` -- in the same cloud (such a
+command signs in to the global cloud, so after a sign-in in another cloud it is not compared): after
+a device code sign-in, for example, a command that names the tenant by its domain opens the browser,
+and another account picked there is refused. After an app-only sign-in (a client secret, a
+certificate or a managed identity), or in another cloud, it is not compared, so name the tenant the
+same way on every command. When the two accounts differ -- you picked another account in the
+picker -- the command that asked is refused with `SignInSuperseded` and the token is not used. The session stays the account it was, so
 the commands above do not run as the account you picked by mistake: a command that names its tenant
 with `-TenantId` the same way uses the session's own token or renews again, and the picker opens
 again until you choose the account the session signed in with, while a command that names no
@@ -350,16 +353,17 @@ again unless the session's token is still valid, so only `-Force` is sure to ope
 renewed Azure Resource Manager token for another account is refused the same way, for the command
 that asked for it, and is not kept. The module also holds Microsoft Graph and Azure Resource Manager
 to one account: an Azure Resource Manager token issued to another account than the session's
-Microsoft Graph token is never cached. A renewal's is refused with `SignInSuperseded`, any other
-sign-in's, the first sign-in and `Connect-OER` included, with `ArmAccountMismatch`, and the Graph
-sign-in stands; sign in again and choose the same account for both, for example with
+Microsoft Graph token is never cached. A renewal's, or that of a command compared as above, is
+refused with `SignInSuperseded`, any other sign-in's, the first sign-in and `Connect-OER` included,
+with `ArmAccountMismatch`, and the Graph sign-in stands; sign in again and choose the same account for both, for example with
 `Connect-OER -IncludeARM -Force`. A sign-in as another account, `Connect-OER -Force` included, drops
 the previous account's cached Azure Resource Manager token, so the next Azure command gets one for
 the new account. Two limits: a token that carries no object id is never compared, and the Azure
 Resource Manager token of a session whose account is unknown is not carried over a new Graph token.
 A token whose tenant is not a tenant ID is not compared when the tenant is named by another label,
-and a sign-in for another tenant, application, method or cloud is not a continuation of the session,
-so its Microsoft Graph token is not compared.
+and a sign-in for another tenant or cloud, an app-only sign-in with another application or method, or
+one that switches between an app-only identity and a user, is not a continuation of the session, so
+its Microsoft Graph token is not compared.
 
 **The silent renewal of an interactive session.** From AzAuth 2.11.0 the module asks `Get-AzToken` to
 renew an interactive session without `-Interactive`, so AzAuth answers from the interactive

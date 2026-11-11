@@ -6336,16 +6336,53 @@ silent-renewal predicates and every cache predicate are unchanged, and the refus
 `Connect-MgGraph`. The tenant is the same tenant and the application and method are the session's, so
 the token continues the session; another account there is the case BL-119 refuses, and a deliberate
 switch of account goes through `Connect-OER`. The false-refusal controls, each a test: a sign-in for
-ANOTHER tenant (a tenant switch), with another `-ClientId`, in another cloud or with another method,
+ANOTHER tenant (a tenant switch), with another `-ClientId` (for a user method, until A5 below),
+in another cloud or with another method (for a user method, until A5 below),
 and `Connect-OER` itself (`-ReclaimGraphSession`) with the other label, all answered by another
 account, are accepted. The sign-in method is compared as the sign-in resolves it: a command that names
 another tenant label inherits nothing, so a bare command after a device code session labelled
-`organizations` signs in as `Interactive` and is another method, not a continuation. If wrong: an
+`organizations` signs in as `Interactive` and is another method, not a continuation (A5 below now
+compares it). If wrong: an
 operator in session A who names the same tenant by another label and deliberately picks account B is
 refused and must run `Connect-OER`, the safer direction.
 
+**A user sign-in that names the session's tenant by another label (A5, Sprint 15 step 3).** D4
+left a limit (BL-163, Sprint 11 step 13b): a command naming the tenant by another label inherits
+nothing from the session (`Test-OERSessionUsable` compares labels), so it signs in as `Interactive`
+with the default application in the Global cloud, and the D4 term, which needs the session's own
+method AND client, applied only when the session was that very kind of sign-in. After a device code
+session or an own `-ClientId` it never applied: the picker could be answered by another account and
+the session became that account's. A5 adds `$ContinuesUserSession` in `Initialize-OERAuth`, decided
+after the Graph token's tenant is known, each term on its own line: a state exists; the call is not
+`Connect-OER`'s (`-ReclaimGraphSession`); the label differs from the sign-in's tenant; the session's
+method and the sign-in's are both `Interactive` or `DeviceCode`, whatever the client; the same cloud;
+and the new token's tenant is a GUID equal to the session's `TokenTenantId`. It is read ONLY by
+`$AccountChanged` and by the ARM account check (`$ArmAccountDiffers` with `$ContinuesSession -or
+$ContinuesUserSession`), so the refusal is `SignInSuperseded -AccountChanged` before
+`Connect-MgGraph`, or before the ARM token is cached; for the ARM token that is `SignInSuperseded`,
+not `ArmAccountMismatch`. The carry-over is unchanged: `SignedInObjectId`, `SignInAccountId` and
+`$ArmTokenKept` do not read it, so a sign-in it covers that is not refused (the same account, or a
+token without an oid) records what it recorded before, a token without an oid included. The label
+term stays because a same-label user method switch is reachable from the public commands only through
+`Connect-OER`, which is exempt anyway; the state term is implied by the method term (an equivalent
+mutant, kept so the invariant reads there). Not compared: a switch between an app identity (client
+secret, certificate, managed identity) and a user, another cloud, another tenant, a token whose
+tenant is not a tenant ID, a token without an oid. The proof, in
+`tests/Unit/Private/Initialize-OERAuth.Tests.ps1`, Describe `Initialize-OERAuth never continues a
+renewal as another account (BL-119)`: the Context `a user sign-in that names the session's tenant by
+another label is held to the account whatever its method or application (A5)`; the two tests that
+flipped from accepting to refusing, `refuses a sign-in with another -ClientId answered by another
+account (a user sign-in under another label, A5)` and `refuses a sign-in with another user method
+answered by another account (a user sign-in under another label, A5)`; and the no-try Context `a
+public command that names the session's tenant by another label after a device code sign-in, in a
+script with no try above it (A5)`, where the command's `-ErrorVariable` holds
+`SignInSuperseded,Initialize-OERAuth` first and `SignInRefused,Get-OERGroup` last, with inner-layer
+copies of `SignInRefused` between. If wrong: an operator in a user session who names the same tenant
+by another label with another user method or application and deliberately picks another account is
+refused and must run `Connect-OER -Force`, the safer direction.
+
 **The ARM token of a renewal.** In the ARM step, after the two tenant checks and before the token is
-cached, a renewal (or a D4 continuation whose Graph token this call acquired, which the same call has
+cached, a renewal (or a D4 or A5 continuation whose Graph token this call acquired, which the same call has
 just recorded as the state's account) whose ARM token has an oid that is a GUID differing from the
 state's `SignedInObjectId` (a GUID) is refused with the same terminating `SignInSuperseded
 -AccountChanged`,
@@ -6366,7 +6403,7 @@ held for `Connect-OER -IncludeARM` over a session. Two terms close it, each on i
 equal to the state's `SignedInObjectId`, so a rebuild carries the cached ARM token only for the same
 known account; otherwise all four ARM fields are dropped and the next Azure call acquires one.
 Second, the ARM step compares the ARM token's oid with the session's `SignedInObjectId` at every
-acquisition (`$ArmAccountDiffers`). A renewal or D4 continuation is refused with `SignInSuperseded
+acquisition (`$ArmAccountDiffers`). A renewal or D4 or A5 continuation is refused with `SignInSuperseded
 -AccountChanged` as before. Any other sign-in -- the first, `Connect-OER`, a switch of tenant,
 method, client or cloud -- is refused with the new terminating `ArmAccountMismatch`
 (AuthenticationError, target the tenant). It is a new id (A9) since the `-AccountChanged` text says
@@ -6392,7 +6429,7 @@ runspace test `delivers ArmAccountMismatch to the caller, caches no ARM token, a
 Azure command only with the session's own account's token`.
 
 **A token without an oid (D2).** A token without an oid, on either side, proves nothing and never
-refuses. On a renewal (or a D4 continuation) it also never replaces the session's `SignedInObjectId`:
+refuses. On a renewal (or a D4 continuation; an A5 sign-in is recorded as a new session) it also never replaces the session's `SignedInObjectId`:
 the old value is carried over, so the next renewal is still compared with the known account. The
 first design left
 `SignedInObjectId` empty after such a renewal (A31's second point: a renewal without an oid
@@ -6413,7 +6450,7 @@ sign-in of the session's tenant named by another label (D4), which is not one.
 
 **What it does not do.** Each of these is a stated limit.
 
-- It guards the RENEWAL and the D4 continuation with `SignInSuperseded`. A first sign-in, or a
+- It guards the RENEWAL and the D4 and A5 continuations with `SignInSuperseded`. A first sign-in, or a
   `Connect-OER`, whose Azure Resource Manager prompt is answered by another account than its Graph
   prompt was not compared; that is closed (BL-163, Sprint 12 step 5): see "Graph and Azure as one
   account" above.
@@ -6421,10 +6458,12 @@ sign-in of the session's tenant named by another label (D4), which is not one.
   name) is not compared on another label, since nothing proves it is the session's tenant: another
   account answering it is accepted and the session becomes that account's, as for any new sign-in,
   and the outer frames that remember the old account are then refused, since the identity moves. A
-  sign-in with another method, client or cloud is a different session and is not compared either; so
-  is a bare command after a session whose method is not `Interactive`, since a command that names
-  another tenant label inherits nothing and signs in as `Interactive`. Both are decided by the
-  sign-in as the module resolves it, not by what the operator meant.
+  sign-in with another method, client or cloud is a different session and is not compared either,
+  except that A5 compares a user sign-in after a user session (`Interactive` or `DeviceCode`, any
+  client, the same cloud); so is a bare command after an app-only session (client secret,
+  certificate or managed identity), since a command that names another tenant label inherits nothing
+  and signs in as `Interactive`, as is one in another cloud. Both are decided by the sign-in as the
+  module resolves it, not by what the operator meant.
 - The refusal names the function that called `Initialize-OERAuth`. For a transport's own refresh
   (`Invoke-GraphSingle`, `Invoke-ArmCallWithRefresh`) that is the transport's function, not the
   public command whose request was rejected (read in the code). A transport's forced refresh is a

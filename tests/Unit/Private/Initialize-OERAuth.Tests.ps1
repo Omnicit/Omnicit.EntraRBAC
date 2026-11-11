@@ -7670,10 +7670,11 @@ Describe 'Initialize-OERAuth never continues a renewal as another account (BL-11
         # The first sign-in of a test; its token requests are forgotten afterwards by the caller's
         # Should -Invoke counts being taken relative to the totals the test states.
         function script:Start-A119Session {
-            param([string]$Method = 'Interactive', [switch]$Arm, [string]$GraphOid = $script:A119OidA, [string]$ArmOid = $script:A119OidA, [string]$Label)
+            param([string]$Method = 'Interactive', [switch]$Arm, [string]$GraphOid = $script:A119OidA, [string]$ArmOid = $script:A119OidA, [string]$Label, [string]$ClientId)
             $script:A119GraphOid = $GraphOid
             $script:A119ArmOid = $ArmOid
             $Parameters = @{ TenantId = $script:A119Tenant; AuthMethod = $Method }
+            if ($ClientId) { $Parameters.ClientId = $ClientId }
             # -Label organizations: the sign-in names no tenant, as a bare Connect-OER or a bare command does.
             if ($Label -eq 'organizations') { $Parameters.Remove('TenantId') }
             if ($Arm) { $Parameters.IncludeARM = $true }
@@ -8103,16 +8104,20 @@ Describe 'Initialize-OERAuth never continues a renewal as another account (BL-11
             Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
         }
 
-        It 'does not refuse a sign-in with another -ClientId answered by another account' {
+        It 'refuses a sign-in with another -ClientId answered by another account (a user sign-in under another label, A5)' {
             Start-A119Session -Label 'organizations'
+            $script:A119Before = Get-A119Info
             $script:A119GraphOid = $script:A119OidB
 
             $Probe = Invoke-A119Probe @{ TenantId = $script:A119Tenant; ClientId = '55555555-5555-5555-5555-555555555555' }
 
-            $Probe.Caught | Should -BeNullOrEmpty
-            $Probe.Latched | Should -BeFalse
-            (Get-A119Info).AccountId | Should -BeExactly $script:A119OidB
-            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
+            $Probe.Caught.FullyQualifiedErrorId | Should -BeExactly 'SignInSuperseded,Initialize-OERAuth'
+            $Probe.Latched | Should -BeTrue
+            $Probe.Marker | Should -BeTrue
+            $Probe.Remembers | Should -BeFalse
+            Assert-A119SessionHeld -Label 'organizations'
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly -ParameterFilter { [string]$Resource -notlike '*management*' }
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
         }
 
         It 'does not refuse a sign-in in another cloud answered by another account' {
@@ -8127,16 +8132,20 @@ Describe 'Initialize-OERAuth never continues a renewal as another account (BL-11
             Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
         }
 
-        It 'does not refuse a sign-in with another method answered by another account' {
+        It 'refuses a sign-in with another user method answered by another account (a user sign-in under another label, A5)' {
             Start-A119Session -Label 'organizations'
+            $script:A119Before = Get-A119Info
             $script:A119GraphOid = $script:A119OidB
 
             $Probe = Invoke-A119Probe @{ TenantId = $script:A119Tenant; AuthMethod = 'DeviceCode' }
 
-            $Probe.Caught | Should -BeNullOrEmpty
-            $Probe.Latched | Should -BeFalse
-            (Get-A119Info).AccountId | Should -BeExactly $script:A119OidB
-            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
+            $Probe.Caught.FullyQualifiedErrorId | Should -BeExactly 'SignInSuperseded,Initialize-OERAuth'
+            $Probe.Latched | Should -BeTrue
+            $Probe.Marker | Should -BeTrue
+            $Probe.Remembers | Should -BeFalse
+            Assert-A119SessionHeld -Label 'organizations'
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly -ParameterFilter { [string]$Resource -notlike '*management*' }
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
         }
 
         It 'does not refuse Connect-OER (-ReclaimGraphSession) naming the tenant by the other label, answered by another account: the session becomes that account''s' {
@@ -8182,6 +8191,182 @@ Describe 'Initialize-OERAuth never continues a renewal as another account (BL-11
             $Probe.Latched | Should -BeFalse
             (Get-A119Info).AccountId | Should -BeExactly $script:A119OidB
             Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
+        }
+    }
+
+    Context 'a user sign-in that names the session''s tenant by another label is held to the account whatever its method or application (A5)' {
+        # After a device code sign-in, or one with an own -ClientId, a command that names the tenant by
+        # another label inherits nothing and signs in as Interactive with the default application: the
+        # session's own method and client no longer match, yet both are a user's, in the same cloud and
+        # for the same tenant ID, so another account answering it is refused as for a renewal.
+        BeforeAll {
+            function script:Assert-A5Refused {
+                param([string]$Label)
+                $Probe = $script:A5Probe
+                $Probe.Caught.FullyQualifiedErrorId | Should -BeExactly 'SignInSuperseded,Initialize-OERAuth'
+                $Probe.Latched | Should -BeTrue
+                $Probe.Marker | Should -BeTrue
+                $Probe.Remembers | Should -BeFalse
+                Assert-A119SessionHeld -Label $Label
+                Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly -ParameterFilter { [string]$Resource -notlike '*management*' }
+                Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+            }
+
+            function script:Assert-A5NotRefused {
+                $Probe = $script:A5Probe
+                $Probe.Caught | Should -BeNullOrEmpty
+                $Probe.Latched | Should -BeFalse
+                (Get-A119Info).AccountId | Should -BeExactly $script:A119OidB
+                Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
+            }
+        }
+
+        It 'refuses a domain after a device code sign-in named by the tenant ID when the other account answers, and leaves the session as it was' {
+            Start-A119Session -Method DeviceCode
+            $script:A119Before = Get-A119Info
+            $script:A119GraphOid = $script:A119OidB
+            $script:A5Probe = Invoke-A119Probe @{ TenantId = $script:A119Domain }
+            Assert-A5Refused -Label $script:A119Tenant
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERTenantDomain -Times 1 -Exactly
+        }
+
+        It 'refuses the tenant ID after a device code sign-in that named none when the other account answers' {
+            Start-A119Session -Method DeviceCode -Label 'organizations'
+            $script:A119Before = Get-A119Info
+            $script:A119GraphOid = $script:A119OidB
+            $script:A5Probe = Invoke-A119Probe @{ TenantId = $script:A119Tenant }
+            Assert-A5Refused -Label 'organizations'
+        }
+
+        It 'refuses a sign-in with the default application after one with an own -ClientId when the other account answers' {
+            Start-A119Session -ClientId '55555555-5555-5555-5555-555555555555'
+            $script:A119Before = Get-A119Info
+            $script:A119GraphOid = $script:A119OidB
+            $script:A5Probe = Invoke-A119Probe @{ TenantId = $script:A119Domain }
+            Assert-A5Refused -Label $script:A119Tenant
+        }
+
+        It 'refuses a device code sign-in after an interactive one when the other account answers' {
+            Start-A119Session
+            $script:A119Before = Get-A119Info
+            $script:A119GraphOid = $script:A119OidB
+            $script:A5Probe = Invoke-A119Probe @{ TenantId = $script:A119Domain; AuthMethod = 'DeviceCode' }
+            Assert-A5Refused -Label $script:A119Tenant
+        }
+
+        It 'lets the session''s own account answer: the label is the domain, the account stays A and the marker is clear' {
+            Start-A119Session -Method DeviceCode
+
+            $Probe = Invoke-A119Probe @{ TenantId = $script:A119Domain }
+
+            $Probe.Caught | Should -BeNullOrEmpty
+            $Probe.Latched | Should -BeFalse
+            $Probe.Marker | Should -BeFalse
+            $Probe.Remembers | Should -BeTrue
+            $After = Get-A119Info
+            $After.Label | Should -BeExactly $script:A119Domain
+            $After.AccountId | Should -BeExactly $script:A119OidA
+            $After.Oid | Should -BeExactly $script:A119OidA
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
+        }
+
+        It 'refuses the ARM token of such a sign-in with SignInSuperseded, not ArmAccountMismatch, when the other account answers it, and caches no ARM token' {
+            Start-A119Session -Method DeviceCode
+            $script:A119ArmOid = $script:A119OidB
+
+            $Probe = Invoke-A119Probe @{ TenantId = $script:A119Domain; IncludeARM = $true }
+
+            $Probe.Caught.FullyQualifiedErrorId | Should -BeExactly 'SignInSuperseded,Initialize-OERAuth'
+            $Probe.Latched | Should -BeTrue
+            $Probe.Marker | Should -BeTrue
+            $After = Get-A119Info
+            $After.HasArm | Should -BeFalse -Because 'a token of another account is never cached'
+            $After.ArmTenant | Should -BeNullOrEmpty
+            $After.Oid | Should -BeExactly $script:A119OidA
+            $After.AccountId | Should -BeExactly $script:A119OidA
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly -ParameterFilter { [string]$Resource -like '*management*' }
+        }
+
+        It 'refuses at the Graph token, before any ARM request, when the other account answers a sign-in with ARM after a session that has ARM' {
+            Start-A119Session -Method DeviceCode -Arm
+            $script:A119Before = Get-A119Info
+            $script:A119GraphOid = $script:A119OidB
+
+            $Probe = Invoke-A119Probe @{ TenantId = $script:A119Domain; IncludeARM = $true }
+
+            $Probe.Caught.FullyQualifiedErrorId | Should -BeExactly 'SignInSuperseded,Initialize-OERAuth'
+            $Probe.Latched | Should -BeTrue
+            Assert-A119SessionHeld -Label $script:A119Tenant
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly -ParameterFilter { [string]$Resource -like '*management*' }
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+        }
+
+        It 'records a new session with no oid for a token without one, and refuses nothing' {
+            Start-A119Session -Method DeviceCode
+            $script:A119GraphOid = ''
+
+            $Probe = Invoke-A119Probe @{ TenantId = $script:A119Domain }
+
+            $Probe.Caught | Should -BeNullOrEmpty
+            $Probe.Latched | Should -BeFalse
+            $After = Get-A119Info
+            $After.Oid | Should -BeNullOrEmpty
+            $After.AccountId | Should -BeNullOrEmpty
+        }
+
+        # False-refusal controls: each of these is no user-to-user continuation of the same cloud and tenant.
+        It 'does not refuse a user sign-in after a managed identity one (an app identity is not compared)' {
+            Start-A119Session -Method ManagedIdentity
+            $script:A119GraphOid = $script:A119OidB
+            $script:A5Probe = Invoke-A119Probe @{ TenantId = $script:A119Domain }
+            Assert-A5NotRefused
+        }
+
+        It 'does not refuse a managed identity sign-in after a user one' {
+            Start-A119Session
+            $script:A119GraphOid = $script:A119OidB
+            $script:A5Probe = Invoke-A119Probe @{ TenantId = $script:A119Domain; AuthMethod = 'ManagedIdentity' }
+            Assert-A5NotRefused
+        }
+
+        It 'does not refuse a sign-in in another cloud after a device code one' {
+            Start-A119Session -Method DeviceCode
+            $script:A119GraphOid = $script:A119OidB
+            $script:A5Probe = Invoke-A119Probe @{ TenantId = $script:A119Domain; Environment = 'USGov' }
+            Assert-A5NotRefused
+        }
+
+        It 'does not compare a token whose tenant is not a tenant ID after a device code sign-in (known limit)' {
+            $script:A119GrantedTenant = 'tenant-reported-as-a-name'
+            Start-A119Session -Method DeviceCode -Label 'organizations'
+            $script:A119GraphOid = $script:A119OidB
+            $script:A5Probe = Invoke-A119Probe @{ TenantId = $script:A119Tenant }
+            Assert-A5NotRefused
+        }
+
+        It 'does not refuse a sign-in for another tenant after a device code one' {
+            Start-A119Session -Method DeviceCode
+            $script:A119GraphOid = $script:A119OidB
+            $script:A119GrantedTenant = $script:A119OtherTenant
+            $script:A5Probe = Invoke-A119Probe @{ TenantId = $script:A119OtherTenant }
+            Assert-A5NotRefused
+        }
+
+        It 'does not refuse Connect-OER (-ReclaimGraphSession) after a device code sign-in: the session becomes the other account''s' {
+            Start-A119Session -Method DeviceCode
+            $Before = Get-A119Info
+            $script:A119GraphOid = $script:A119OidB
+
+            $Probe = Invoke-A119Probe @{ TenantId = $script:A119Domain; ReclaimGraphSession = $true }
+
+            $Probe.Caught | Should -BeNullOrEmpty
+            $Probe.Latched | Should -BeFalse
+            $Probe.Marker | Should -BeFalse
+            $After = Get-A119Info
+            $After.AccountId | Should -BeExactly $script:A119OidB
+            $After.Oid | Should -BeExactly $script:A119OidB
+            ($After.Identity -eq $Before.Identity) | Should -BeFalse -Because 'an explicit sign-in as another account moves the identity'
         }
     }
 
@@ -8917,6 +9102,137 @@ foreach ($L in [System.IO.File]::ReadAllLines('#LOG#')) { "LOG2:$L" }
             $Arm2.Count | Should -BeGreaterThan 0 -Because $Out
             @($Arm2 | Where-Object { $_ -notlike '*|88888888-8888-8888-8888-888888888888' }).Count | Should -Be 0 -Because $Out
             @($Run.Output | Where-Object { $_ -like 'LOG2:TOKEN*management*' }).Count | Should -Be 1 -Because $Out
+        }
+    }
+
+    Context 'a public command that names the session''s tenant by another label after a device code sign-in, in a script with no try above it (A5)' {
+        BeforeAll {
+            . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+            # Same scaffold as the BL-163 Context above, with one oid for both resources, set per step. Every
+            # stub carries the marker #OERSTUB, and before ANY module call the script checks, in the module's
+            # scope, that each transport name resolves to such a stub (a stub left unset would reach the
+            # real command): on a miss it writes STUBFAIL:<name> and calls nothing. The real Connect-OER
+            # signs in with -DeviceCode naming the tenant ID (oid A); then Get-OERGroup names the tenant by
+            # its domain, which signs in as Interactive with the default application, answered by oid
+            # StepTwoOid (B: refused; A: let through); then, if StepTwoOid was B, once more answered by A.
+            function script:New-DeviceCodeLabelNoTryScenario {
+                param([string]$Log, [string]$StepTwoOid)
+                $Text = @'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    $script:_OERAuthState = $null
+    $script:_OERSessionUncertain = $null
+    $script:_OERInteractiveCredential = $null
+    $script:A5Oid = '88888888-8888-8888-8888-888888888888'
+    Set-Item -Path function:script:Test-OERHostNonInteractive -Value { #OERSTUB
+        $false }
+    Set-Item -Path function:script:Get-AzToken -Value { #OERSTUB
+        param($ClientId, $Resource, $Tenant, $Scope, $Interactive, $DeviceCode, $Force, $CredentialPrecedence, $ErrorAction, $WarningAction)
+        [System.IO.File]::AppendAllText('#LOG#', "TOKEN $Resource`n")
+        [pscustomobject]@{
+            Token     = "NOT-A-REAL-TOKEN-a5|$($script:A5Oid)"
+            ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+            Identity  = 'admin@contoso.com'
+            TenantId  = '66666666-6666-6666-6666-666666666666'
+        }
+    }
+    Set-Item -Path function:script:Get-OERTokenObjectId -Value { #OERSTUB
+        param($Token)
+        $Plain = [System.Net.NetworkCredential]::new('', $Token).Password
+        ($Plain -split '\|')[1]
+    }
+    Set-Item -Path function:script:Connect-MgGraph -Value { #OERSTUB
+        [System.IO.File]::AppendAllText('#LOG#', "CONNECT`n") }
+    Set-Item -Path function:script:Get-MgContext -Value { #OERSTUB
+        [pscustomobject]@{ AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '11111111-1111-1111-1111-111111111111'; TenantId = '66666666-6666-6666-6666-666666666666'
+            Account = 'admin@contoso.com'; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All') }
+    }
+    Set-Item -Path function:script:Invoke-MgGraphRequest -Value { #OERSTUB
+        [System.IO.File]::AppendAllText('#LOG#', "GRAPH`n") }
+    Set-Item -Path function:script:Invoke-WebRequest -Value { #OERSTUB
+        param($Uri, $Method, $Headers, $SkipHttpErrorCheck, $UseBasicParsing, $ErrorAction, $TimeoutSec, $OperationTimeoutSeconds, $Body, $ContentType, $MaximumRedirection)
+        [System.IO.File]::AppendAllText('#LOG#', "ARM $($Headers.Authorization)`n")
+    }
+    Set-Item -Path function:script:Resolve-OERTenantDomain -Value { #OERSTUB
+        '66666666-6666-6666-6666-666666666666' }
+}
+$Unstubbed = @(& (Get-Module Omnicit.EntraRBAC) {
+    foreach ($Name in 'Get-AzToken', 'Connect-MgGraph', 'Get-MgContext', 'Invoke-MgGraphRequest', 'Invoke-WebRequest', 'Resolve-OERTenantDomain', 'Get-OERTokenObjectId', 'Test-OERHostNonInteractive') {
+        $Command = Get-Command -Name $Name -CommandType Function, Cmdlet, Alias, ExternalScript, Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not ($Command -and $Command.CommandType -eq 'Function' -and $Command.ScriptBlock.ToString().Contains('#OERSTUB'))) { $Name }
+    }
+})
+if ($Unstubbed.Count -gt 0) {
+    foreach ($Name in $Unstubbed) { "STUBFAIL:$Name" }
+}
+else {
+    $Tenant = '66666666-6666-6666-6666-666666666666'
+    Connect-OER -TenantId $Tenant -DeviceCode -ErrorVariable EV1 -ErrorAction Continue | Out-Null
+    foreach ($E in $EV1) { "ERR1:$($E.FullyQualifiedErrorId)" }
+    & (Get-Module Omnicit.EntraRBAC) { $script:A5Oid = '#STEP2OID#' }
+    [System.IO.File]::WriteAllText('#LOG#', '')
+    $null = Get-OERGroup -Group 'g1' -TenantId 'contoso.onmicrosoft.com' -ErrorVariable EV2 -ErrorAction Continue
+    foreach ($E in $EV2) { "ERR2:$($E.FullyQualifiedErrorId)" }
+    foreach ($L in [System.IO.File]::ReadAllLines('#LOG#')) { "LOG2:$L" }
+    "MARKER2:$(& (Get-Module Omnicit.EntraRBAC) { $script:_OERSessionUncertain })"
+    "OID2:$(& (Get-Module Omnicit.EntraRBAC) { $script:_OERAuthState.SignedInObjectId })"
+    & (Get-Module Omnicit.EntraRBAC) { $script:A5Oid = '88888888-8888-8888-8888-888888888888' }
+    [System.IO.File]::WriteAllText('#LOG#', '')
+    $null = Get-OERGroup -Group 'g1' -TenantId 'contoso.onmicrosoft.com' -ErrorVariable EV3 -ErrorAction Continue
+    foreach ($E in $EV3) { "ERR3:$($E.FullyQualifiedErrorId)" }
+    foreach ($L in [System.IO.File]::ReadAllLines('#LOG#')) { "LOG3:$L" }
+}
+& (Get-Module Omnicit.EntraRBAC) {
+    foreach ($Name in 'Get-AzToken', 'Connect-MgGraph', 'Get-MgContext', 'Invoke-MgGraphRequest', 'Invoke-WebRequest', 'Resolve-OERTenantDomain', 'Get-OERTokenObjectId', 'Test-OERHostNonInteractive') {
+        Remove-Item -Path ('function:' + $Name) -ErrorAction SilentlyContinue
+    }
+}
+'END'
+'@
+                [scriptblock]::Create($Text.Replace('#LOG#', $Log.Replace("'", "''")).Replace('#STEP2OID#', $StepTwoOid))
+            }
+        }
+
+        It 'refuses the other account''s sign-in under the domain label, sends nothing with it, and lets the session''s own account sign in afterwards' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-DeviceCodeLabelNoTryScenario -Log $Log -StepTwoOid '99999999-9999-9999-9999-999999999999')
+
+            $Out = "the output was:`n$($Run.Output -join "`n")"
+            @($Run.Output | Where-Object { $_ -like 'STUBFAIL:*' }) | Should -BeNullOrEmpty -Because $Out
+            $Run.Output[-1] | Should -BeExactly 'END' -Because $Out
+            @($Run.Output | Where-Object { $_ -like 'ERR1:?*' }) | Should -BeNullOrEmpty -Because $Out
+            # Measured: the refusal reaches -ErrorVariable although no try stands above it, and the command's
+            # own requests are then refused by the latch. -ErrorVariable also holds the inner-layer copies of
+            # those refusals (id SignInRefused, no command suffix; measured 8 of them), and the command's
+            # own record, SignInRefused,Get-OERGroup, comes last.
+            $Ids2 = @($Run.Output | Where-Object { $_ -like 'ERR2:?*' })
+            $Ids2[0] | Should -BeExactly 'ERR2:SignInSuperseded,Initialize-OERAuth' -Because $Out
+            $Ids2[-1] | Should -BeExactly 'ERR2:SignInRefused,Get-OERGroup' -Because $Out
+            @($Ids2[1..($Ids2.Count - 2)] | Where-Object { $_ -ne 'ERR2:SignInRefused' }).Count | Should -Be 0 -Because $Out
+            @($Ids2 | Where-Object { $_ -like '*Superseded*' }).Count | Should -Be 1 -Because $Out
+            $Lines2 = @($Run.Output | Where-Object { $_ -like 'LOG2:*' })
+            @($Lines2 | Where-Object { $_ -like 'LOG2:TOKEN*' -and $_ -notlike '*management*' }).Count | Should -Be 1 -Because $Out
+            @($Lines2 | Where-Object { $_ -like 'LOG2:CONNECT*' }).Count | Should -Be 0 -Because $Out
+            @($Lines2 | Where-Object { $_ -like 'LOG2:GRAPH*' }).Count | Should -Be 0 -Because $Out
+            @($Lines2 | Where-Object { $_ -like 'LOG2:ARM*' }).Count | Should -Be 0 -Because $Out
+            @($Run.Output | Where-Object { $_ -like 'OID2:*' }) | Should -Be @('OID2:88888888-8888-8888-8888-888888888888') -Because $Out
+            @($Run.Output | Where-Object { $_ -like 'MARKER2:*' }) | Should -Be @('MARKER2:True') -Because $Out
+            # The same command answered by the session's own account A is not refused: one connect and a request.
+            @($Run.Output | Where-Object { $_ -like 'ERR3:SignIn*' }) | Should -BeNullOrEmpty -Because $Out
+            @($Run.Output | Where-Object { $_ -like 'LOG3:CONNECT*' }).Count | Should -Be 1 -Because $Out
+            @($Run.Output | Where-Object { $_ -like 'LOG3:GRAPH*' }).Count | Should -BeGreaterThan 0 -Because $Out
+        }
+
+        It 'raises nothing when the session''s own account answers the sign-in under the domain label' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-DeviceCodeLabelNoTryScenario -Log $Log -StepTwoOid '88888888-8888-8888-8888-888888888888')
+
+            $Out = "the output was:`n$($Run.Output -join "`n")"
+            @($Run.Output | Where-Object { $_ -like 'STUBFAIL:*' }) | Should -BeNullOrEmpty -Because $Out
+            $Run.Output[-1] | Should -BeExactly 'END' -Because $Out
+            @($Run.Output | Where-Object { $_ -like 'ERR2:SignIn*' }) | Should -BeNullOrEmpty -Because $Out
+            @($Run.Output | Where-Object { $_ -like 'LOG2:CONNECT*' }).Count | Should -Be 1 -Because $Out
         }
     }
 }
