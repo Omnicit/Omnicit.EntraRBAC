@@ -553,17 +553,20 @@ session inherits nothing and signs in again, so README.md's "Name the tenant exp
 consistently" and the about topic's equivalent under SOVEREIGN CLOUDS stand.
 
 **A renewal never continues as another account** (BL-119). The identity's fifth term is the account
-(`SignInAccountId`). A renewal, or a sign-in of the session's tenant, application and method named
-by another label, whose Microsoft Graph or Azure Resource Manager token carries an oid
+(`SignInAccountId`). A renewal, or a sign-in of the session's tenant named by another label with the
+session's application and method, or as a user after a user sign-in (A5), whose Microsoft Graph or
+Azure Resource Manager token carries an oid
 (`Get-OERTokenObjectId`) that differs from the session's `SignedInObjectId`, both GUIDs, is refused
 for its caller with `SignInSuperseded` (`-AccountChanged`) before `Connect-MgGraph` (a Graph token)
 or before it is cached (an ARM token): the session stays the old account's, so no later command,
-with or without `-TenantId`, runs as the other account (`$ContinuesSession` decides it; limits: a
-token whose tenant is not a tenant ID is not compared on another label, and a command naming the
-tenant by another label inherits nothing, so it is compared only after an Interactive sign-in with
-the default application in the Global cloud); only `Connect-OER`
+with or without `-TenantId`, runs as the other account (`$ContinuesSession` decides it, and on
+another label also `$ContinuesUserSession`: the session's method and the new one both `Interactive`
+or `DeviceCode`, any client, the same cloud and tenant GUID, read only by the two refusals, never by
+the carry-over; limits: a token whose tenant is not a tenant ID is not compared on another label,
+and neither is a switch between an app identity and a user, or to another cloud); only `Connect-OER`
 (`-ReclaimGraphSession`, never refused by it) signs in as another account. Every OTHER sign-in with
-`-IncludeARM` -- a first one, `Connect-OER`, a switch of tenant, method, client or cloud -- whose ARM
+`-IncludeARM` -- a first one, `Connect-OER`, a switch of tenant or cloud, or of method or client that is not a user
+continuation (A5) -- whose ARM
 token's oid differs from the session's `SignedInObjectId`, both GUIDs, is refused for its ARM half with
 `ArmAccountMismatch` before that token is cached (BL-163): the Graph half stands, the caller stays
 latched and the session uncertain, and no ARM request is sent with that token. The marker is set as

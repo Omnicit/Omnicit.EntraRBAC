@@ -61,11 +61,10 @@ function Connect-OER {
     a sign-in naming the session's tenant by another label (a domain or its tenant ID) with the
     session's own application, method and cloud: the token is not used and the session stays the
     account it was, so a later command, with or without -TenantId, does not run as the other account
-    (a command that names the tenant by another label is compared only when the session is an
-    interactive sign-in with the default application in the global cloud: after a device code
-    sign-in, your own -ClientId or another cloud it signs in again with the default application and
-    is not compared, so name the tenant the same way on every command; nor is a token whose tenant
-    is not a tenant ID): it uses the session's token or renews again, and a
+    (a command that names the tenant by another label is also compared when the session and its
+    own sign-in are both a user sign-in, interactive or device code with any application, in the
+    same cloud; after an app-only sign-in or in another cloud it is not compared, so name the
+    tenant the same way on every command; nor is a token whose tenant is not a tenant ID): it uses the session's token or renews again, and a
     command that names no tenant is refused until Connect-OER or a command that names its tenant
     signs in; run Connect-OER -Force to sign in as another account; Connect-OER itself, which signs
     in deliberately, may sign in as another account), and a device code
