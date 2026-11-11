@@ -822,6 +822,40 @@ Describe 'Sync-OERStructureAccessReview' {
         }
     }
 
+    It 'fails with GraphPagingIncomplete and creates nothing when the name read answered a first page without a value member' {
+        # The REAL wrapper and the REAL Get-OERAccessReviewDefinition run (only the SDK call is
+        # mocked). The ByFilter read passes -RequireValue, so a first page with no value member is a
+        # read that did not answer: published as itself, never as AccessReviewDefinitionNotFound.
+        InModuleScope $script:moduleName {
+            function Invoke-SyncArViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+            }
+            Mock Initialize-OERAuth {}
+            $script:_OERAuthState = @{ TenantId = 't'; Environment = 'Global'; GraphConnected = $true }
+            Mock Invoke-MgGraphRequest { @{ '@odata.count' = 0 } }
+            Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-1'; DisplayName = 'Valueless Probe' } }
+            $Errs = $null
+            $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -ErrorAction SilentlyContinue `
+                    -ErrorVariable Errs -Item ([PSCustomObject]@{
+                    displayName       = 'Valueless Probe'
+                    accessPackage     = 'AP-Ops'
+                    assignmentPolicy  = 'Default'
+                    reviewers         = @('manager')
+                    fallbackReviewers = @('fallback@contoso.com')
+                    recurrence        = 'Monthly'
+                }))
+            Should -Invoke New-OERAccessReviewDefinition -Times 0 -Exactly
+            @($r | Where-Object Action -eq 'Failed').Count | Should -Be 1 -Because ('Actions: ' + (@($r | ForEach-Object { "$($_.Action)/$($_.Detail)" }) -join ' | '))
+            @($r | Where-Object Action -eq 'Created').Count | Should -Be 0
+            $Ids = @($Errs | ForEach-Object { (([string]$_.FullyQualifiedErrorId) -split ',')[0] })
+            $Ids | Should -Contain 'GraphPagingIncomplete'
+            $Ids | Should -Not -Contain 'AccessReviewDefinitionNotFound'
+            $Ids | Should -Not -Contain 'AccessReviewAbsenceUnproven'
+        }
+    }
+
     It 'still finds an existing definition through the SilentlyContinue probe' {
         InModuleScope $script:moduleName {
             function Invoke-SyncArViaCaller {

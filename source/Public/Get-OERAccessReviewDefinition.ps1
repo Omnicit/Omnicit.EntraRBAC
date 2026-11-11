@@ -44,7 +44,9 @@ function Get-OERAccessReviewDefinition {
     '...', but silently IGNORES startswith(displayName,...) -- an ignored filter returns every
     definition rather than an error, so an unexpectedly large result set is the only signal. Other
     expressions are untested. For name matching use -DisplayName, which issues the displayName eq
-    form itself and falls back to a client-side match.
+    form itself and falls back to a client-side match. A first page that comes back empty or without
+    a value list is a read that did not answer, and is published as GraphPagingIncomplete, never as
+    AccessReviewDefinitionNotFound.
 
     .PARAMETER All
     Lists every access review definition in the tenant using an unfiltered, paged GET
@@ -164,7 +166,10 @@ function Get-OERAccessReviewDefinition {
                     'ById'     { , @(Invoke-OERGraphRequest -Uri ("v1.0/identityGovernance/accessReviews/definitions/{0}" -f $Id)) }
                     'ByFilter' {
                         $Encoded = [System.Uri]::EscapeDataString($Filter)
-                        @((Invoke-OERGraphRequest -Uri "v1.0/identityGovernance/accessReviews/definitions?`$filter=$Encoded" -All).value)
+                        # -RequireValue: a first page that is empty, JSON null or has no value member is
+                        # a read that did not answer, refused as GraphPagingIncomplete and published
+                        # below as itself; only an answer with an empty value list is "none matched".
+                        @((Invoke-OERGraphRequest -Uri "v1.0/identityGovernance/accessReviews/definitions?`$filter=$Encoded" -All -RequireValue).value)
                     }
                 }
             }

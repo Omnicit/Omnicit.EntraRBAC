@@ -505,6 +505,7 @@ function Sync-OERStructureAccessReview {
                             -ErrorRecord $ProbeFailure
                         return [PSCustomObject]@{ Definition = $null; FailedRow = $FailedRow }
                     }
+                    # See docs/development/rationale.md#access-review-proven-absence.
                     # Absence is PROVEN only by the answer the cmdlet publishes for it: a record whose
                     # first id segment IS AccessReviewDefinitionNotFound and which the cmdlet itself
                     # published (the same publisher test as above). A read that returned no definition
@@ -540,9 +541,10 @@ function Sync-OERStructureAccessReview {
             }
 
             # -- Ambiguous name -> refuse --------------------------------------------------------
-            # Kept OUTSIDE the try above on purpose: under a caller with -ErrorAction Stop the
-            # $Caller.WriteError below throws, and inside that try the read's own catch would take
-            # the exception, scrub it and publish the same record a second time. A published read
+            # Kept OUTSIDE the try above on purpose, as a precaution (it was measured not to throw
+            # here): were the $Caller.WriteError below to throw under a caller with -ErrorAction
+            # Stop, inside that try the read's own catch would take the exception, scrub it and
+            # publish the same record a second time. A published read
             # failure (the ProbeFailure branch above) still wins when both happened, since an
             # incomplete read is not trustworthy evidence either way; nothing is lost, the next run
             # reports the ambiguity.
@@ -585,6 +587,7 @@ function Sync-OERStructureAccessReview {
             }
 
             # -- Unanswered lookup -> refuse -----------------------------------------------------
+            # See docs/development/rationale.md#access-review-proven-absence.
             # Outside the try, as the ambiguous refusal is, so a WriteError that throws could not be
             # taken by the read's catch and published twice (a precaution: it was measured not to throw here).
             if ($Unanswered) {

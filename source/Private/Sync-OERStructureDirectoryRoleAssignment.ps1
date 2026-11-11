@@ -135,8 +135,8 @@ function Sync-OERStructureDirectoryRoleAssignment {
          declined, it is reported Skipped ("would remove ...").
       Guards 2, 3 and 4 are this module's own, not a Graph rejection, and their Details say so.
 
-    Each role and principal is looked up at most once per run: the pass and every entry share the
-    answers through -LookupCache. Only a successful answer is reused; a lookup that throws or finds
+    A successful role or principal lookup is made once per run (per spelling of the name): the pass
+    and every entry share the answers through -LookupCache. Only a successful answer is reused; a lookup that throws or finds
     nothing is made again where it is next needed, so every Failed row and error record stays as it was.
 
     Every write is gated by $Caller.ShouldProcess. Under -WhatIf that returns $false and the handler
