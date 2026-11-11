@@ -662,8 +662,9 @@ be included in access packages:
 catalog, not in the tenant. The access package cmdlets that look a package up by name take `-Catalog`
 (a name or an id), optional on eight and required on `Add-OERAccessPackageResourceRole` and
 `New-OERAccessPackage`: the name is then looked up in that catalog only, and an access package id of
-another catalog is refused with `AccessPackageNotInCatalog` before anything is written. With `-Catalog`,
-an access package piped from `Get-OERAccessPackage` is checked by its own id.
+another catalog is refused with `AccessPackageNotInCatalog` before anything is written. An access
+package piped from `Get-OERAccessPackage` is resolved by its own id, and with `-Catalog` checked against
+that catalog.
 Without `-Catalog` the name is looked up in the whole tenant as before, and a name two catalogs share
 is refused as ambiguous. `Get-OERAccessPackageAssignment` refuses `-Catalog` without `-AccessPackage`
 (`CatalogWithoutAccessPackage`). `New-OERAccessPackage` no longer stops at a package of that name in

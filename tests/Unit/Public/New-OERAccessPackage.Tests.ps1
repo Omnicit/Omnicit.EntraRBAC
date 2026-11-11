@@ -80,6 +80,29 @@ Describe 'New-OERAccessPackage' {
         Should -Invoke -ModuleName $script:moduleName Resolve-OERCatalogId -Times 1 -ParameterFilter { $DisplayName -eq 'CAT-1' }
     }
 
+    It 'binds the catalog''s Id from a piped Catalog object that also carries the CatalogId alias member' {
+        Mock -ModuleName $script:moduleName Resolve-OERCatalogId { 'CAT-1' }
+        Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId { $null }
+        $CatalogObj = [pscustomobject]@{ Id = 'aaaa3333-0000-0000-0000-000000000001'; DisplayName = 'CAT Core' }
+        $CatalogObj.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Catalog')
+        $CatalogObj.CatalogId | Should -BeExactly 'aaaa3333-0000-0000-0000-000000000001'
+        $CatalogObj | New-OERAccessPackage -DisplayName 'AP' -WhatIf | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERCatalogId -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'aaaa3333-0000-0000-0000-000000000001' }
+    }
+
+    It 'binds -Catalog from a piped access package by its CatalogId, never its own Id' {
+        Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId { $null }
+        $Ap = [pscustomobject]@{ Id = 'aaaa2222-0000-0000-0000-000000000001'; DisplayName = 'AP-Old'; CatalogId = 'aaaa3333-0000-0000-0000-000000000001' }
+        $Ap.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.AccessPackage')
+        $Ap | New-OERAccessPackage -DisplayName 'AP-New' -WhatIf | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERCatalogId -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'aaaa3333-0000-0000-0000-000000000001' }
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERCatalogId -Times 0 -ParameterFilter { $DisplayName -eq 'aaaa2222-0000-0000-0000-000000000001' }
+    }
+
+    It 'declares the -Catalog aliases CatalogId before Id' {
+        $Aliases = @((Get-Command New-OERAccessPackage).Parameters['Catalog'].Aliases)
+        $Aliases | Should -Be @('CatalogId', 'Id')
+    }
     It 'surfaces a Graph POST failure as a non-terminating error and emits nothing' {
         # Guards two things the cmdlet must do on a Graph failure: call Remove-OERErrorRecord (the
         # mandatory bearer-token-hygiene line -- asserted via Should -Invoke, since a deleted line

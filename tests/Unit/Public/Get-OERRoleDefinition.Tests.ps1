@@ -230,20 +230,22 @@ Describe 'Get-OERRoleDefinition: the example in the RoleDefinitionNotFound messa
     }
 }
 
-Describe 'Get-OERRoleDefinition: a role id that names another host sends nothing, outside any try (BL-177, A9)' {
-    # -Role holding '/providers/Microsoft.Authorization/roleDefinitions/' is used as the request path, so a
-    # value that begins with a host suffix would address another host. The wrapper refuses it. The cmdlet
+Describe 'Get-OERRoleDefinition: a role value that does not begin with a slash is looked up as a name and never sent as a path, outside any try (BL-180, A4)' {
+    # -Role is used as the request path only when it begins with '/' and holds
+    # '/providers/Microsoft.Authorization/roleDefinitions/'; a value that begins with a host suffix is
+    # looked up as a role NAME (one filtered GET on the cloud's own ARM host). The cmdlet
     # runs in a runspace with no try; Initialize-OERAuth and Invoke-WebRequest are stubs in the module's
     # scope, checked to be the stubs before the call.
     BeforeAll {
         . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
     }
 
-    It 'sends no request, writes one ArmRequestOutsideCloudHost record and no output object' {
+    It 'sends one filtered name lookup on the cloud ARM host, writes one RoleDefinitionNotFound record and no output object' {
         $HitsBefore = @($global:OERTransportTripwireHits).Count
         $Text = @'
 Import-Module Omnicit.EntraRBAC
 $global:OERRdGuardArmCalls = 0
+$global:OERRdGuardUri = ''
 & (Get-Module Omnicit.EntraRBAC) {
     $script:_OERAuthState = @{
         TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'
@@ -262,6 +264,7 @@ $global:OERRdGuardArmCalls = 0
         param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
         # OER-GUARD-WEB-STUB
         $global:OERRdGuardArmCalls++
+        $global:OERRdGuardUri = [string]$Uri
         if ($global:OERRdGuardArmCalls -gt 5) { exit }
         [pscustomobject]@{ StatusCode = 200; Content = '{"value":[]}'; Headers = @{} }
     }
@@ -280,6 +283,7 @@ $Resolved = & (Get-Module Omnicit.EntraRBAC) { Get-Command -Name Invoke-WebReque
 'STUBS IN PLACE: {0}' -f $StubsInPlace
 'OUTPUT COUNT: {0}' -f $Output.Count
 'ARM CALLS: {0}' -f $global:OERRdGuardArmCalls
+'ARM URI: {0}' -f $global:OERRdGuardUri
 'OWN RECORDS: {0}' -f $Own.Count
 foreach ($Record in $Own) { 'OWN ID: {0}' -f ([string]$Record.FullyQualifiedErrorId -split ',')[0] }
 'END OF SCRIPT REACHED'
@@ -289,10 +293,46 @@ foreach ($Record in $Own) { 'OWN ID: {0}' -f ([string]$Record.FullyQualifiedErro
         $R.Output | Should -Contain 'END OF SCRIPT REACHED'
         $R.Output | Should -Contain 'STUBS IN PLACE: True'
         $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
-        $R.Output | Should -Contain 'ARM CALLS: 0'
+        $R.Output | Should -Contain 'ARM CALLS: 1'
+        $Uri = @($R.Output | Where-Object { $_ -like 'ARM URI: *' })
+        $Uri.Count | Should -Be 1
+        $Value = '.contoso.invalid/x/providers/Microsoft.Authorization/roleDefinitions/y'
+        $Prefix = 'https://management.azure.com/providers/Microsoft.Authorization/roleDefinitions?api-version=2022-04-01&$filter='
+        $Uri[0] | Should -BeLike "ARM URI: $Prefix*"
+        $Uri[0].Replace('%27', "'").Replace('%20', ' ').Replace('%2F', '/') | Should -BeLike "*roleName eq '$Value'*"
         $R.Output | Should -Contain 'OUTPUT COUNT: 0'
         $R.Output | Should -Contain 'OWN RECORDS: 1'
-        $R.Output | Should -Contain 'OWN ID: ArmRequestOutsideCloudHost'
+        $R.Output | Should -Contain 'OWN ID: RoleDefinitionNotFound'
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+}
+
+Describe 'Get-OERRoleDefinition: a role value is a path only when it begins with a slash (BL-180)' {
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { [PSCustomObject]@{ value = @() } }
+    }
+
+    It 'looks up <Role> as a name with one -RequireValue request and never sends it as a path' -ForEach @(
+        @{ Role = '.contoso.invalid/x/providers/Microsoft.Authorization/roleDefinitions/y' }
+        @{ Role = ('@contoso.invalid' + '/providers/Microsoft.Authorization/roleDefinitions/y') }
+        @{ Role = (':443' + '@contoso.invalid/providers/Microsoft.Authorization/roleDefinitions/y') }
+        @{ Role = 'https://contoso.invalid/providers/Microsoft.Authorization/roleDefinitions/y' }
+    ) {
+        $null = Get-OERRoleDefinition -Role $Role -ErrorAction SilentlyContinue
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+            $RequireValue -and $Path.StartsWith('/providers/Microsoft.Authorization/roleDefinitions?api-version=2022-04-01&$filter=', [System.StringComparison]::Ordinal)
+        }
+        # The one call is the filtered one, so no call carried the value as its own path.
+    }
+
+    It 'still sends a slash-leading id with other letter case straight to the id path' {
+        $Role = '/Providers/microsoft.authorization/RoleDefinitions/aaaa1111-0000-0000-0000-000000000001'
+        $null = Get-OERRoleDefinition -Role $Role -ErrorAction SilentlyContinue
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+            $Path -ceq "$Role`?api-version=2022-04-01"
+        }
     }
 }

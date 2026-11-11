@@ -408,3 +408,58 @@ Describe 'Resolve-OERTenantDomain' {
         }
     }
 }
+
+Describe 'Resolve-OERTenantDomain stops after each throw, outside any try (BL-182)' {
+    # Under -ErrorAction SilentlyContinue with no try up the stack a throw is suppressed and the next
+    # statement runs. The helper runs in a runspace with no try; Invoke-RestMethod is a stub in the
+    # module's scope, checked to be the stub before the call, so no request is ever sent.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        $script:ProbeHead = @'
+Import-Module Omnicit.EntraRBAC
+$ErrorActionPreference = 'SilentlyContinue'
+& (Get-Module Omnicit.EntraRBAC) {
+    $script:_OERTenantDomainCache = @{}
+    function script:Invoke-RestMethod {
+        [CmdletBinding()]
+        param($Uri, $Method, $TimeoutSec, $OperationTimeoutSeconds)
+        # OER-LOOKUP-REST-STUB
+'@
+        $script:ProbeTail = @'
+    }
+}
+$StubInPlace = & (Get-Module Omnicit.EntraRBAC) {
+    (Get-Command -Name Invoke-RestMethod -CommandType Function).ScriptBlock.ToString().Contains('OER-LOOKUP-REST-STUB')
+}
+$Error.Clear()
+$Output = @(& (Get-Module Omnicit.EntraRBAC) { Resolve-OERTenantDomain -Domain 'contoso.onmicrosoft.com' -Environment 'Global' -ErrorAction SilentlyContinue })
+$Own = @($Error | Where-Object { [string]$_.FullyQualifiedErrorId -like 'TenantDomainUnresolved*' })
+$CacheCount = & (Get-Module Omnicit.EntraRBAC) { $script:_OERTenantDomainCache.Count }
+& (Get-Module Omnicit.EntraRBAC) { Remove-Item -Path function:Invoke-RestMethod }
+$Resolved = & (Get-Module Omnicit.EntraRBAC) { Get-Command -Name Invoke-RestMethod -CommandType Function -ErrorAction Ignore }
+'TRIPWIRE RESTORED: {0}' -f ([bool]$Resolved -and $Resolved.ScriptBlock.ToString().Contains('OER-TRANSPORT-TRIPWIRE'))
+'STUB IN PLACE: {0}' -f $StubInPlace
+'OUTPUT COUNT: {0}' -f $Output.Count
+'CACHE COUNT: {0}' -f $CacheCount
+'OWN RECORDS: {0}' -f $Own.Count
+'END OF SCRIPT REACHED'
+'@
+    }
+
+    It 'returns after the throw: no output, no cached value and one record (<Name>)' -ForEach @(
+        @{ Name = 'the request fails'; Body = "        throw [System.Management.Automation.ErrorRecord]::new([System.InvalidOperationException]::new('request failed'), 'OerProbeRequestFailed', [System.Management.Automation.ErrorCategory]::ConnectionError, `$Uri)`n" }
+        @{ Name = 'the issuer names no tenant'; Body = "        [pscustomobject]@{ issuer = 'https://login.microsoftonline.com/{tenantid}/v2.0' }`n" }
+    ) {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $Text = $script:ProbeHead + "`n" + $Body + $script:ProbeTail
+        $R = Invoke-OERWithConfirmAnswer -Answer '&No' -Script ([scriptblock]::Create($Text))
+
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'STUB IN PLACE: True'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'OUTPUT COUNT: 0'
+        $R.Output | Should -Contain 'CACHE COUNT: 0'
+        $R.Output | Should -Contain 'OWN RECORDS: 1'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+}

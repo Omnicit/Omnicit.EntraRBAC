@@ -18,6 +18,36 @@ Describe 'Resolve-OERRoleDefinitionId' {
         }
     }
 
+    It 'returns a slash-leading id with other letter case verbatim and sends no request (BL-180)' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-OERArmRequest { throw 'should not be called' }
+            $Full = '/Providers/microsoft.authorization/RoleDefinitions/aaaa1111-0000-0000-0000-000000000001'
+            Resolve-OERRoleDefinitionId -Role $Full -Scope '/subscriptions/s1' | Should -BeExactly $Full
+            Should -Invoke Invoke-OERArmRequest -Times 0 -Exactly
+        }
+    }
+
+    It 'does not return <Role> verbatim: it is looked up as a name, and the empty answer throws the no-match (BL-180)' -ForEach @(
+        @{ Role = '.contoso.invalid/x/providers/Microsoft.Authorization/roleDefinitions/y' }
+        @{ Role = ('@contoso.invalid' + '/providers/Microsoft.Authorization/roleDefinitions/y') }
+        @{ Role = (':443' + '@contoso.invalid/providers/Microsoft.Authorization/roleDefinitions/y') }
+        @{ Role = 'https://contoso.invalid/providers/Microsoft.Authorization/roleDefinitions/y' }
+    ) {
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ HostRole = $Role } {
+            Mock Invoke-OERArmRequest { [PSCustomObject]@{ value = @() } }
+            Mock Invoke-OERArmRequest { [PSCustomObject]@{ value = @() } } -ParameterFilter { $RequireValue }
+            $Caught = $null
+            $Result = $null
+            try { $Result = Resolve-OERRoleDefinitionId -Role $HostRole -Scope '/subscriptions/s1' } catch { $Caught = $PSItem }
+            $Result | Should -BeNullOrEmpty
+            [string]$Caught | Should -BeLike "Role definition '*' was not found at scope '/subscriptions/s1'*"
+            Should -Invoke Invoke-OERArmRequest -Times 1 -Exactly
+            Should -Invoke Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+                $RequireValue -and $Path.StartsWith('/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions?api-version=2022-04-01&$filter=', [System.StringComparison]::Ordinal)
+            }
+        }
+    }
+
     It 'expands a bare GUID to the full id at the target scope without any ARM call' {
         InModuleScope Omnicit.EntraRBAC {
             Mock Invoke-OERArmRequest { throw 'should not be called' }

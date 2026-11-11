@@ -1278,15 +1278,18 @@ function Invoke-OERGraphRequest {
                 -AtPage $PageNumber -AtUri $NextUri -Aggregated $AllValues.ToArray())
             return
         }
-        # SEC (BL-179, A10): the Graph SDK has no allowed-hosts list of its own, so a next link is
-        # requested wherever it points, with the session's bearer token. Page 1 is the caller's own
-        # -Uri (always a literal); only a LATER page is a value a response supplied. Decided here on the
-        # parsed address: https, no user info, the port and IdnHost of the session cloud's Graph address
-        # (https, no user info, same Port, IdnHost equal ignoring case). A relative link is refused like
-        # a foreign host. The ORIGINAL string is what is sent below, never Uri.ToString() (which
-        # unescapes, so a skiptoken would be re-encoded): the SDK takes -Uri as [uri] and PowerShell
-        # converts the same absolute string to the same IdnHost the TryCreate here judges (measured), so
-        # what is judged is what is requested. The return is load-bearing, as after the checks above.
+        # SEC (BL-179, A10): the SDK's token provider carries an allowed-hosts list (read in a Global
+        # session in Sprint 15 step 1, not for a sovereign cloud; docs/development/rationale.md#arm-transport).
+        # It holds the Graph host of every cloud and two Microsoft test hosts, so, by the list (not
+        # measured), it does not keep a next link inside the session's cloud; this check does. Page 1 is
+        # the caller's own -Uri (always a literal); only a LATER page is a value a response supplied.
+        # Decided here on the parsed address: https, no user info, the port and IdnHost of the session
+        # cloud's Graph address (https, no user info, same Port, IdnHost equal ignoring case). A relative
+        # link is refused like a foreign host. The ORIGINAL string is what is sent below, never
+        # Uri.ToString() (which unescapes, so a skiptoken would be re-encoded): the SDK takes -Uri as [uri]
+        # and PowerShell converts the same absolute string to the same IdnHost the TryCreate here judges
+        # (measured), so what is judged is what is requested. The return is load-bearing, as after the
+        # checks above.
         if ($PageNumber -gt 1) {
             $NextLinkUri = $null
             $GraphUri = $null

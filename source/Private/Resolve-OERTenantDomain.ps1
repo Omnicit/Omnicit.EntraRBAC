@@ -98,6 +98,9 @@ function Resolve-OERTenantDomain {
             'TenantDomainUnresolved',
             [System.Management.Automation.ErrorCategory]::AuthenticationError,
             $Domain)
+        # The return is load-bearing: outside any try a throw can be suppressed (-ErrorAction
+        # SilentlyContinue), and without it the lookup would carry on to the issuer check below.
+        return
     }
 
     [string]$Issuer = if ($Document) { [string]$Document.issuer } else { '' }
@@ -116,6 +119,8 @@ function Resolve-OERTenantDomain {
             'TenantDomainUnresolved',
             [System.Management.Automation.ErrorCategory]::AuthenticationError,
             $Domain)
+        # The return is load-bearing: without it a suppressed throw would carry on and cache an empty id.
+        return
     }
 
     $script:_OERTenantDomainCache[$Key] = $TenantGuid

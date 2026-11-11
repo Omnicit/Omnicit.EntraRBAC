@@ -828,7 +828,9 @@ function Test-OERStructureSchema {
 
                 if (Test-HasProp -Node $G -Name 'membershipRuleProcessingState') {
                     $ValidGroupProcessingStates = @(Resolve-OERStructureEnumCasing -EnumName 'membershipRuleProcessingState' -List)
-                    if ($ValidGroupProcessingStates -inotcontains [string]$G.membershipRuleProcessingState) {
+                    # BL-159: the value must be a string. -inotcontains reads a one-element array as its element,
+                    # so ["x"] used to pass as 'x'; a value that is not a string is refused with the same message.
+                    if ($G.membershipRuleProcessingState -isnot [string] -or $ValidGroupProcessingStates -inotcontains $G.membershipRuleProcessingState) {
                         Add-Finding -Section 'groups' -Item $GItem `
                             -Path "$GPath.membershipRuleProcessingState" `
                             -Message "'membershipRuleProcessingState' at $GPath must be one of: $($ValidGroupProcessingStates -join ', '). Got: '$($G.membershipRuleProcessingState)'."
@@ -882,7 +884,9 @@ function Test-OERStructureSchema {
                             }
                             if (Test-HasProp -Node $E -Name 'accessType') {
                                 $ValidAccessTypes = @(Resolve-OERStructureEnumCasing -EnumName 'accessType' -List)
-                                if ($ValidAccessTypes -inotcontains [string]$E.accessType) {
+                                # BL-159: the value must be a string. -inotcontains reads a one-element array as its element,
+                                # so ["x"] used to pass as 'x'; a value that is not a string is refused with the same message.
+                                if ($E.accessType -isnot [string] -or $ValidAccessTypes -inotcontains $E.accessType) {
                                     Add-Finding -Section 'groups' -Item $GItem `
                                         -Path "$EPath.accessType" `
                                         -Message "'accessType' at $EPath must be one of: $($ValidAccessTypes -join ', '). Got: '$($E.accessType)'."
@@ -924,7 +928,9 @@ function Test-OERStructureSchema {
                                         -Message "'$EnabKey' at $BlockPath must be an array."
                                 } else {
                                     foreach ($V in @($Arr)) {
-                                        if ($EnabValues -inotcontains [string]$V) {
+                                        # BL-159: the value must be a string. -inotcontains reads a one-element array as its element,
+                                        # so ["x"] used to pass as 'x'; a value that is not a string is refused with the same message.
+                                        if ($V -isnot [string] -or $EnabValues -inotcontains $V) {
                                             Add-Finding -Section 'groups' -Item $GItem -Path "$BlockPath.$EnabKey" `
                                                 -Message "'$EnabKey' at $BlockPath must contain only: $($EnabValues -join ', '). Got: '$V'."
                                         } else {
@@ -1084,7 +1090,9 @@ function Test-OERStructureSchema {
 
                 if (Test-HasProp -Node $AU -Name 'membershipRuleProcessingState') {
                     $ValidProcessingStates = @(Resolve-OERStructureEnumCasing -EnumName 'membershipRuleProcessingState' -List)
-                    if ($ValidProcessingStates -inotcontains [string]$AU.membershipRuleProcessingState) {
+                    # BL-159: the value must be a string. -inotcontains reads a one-element array as its element,
+                    # so ["x"] used to pass as 'x'; a value that is not a string is refused with the same message.
+                    if ($AU.membershipRuleProcessingState -isnot [string] -or $ValidProcessingStates -inotcontains $AU.membershipRuleProcessingState) {
                         Add-Finding -Section 'administrativeUnits' -Item $AUItem `
                             -Path "$AUPath.membershipRuleProcessingState" `
                             -Message "'membershipRuleProcessingState' at $AUPath must be one of: $($ValidProcessingStates -join ', '). Got: '$($AU.membershipRuleProcessingState)'."
@@ -1226,7 +1234,9 @@ function Test-OERStructureSchema {
                                     -Message "'name' at $RPath must be a non-empty string."
                             }
                             if (Test-HasProp -Node $R -Name 'type') {
-                                if ($ValidResourceTypes -inotcontains $R.type) {
+                                # BL-159: the value must be a string. -inotcontains reads a one-element array as its element,
+                                # so ["x"] used to pass as 'x'; a value that is not a string is refused with the same message.
+                                if ($R.type -isnot [string] -or $ValidResourceTypes -inotcontains $R.type) {
                                     Add-Finding -Section 'catalogs' -Item $CatItem `
                                         -Path "$RPath.type" `
                                         -Message "'type' at $RPath must be one of: $($ValidResourceTypes -join ', '). Got: '$($R.type)'."
@@ -1288,6 +1298,11 @@ function Test-OERStructureSchema {
                 if (-not (Test-HasProp -Node $AP -Name 'catalog')) {
                     Add-Finding -Section 'accessPackages' -Item $APItem -Path $APPath `
                         -Message "'catalog' is required at $APPath."
+                } elseif ($AP.catalog -isnot [string]) {
+                    # BL-159: schema.json declares catalog as a string, and the reference check (Rule 11)
+                    # reads a non-string only through this Error.
+                    Add-Finding -Section 'accessPackages' -Item $APItem -Path "$APPath.catalog" `
+                        -Message "'catalog' at $APPath must be a string."
                 }
                 $APConsequence = 'Both entries reconcile one access package, so each would undo the other''s settings and, ' +
                     'under -Prune, remove the resource role bindings the other declares.'
@@ -1568,7 +1583,9 @@ function Test-OERStructureSchema {
                                             }
                                         }
                                         if (Test-HasProp -Node $Stg -Name 'approverInfoVisibility') {
-                                            if ($ValidVisibility -inotcontains $Stg.approverInfoVisibility) {
+                                            # BL-159: the value must be a string. -inotcontains reads a one-element array as its element,
+                                            # so ["x"] used to pass as 'x'; a value that is not a string is refused with the same message.
+                                            if ($Stg.approverInfoVisibility -isnot [string] -or $ValidVisibility -inotcontains $Stg.approverInfoVisibility) {
                                                 Add-Finding -Section 'accessPackages' -Item $APItem `
                                                     -Path "$StgPath.approverInfoVisibility" `
                                                     -Message "'approverInfoVisibility' at $StgPath must be one of: $($ValidVisibility -join ', '). Got: '$($Stg.approverInfoVisibility)'."
@@ -1886,7 +1903,9 @@ function Test-OERStructureSchema {
 
                 if (Test-HasProp -Node $AR -Name 'defaultDecision') {
                     $ValidDecision = @(Resolve-OERStructureEnumCasing -EnumName 'accessReviewDefaultDecision' -List)
-                    if ($ValidDecision -inotcontains [string]$AR.defaultDecision) {
+                    # BL-159: the value must be a string. -inotcontains reads a one-element array as its element,
+                    # so ["x"] used to pass as 'x'; a value that is not a string is refused with the same message.
+                    if ($AR.defaultDecision -isnot [string] -or $ValidDecision -inotcontains $AR.defaultDecision) {
                         Add-Finding -Section 'accessReviews' -Item $ARItem `
                             -Path "$ARPath.defaultDecision" `
                             -Message "'defaultDecision' at $ARPath must be one of: $($ValidDecision -join ', '). Got: '$($AR.defaultDecision)'."
@@ -2333,7 +2352,9 @@ function Test-OERStructureSchema {
 
                 if (Test-HasProp -Node $DRA -Name 'assignmentType') {
                     $ValidDraTypes = @(Resolve-OERStructureEnumCasing -EnumName 'directoryRoleAssignmentType' -List)
-                    if ($ValidDraTypes -inotcontains [string]$DRA.assignmentType) {
+                    # BL-159: the value must be a string. -inotcontains reads a one-element array as its element,
+                    # so ["x"] used to pass as 'x'; a value that is not a string is refused with the same message.
+                    if ($DRA.assignmentType -isnot [string] -or $ValidDraTypes -inotcontains $DRA.assignmentType) {
                         Add-Finding -Section 'directoryRoleAssignments' -Item $DRAItem `
                             -Path "$DRAPath.assignmentType" `
                             -Message "'assignmentType' at $DRAPath must be one of: $($ValidDraTypes -join ', '). Got: '$($DRA.assignmentType)'."
@@ -2345,7 +2366,9 @@ function Test-OERStructureSchema {
 
                 if (Test-HasProp -Node $DRA -Name 'principalType') {
                     $ValidDraPrincipalTypes = @(Resolve-OERStructureEnumCasing -EnumName 'principalType' -List)
-                    if ($ValidDraPrincipalTypes -inotcontains [string]$DRA.principalType) {
+                    # BL-159: the value must be a string. -inotcontains reads a one-element array as its element,
+                    # so ["x"] used to pass as 'x'; a value that is not a string is refused with the same message.
+                    if ($DRA.principalType -isnot [string] -or $ValidDraPrincipalTypes -inotcontains $DRA.principalType) {
                         Add-Finding -Section 'directoryRoleAssignments' -Item $DRAItem `
                             -Path "$DRAPath.principalType" `
                             -Message "'principalType' at $DRAPath must be one of: $($ValidDraPrincipalTypes -join ', '). Got: '$($DRA.principalType)'."
@@ -2451,8 +2474,9 @@ function Test-OERStructureSchema {
             $AP = $APArr[$I]
             if (Test-HasProp -Node $AP -Name 'catalog') {
                 $CatRef = $AP.catalog
-                if ($DeclaredCatalogs -inotcontains $CatRef -and
-                    -not ($CatRef -is [string] -and $RenamedCatalogPrev.Contains($CatRef))) {
+                # BL-159: only a string reference is checked here; a non-string has its Error in the entry rule.
+                if ($CatRef -is [string] -and $DeclaredCatalogs -inotcontains $CatRef -and
+                    -not $RenamedCatalogPrev.Contains($CatRef)) {
                     $APItem = if (Test-HasProp -Node $AP -Name 'displayName') { $AP.displayName } else { "accessPackages[$I]" }
                     Add-Finding -Section 'accessPackages' -Item $APItem `
                         -Path "accessPackages[$I].catalog" `

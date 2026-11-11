@@ -108,6 +108,9 @@ Describe 'Remove-OERRoleAssignment: the -Id must begin with a slash (BL-177, A9)
         @{ Label = 'a leading port and at sign'; Value = (':443' + '@' + 'contoso.invalid/providers/Microsoft.Authorization/roleAssignments/a') }
         @{ Label = 'a scheme and host'; Value = 'https://contoso.invalid/providers/Microsoft.Authorization/roleAssignments/a' }
         @{ Label = 'no leading slash'; Value = 'providers/Microsoft.Authorization/roleAssignments/a' }
+        @{ Label = 'a trailing line feed'; Value = "/subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleAssignments/a`n" }
+        @{ Label = 'a trailing carriage return and line feed'; Value = "/subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleAssignments/a`r`n" }
+        @{ Label = 'a line feed inside the last segment'; Value = "/subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleAssignments/a`nb" }
     ) {
         $Err = $null
         Remove-OERRoleAssignment -Id $Value -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err
@@ -180,11 +183,20 @@ $StubsInPlace = & (Get-Module Omnicit.EntraRBAC) {
 $Error.Clear()
 $Output = @(Remove-OERRoleAssignment -Id '.contoso.invalid/providers/Microsoft.Authorization/roleAssignments/a' -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable OerProbeErrors)
 $Own = @($OerProbeErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Remove-OERRoleAssignment' })
+$ArmCalls1 = $global:OERRaGuardArmCalls
+$global:OERRaGuardArmCalls = 0
+$Error.Clear()
+$Output2 = @(Remove-OERRoleAssignment -Id "/subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleAssignments/a`n" -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable OerProbeErrors2)
+$Own2 = @($OerProbeErrors2 | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Remove-OERRoleAssignment' })
 'STUBS IN PLACE: {0}' -f $StubsInPlace
 'OUTPUT COUNT: {0}' -f $Output.Count
-'ARM CALLS: {0}' -f $global:OERRaGuardArmCalls
+'ARM CALLS: {0}' -f $ArmCalls1
 'OWN RECORDS: {0}' -f $Own.Count
 foreach ($Record in $Own) { 'OWN ID: {0}' -f ([string]$Record.FullyQualifiedErrorId -split ',')[0] }
+'LF OUTPUT COUNT: {0}' -f $Output2.Count
+'LF ARM CALLS: {0}' -f $global:OERRaGuardArmCalls
+'LF OWN RECORDS: {0}' -f $Own2.Count
+foreach ($Record in $Own2) { 'LF OWN ID: {0}' -f ([string]$Record.FullyQualifiedErrorId -split ',')[0] }
 'END OF SCRIPT REACHED'
 '@
         $R = Invoke-OERWithConfirmAnswer -Answer '&No' -Script ([scriptblock]::Create($Text))
@@ -195,6 +207,10 @@ foreach ($Record in $Own) { 'OWN ID: {0}' -f ([string]$Record.FullyQualifiedErro
         $R.Output | Should -Contain 'OUTPUT COUNT: 0'
         $R.Output | Should -Contain 'OWN RECORDS: 1'
         $R.Output | Should -Contain 'OWN ID: InvalidRoleAssignmentId'
+        $R.Output | Should -Contain 'LF OUTPUT COUNT: 0'
+        $R.Output | Should -Contain 'LF ARM CALLS: 0'
+        $R.Output | Should -Contain 'LF OWN RECORDS: 1'
+        $R.Output | Should -Contain 'LF OWN ID: InvalidRoleAssignmentId'
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
     }
 }

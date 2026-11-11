@@ -8102,3 +8102,151 @@ Describe 'Test-OERStructureSchema displayName must be a string (BL-154, R-11)' {
         @(Get-NameTypeFinding -Validation $V -Entry 'administrativeUnits[1]').Count | Should -Be 1
     }
 }
+
+Describe 'Test-OERStructureSchema refuses a one-element array for every enum value (BL-159)' {
+    # -inotcontains reads a one-element array as its element, so ["On"] passed as 'On' at nine more enum
+    # checks. Each now tests that the value is a string first; the messages are unchanged, so a refused
+    # array reads as its element. The catalog reference of an access package is the tenth case.
+    BeforeAll {
+        function Invoke-NstValidation {
+            param([string]$Json)
+            $Doc = $Json | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+        function Get-NstEnumList {
+            param([string]$EnumName)
+            InModuleScope $script:moduleName -Parameters @{ EnumName = $EnumName } {
+                param($EnumName)
+                (Resolve-OERStructureEnumCasing -EnumName $EnumName -List) -join ', '
+            }
+        }
+        function Get-NstSiteCase {
+            # One row per site: the document with {0} where the enum value goes.
+            @(
+                @{ Site = 1; Enum = 'membershipRuleProcessingState'; Valid = 'On'; Lower = 'on'; Path = 'groups[0].membershipRuleProcessingState'
+                    Json = '{ "version": "1.0", "groups": [ { "displayName": "G1", "membershipRuleProcessingState": {0} } ] }'
+                    Text = "'membershipRuleProcessingState' at groups[0] must be one of: {list}. Got: '{got}'." }
+                @{ Site = 2; Enum = 'accessType'; Valid = 'member'; Lower = 'Member'; Path = 'groups[0].eligibility[0].accessType'
+                    Json = '{ "version": "1.0", "groups": [ { "displayName": "G1", "eligibility": [ { "principal": "person1@example.com", "accessType": {0} } ] } ] }'
+                    Text = "'accessType' at groups[0].eligibility[0] must be one of: {list}. Got: '{got}'." }
+                @{ Site = 3; Enum = 'enablement'; Valid = 'Justification'; Lower = 'justification'; Path = 'groups[0].pimPolicy.member.activationEnablement'
+                    Json = '{ "version": "1.0", "groups": [ { "displayName": "G1", "pimPolicy": { "member": { "activationEnablement": [ {0} ] } } } ] }'
+                    Text = "'activationEnablement' at groups[0].pimPolicy.member must contain only: {list}. Got: '{got}'." }
+                @{ Site = 4; Enum = 'membershipRuleProcessingState'; Valid = 'On'; Lower = 'on'; Path = 'administrativeUnits[0].membershipRuleProcessingState'
+                    Json = '{ "version": "1.0", "administrativeUnits": [ { "displayName": "AU-One", "membershipRuleProcessingState": {0} } ] }'
+                    Text = "'membershipRuleProcessingState' at administrativeUnits[0] must be one of: {list}. Got: '{got}'." }
+                @{ Site = 5; Enum = 'catalogResourceType'; Valid = 'Group'; Lower = 'group'; Path = 'catalogs[0].resources[0].type'
+                    Json = '{ "version": "1.0", "catalogs": [ { "displayName": "CAT-A", "resources": [ { "name": "G1", "type": {0} } ] } ] }'
+                    Text = "'type' at catalogs[0].resources[0] must be one of: {list}. Got: '{got}'." }
+                @{ Site = 6; Enum = 'approverInfoVisibility'; Valid = 'Visible'; Lower = 'visible'; Path = 'accessPackages[0].assignmentPolicies[0].approvalStages[0].approverInfoVisibility'
+                    Json = '{ "version": "1.0", "catalogs": [ { "displayName": "CAT-A" } ], "accessPackages": [ { "displayName": "AP-One", "catalog": "CAT-A", "assignmentPolicies": [ { "displayName": "Pol", "approvalStages": [ { "approverInfoVisibility": {0} } ] } ] } ] }'
+                    Text = "'approverInfoVisibility' at accessPackages[0].assignmentPolicies[0].approvalStages[0] must be one of: {list}. Got: '{got}'." }
+                @{ Site = 7; Enum = 'accessReviewDefaultDecision'; Valid = 'None'; Lower = 'none'; Path = 'accessReviews[0].defaultDecision'
+                    Json = '{ "version": "1.0", "accessReviews": [ { "displayName": "AR-One", "defaultDecision": {0} } ] }'
+                    Text = "'defaultDecision' at accessReviews[0] must be one of: {list}. Got: '{got}'." }
+                @{ Site = 8; Enum = 'directoryRoleAssignmentType'; Valid = 'Eligible'; Lower = 'eligible'; Path = 'directoryRoleAssignments[0].assignmentType'
+                    Json = '{ "version": "1.0", "directoryRoleAssignments": [ { "role": "User Administrator", "principal": "person1@example.com", "assignmentType": {0} } ] }'
+                    Text = "'assignmentType' at directoryRoleAssignments[0] must be one of: {list}. Got: '{got}'." }
+                @{ Site = 9; Enum = 'principalType'; Valid = 'User'; Lower = 'user'; Path = 'directoryRoleAssignments[0].principalType'
+                    Json = '{ "version": "1.0", "directoryRoleAssignments": [ { "role": "User Administrator", "principal": "person1@example.com", "assignmentType": "Eligible", "principalType": {0} } ] }'
+                    Text = "'principalType' at directoryRoleAssignments[0] must be one of: {list}. Got: '{got}'." }
+            )
+        }
+    }
+
+    It 'site <Site>: refuses a one-element array, with the existing text' -ForEach @(
+        1..9 | ForEach-Object { $Site = $_; @{ Site = $Site } }
+    ) {
+        $Case = Get-NstSiteCase | Where-Object { $_.Site -eq $Site }
+        $Shown = '["' + $Case.Valid + '"]'
+        $Json = $Case.Json.Replace('{0}', $Shown)
+        $V = Invoke-NstValidation -Json $Json
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq $Case.Path -and $_.Severity -eq 'Error' })
+        $Hit.Count | Should -Be 1 -Because 'the rule must have been reached for the message to be read'
+        $Expected = $Case.Text.Replace('{list}', (Get-NstEnumList -EnumName $Case.Enum)).Replace('{got}', $Case.Valid)
+        $Hit[0].Message | Should -BeExactly $Expected
+        @($V.Errors | Where-Object { $_.Path -eq $Case.Path }).Count | Should -Be 1
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'site 3: refuses an element that is itself an array, [["Justification"]]' {
+        $Case = Get-NstSiteCase | Where-Object { $_.Site -eq 3 }
+        $V = Invoke-NstValidation -Json ($Case.Json.Replace('{0}', '["Justification"]'))
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq $Case.Path -and $_.Severity -eq 'Error' })
+        $Hit.Count | Should -Be 1
+        $Hit[0].Message | Should -BeExactly ("'activationEnablement' at groups[0].pimPolicy.member must contain only: $(Get-NstEnumList -EnumName 'enablement'). Got: 'Justification'.")
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'site 3: refuses an element array in activeEnablement too' {
+        $Case = Get-NstSiteCase | Where-Object { $_.Site -eq 3 }
+        $Json = $Case.Json.Replace('activationEnablement', 'activeEnablement').Replace('{0}', '["Justification"]')
+        $V = Invoke-NstValidation -Json $Json
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].pimPolicy.member.activeEnablement' -and $_.Severity -eq 'Error' })
+        $Hit.Count | Should -Be 1
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'site <Site>: still accepts the plain string' -ForEach @(
+        1..9 | ForEach-Object { @{ Site = $_ } }
+    ) {
+        $Case = Get-NstSiteCase | Where-Object { $_.Site -eq $Site }
+        $V = Invoke-NstValidation -Json ($Case.Json.Replace('{0}', '"' + $Case.Valid + '"'))
+        @($V.Errors | Where-Object { $_.Path -eq $Case.Path }).Count | Should -Be 0
+    }
+
+    It 'site <Site>: keeps the casing Warning for a string of other letter case' -ForEach @(
+        1..9 | ForEach-Object { @{ Site = $_ } }
+    ) {
+        $Case = Get-NstSiteCase | Where-Object { $_.Site -eq $Site }
+        $V = Invoke-NstValidation -Json ($Case.Json.Replace('{0}', '"' + $Case.Lower + '"'))
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq $Case.Path })
+        $Hit.Count | Should -Be 1
+        $Hit[0].Severity | Should -BeExactly 'Warning'
+    }
+
+    It 'reads an explicit null enum key as not declared (no finding at the path)' {
+        $Case = Get-NstSiteCase | Where-Object { $_.Site -eq 1 }
+        $V = Invoke-NstValidation -Json ($Case.Json.Replace('{0}', 'null'))
+        @($V.Errors | Where-Object { $_.Path -eq $Case.Path }).Count | Should -Be 0
+    }
+
+    Context 'site 10: the catalog reference of an access package' {
+        BeforeAll {
+            function Get-NstCatalogDocument {
+                param([string]$Catalog)
+                '{ "version": "1.0", "catalogs": [ { "displayName": "CAT-A" } ], "accessPackages": [ { "displayName": "AP-One", "catalog": ' + $Catalog + ' } ] }'
+            }
+        }
+
+        It 'refuses catalog <Shown> that is not a string, with an Error and no Warning' -ForEach @(
+            @{ Shown = '["CAT-A"]' }
+            @{ Shown = '5' }
+        ) {
+            $V = Invoke-NstValidation -Json (Get-NstCatalogDocument -Catalog $Shown)
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'accessPackages[0].catalog' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Error'
+            $Hit[0].Section | Should -BeExactly 'accessPackages'
+            $Hit[0].Item | Should -BeExactly 'AP-One'
+            $Hit[0].Message | Should -BeExactly "'catalog' at accessPackages[0] must be a string."
+            $V.Valid | Should -BeFalse
+        }
+
+        It 'gives no finding at the path for a declared catalog string' {
+            $V = Invoke-NstValidation -Json (Get-NstCatalogDocument -Catalog '"CAT-A"')
+            @($V.Errors | Where-Object { $_.Path -eq 'accessPackages[0].catalog' }).Count | Should -Be 0
+        }
+
+        It 'keeps the Warning for an undeclared catalog string' {
+            $V = Invoke-NstValidation -Json (Get-NstCatalogDocument -Catalog '"CAT-B"')
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'accessPackages[0].catalog' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Message | Should -BeExactly "Catalog 'CAT-B' is not declared in this document. It may already exist in the tenant."
+        }
+    }
+}

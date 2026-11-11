@@ -8,7 +8,7 @@ function Get-OERRoleDefinition {
     Invoke-OERArmRequest. Without a scope parameter the tenant-level collection is used; -Scope,
     -Subscription (optionally with -ResourceGroup), or -ManagementGroup narrow the scope via
     Resolve-OERScope. -Role accepts the exact role display name (resolved with the documented
-    $filter=roleName eq '...' filter), a role definition GUID, or a full ARM id (both fetched
+    $filter=roleName eq '...' filter), a role definition GUID, or a full ARM id (beginning with '/'; the last two fetched
     directly). -Custom lists only custom roles ($filter=type eq 'CustomRole') and cannot be combined
     with -Role. With -Role, an Azure answer that is empty or carries no value list is a failed
     read, published as itself (ArmPagingIncomplete), never RoleDefinitionNotFound. Output objects are
@@ -17,7 +17,7 @@ function Get-OERRoleDefinition {
     Initialize-OERAuth -IncludeARM.
 
     .PARAMETER Role
-    The role display name (e.g. 'Reader'), role definition GUID, or full ARM id. Tab-completion
+    The role display name (e.g. 'Reader'), role definition GUID, or full ARM id (beginning with '/'). Tab-completion
     offers the five curated common Azure RBAC roles; any other built-in or custom role name is still
     accepted.
 
@@ -106,7 +106,7 @@ function Get-OERRoleDefinition {
         }
         $Base = "$TargetScope/providers/Microsoft.Authorization/roleDefinitions"
 
-        if ($Role -like '*/providers/Microsoft.Authorization/roleDefinitions/*') {
+        if ($Role.StartsWith('/', [System.StringComparison]::Ordinal) -and $Role -like '*/providers/Microsoft.Authorization/roleDefinitions/*') {
             $Path = "$Role`?api-version=2022-04-01"
         } elseif (Test-OERGuid -Value $Role) {
             $Path = "$Base/$Role`?api-version=2022-04-01"
