@@ -9559,8 +9559,15 @@ changes on a stable tenant.
 definition and user requests): two entries without `-Prune` went from 4 and 4 to 1 and 2; with
 `-Prune` and one removal the same; two calls of that document from 8 and 8 to 2 and 4 (one cache per
 call); one valid role plus one ambiguous role from 4 and 2 to 3 and 1 (the ambiguous role is asked
-twice, the valid one once). No other Graph request was sent in any case. Live counts are not part of
-this record yet.
+twice, the valid one once). No other Graph request was sent in any case.
+
+**Measured live** (2026-11-11, as `oer-live-cc`, the step's checklist
+`docs/live-verification/fix-lookups-once-and-proven-absence-checklist.md`, checks 1.1 to 1.4): a
+`-WhatIf` plan of two eligible entries naming one role and two groups by name went from 11 Graph
+requests on the base build (4 role definition, 4 group name and 3 schedule reads) to 6 (1, 2 and 3);
+the same with `-Prune` and one assignment to remove from 12 to 7 (the one other request, the
+signed-in identity's membership read, unchanged). The rows and the error records of both plans were
+identical to the base, Detail included, and each document applied twice ended in only `Unchanged`.
 
 **What it does not cover.** The six public directory role assignment cmdlets are given ids and look
 nothing up, so they have no duplicate to remove. Another section's lookups (groups, administrative
