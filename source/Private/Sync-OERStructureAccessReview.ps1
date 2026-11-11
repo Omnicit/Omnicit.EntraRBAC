@@ -10,7 +10,11 @@ function Sync-OERStructureAccessReview {
 
     Create-or-update:
     A definition is matched by displayName. When it does not exist it is created (unless the entry
-    declares previousDisplayName, below: a rename never creates). When it does exist,
+    declares previousDisplayName, below: a rename never creates). A definition is created only when
+    the read of its display name answered that none exists (Get-OERAccessReviewDefinition's
+    AccessReviewDefinitionNotFound, compared as the whole first segment of the error id); a read that
+    failed, or that gave no answer at all, is reported Failed (AccessReviewAbsenceUnproven for the
+    latter) and nothing is created. When it does exist,
     the declared fields are diffed against the live definition by the pure helper
     Resolve-OERAccessReviewChange and only the differences are sent to Set-OERAccessReviewDefinition
     (a read-modify-write PUT, so undeclared properties are preserved). Reviewer tokens are resolved to
@@ -434,6 +438,16 @@ function Sync-OERStructureAccessReview {
             $Ambiguous = @()
             $Filter = "displayName eq '{0}'" -f $LookupName.Replace("'", "''")
             $ProbeErrors = $null
+            $Unanswered = $false
+            # Whether a record's id IS AccessReviewDefinitionNotFound: the first comma-separated
+            # segment of FullyQualifiedErrorId, untrimmed, compared whole and ordinally. A longer id
+            # (AccessReviewDefinitionNotFoundX), another case, or a record with no such first segment
+            # is not that answer.
+            $IsNotFoundId = {
+                param($Record)
+                $FirstSegment = ([string]$Record.FullyQualifiedErrorId -split ',')[0]
+                [string]::Equals($FirstSegment, 'AccessReviewDefinitionNotFound', [System.StringComparison]::Ordinal)
+            }
             # The try/catch still guards a genuinely TERMINATING failure of the read (auth, a dead
             # transport, a ThrowTerminatingError upstream); the inspection inside it handles the
             # NON-terminating records. Both are needed: neither subsumes the other.
@@ -476,7 +490,7 @@ function Sync-OERStructureAccessReview {
                     # administrative-unit read had to filter out.
                     $ProbeFailure = @($ProbeErrors | Where-Object {
                             $null -ne $_ -and
-                            $_.FullyQualifiedErrorId -notlike 'AccessReviewDefinitionNotFound*' -and
+                            -not (& $IsNotFoundId $_) -and
                             @(([string]$_.FullyQualifiedErrorId) -split ',') -contains 'Get-OERAccessReviewDefinition'
                         }) | Select-Object -First 1
                     if ($ProbeFailure) {
@@ -491,13 +505,30 @@ function Sync-OERStructureAccessReview {
                             -ErrorRecord $ProbeFailure
                         return [PSCustomObject]@{ Definition = $null; FailedRow = $FailedRow }
                     }
+                    # See docs/development/rationale.md#access-review-proven-absence.
+                    # Absence is PROVEN only by the answer the cmdlet publishes for it: a record whose
+                    # first id segment IS AccessReviewDefinitionNotFound and which the cmdlet itself
+                    # published (the same publisher test as above). A read that returned no definition
+                    # of the name and published no such answer shows nothing about the tenant, and a
+                    # create on it could duplicate a review that exists. It is refused below, outside
+                    # the try, for the reason the ambiguous refusal is.
+                    if ($MatchList.Count -eq 0) {
+                        $ProvenEmpty = @($ProbeErrors | Where-Object {
+                                $null -ne $_ -and
+                                (& $IsNotFoundId $_) -and
+                                @(([string]$_.FullyQualifiedErrorId) -split ',') -contains 'Get-OERAccessReviewDefinition'
+                            }) | Select-Object -First 1
+                        if (-not $ProvenEmpty) {
+                            $Unanswered = $true
+                        }
+                    }
                 }
             }
             catch {
                 Remove-OERErrorRecord -Record $PSItem
                 # Distinguish a clean NotFound (definition simply does not exist yet) from a real
                 # error (throttle, auth failure, etc.). NotFound means proceed with create.
-                if ($PSItem.FullyQualifiedErrorId -like 'AccessReviewDefinitionNotFound*') {
+                if (& $IsNotFoundId $PSItem) {
                     $Found = $null
                 }
                 else {
@@ -510,9 +541,10 @@ function Sync-OERStructureAccessReview {
             }
 
             # -- Ambiguous name -> refuse --------------------------------------------------------
-            # Kept OUTSIDE the try above on purpose: under a caller with -ErrorAction Stop the
-            # $Caller.WriteError below throws, and inside that try the read's own catch would take
-            # the exception, scrub it and publish the same record a second time. A published read
+            # Kept OUTSIDE the try above on purpose, as a precaution (it was measured not to throw
+            # here): were the $Caller.WriteError below to throw under a caller with -ErrorAction
+            # Stop, inside that try the read's own catch would take the exception, scrub it and
+            # publish the same record a second time. A published read
             # failure (the ProbeFailure branch above) still wins when both happened, since an
             # incomplete read is not trustworthy evidence either way; nothing is lost, the next run
             # reports the ambiguity.
@@ -551,6 +583,24 @@ function Sync-OERStructureAccessReview {
                 }
                 $FailedRow = ConvertTo-OERStructureResult -Section 'accessReviews' -Item $Name -Action 'Failed' `
                     -Detail $AmbiguousDetail -ErrorRecord $AmbiguousRecord
+                return [PSCustomObject]@{ Definition = $null; FailedRow = $FailedRow }
+            }
+
+            # -- Unanswered lookup -> refuse -----------------------------------------------------
+            # See docs/development/rationale.md#access-review-proven-absence.
+            # Outside the try, as the ambiguous refusal is, so a WriteError that throws could not be
+            # taken by the read's catch and published twice (a precaution: it was measured not to throw here).
+            if ($Unanswered) {
+                $UnansweredMessage = "The read of access review definitions named '$LookupName' returned no definition of that name and no answer that none exists, so it does not show that the review is absent. " +
+                    'Nothing was created or changed; apply the document again.'
+                $UnansweredRecord = [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new($UnansweredMessage),
+                    'AccessReviewAbsenceUnproven',
+                    [System.Management.Automation.ErrorCategory]::ReadError,
+                    $LookupName)
+                $Caller.WriteError($UnansweredRecord)
+                $FailedRow = ConvertTo-OERStructureResult -Section 'accessReviews' -Item $Name -Action 'Failed' `
+                    -Detail "could not read access review definitions: $UnansweredMessage" -ErrorRecord $UnansweredRecord
                 return [PSCustomObject]@{ Definition = $null; FailedRow = $FailedRow }
             }
 

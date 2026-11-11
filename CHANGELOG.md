@@ -26,6 +26,11 @@ after a sign-in that named none) is now held to the session's account after a de
 with your own `-ClientId` too: another account picked at sign-in is refused with `SignInSuperseded` and
 the session stays the first account's. App-only sign-ins and other clouds are unchanged.
 
+`Invoke-OERStructure` looks a directory role and a principal up once per run in `directoryRoleAssignments`,
+with the same rows and errors as before. It creates an access review only when the read of its name
+answered that none exists: a read that failed, or came back without a value list, is `Failed` as itself,
+a read that gave no answer is `Failed` with `AccessReviewAbsenceUnproven`, and nothing is created.
+
 ## [1.6.0] - 2026-11-10
 
 A refused call now says what is wrong. `Get-OERActiveRoleAssignment`, `Get-OEREligibleRoleAssignment` and

@@ -899,7 +899,8 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment section-wide prune pass' {
             $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune -WarningAction SilentlyContinue)
             @($Records).Action | Should -Be @('Unchanged')
             $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DraP[1].ToUpperInvariant()) (Eligible)"
-            Should -Invoke Resolve-OERStructurePrincipal -Times 2 -Exactly -ParameterFilter { $Reference -ceq 'BBBBBBBB-0000-0000-0000-000000000001' }
+            # One lookup serves the pass and the item (BL-23).
+            Should -Invoke Resolve-OERStructurePrincipal -Times 1 -Exactly -ParameterFilter { $Reference -ceq 'BBBBBBBB-0000-0000-0000-000000000001' }
             Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
             Should -Invoke Remove-OERActiveDirectoryRoleAssignment -Times 0
             Should -Invoke New-OEREligibleDirectoryRoleAssignment -Times 0
@@ -920,7 +921,8 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment section-wide prune pass' {
             @($Records).Action | Should -Be @('Removed', 'Unchanged')
             $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DraP[2]) (Eligible)"
             Should -Invoke Resolve-OERStructurePrincipal -Times 0 -ParameterFilter { $PesterBoundParameters.ContainsKey('Type') }
-            Should -Invoke Resolve-OERStructurePrincipal -Times 2 -Exactly
+            # One lookup serves the pass and the item (BL-23); the empty type was never forwarded.
+            Should -Invoke Resolve-OERStructurePrincipal -Times 1 -Exactly
         }
     }
 
@@ -1900,6 +1902,185 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment when Microsoft Graph answers 
             @($Records).Action | Should -Be @('Removed', 'Unchanged')
             $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DraExtra) ($Kind)"
             @($DraErrors | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like '*,Invoke-SyncDraStatus' }).Count | Should -Be 0
+        }
+    }
+}
+
+Describe 'Sync-OERStructureDirectoryRoleAssignment looks a role and a principal up once per run (BL-23)' {
+    # The engine hands every item of a document one -LookupCache; the first item also runs the pass.
+    # Only a successful answer is stored, so a failed lookup is made again by the item that needs it
+    # and that item writes its own record and Failed row. The records are counted by their
+    # ',<wrapper name>' suffix: -ErrorVariable also collects the exceptions the mock layers re-throw.
+    # No id below is version-4 shaped.
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:RR = 'aaaaaaaa-0000-0000-0000-000000000001'
+            $script:DraP = @{}
+            foreach ($N in 1..9) { $script:DraP[$N] = "bbbbbbbb-0000-0000-0000-00000000000$N" }
+            function script:Invoke-SyncDraCache {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [object[]]$DeclaredInSection = @(), [switch]$ReconcileSection,
+                    [System.Collections.Generic.Dictionary[string, string]]$LookupCache)
+                $Extra = @{}
+                if ($null -ne $LookupCache) { $Extra.LookupCache = $LookupCache }
+                Sync-OERStructureDirectoryRoleAssignment -Item $Item -Caller $PSCmdlet `
+                    -DeclaredInSection $DeclaredInSection -ReconcileSection:$ReconcileSection @Extra
+            }
+            function script:New-DraCache {
+                [System.Collections.Generic.Dictionary[string, string]]::new([System.StringComparer]::Ordinal)
+            }
+            function script:Select-DraCacheError {
+                param([object[]]$ErrorList)
+                @($ErrorList | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like '*,Invoke-SyncDraCache' })
+            }
+            Mock Initialize-OERAuth {}
+            Mock Resolve-OERDirectoryRoleDefinitionId {
+                if ($Role -ieq 'Reports Reader') { return $script:RR }
+                if ($Role -eq 'Throwing Role') { throw "Directory role name 'Throwing Role' is ambiguous." }
+                return $null
+            }
+            Mock Resolve-OERStructurePrincipal {
+                if ($Reference -match '^person(\d)@example\.com$') { return $script:DraP[[int]$Matches[1]] }
+                if ($Reference -eq 'throws@example.com') { throw "Principal 'throws@example.com' is ambiguous." }
+                return $null
+            }
+            Mock Get-OEREligibleDirectoryRoleAssignment {}
+            Mock Get-OERActiveDirectoryRoleAssignment {}
+            Mock New-OEREligibleDirectoryRoleAssignment {}
+            Mock New-OERActiveDirectoryRoleAssignment {}
+            Mock Remove-OEREligibleDirectoryRoleAssignment {}
+            Mock Remove-OERActiveDirectoryRoleAssignment {}
+            Mock Get-OERSignedInObjectId { 'aaaaaaaa-0000-0000-0000-0000000000ff' }
+            Mock Get-OERMemberGroupId { throw 'unexpected membership read' }
+        }
+    }
+
+    It 'resolves a role name and a principal name shared by two items once, and both rows are what they were' {
+        InModuleScope $script:moduleName {
+            $Section = @(
+                [PSCustomObject]@{ role = 'Reports Reader'; principal = 'person1@example.com'; assignmentType = 'Eligible' }
+                [PSCustomObject]@{ role = 'Reports Reader'; principal = 'person1@example.com'; assignmentType = 'Active' }
+            )
+            $Cache = New-DraCache
+            $Records = @(Invoke-SyncDraCache -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -LookupCache $Cache)
+            $Records += @(Invoke-SyncDraCache -Item $Section[1] -DeclaredInSection $Section -LookupCache $Cache)
+            @($Records).Action | Should -Be @('Created', 'Created')
+            $Records[0].Item | Should -BeExactly 'Reports Reader -> person1@example.com (Eligible)'
+            $Records[1].Item | Should -BeExactly 'Reports Reader -> person1@example.com (Active)'
+            Should -Invoke Resolve-OERDirectoryRoleDefinitionId -Times 1 -Exactly
+            Should -Invoke Resolve-OERStructurePrincipal -Times 1 -Exactly
+            Should -Invoke New-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly -ParameterFilter { $Role -eq $script:RR -and $PrincipalId -eq $script:DraP[1] }
+            Should -Invoke New-OERActiveDirectoryRoleAssignment -Times 1 -Exactly -ParameterFilter { $Role -eq $script:RR -and $PrincipalId -eq $script:DraP[1] }
+        }
+    }
+
+    It 'makes a role lookup that threw in the pass again in the item, which writes its own record and the same Failed row, and caches nothing' {
+        InModuleScope $script:moduleName {
+            $Section = @([PSCustomObject]@{ role = 'Throwing Role'; principal = 'person1@example.com'; assignmentType = 'Eligible' })
+            $Cache = New-DraCache
+            $Records = @(Invoke-SyncDraCache -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -LookupCache $Cache -ErrorAction SilentlyContinue -ErrorVariable Errs)
+            @($Records).Action | Should -Be @('Failed')
+            $Records[0].Detail | Should -BeExactly "could not resolve directory role 'Throwing Role': Directory role name 'Throwing Role' is ambiguous."
+            @(Select-DraCacheError $Errs).Count | Should -Be 1
+            Should -Invoke Resolve-OERDirectoryRoleDefinitionId -Times 2 -Exactly
+            $Cache.Count | Should -Be 0
+        }
+    }
+
+    It 'makes a principal lookup that threw in the pass again in the item, which writes its own record and the same Failed row, and caches no principal' {
+        InModuleScope $script:moduleName {
+            $Section = @([PSCustomObject]@{ role = 'Reports Reader'; principal = 'throws@example.com'; assignmentType = 'Eligible' })
+            $Cache = New-DraCache
+            $Records = @(Invoke-SyncDraCache -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -LookupCache $Cache -ErrorAction SilentlyContinue -ErrorVariable Errs)
+            @($Records).Action | Should -Be @('Failed')
+            $Records[0].Detail | Should -BeExactly "could not resolve principal 'throws@example.com': Principal 'throws@example.com' is ambiguous."
+            @(Select-DraCacheError $Errs).Count | Should -Be 1
+            Should -Invoke Resolve-OERStructurePrincipal -Times 2 -Exactly
+            Should -Invoke Resolve-OERDirectoryRoleDefinitionId -Times 1 -Exactly
+            $Cache.ContainsKey('role|Reports Reader') | Should -BeTrue
+            @($Cache.Keys | Where-Object { $_ -like 'principal|*' }).Count | Should -Be 0
+        }
+    }
+
+    It 'makes a lookup that answered nothing again, with no record and the same Failed row: <Case>' -TestCases @(
+        @{ Case = 'role'; Role = 'Unknown Role'; Principal = 'person1@example.com'; Detail = "directory role 'Unknown Role' could not be resolved to a role definition id"; RoleCalls = 2; PrincipalCalls = 0; Keys = 0 }
+        @{ Case = 'principal'; Role = 'Reports Reader'; Principal = 'nobody@example.com'; Detail = "principal 'nobody@example.com' could not be resolved to an object id"; RoleCalls = 1; PrincipalCalls = 2; Keys = 1 }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Role = $Role; Principal = $Principal; Detail = $Detail; RoleCalls = $RoleCalls; PrincipalCalls = $PrincipalCalls; Keys = $Keys } {
+            param($Role, $Principal, $Detail, $RoleCalls, $PrincipalCalls, $Keys)
+            $Section = @([PSCustomObject]@{ role = $Role; principal = $Principal; assignmentType = 'Eligible' })
+            $Cache = New-DraCache
+            $Records = @(Invoke-SyncDraCache -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -LookupCache $Cache -ErrorAction SilentlyContinue -ErrorVariable Errs)
+            @($Records).Action | Should -Be @('Failed')
+            $Records[0].Detail | Should -BeExactly $Detail
+            @(Select-DraCacheError $Errs).Count | Should -Be 0
+            Should -Invoke Resolve-OERDirectoryRoleDefinitionId -Times $RoleCalls -Exactly
+            if ($PrincipalCalls -gt 0) { Should -Invoke Resolve-OERStructurePrincipal -Times $PrincipalCalls -Exactly }
+            $Cache.Count | Should -Be $Keys
+        }
+    }
+
+    It 'keys a role case-sensitively: two spellings of one name are two lookups' {
+        InModuleScope $script:moduleName {
+            $Section = @(
+                [PSCustomObject]@{ role = 'Reports Reader'; principal = 'person1@example.com'; assignmentType = 'Eligible' }
+                [PSCustomObject]@{ role = 'reports reader'; principal = 'person2@example.com'; assignmentType = 'Eligible' }
+            )
+            $Cache = New-DraCache
+            $null = @(Invoke-SyncDraCache -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -LookupCache $Cache)
+            Should -Invoke Resolve-OERDirectoryRoleDefinitionId -Times 2 -Exactly
+            Should -Invoke Resolve-OERDirectoryRoleDefinitionId -Times 1 -Exactly -ParameterFilter { $Role -ceq 'Reports Reader' }
+            Should -Invoke Resolve-OERDirectoryRoleDefinitionId -Times 1 -Exactly -ParameterFilter { $Role -ceq 'reports reader' }
+            $Cache.ContainsKey('role|Reports Reader') | Should -BeTrue
+            $Cache.ContainsKey('role|reports reader') | Should -BeTrue
+        }
+    }
+
+    It 'bypasses the cache for a principalType outside User, Group and ServicePrincipal, so a binding failure is never masked by a cached id' {
+        InModuleScope $script:moduleName {
+            $Section = @([PSCustomObject]@{ role = 'Reports Reader'; principal = 'person1@example.com'; principalType = 'Robot'; assignmentType = 'Eligible' })
+            # An id cached under the very key a non-bypassing site would read: it must never be used.
+            $Cache = New-DraCache
+            $Cache['principal|Robot|person1@example.com'] = $script:DraP[1]
+            $Records = @(Invoke-SyncDraCache -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -LookupCache $Cache -ErrorAction SilentlyContinue -ErrorVariable Errs)
+            @($Records).Action | Should -Be @('Failed')
+            $Records[0].Detail | Should -BeLike "could not resolve principal 'person1@example.com': *does not belong to the set*"
+            @(Select-DraCacheError $Errs).Count | Should -Be 1
+            Should -Invoke New-OEREligibleDirectoryRoleAssignment -Times 0
+            $Cache.Count | Should -Be 2
+        }
+    }
+    It 'caches a principal under its declared type: the same name with and without a type is two lookups' {
+        InModuleScope $script:moduleName {
+            $Section = @(
+                [PSCustomObject]@{ role = 'Reports Reader'; principal = 'person1@example.com'; principalType = 'User'; assignmentType = 'Eligible' }
+                [PSCustomObject]@{ role = 'Reports Reader'; principal = 'person1@example.com'; assignmentType = 'Active' }
+            )
+            $Cache = New-DraCache
+            $null = @(Invoke-SyncDraCache -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -LookupCache $Cache)
+            Should -Invoke Resolve-OERStructurePrincipal -Times 2 -Exactly
+            $Cache.ContainsKey('principal|User|person1@example.com') | Should -BeTrue
+            $Cache.ContainsKey('principal||person1@example.com') | Should -BeTrue
+        }
+    }
+
+    It 'shares the pass answers with its own item without a -LookupCache: one role and one principal lookup' {
+        InModuleScope $script:moduleName {
+            $Section = @([PSCustomObject]@{ role = 'Reports Reader'; principal = 'person1@example.com'; assignmentType = 'Eligible' })
+            $Records = @(Invoke-SyncDraCache -Item $Section[0] -DeclaredInSection $Section -ReconcileSection)
+            @($Records).Action | Should -Be @('Created')
+            Should -Invoke Resolve-OERDirectoryRoleDefinitionId -Times 1 -Exactly
+            Should -Invoke Resolve-OERStructurePrincipal -Times 1 -Exactly
+        }
+    }
+    It 'keys a role case-sensitively without a -LookupCache too: two spellings of one name are two lookups' {
+        InModuleScope $script:moduleName {
+            $Section = @(
+                [PSCustomObject]@{ role = 'Reports Reader'; principal = 'person1@example.com'; assignmentType = 'Eligible' }
+                [PSCustomObject]@{ role = 'reports reader'; principal = 'person2@example.com'; assignmentType = 'Eligible' }
+            )
+            $null = @(Invoke-SyncDraCache -Item $Section[0] -DeclaredInSection $Section -ReconcileSection)
+            Should -Invoke Resolve-OERDirectoryRoleDefinitionId -Times 2 -Exactly
         }
     }
 }

@@ -3871,6 +3871,12 @@ Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
         [CmdletBinding()]
         param([string]$Filter)
         [System.IO.File]::AppendAllText('#LOG#', "READ reviews $Filter`n")
+        if ($Filter -ne "displayName eq 'R-Old'") {
+            # Nothing carries the new name: the answer the real cmdlet publishes.
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new([System.Exception]::new('No access review definition found for the ByFilter query.'),
+                    'AccessReviewDefinitionNotFound', [System.Management.Automation.ErrorCategory]::ObjectNotFound, 'ByFilter'))
+            return
+        }
         [pscustomobject]@{
             Id = 'cccc3333-0000-0000-0000-000000000041'; DisplayName = 'R-Old'; Status = 'InProgress'
             Scope = 'another access package'; AccessPackageId = 'aaaa1111-0000-0000-0000-000000000049'; AssignmentPolicyId = 'bbbb2222-0000-0000-0000-000000000049'
@@ -4018,7 +4024,20 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
         Mock -ModuleName $script:moduleName Set-OERAccessPackageAssignmentPolicy { }
         Mock -ModuleName $script:moduleName New-OERAccessPackage { throw 'unexpected access package create' }
         Mock -ModuleName $script:moduleName New-OERAccessPackageAssignmentPolicy { throw 'unexpected assignment policy create' }
-        Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition { $script:RvState.Review }
+        Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+            if ($null -ne $script:RvState.Review) { return $script:RvState.Review }
+            # No review: the answer the real cmdlet publishes for a name nothing carries (a mock that returned
+            # nothing and published nothing would be an unanswered read, which the engine refuses to create on).
+            function Get-OERAccessReviewDefinition {
+                [CmdletBinding()]
+                param()
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('No access review definition found for the ByFilter query.'),
+                        'AccessReviewDefinitionNotFound',
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound, 'ByFilter'))
+            }
+            & (Get-Item -LiteralPath 'function:Get-OERAccessReviewDefinition') -ErrorAction SilentlyContinue
+        }
         # Graph's tenant-wide name lookups in the run that renames: the names nothing renames resolve to
         # the objects the document means; the new names to OTHER objects that carry them.
         Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId {
@@ -4403,7 +4422,20 @@ Describe 'Invoke-OERStructure: an access review reaches the access package its a
             if ($DisplayName -eq 'CAT-A') { return 'eeee5555-0000-0000-0000-000000000061' }
             throw "unexpected catalog lookup: $DisplayName"
         }
-        Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition { $script:TwState.Review }
+        Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+            if ($null -ne $script:TwState.Review) { return $script:TwState.Review }
+            # No review: the answer the real cmdlet publishes for a name nothing carries (a mock that returned
+            # nothing and published nothing would be an unanswered read, which the engine refuses to create on).
+            function Get-OERAccessReviewDefinition {
+                [CmdletBinding()]
+                param()
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('No access review definition found for the ByFilter query.'),
+                        'AccessReviewDefinitionNotFound',
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound, 'ByFilter'))
+            }
+            & (Get-Item -LiteralPath 'function:Get-OERAccessReviewDefinition') -ErrorAction SilentlyContinue
+        }
         # The tenant-wide name lookups: AP-Twin is found -- in catalog CAT-B. An id is taken as it is.
         Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId {
             if ($DisplayName -eq 'AP-Twin') { return 'aaaa1111-0000-0000-0000-000000000062' }
@@ -7460,5 +7492,233 @@ Describe 'Invoke-OERStructure and an access package left out of the export (Spri
             $GraphCalls | Should -BeGreaterThan 0
             $PolicyRemoveCalls | Should -BeGreaterThan 0
         }
+    }
+}
+
+Describe 'Invoke-OERStructure looks each directory role and principal up once per run (BL-23)' {
+    # The real engine, handler and resolvers run; Invoke-OERGraphRequest answers from a URI router that
+    # counts role definition lookups and user lookups separately, and the directory role cmdlets are
+    # mocked over a stable tenant. The row and record assertions hold on the code before BL-23 too;
+    # only the lookup counts moved. No id below is version-4 shaped.
+    BeforeAll {
+        $script:LoRole = '44444444-0000-0000-0000-000000000001'
+        $script:LoUser = @{ 'person1@example.com' = '55555555-0000-0000-0000-000000000001'; 'person2@example.com' = '55555555-0000-0000-0000-000000000002' }
+        $script:LoOther = '55555555-0000-0000-0000-000000000009'
+        $script:LoDoc = '{ "version": "1.0", "directoryRoleAssignments": [ ' +
+            '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible" }, ' +
+            '{ "role": "Reports Reader", "principal": "person2@example.com", "assignmentType": "Eligible" } ] }'
+        $script:LoTwinDoc = '{ "version": "1.0", "directoryRoleAssignments": [ ' +
+            '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible" }, ' +
+            '{ "role": "Twin Role", "principal": "person1@example.com", "assignmentType": "Eligible" } ] }'
+        $script:LoCaseDoc = '{ "version": "1.0", "directoryRoleAssignments": [ ' +
+            '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible" }, ' +
+            '{ "role": "reports reader", "principal": "person2@example.com", "assignmentType": "Eligible" } ] }'
+        function script:New-LoRow {
+            param([string]$PrincipalId)
+            [PSCustomObject]@{
+                ScheduleId = "schedule-$PrincipalId"; RoleDefinitionId = $script:LoRole; RoleName = 'Reports Reader'
+                PrincipalId = $PrincipalId; PrincipalDisplayName = 'fixture'; PrincipalType = 'User'
+                DirectoryScopeId = '/'; MemberType = 'Direct'; Status = 'Provisioned'
+                StartDateTime = '2026-01-01T00:00:00Z'; EndDateTime = $null; ExpirationType = 'noExpiration'; DurationDays = $null
+            }
+        }
+        function script:ConvertTo-LoRowLine {
+            param([object[]]$Row)
+            @($Row | ForEach-Object { '{0}|{1}|{2}|{3}' -f $_.Section, $_.Item, $_.Action, $_.Detail })
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        $script:LoCount = @{ Role = 0; User = 0; Other = 0 }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { [PSCustomObject]@{ Scope = $null; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null } }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            $Plain = [uri]::UnescapeDataString($Uri)
+            if ($Uri -like 'v1.0/roleManagement/directory/roleDefinitions?*') {
+                $script:LoCount.Role++
+                if ($Plain -clike "*displayName eq 'Reports Reader'*") { return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = $script:LoRole; displayName = 'Reports Reader' }) } }
+                if ($Plain -clike "*displayName eq 'Twin Role'*") {
+                    return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = '44444444-0000-0000-0000-000000000002'; displayName = 'Twin Role' }, [PSCustomObject]@{ id = '44444444-0000-0000-0000-000000000003'; displayName = 'Twin Role' }) }
+                }
+                # The whole-list read of the case-insensitive second step.
+                if ($Plain -notlike '*$filter*') { return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = $script:LoRole; displayName = 'Reports Reader' }) } }
+                return [PSCustomObject]@{ value = @() }
+            }
+            if ($Uri -like 'v1.0/users?*') {
+                $script:LoCount.User++
+                $Upn = ([regex]::Match([uri]::UnescapeDataString($Uri), "userPrincipalName eq '([^']+)'")).Groups[1].Value
+                if ($script:LoUser.ContainsKey($Upn)) { return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = $script:LoUser[$Upn]; userPrincipalName = $Upn }) } }
+                return [PSCustomObject]@{ value = @() }
+            }
+            $script:LoCount.Other++
+            throw "unexpected Graph request: $Uri"
+        }
+        # A stable tenant: both declared principals hold the role, and one undeclared principal too.
+        $script:LoLive = @((New-LoRow -PrincipalId $script:LoUser['person1@example.com']), (New-LoRow -PrincipalId $script:LoUser['person2@example.com']), (New-LoRow -PrincipalId $script:LoOther))
+        Mock -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment {
+            @($script:LoLive | Where-Object { (-not $Role -or $_.RoleDefinitionId -eq $Role) -and (-not $PrincipalId -or $_.PrincipalId -eq $PrincipalId) })
+        }
+        Mock -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment { @() }
+        Mock -ModuleName $script:moduleName New-OEREligibleDirectoryRoleAssignment { }
+        Mock -ModuleName $script:moduleName New-OERActiveDirectoryRoleAssignment { }
+        Mock -ModuleName $script:moduleName Remove-OEREligibleDirectoryRoleAssignment { }
+        Mock -ModuleName $script:moduleName Remove-OERActiveDirectoryRoleAssignment { }
+        Mock -ModuleName $script:moduleName Get-OERSignedInObjectId { '55555555-0000-0000-0000-0000000000ff' }
+        Mock -ModuleName $script:moduleName Get-OERMemberGroupId { @() }
+    }
+
+    It 'looks the shared role and each principal up once without -Prune, and the rows and records are what they were' {
+        $Rows = @(Invoke-OERStructure -Json $script:LoDoc -Include DirectoryRoleAssignments -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Errs -WarningAction SilentlyContinue)
+        @(ConvertTo-LoRowLine -Row $Rows) | Should -Be @(
+            "directoryRoleAssignments|Reports Reader -> $($script:LoOther) (Eligible)|Extra|undeclared eligible assignment of directory role 'Reports Reader' for principal '$($script:LoOther)' (use -Prune to remove)"
+            'directoryRoleAssignments|Reports Reader -> person1@example.com (Eligible)|Unchanged|assignment matches'
+            'directoryRoleAssignments|Reports Reader -> person2@example.com (Eligible)|Unchanged|assignment matches'
+        )
+        @($Errs | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' }).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName New-OEREligibleDirectoryRoleAssignment -Times 0
+        Should -Invoke -ModuleName $script:moduleName Remove-OEREligibleDirectoryRoleAssignment -Times 0
+        $script:LoCount.Other | Should -Be 0
+        $script:LoCount.Role | Should -Be 1
+        $script:LoCount.User | Should -Be 2
+    }
+
+    It 'looks them up once with -Prune too, and removes the one undeclared assignment' {
+        $Rows = @(Invoke-OERStructure -Json $script:LoDoc -Include DirectoryRoleAssignments -Prune -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Errs -WarningAction SilentlyContinue)
+        @($Rows).Action | Should -Be @('Removed', 'Unchanged', 'Unchanged')
+        $Rows[0].Item | Should -BeExactly "Reports Reader -> $($script:LoOther) (Eligible)"
+        $Rows[0].Detail | Should -BeExactly "removed undeclared eligible assignment of directory role 'Reports Reader' for principal '$($script:LoOther)'"
+        $Rows[1].Item | Should -BeExactly 'Reports Reader -> person1@example.com (Eligible)'
+        $Rows[1].Detail | Should -BeExactly 'assignment matches'
+        $Rows[2].Detail | Should -BeExactly 'assignment matches'
+        $Rows[2].Item | Should -BeExactly 'Reports Reader -> person2@example.com (Eligible)'
+        @($Errs | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' }).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Remove-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly -ParameterFilter { $Role -eq $script:LoRole -and $PrincipalId -eq $script:LoOther }
+        $script:LoCount.Other | Should -Be 0
+        $script:LoCount.Role | Should -Be 1
+        $script:LoCount.User | Should -Be 2
+    }
+
+    It 'makes a failed role lookup again where it is next needed: the item writes its own record and the Failed row, and the good role is looked up once' {
+        $Rows = @(Invoke-OERStructure -Json $script:LoTwinDoc -Include DirectoryRoleAssignments -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Errs -WarningAction SilentlyContinue)
+        $Failed = @($Rows | Where-Object { $_.Action -eq 'Failed' })
+        $Failed.Count | Should -Be 1
+        $Failed[0].Item | Should -BeExactly 'Twin Role -> person1@example.com (Eligible)'
+        $Failed[0].Detail | Should -BeLike "could not resolve directory role 'Twin Role': Directory role name 'Twin Role' matches 2 role definitions (*)*"
+        @($Errs | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -eq 'AmbiguousName,Invoke-OERStructure' }).Count | Should -Be 1
+        # The pass withholds the prune of the pair for the unresolved entry; nothing is removed.
+        Should -Invoke -ModuleName $script:moduleName Remove-OEREligibleDirectoryRoleAssignment -Times 0
+        $script:LoCount.Other | Should -Be 0
+        # 'Reports Reader' once (shared), 'Twin Role' twice (pass, then the item; a failure is never cached).
+        $script:LoCount.Role | Should -Be 3
+        $script:LoCount.User | Should -Be 1
+    }
+
+    It 'does not let the cache outlive its document: a second call looks everything up again, and no module variable holds a cache' {
+        $null = @(Invoke-OERStructure -Json $script:LoDoc -Include DirectoryRoleAssignments -Confirm:$false -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+        $script:LoCount.Role | Should -Be 1
+        $script:LoCount.User | Should -Be 2
+        $null = @(Invoke-OERStructure -Json $script:LoDoc -Include DirectoryRoleAssignments -Confirm:$false -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+        $script:LoCount.Role | Should -Be 2
+        $script:LoCount.User | Should -Be 4
+        InModuleScope $script:moduleName {
+            @(Get-Variable -Scope Script | Where-Object { $_.Value -is [System.Collections.Generic.Dictionary[string, string]] }).Count | Should -Be 0
+        }
+    }
+    It 'keys a role name case-sensitively across the run: two spellings are two lookups, never one cached answer' {
+        $Rows = @(Invoke-OERStructure -Json $script:LoCaseDoc -Include DirectoryRoleAssignments -Confirm:$false -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+        @($Rows).Action | Should -Be @('Extra', 'Unchanged', 'Unchanged')
+        # 'Reports Reader': one exact-case request. 'reports reader': the exact-case request, then the whole list.
+        $script:LoCount.Role | Should -Be 3
+        $script:LoCount.User | Should -Be 2
+    }
+}
+
+Describe 'Invoke-OERStructure accessReviews: an unanswered review read creates nothing and reaches the caller' {
+    # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere above
+    # it, as at a prompt, with the runspace's own error preference (Continue). The entry is a group review
+    # that no definition of its name answers for. In the first scenario the read returns nothing and
+    # publishes nothing: the refusal AccessReviewAbsenceUnproven must reach the caller's -ErrorVariable
+    # and the error stream once, with one Failed row and no create. In the control the read publishes the
+    # cmdlet's own AccessReviewDefinitionNotFound answer (through a local function of that name, as the
+    # handler suite does), so the scenario can tell the refusal from silence. The script installs its own
+    # fakes in ITS copy of the module scope, checks that each one is the stub there and prints it as
+    # STUBS:, and logs every call with AppendAllText, whose path is substituted into the text. Both
+    # transports are stubs that log and throw, so nothing is sent.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        function script:New-AuNoTryScenario {
+            param([string]$Log, [ValidateSet('unanswered', 'notfound')][string]$Read)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Stubs = & (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { $null = 'OERSTUB' }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value { $null = 'OERSTUB'; [System.IO.File]::AppendAllText('#LOG#', "TRANSPORT Graph`n"); throw 'unexpected Graph request' }
+    Set-Item -Path function:script:Invoke-OERArmRequest -Value { $null = 'OERSTUB'; [System.IO.File]::AppendAllText('#LOG#', "TRANSPORT Arm`n"); throw 'unexpected ARM request' }
+    Set-Item -Path function:script:New-OERAccessReviewDefinition -Value {
+        $null = 'OERSTUB'
+        [System.IO.File]::AppendAllText('#LOG#', "REVIEW CREATE`n")
+        [pscustomobject]@{ Id = 'cccc3333-0000-0000-0000-000000000002'; DisplayName = 'AR-NoTry' }
+    }
+    Set-Item -Path function:script:Publish-AuNotFound -Value {
+        $null = 'OERSTUB'
+        function Get-OERAccessReviewDefinition {
+            [CmdletBinding()]
+            param()
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('No access review definition found for the ByFilter query.'),
+                    'AccessReviewDefinitionNotFound',
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound, 'ByFilter'))
+        }
+        & (Get-Item -LiteralPath 'function:Get-OERAccessReviewDefinition') -ErrorAction SilentlyContinue
+    }
+    Set-Item -Path function:script:Get-OERAccessReviewDefinition -Value {
+        [CmdletBinding()]
+        param([string]$Filter)
+        $null = 'OERSTUB'
+        [System.IO.File]::AppendAllText('#LOG#', "REVIEW READ $Filter`n")
+        if ('#READ#' -eq 'notfound') { Publish-AuNotFound }
+    }
+    $All = foreach ($Name in 'Initialize-OERAuth', 'Invoke-OERGraphRequest', 'Invoke-OERArmRequest', 'New-OERAccessReviewDefinition', 'Publish-AuNotFound', 'Get-OERAccessReviewDefinition') {
+        (Get-Item -LiteralPath "function:$Name").ScriptBlock.ToString().Contains("'OERSTUB'")
+    }
+    -not ($All -contains $false)
+}
+"STUBS:$Stubs"
+$Json = '{ "version": "1.0", "accessReviews": [ { "displayName": "AR-NoTry", "group": "11111111-1111-1111-1111-111111111111", "reviewers": [], "recurrence": "OneTime", "durationInDays": 3 } ] }'
+Invoke-OERStructure -Json $Json -Confirm:$false -ErrorVariable RunErrors | ForEach-Object { "ROW:$($_.Action):$($_.Item)" }
+$RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' } | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#READ#', $Read))
+        }
+    }
+
+    It 'reaches the end of a script with no try above it, with one Failed row and the refusal in the caller''s errors, and creates nothing' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-AuNoTryScenario -Log $Log -Read 'unanswered')
+        $Run.Output | Should -Contain 'STUBS:True'
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
+        # Reached: the read of the display name was made.
+        @($Logged | Where-Object { $_ -like 'REVIEW READ *' }).Count | Should -BeGreaterThan 0
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @('ROW:Failed:AR-NoTry')
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @('ERRID:AccessReviewAbsenceUnproven,Invoke-OERStructure')
+        @($Run.Errors).Count | Should -Be 1
+        $Logged | Should -Not -Contain 'REVIEW CREATE'
+        @($Logged | Where-Object { $_ -like 'TRANSPORT*' }) | Should -BeNullOrEmpty
+        @($Run.Prompts).Count | Should -Be 0
+    }
+
+    It 'creates the review in the same script when the read publishes its own not-found answer, so the scenario can tell a refusal from silence' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-AuNoTryScenario -Log $Log -Read 'notfound')
+        $Run.Output | Should -Contain 'STUBS:True'
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @('ROW:Created:AR-NoTry')
+        @($Logged | Where-Object { $_ -eq 'REVIEW CREATE' }).Count | Should -Be 1
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -BeNullOrEmpty
+        @($Run.Errors).Count | Should -Be 0
+        @($Logged | Where-Object { $_ -like 'TRANSPORT*' }) | Should -BeNullOrEmpty
     }
 }

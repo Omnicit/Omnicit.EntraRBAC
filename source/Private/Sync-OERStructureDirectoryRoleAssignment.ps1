@@ -135,6 +135,10 @@ function Sync-OERStructureDirectoryRoleAssignment {
          declined, it is reported Skipped ("would remove ...").
       Guards 2, 3 and 4 are this module's own, not a Graph rejection, and their Details say so.
 
+    A successful role or principal lookup is made once per run (per spelling of the name): the pass
+    and every entry share the answers through -LookupCache. Only a successful answer is reused; a lookup that throws or finds
+    nothing is made again where it is next needed, so every Failed row and error record stays as it was.
+
     Every write is gated by $Caller.ShouldProcess. Under -WhatIf that returns $false and the handler
     emits Skipped, naming the planned change, instead of calling the New or Remove cmdlet. Reads always
     execute even under -WhatIf so the plan is built from the live state. Every call goes through
@@ -181,6 +185,13 @@ function Sync-OERStructureDirectoryRoleAssignment {
     When set, this invocation runs the section-wide prune pass once, before reconciling its own item
     and independently of that item's outcome. The engine sets it on the section's first item only.
 
+    .PARAMETER LookupCache
+    The run's lookup cache: a case-sensitive dictionary of role definition ids (key 'role|<role>') and
+    principal object ids (key 'principal|<principalType>|<reference>') the pass and every entry share.
+    The engine creates one per document. Only a successful answer is stored. A principalType outside
+    User, Group and ServicePrincipal bypasses it. When omitted, the handler uses a cache of its own for
+    that invocation.
+
     .EXAMPLE
     Sync-OERStructureDirectoryRoleAssignment -Item $DocItem -Caller $PSCmdlet
     Reconciles one directory role assignment entry from the document against the live assignments of
@@ -207,7 +218,8 @@ function Sync-OERStructureDirectoryRoleAssignment {
         [switch]$Prune,
         [string]$TenantAlias,
         [object[]]$DeclaredInSection = @(),
-        [switch]$ReconcileSection
+        [switch]$ReconcileSection,
+        [System.Collections.Generic.Dictionary[string, string]]$LookupCache
     )
 
     process {
@@ -223,6 +235,18 @@ function Sync-OERStructureDirectoryRoleAssignment {
             param([System.Management.Automation.ErrorRecord]$Record)
             ([string]$Record.FullyQualifiedErrorId).StartsWith('ActiveDurationTooShort', [System.StringComparison]::Ordinal) -or
             ([string]$Record.Exception.Message).StartsWith('ActiveDurationTooShort', [System.StringComparison]::Ordinal)
+        }
+        # One cache per run: the engine passes its document's; a direct call gets its own, so the pass
+        # and the item of one invocation still share answers. Only a successful answer is ever stored.
+        if ($null -eq $LookupCache) {
+            $LookupCache = [System.Collections.Generic.Dictionary[string, string]]::new([System.StringComparer]::Ordinal)
+        }
+        # The principal key: Ordinal, typed. A principalType outside the resolver's set bypasses the
+        # cache (returns $null), so a binding failure is never masked by a cached id.
+        $PrincipalCacheKey = {
+            param([string]$Type, [string]$Reference)
+            if ($Type -and $Type -notin @('User', 'Group', 'ServicePrincipal')) { return $null }
+            'principal|' + $Type + '|' + $Reference
         }
         $Kind = Resolve-OERStructureEnumCasing -EnumName 'directoryRoleAssignmentType' -Value ([string]$Item.assignmentType)
         # An out-of-enum assignmentType keeps its written value in the label, as the engine's
@@ -248,8 +272,13 @@ function Sync-OERStructureDirectoryRoleAssignment {
                 if (-not $EntryKind) { continue }
                 $EntryLabel = "$($Entry.role) -> $($Entry.principal) ($EntryKind)"
                 $EntryRoleId = $null
-                try { $EntryRoleId = Resolve-OERDirectoryRoleDefinitionId -Role ([string]$Entry.role) }
-                catch { Remove-OERErrorRecord -Record $PSItem }
+                $EntryRoleKey = 'role|' + [string]$Entry.role
+                if (-not $LookupCache.TryGetValue($EntryRoleKey, [ref]$EntryRoleId)) {
+                    $EntryRoleId = $null
+                    try { $EntryRoleId = Resolve-OERDirectoryRoleDefinitionId -Role ([string]$Entry.role) }
+                    catch { Remove-OERErrorRecord -Record $PSItem }
+                    if ($EntryRoleId -is [string] -and $EntryRoleId) { $LookupCache[$EntryRoleKey] = $EntryRoleId }
+                }
                 if (-not $EntryRoleId) {
                     # Its pair is unknown, so it may be the counterpart of a candidate in ANY pair of
                     # its kind: withhold them all. Its own invocation reports its Failed row.
@@ -265,9 +294,14 @@ function Sync-OERStructureDirectoryRoleAssignment {
                 $EntryType = if (Test-OERDeclaredProperty -Node $Entry -Name 'principalType') { [string]$Entry.principalType } else { $null }
                 $EntryParams = @{ Reference = [string]$Entry.principal }
                 if ($EntryType) { $EntryParams.Type = $EntryType }
+                $EntryPrincipalKey = & $PrincipalCacheKey $EntryType ([string]$Entry.principal)
                 $EntryPrincipalId = $null
-                try { $EntryPrincipalId = Resolve-OERStructurePrincipal @EntryParams }
-                catch { Remove-OERErrorRecord -Record $PSItem }
+                if (-not ($EntryPrincipalKey -and $LookupCache.TryGetValue($EntryPrincipalKey, [ref]$EntryPrincipalId))) {
+                    $EntryPrincipalId = $null
+                    try { $EntryPrincipalId = Resolve-OERStructurePrincipal @EntryParams }
+                    catch { Remove-OERErrorRecord -Record $PSItem }
+                    if ($EntryPrincipalKey -and $EntryPrincipalId -is [string] -and $EntryPrincipalId) { $LookupCache[$EntryPrincipalKey] = $EntryPrincipalId }
+                }
                 if (-not $EntryPrincipalId) { $PairUnresolved[$PairKey].Add($EntryLabel); continue }
                 $null = $DeclaredKeys.Add("$EntryRoleId|$EntryPrincipalId|$EntryKind")
             }
@@ -395,8 +429,13 @@ function Sync-OERStructureDirectoryRoleAssignment {
 
         # -- 1. Resolve the role -----------------------------------------------------------
         $RoleId = $null
+        $RoleKey = 'role|' + [string]$Item.role
         try {
-            $RoleId = Resolve-OERDirectoryRoleDefinitionId -Role $Item.role
+            if (-not $LookupCache.TryGetValue($RoleKey, [ref]$RoleId)) {
+                $RoleId = $null
+                $RoleId = Resolve-OERDirectoryRoleDefinitionId -Role $Item.role
+                if ($RoleId -is [string] -and $RoleId) { $LookupCache[$RoleKey] = $RoleId }
+            }
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             $Caller.WriteError($PSItem)
@@ -414,8 +453,13 @@ function Sync-OERStructureDirectoryRoleAssignment {
         $ResolveParams = @{ Reference = [string]$Item.principal }
         if ($PrincipalType) { $ResolveParams.Type = $PrincipalType }
         $PrincipalObjId = $null
+        $PrincipalKey = & $PrincipalCacheKey $PrincipalType ([string]$Item.principal)
         try {
-            $PrincipalObjId = Resolve-OERStructurePrincipal @ResolveParams
+            if (-not ($PrincipalKey -and $LookupCache.TryGetValue($PrincipalKey, [ref]$PrincipalObjId))) {
+                $PrincipalObjId = $null
+                $PrincipalObjId = Resolve-OERStructurePrincipal @ResolveParams
+                if ($PrincipalKey -and $PrincipalObjId -is [string] -and $PrincipalObjId) { $LookupCache[$PrincipalKey] = $PrincipalObjId }
+            }
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             $Caller.WriteError($PSItem)

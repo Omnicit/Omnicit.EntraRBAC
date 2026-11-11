@@ -995,6 +995,11 @@ rename itself fails, the object's children (members, scoped roles, resources, re
 assignment policies) are not reconciled, and under `-WhatIf` the plan says `would rename` and plans
 them against the object found under its previous name.
 
+An access review is created only when the read of its display name answered that none exists; a read
+that failed is reported `Failed` as itself (a first page that came back without a value list is a failed
+read, `GraphPagingIncomplete`), and a read that gave no answer at all is reported `Failed` with
+`AccessReviewAbsenceUnproven`, in a `-WhatIf` plan too, and nothing is created.
+
 An assignment policy's object id matches only a policy of its own access package, and a policy that
 declares `previousDisplayName` in a package the same run creates fails with
 `AssignmentPolicyRenameNotFound`. An access review's two names are looked up in the whole tenant (an

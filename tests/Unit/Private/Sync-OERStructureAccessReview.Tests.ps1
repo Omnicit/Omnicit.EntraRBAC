@@ -5,10 +5,39 @@ BeforeAll {
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
     . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+    # The answer the real Get-OERAccessReviewDefinition publishes when nothing matched: a record whose
+    # FullyQualifiedErrorId is 'AccessReviewDefinitionNotFound,Get-OERAccessReviewDefinition'. A mock that
+    # returns nothing and publishes nothing is NOT that answer: the handler reports it unproven. The
+    # local function shadows the cmdlet inside this helper only, then is invoked as the cmdlet's own
+    # name so the engine stamps the publisher segment (measured on Pester 6.2.0, Continue and Stop).
+    # Global: a mock bound with -ModuleName does not see a function defined with script scope here;
+    # the AfterAll below removes it.
+    # -Id sets the published id for the near-miss cases (a longer id, another case).
+    & {
+        function global:Publish-ArNotFound {
+            param([string]$Id = 'AccessReviewDefinitionNotFound')
+            $script:ArPublishId = $Id
+            function Get-OERAccessReviewDefinition {
+                [CmdletBinding()]
+                param()
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('No access review definition found for the ByFilter query.'),
+                        $script:ArPublishId,
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound, 'ByFilter'))
+            }
+            # -ErrorAction SilentlyContinue: the record reaches the handler's own -ErrorVariable but is not
+            # deposited in the caller's collectors, as the real read leaves it (measured: without it a
+            # mocked not-found read leaks one record per call into the operator's -ErrorVariable).
+            & (Get-Item -LiteralPath 'function:Get-OERAccessReviewDefinition') -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 AfterAll {
-    try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire }
+    try { Assert-OERTransportTripwire } finally {
+        Uninstall-OERTransportTripwire
+        Remove-Item -Path 'function:Publish-ArNotFound' -ErrorAction SilentlyContinue
+    }
 }
 
 Describe 'Sync-OERStructureAccessReview' {
@@ -28,7 +57,7 @@ Describe 'Sync-OERStructureAccessReview' {
                 param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                 Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
             }
-            Mock Get-OERAccessReviewDefinition { @() }
+            Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
             Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-1'; DisplayName = 'Quarterly AP-Sales' } }
             Mock Initialize-OERAuth {}
             $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -51,7 +80,7 @@ Describe 'Sync-OERStructureAccessReview' {
                 param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                 Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
             }
-            Mock Get-OERAccessReviewDefinition { @() }
+            Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
             Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-1'; DisplayName = 'Semi-annual AP-Sales' } }
             Mock Initialize-OERAuth {}
             $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -116,7 +145,7 @@ Describe 'Sync-OERStructureAccessReview' {
                 param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                 Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
             }
-            Mock Get-OERAccessReviewDefinition { @() }
+            Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
             Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-2'; DisplayName = 'Mixed Review' } }
             Mock Initialize-OERAuth {}
             $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -140,7 +169,7 @@ Describe 'Sync-OERStructureAccessReview' {
                 param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                 Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
             }
-            Mock Get-OERAccessReviewDefinition { @() }
+            Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
             Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-fb'; DisplayName = 'Fallback Review' } }
             Mock Initialize-OERAuth {}
             $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -165,7 +194,7 @@ Describe 'Sync-OERStructureAccessReview' {
                 param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                 Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
             }
-            Mock Get-OERAccessReviewDefinition { @() }
+            Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
             Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-x'; DisplayName = 'No Fallback' } }
             Mock Initialize-OERAuth {}
             $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -188,7 +217,7 @@ Describe 'Sync-OERStructureAccessReview' {
                 param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                 Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
             }
-            Mock Get-OERAccessReviewDefinition { @() }
+            Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
             Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-3'; DisplayName = 'Self Review' } }
             Mock Initialize-OERAuth {}
             $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -231,7 +260,7 @@ Describe 'Sync-OERStructureAccessReview' {
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition {
                     param($DisplayName, $DescriptionForAdmins, $DescriptionForReviewers, $AccessPackage,
                         $AssignmentPolicy, $Catalog, $Reviewer, $ReviewerGroup, $Manager, $SelfReview,
@@ -279,7 +308,7 @@ Describe 'Sync-OERStructureAccessReview' {
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition {
                     param($DisplayName, $DescriptionForAdmins, $DescriptionForReviewers, $AccessPackage,
                         $AssignmentPolicy, $Catalog, $Reviewer, $ReviewerGroup, $Manager, $SelfReview,
@@ -323,7 +352,7 @@ Describe 'Sync-OERStructureAccessReview' {
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition {
                     param($DisplayName, $DescriptionForAdmins, $DescriptionForReviewers, $AccessPackage,
                         $AssignmentPolicy, $Catalog, $Reviewer, $ReviewerGroup, $Manager, $SelfReview,
@@ -364,7 +393,7 @@ Describe 'Sync-OERStructureAccessReview' {
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition {
                     param($DisplayName, $DescriptionForAdmins, $DescriptionForReviewers, $AccessPackage,
                         $AssignmentPolicy, $Catalog, $Reviewer, $ReviewerGroup, $Manager, $SelfReview,
@@ -446,7 +475,7 @@ Describe 'Sync-OERStructureAccessReview' {
                 $script:LiveAfterRun1 = $null
                 Mock Get-OERAccessReviewDefinition {
                     $script:ArReadCount++
-                    if ($script:ArReadCount -eq 1) { @() } else { $script:LiveAfterRun1 }
+                    if ($script:ArReadCount -eq 1) { Publish-ArNotFound } else { $script:LiveAfterRun1 }
                 }
                 Mock New-OERAccessReviewDefinition {
                     param($DisplayName, $DescriptionForAdmins, $DescriptionForReviewers, $AccessPackage,
@@ -524,7 +553,7 @@ Describe 'Sync-OERStructureAccessReview' {
                 param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                 Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
             }
-            Mock Get-OERAccessReviewDefinition { @() }
+            Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
             Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-4'; DisplayName = 'Default Desc Review' } }
             Mock Initialize-OERAuth {}
             Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -547,7 +576,7 @@ Describe 'Sync-OERStructureAccessReview' {
                 param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                 Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
             }
-            Mock Get-OERAccessReviewDefinition { @() }
+            Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
             $CapturedStartDate = $null
             Mock New-OERAccessReviewDefinition {
                 $script:CapturedStartDate = $StartDate
@@ -574,7 +603,7 @@ Describe 'Sync-OERStructureAccessReview' {
                 param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                 Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
             }
-            Mock Get-OERAccessReviewDefinition { @() }
+            Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
             Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-6'; DisplayName = 'WhatIf Review' } }
             Mock Initialize-OERAuth {}
             $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -793,6 +822,40 @@ Describe 'Sync-OERStructureAccessReview' {
         }
     }
 
+    It 'fails with GraphPagingIncomplete and creates nothing when the name read answered a first page without a value member' {
+        # The REAL wrapper and the REAL Get-OERAccessReviewDefinition run (only the SDK call is
+        # mocked). The ByFilter read passes -RequireValue, so a first page with no value member is a
+        # read that did not answer: published as itself, never as AccessReviewDefinitionNotFound.
+        InModuleScope $script:moduleName {
+            function Invoke-SyncArViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+            }
+            Mock Initialize-OERAuth {}
+            $script:_OERAuthState = @{ TenantId = 't'; Environment = 'Global'; GraphConnected = $true }
+            Mock Invoke-MgGraphRequest { @{ '@odata.count' = 0 } }
+            Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-1'; DisplayName = 'Valueless Probe' } }
+            $Errs = $null
+            $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -ErrorAction SilentlyContinue `
+                    -ErrorVariable Errs -Item ([PSCustomObject]@{
+                    displayName       = 'Valueless Probe'
+                    accessPackage     = 'AP-Ops'
+                    assignmentPolicy  = 'Default'
+                    reviewers         = @('manager')
+                    fallbackReviewers = @('fallback@contoso.com')
+                    recurrence        = 'Monthly'
+                }))
+            Should -Invoke New-OERAccessReviewDefinition -Times 0 -Exactly
+            @($r | Where-Object Action -eq 'Failed').Count | Should -Be 1 -Because ('Actions: ' + (@($r | ForEach-Object { "$($_.Action)/$($_.Detail)" }) -join ' | '))
+            @($r | Where-Object Action -eq 'Created').Count | Should -Be 0
+            $Ids = @($Errs | ForEach-Object { (([string]$_.FullyQualifiedErrorId) -split ',')[0] })
+            $Ids | Should -Contain 'GraphPagingIncomplete'
+            $Ids | Should -Not -Contain 'AccessReviewDefinitionNotFound'
+            $Ids | Should -Not -Contain 'AccessReviewAbsenceUnproven'
+        }
+    }
+
     It 'still finds an existing definition through the SilentlyContinue probe' {
         InModuleScope $script:moduleName {
             function Invoke-SyncArViaCaller {
@@ -846,7 +909,7 @@ Describe 'Sync-OERStructureAccessReview' {
                 param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                 Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
             }
-            Mock Get-OERAccessReviewDefinition { @() }
+            Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
             Mock New-OERAccessReviewDefinition { throw 'graph 500' }
             Mock Initialize-OERAuth {}
             $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -878,7 +941,7 @@ Describe 'Sync-OERStructureAccessReview' {
                 param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                 Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
             }
-            Mock Get-OERAccessReviewDefinition { @() }
+            Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
             Mock New-OERAccessReviewDefinition { throw 'graph 500' }
             Mock Initialize-OERAuth {}
             Mock Remove-OERErrorRecord { }
@@ -902,7 +965,7 @@ Describe 'Sync-OERStructureAccessReview' {
                 param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                 Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
             }
-            Mock Get-OERAccessReviewDefinition { @() }
+            Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
             Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-x'; DisplayName = 'Bad Recurrence' } }
             Mock Initialize-OERAuth {}
             $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -928,7 +991,7 @@ Describe 'Sync-OERStructureAccessReview' {
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-1'; DisplayName = 'oer-ar' } }
                 Mock Initialize-OERAuth {}
                 $Item = [PSCustomObject]@{
@@ -957,7 +1020,7 @@ Describe 'Sync-OERStructureAccessReview' {
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-1'; DisplayName = 'oer-ar-omitted' } }
                 Mock Initialize-OERAuth {}
                 # No 'recurrence' key at all on this node -- this is the paired case to the explicit-null
@@ -1057,7 +1120,7 @@ Describe 'Sync-OERStructureAccessReview' {
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-1' } }
                 Mock Initialize-OERAuth {}
                 $Item = [PSCustomObject]@{
@@ -1089,7 +1152,7 @@ Describe 'Sync-OERStructureAccessReview' {
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-1' } }
                 Mock Initialize-OERAuth {}
                 $Item = [PSCustomObject]@{
@@ -1111,7 +1174,7 @@ Describe 'Sync-OERStructureAccessReview' {
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-1' } }
                 Mock Initialize-OERAuth {}
                 $Item = [PSCustomObject]@{
@@ -2483,7 +2546,7 @@ $global:WarningPreference = 'Continue'
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-mix'; DisplayName = 'Mixed Reviewers' } }
                 Mock Initialize-OERAuth {}
                 $Warnings = $null
@@ -2965,7 +3028,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-da-1' } }
                 Mock Initialize-OERAuth {}
                 $null = Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -2988,7 +3051,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-da-2' } }
                 Mock Initialize-OERAuth {}
                 $null = Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -3011,7 +3074,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-da-3' } }
                 Mock Initialize-OERAuth {}
                 $null = Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -3035,7 +3098,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-dr-1' } }
                 Mock Initialize-OERAuth {}
                 $null = Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -3058,7 +3121,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-dr-2' } }
                 Mock Initialize-OERAuth {}
                 $null = Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -3081,7 +3144,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-dr-3' } }
                 Mock Initialize-OERAuth {}
                 $null = Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -3105,7 +3168,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-sd-1' } }
                 Mock Initialize-OERAuth {}
                 $null = Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -3128,7 +3191,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-sd-2' } }
                 Mock Initialize-OERAuth {}
                 $Item = [PSCustomObject]@{
@@ -3164,7 +3227,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-sd-3' } }
                 Mock Initialize-OERAuth {}
                 $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -3189,7 +3252,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-dd-1' } }
                 Mock Initialize-OERAuth {}
                 $null = Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -3212,7 +3275,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-dd-2' } }
                 Mock Initialize-OERAuth {}
                 # Before the fix, the -contains check binds -DurationInDays $null, which the
@@ -3240,7 +3303,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-dd-3' } }
                 Mock Initialize-OERAuth {}
                 $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -3265,7 +3328,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-ed-1' } }
                 Mock Initialize-OERAuth {}
                 $null = Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -3288,7 +3351,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-ed-2' } }
                 Mock Initialize-OERAuth {}
                 $Item = [PSCustomObject]@{
@@ -3322,7 +3385,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-ed-3' } }
                 Mock Initialize-OERAuth {}
                 $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -3345,7 +3408,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-ed-4' } }
                 Mock Initialize-OERAuth {}
                 $Item = [PSCustomObject]@{
@@ -3382,7 +3445,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-oc-1' } }
                 Mock Initialize-OERAuth {}
                 $null = Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -3405,7 +3468,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-oc-2' } }
                 Mock Initialize-OERAuth {}
                 # Before the fix, the elseif's -contains check binds -Occurrences $null, which the
@@ -3433,7 +3496,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-oc-3' } }
                 Mock Initialize-OERAuth {}
                 $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -3462,7 +3525,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-mn-1' } }
                 Mock Initialize-OERAuth {}
                 $null = Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -3485,7 +3548,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-mn-2' } }
                 Mock Initialize-OERAuth {}
                 $null = Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -3508,7 +3571,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-mn-3' } }
                 Mock Initialize-OERAuth {}
                 $null = Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -3532,7 +3595,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-dec-1' } }
                 Mock Initialize-OERAuth {}
                 $null = Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -3555,7 +3618,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-dec-2' } }
                 Mock Initialize-OERAuth {}
                 # Before the fix, the -contains check casts [string]$Item.defaultDecision to an
@@ -3583,7 +3646,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-dec-3' } }
                 Mock Initialize-OERAuth {}
                 $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -3612,7 +3675,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-fb-1' } }
                 Mock Initialize-OERAuth {}
                 $null = Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -3635,7 +3698,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-fb-2' } }
                 Mock Initialize-OERAuth {}
                 $null = Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -3658,7 +3721,7 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                Mock Get-OERAccessReviewDefinition { @() }
+                Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
                 Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-fb-3' } }
                 Mock Initialize-OERAuth {}
                 $null = Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
@@ -4028,7 +4091,7 @@ Describe 'Sync-OERStructureAccessReview refuses an ambiguous definition name' {
                 param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                 Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
             }
-            Mock Get-OERAccessReviewDefinition { @() }
+            Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
             Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-new'; DisplayName = 'Q3 AP review' } }
             Mock Set-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-set' } }
             Mock Initialize-OERAuth {}
@@ -4074,7 +4137,7 @@ Describe 'Sync-OERStructureAccessReview publishes a failed derived-catalog read 
                 param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                 Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
             }
-            Mock Get-OERAccessReviewDefinition { @() }
+            Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
             Mock Resolve-OERAccessPackageId { 'ap-1' }
             Mock Initialize-OERAuth {}
             Mock Invoke-OERGraphRequest {
@@ -4129,7 +4192,7 @@ Describe 'Sync-OERStructureAccessReview publishes a failed derived-catalog read 
                 param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                 Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
             }
-            Mock Get-OERAccessReviewDefinition { @() }
+            Mock Get-OERAccessReviewDefinition { Publish-ArNotFound }
             Mock Resolve-OERAccessPackageId { 'ap-1' }
             Mock Initialize-OERAuth {}
             Mock Invoke-OERGraphRequest {
@@ -4247,7 +4310,7 @@ Describe 'Sync-OERStructureAccessReview updates a review found by name only when
         $script:BtLiveNow = New-BtPackageLive
         Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
         Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { param($Uri) throw "Unexpected Graph request: $Uri" }
-        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition { $script:BtLiveNow }
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition { $Cur = @($script:BtLiveNow | Where-Object { $null -ne $_ }); if ($Cur.Count -eq 0) { Publish-ArNotFound } else { $Cur } }
         Mock -ModuleName Omnicit.EntraRBAC Resolve-OERStructurePrincipal { 'usr-1' }
         # By default the names resolve to the live package and policy; a test that needs another answer
         # mocks it again.
@@ -4555,7 +4618,8 @@ Describe 'Sync-OERStructureAccessReview renames a review through previousDisplay
                 param($Filter)
                 if ($Filter -notmatch "^displayName eq '(.*)'$") { throw "Unexpected filter: $Filter" }
                 $Wanted = $Matches[1].Replace("''", "'")
-                @($script:RnLive | Where-Object { $_.DisplayName -eq $Wanted })
+                $RnFound = @($script:RnLive | Where-Object { $_.DisplayName -eq $Wanted })
+                if ($RnFound.Count -eq 0) { Publish-ArNotFound } else { $RnFound }
             }
         }
 
@@ -5037,8 +5101,10 @@ Describe 'Sync-OERStructureAccessReview renames a review through previousDisplay
                         [CmdletBinding()]
                         param($Filter)
                         $Live = @{ 'R1 old' = 14; 'R2 old' = 21; 'R3' = 14 }
+                        $Hit = $false
                         foreach ($Name in $Live.Keys) {
                             if ($Filter -eq "displayName eq '$Name'") {
+                                $Hit = $true
                                 [pscustomobject]@{
                                     Id = "cccc3333-0000-0000-0000-00000000002$($Name.Substring(1, 1))"; DisplayName = $Name; Status = 'InProgress'
                                     AccessPackageId = 'aaaa1111-0000-0000-0000-000000000001'; AssignmentPolicyId = 'bbbb2222-0000-0000-0000-000000000001'
@@ -5046,6 +5112,13 @@ Describe 'Sync-OERStructureAccessReview renames a review through previousDisplay
                                     Settings = @{ instanceDurationInDays = $Live[$Name] }
                                 }
                             }
+                        }
+                        # A name nothing carries: the answer the real cmdlet publishes.
+                        if (-not $Hit) {
+                            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                                    [System.Exception]::new('No access review definition found for the ByFilter query.'),
+                                    'AccessReviewDefinitionNotFound',
+                                    [System.Management.Automation.ErrorCategory]::ObjectNotFound, 'ByFilter'))
                         }
                     }
                     function script:Invoke-SyncArPlan {
@@ -5138,7 +5211,14 @@ Describe 'Sync-OERStructureAccessReview renames a review through previousDisplay
                         [pscustomobject]@{ Id = 'cccc3333-0000-0000-0000-000000000031' }
                     }
                     # No review carries either name.
-                    Set-Item -Path function:script:Get-OERAccessReviewDefinition -Value { [CmdletBinding()] param($Filter) }
+                    Set-Item -Path function:script:Get-OERAccessReviewDefinition -Value {
+                        [CmdletBinding()]
+                        param($Filter)
+                        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                                [System.Exception]::new('No access review definition found for the ByFilter query.'),
+                                'AccessReviewDefinitionNotFound',
+                                [System.Management.Automation.ErrorCategory]::ObjectNotFound, 'ByFilter'))
+                    }
                     function script:Invoke-SyncArNoTry {
                         [CmdletBinding(SupportsShouldProcess)]
                         param([PSCustomObject]$Item)
@@ -5258,7 +5338,7 @@ Describe 'Sync-OERStructureAccessReview reaches an access package or assignment 
         $script:MpLiveNow = New-MpLive
         Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
         Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { param($Uri) throw "Unexpected Graph request: $Uri" }
-        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition { $script:MpLiveNow }
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition { $Cur = @($script:MpLiveNow | Where-Object { $null -ne $_ }); if ($Cur.Count -eq 0) { Publish-ArNotFound } else { $Cur } }
         Mock -ModuleName Omnicit.EntraRBAC Resolve-OERStructurePrincipal { 'usr-1' }
         # Graph's name lookups in the run that renames: the names nothing renames resolve to the
         # reviewed package and policy, and every other name -- a new name -- to ANOTHER package or policy.
@@ -5845,7 +5925,7 @@ Describe 'Sync-OERStructureAccessReview applies a review of a group''s members (
         $script:GsLiveNow = $null
         Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
         Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { param($Uri) throw "Unexpected Graph request: $Uri" }
-        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition { $script:GsLiveNow }
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition { $Cur = @($script:GsLiveNow | Where-Object { $null -ne $_ }); if ($Cur.Count -eq 0) { Publish-ArNotFound } else { $Cur } }
         Mock -ModuleName Omnicit.EntraRBAC Resolve-OERStructurePrincipal { 'usr-1' }
         Mock -ModuleName Omnicit.EntraRBAC Resolve-OERGroupId { '11111111-1111-1111-1111-111111111111' }
         Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId { throw 'Unexpected access package lookup.' }
@@ -6074,7 +6154,7 @@ Describe 'Sync-OERStructureAccessReview applies a review of a directory role' {
         $script:DrRoleAnswer = [PSCustomObject]@{ RoleDefinitionId = '00000000-0000-0000-0000-000000000041'; ErrorId = $null }
         Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
         Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { param($Uri) throw "Unexpected Graph request: $Uri" }
-        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition { $script:DrLiveNow }
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition { $Cur = @($script:DrLiveNow | Where-Object { $null -ne $_ }); if ($Cur.Count -eq 0) { Publish-ArNotFound } else { $Cur } }
         Mock -ModuleName Omnicit.EntraRBAC Resolve-OERStructurePrincipal { 'usr-1' }
         Mock -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleInput { $script:DrRoleAnswer }
         Mock -ModuleName Omnicit.EntraRBAC Resolve-OERGroupId { throw 'Unexpected group lookup.' }
@@ -6355,5 +6435,236 @@ foreach ($Record in @($Ev)) { if ($Record -is [System.Management.Automation.Erro
             @($Run.Output | Where-Object { $_ -like 'EV:AccessReviewScopeMismatch*' }).Count | Should -BeGreaterOrEqual 1
             if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log | Where-Object { $_ }) | Should -BeNullOrEmpty }
         }
+    }
+}
+# BL-159a (Sprint 15 step 4). A review is created only when the read of its display name PROVED that none
+# exists: a record the cmdlet itself published whose id is, as a whole first segment, compared ordinally,
+# AccessReviewDefinitionNotFound. A read that returned nothing and published nothing, one that returned
+# other definitions only, a longer id, another case, and a NotFound record no cmdlet published (no publisher
+# segment) all prove nothing. The not-found answer is published through Publish-ArNotFound (root BeforeAll),
+# which gives the id the publisher segment the way the real cmdlet does.
+Describe 'Sync-OERStructureAccessReview creates a review only when the read proved none exists (BL-159a)' {
+
+    BeforeAll {
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewTargetMismatch { $null }
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-new'; DisplayName = 'Proof Review' } }
+        $script:AuUnprovenText = "The read of access review definitions named 'Proof Review' returned no definition of that name and no answer that none exists, so it does not show that the review is absent. Nothing was created or changed; apply the document again."
+        # Applies one entry through a caller that owns ShouldProcess. Errors are the records the CALLER
+        # published (a record's id ends with the caller's name when it is).
+        function Invoke-AuSync {
+            param([Parameter(Mandatory)]$Item, [switch]$WhatIf)
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Item = $Item; PlanOnly = $WhatIf.IsPresent } {
+                param($Item, $PlanOnly)
+                function Invoke-SyncArViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet
+                }
+                $Published = $null
+                $Rows = @(Invoke-SyncArViaCaller -Item $Item -WhatIf:$PlanOnly -ErrorAction SilentlyContinue -ErrorVariable Published -WarningAction SilentlyContinue)
+                [PSCustomObject]@{
+                    Rows   = $Rows
+                    Errors = @($Published | Where-Object {
+                            $_ -is [System.Management.Automation.ErrorRecord] -and
+                            ([string]$_.FullyQualifiedErrorId).EndsWith(',Invoke-SyncArViaCaller')
+                        })
+                }
+            }
+        }
+        function New-AuEntry {
+            param([string]$PreviousDisplayName)
+            $E = [PSCustomObject]@{
+                displayName       = 'Proof Review'
+                accessPackage     = 'AP-Ops'
+                assignmentPolicy  = 'Default'
+                reviewers         = @('manager')
+                fallbackReviewers = @('fallback@contoso.com')
+                recurrence        = 'Monthly'
+            }
+            if ($PreviousDisplayName) { $E | Add-Member -NotePropertyName previousDisplayName -NotePropertyValue $PreviousDisplayName }
+            $E
+        }
+    }
+
+    It 'refuses with AccessReviewAbsenceUnproven and creates nothing when the read returned nothing and published nothing (<Mode>)' -ForEach @(
+        @{ Mode = 'a real run'; PlanOnly = $false }
+        @{ Mode = 'a plan under -WhatIf'; PlanOnly = $true }
+    ) {
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition { }
+        $Run = Invoke-AuSync -Item (New-AuEntry) -WhatIf:$PlanOnly
+
+        $Run.Rows.Count | Should -Be 1 -Because 'one Failed row stands alone, with no would-create row beside it'
+        $Run.Rows[0].Action | Should -BeExactly 'Failed'
+        $Run.Rows[0].Detail | Should -BeExactly "could not read access review definitions: $script:AuUnprovenText"
+        $Run.Errors.Count | Should -Be 1
+        [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewAbsenceUnproven,Invoke-SyncArViaCaller'
+        $Run.Errors[0].CategoryInfo.Category | Should -Be 'ReadError'
+        $Run.Errors[0].TargetObject | Should -BeExactly 'Proof Review'
+        $Run.Errors[0].Exception.Message | Should -BeExactly $script:AuUnprovenText
+        $Run.Rows[0].Error.Exception.Message | Should -BeExactly $script:AuUnprovenText
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+    }
+
+    It 'refuses the same way when the read returned definitions and none carries the exact name' {
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition {
+            [PSCustomObject]@{ Id = 'ar-other'; DisplayName = 'Proof Review 2' }
+            [PSCustomObject]@{ Id = 'ar-prefix'; DisplayName = 'Proof' }
+        }
+        $Run = Invoke-AuSync -Item (New-AuEntry)
+
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -BeExactly 'Failed'
+        $Run.Rows[0].Detail | Should -BeExactly "could not read access review definitions: $script:AuUnprovenText"
+        [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewAbsenceUnproven,Invoke-SyncArViaCaller'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+    }
+
+    It 'creates the review when the read published exactly AccessReviewDefinitionNotFound (<Mode>)' -ForEach @(
+        @{ Mode = 'a real run'; PlanOnly = $false; Action = 'Created'; Times = 1 }
+        @{ Mode = 'a plan under -WhatIf'; PlanOnly = $true; Action = 'Skipped'; Times = 0 }
+    ) {
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition { Publish-ArNotFound }
+        $Run = Invoke-AuSync -Item (New-AuEntry) -WhatIf:$PlanOnly
+
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -BeExactly $Action
+        $Run.Errors.Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times $Times -Exactly
+    }
+
+    It 'reports a published <Case> as a failed read as itself and creates nothing' -ForEach @(
+        @{ Case = 'AccessReviewDefinitionNotFoundX (a longer id)'; Id = 'AccessReviewDefinitionNotFoundX' }
+        @{ Case = 'accessreviewdefinitionnotfound (another case)'; Id = 'accessreviewdefinitionnotfound' }
+    ) {
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition { Publish-ArNotFound -Id $Id }
+        $Run = Invoke-AuSync -Item (New-AuEntry)
+
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -BeExactly 'Failed'
+        $Run.Rows[0].Detail | Should -BeLike 'could not read access review definitions: No access review definition found*'
+        $Run.Errors.Count | Should -Be 1
+        [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeExactly "$Id,Invoke-SyncArViaCaller"
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+    }
+
+    It 'treats a NotFound record no cmdlet published (no publisher segment) as an unanswered read' {
+        # The mock's own WriteError, in the session state of the module (measured on Pester 6.2.0): the id
+        # arrives as AccessReviewDefinitionNotFound with no Get-OERAccessReviewDefinition segment.
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Get-OERAccessReviewDefinition {
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('No access review definition found for the ByFilter query.'),
+                        'AccessReviewDefinitionNotFound',
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound, 'ByFilter'))
+            }
+            function Invoke-SyncArViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item)
+                Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet
+            }
+            $Published = $null
+            $Rows = @(Invoke-SyncArViaCaller -ErrorAction SilentlyContinue -ErrorVariable Published -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
+                        displayName       = 'Proof Review'
+                        accessPackage     = 'AP-Ops'
+                        assignmentPolicy  = 'Default'
+                        reviewers         = @('manager')
+                        fallbackReviewers = @('fallback@contoso.com')
+                        recurrence        = 'Monthly'
+                    }))
+            $Own = @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and ([string]$_.FullyQualifiedErrorId).EndsWith(',Invoke-SyncArViaCaller') })
+            $Rows.Count | Should -Be 1
+            $Rows[0].Action | Should -BeExactly 'Failed'
+            $Rows[0].Detail | Should -BeLike 'could not read access review definitions: The read of access review definitions named ''Proof Review'' returned no definition*'
+            $Own.Count | Should -Be 1
+            [string]$Own[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewAbsenceUnproven,Invoke-SyncArViaCaller'
+            Should -Invoke New-OERAccessReviewDefinition -Times 0
+        }
+    }
+    It 'creates the review for a terminating record whose id is exactly AccessReviewDefinitionNotFound' {
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition {
+            throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Not found'),
+                'AccessReviewDefinitionNotFound', [System.Management.Automation.ErrorCategory]::ObjectNotFound, $null)
+        }
+        $Run = Invoke-AuSync -Item (New-AuEntry)
+
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -BeExactly 'Created'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 1 -Exactly
+    }
+
+    It 'reports a terminating record with the id AccessReviewDefinitionNotFoundX as a failed read as itself' {
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition {
+            throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Not found, but not that id'),
+                'AccessReviewDefinitionNotFoundX', [System.Management.Automation.ErrorCategory]::ObjectNotFound, $null)
+        }
+        $Run = Invoke-AuSync -Item (New-AuEntry)
+
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -BeExactly 'Failed'
+        $Run.Rows[0].Detail | Should -BeExactly 'could not read access review definitions: Not found, but not that id'
+        [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeLike 'AccessReviewDefinitionNotFoundX*'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+    }
+
+    It 'fails an entry with previousDisplayName whose name reads give no answer, as AccessReviewAbsenceUnproven and not as AccessReviewRenameNotFound' {
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition { }
+        $Run = Invoke-AuSync -Item (New-AuEntry -PreviousDisplayName 'Proof Review (old)')
+
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -BeExactly 'Failed'
+        $Run.Errors.Count | Should -Be 1
+        [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewAbsenceUnproven,Invoke-SyncArViaCaller'
+        @($Run.Errors | Where-Object { ([string]$_.FullyQualifiedErrorId) -like 'AccessReviewRenameNotFound*' }).Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+    }
+
+    It 'fails the previous-name lookup when only that read gives no answer, naming the previous name' {
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition {
+            param($Filter)
+            if ($Filter -like '*(old)*') { return }
+            Publish-ArNotFound
+        }
+        $Run = Invoke-AuSync -Item (New-AuEntry -PreviousDisplayName 'Proof Review (old)')
+
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -BeExactly 'Failed'
+        [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewAbsenceUnproven,Invoke-SyncArViaCaller'
+        $Run.Errors[0].TargetObject | Should -BeExactly 'Proof Review (old)'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+    }
+
+    It 'publishes the unanswered refusal exactly once under a caller with -ErrorAction Stop, never through the read catch' {
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition { }
+        # Every Graph catch of the handler scrubs first. The read's catch would take the exception the
+        # refusal throws under -ErrorAction Stop and publish the record a second time, so a refusal that
+        # reached it would call the scrub; the refusal stands outside the try, and nothing does.
+        Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
+        $Item = New-AuEntry
+        $Out = InModuleScope Omnicit.EntraRBAC -Parameters @{ Item = $Item } {
+            param($Item)
+            function Invoke-SyncArViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item)
+                Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet
+            }
+            $Caught = 0
+            $CaughtId = $null
+            try { $null = @(Invoke-SyncArViaCaller -Item $Item -ErrorAction Stop -WarningAction SilentlyContinue) }
+            catch { $Caught++; $CaughtId = [string]$_.FullyQualifiedErrorId }
+            [PSCustomObject]@{ Caught = $Caught; CaughtId = $CaughtId }
+        }
+        $Out.Caught | Should -Be 1
+        $Out.CaughtId | Should -BeExactly 'AccessReviewAbsenceUnproven,Invoke-SyncArViaCaller'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 0 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+    }
+    It 'creates when the real read answers an empty list (Get-OERAccessReviewDefinition itself publishes the not-found)' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { @{ value = @() } }
+        $Run = Invoke-AuSync -Item (New-AuEntry)
+
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -BeExactly 'Created'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 1 -Exactly
     }
 }

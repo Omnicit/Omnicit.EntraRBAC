@@ -259,6 +259,25 @@ Describe 'Get-OERAccessReviewDefinition' {
         }
     }
 
+    It 'passes -RequireValue on the -Filter read and on no other read' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            @{ value = @(@{ id = 'd1'; displayName = 'Scoped' }) }
+        }
+        $null = Get-OERAccessReviewDefinition -Filter "contains(scope/microsoft.graph.accessReviewQueryScope/query, '/groups')"
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $RequireValue }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly
+        $null = Get-OERAccessReviewDefinition -All
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $RequireValue }
+    }
+
+    It 'still publishes AccessReviewDefinitionNotFound for a -Filter answer with an empty value list' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { @{ value = @() } }
+        $Errs = $null
+        $null = Get-OERAccessReviewDefinition -Filter "contains(scope/microsoft.graph.accessReviewQueryScope/query, '/groups')" -ErrorVariable Errs -ErrorAction SilentlyContinue
+        @($Errs).Count | Should -Be 1
+        ([string]$Errs[0].FullyQualifiedErrorId) | Should -BeLike 'AccessReviewDefinitionNotFound,*'
+    }
+
     It '-All requests every definition via the wrapper''s -All paging switch' {
         # The hand-rolled nextLink loop this cmdlet used to run itself is gone -- it now delegates
         # paging to Invoke-OERGraphRequest -All (closes rt-graph-list-reads-first-page-only). Since
