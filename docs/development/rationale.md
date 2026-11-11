@@ -15290,6 +15290,18 @@ few other enums (a `directoryRoleAssignments` `principalType`, an access review'
 `approverInfoVisibility`, a catalog resource `type`, and the enums cast to `[string]`), recorded as a
 finding for a later step.
 
+Sprint 15 step 2 (BL-159, A4). That later step: every remaining enum check of the validator now tests that
+the value is a string before it tests membership, so a one-element array is refused as the others are.
+The keys are a group's `membershipRuleProcessingState`, a group eligibility entry's `accessType`, each
+element of a PIM `activationEnablement` and `activeEnablement`, an administrative unit's
+`membershipRuleProcessingState`, a catalog resource `type`, an approval stage's `approverInfoVisibility`,
+an access review's `defaultDecision`, and a directory role assignment's `assignmentType` and
+`principalType`. The messages are unchanged, so a refused array reads as its element ("Got: 'On'"). The
+access package `catalog` reference is the tenth case (R-1): Rule 11 is a Warning rule and cannot refuse,
+so an access package whose `catalog` is not a string now has an `Error` of its own ("'catalog' at
+accessPackages[0] must be a string.") and Rule 11 writes no Warning for it. A document that was accepted
+with a one-element array at one of these keys is refused now.
+
 ## validator-warnings-for-graph-refusals
 
 Sprint 11 step 11 (BL-54, BL-24).
