@@ -63,7 +63,7 @@ in the step's own worktree (`./build.ps1 -Tasks build`) and `OER_LIVE_REPO` nami
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -86,11 +86,20 @@ tracked changes; `A: True`.
 **Failure looks like:** `False` on the first line (`OER_LIVE_REPO` unset), or on the last (build the
 worktree first, never while the gate runs).
 
-Result:
+Result: 2026-11-11 13:30 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. The session's Repo is the step's own worktree, not the main clone; the main clone is on main; the worktree on fix/same-account-across-tenant-labels at 33fb154 with 0 tracked changes; the build carries A.
+
+[oer-s153] The module loads from a worktree that is not the main clone: True
+[oer-s153] Main clone: branch main
+[oer-s153] Worktree: branch fix/same-account-across-tenant-labels; HEAD 33fb154 docs: add the live checklist for the session's account across tenant labels; tracked changes: 0
+[oer-s153] The worktree's build carries A: True
+```
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -106,7 +115,23 @@ Disconnect-OerLive
 **Expect:** every identity line `True`, `identity check passed: True`, `The module is the worktree's build: True`.
 **Failure looks like:** any `False`, or `application is disabled` -- STOP; never sign in another way.
 
-Result:
+Result: 2026-11-11 13:30 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Every identity line True for the module session; identity check passed; the module is the worktree's build (1.6.1).
+
+[oer-s153] Omnicit.EntraRBAC 1.6.1 loaded from REPO\.claude\worktrees\s15-steg3\output\module\Omnicit.EntraRBAC\1.6.1.
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s153] The module is the worktree's build: True
+```
 
 ## A. An app-only session behaves as on main under both labels
 
@@ -131,7 +156,7 @@ around every read and is removed before every sign-in.
 
 ### A.1. The sequence on this branch's build
 
-- [ ] **A.1** Every read under the session's own label returns rows; under the other label it is refused before any token request, and the fence is never reached; both `Connect-OER` sign-ins succeed.
+- [x] **A.1** Every read under the session's own label returns rows; under the other label it is refused before any token request, and the fence is never reached; both `Connect-OER` sign-ins succeed.
 
 ```powershell
 $Variant = 'branch'
@@ -226,11 +251,50 @@ No `SignInSuperseded` anywhere.
 **Failure looks like:** `SignInSuperseded` (an app-only session compared with a user sign-in), a fence
 hit (an interactive request was made), or a digest that differs between phases.
 
-Result:
+Result: 2026-11-11 13:30 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Under the label the session signed in with, both reads returned rows with no error (Graph 5 rows, Azure Resource Manager 1, the same digest for the same read in phases 1, 4 and 5); under the other label each read was refused with InteractiveSignInUnavailable before any token request, then the command's own SignInRefused (the plain SignInRefused entries between are inner-layer copies), and the session stayed the certificate one under its own label; Connect-OER with the certificate naming the domain signed in with every True/False True; fence hits 0; no SignInSuperseded anywhere.
+
+[oer-s153] Omnicit.EntraRBAC 1.6.1 loaded from REPO\.claude\worktrees\s15-steg3\output\module\Omnicit.EntraRBAC\1.6.1.
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s153] Variant branch; module 1.6.1; from the worktree's build: True
+[oer-s153] 1 (signed in by tenant ID), Graph read naming the tenant by its tenant ID: rows 5, digest 9d4e1f209dc6; errors: ; session after: certificate True, label is the tenant ID True, label is the domain False, signed-in object is the identity True
+[oer-s153] 1 (signed in by tenant ID), ARM read naming the tenant by its tenant ID: rows 1, digest 6510588245d9; errors: ; session after: certificate True, label is the tenant ID True, label is the domain False, signed-in object is the identity True
+[oer-s153] 1 (signed in by tenant ID), Graph read naming the tenant by its domain: rows 0, digest none; errors: InteractiveSignInUnavailable,Initialize-OERAuth, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused,Get-OERCatalog; session after: certificate True, label is the tenant ID True, label is the domain False, signed-in object is the identity True
+[oer-s153] 1 (signed in by tenant ID), ARM read naming the tenant by its domain: rows 0, digest none; errors: InteractiveSignInUnavailable,Initialize-OERAuth, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused,Get-OERSubscription; session after: certificate True, label is the tenant ID True, label is the domain False, signed-in object is the identity True
+[oer-s153] Fence hits so far: 0
+[oer-s153] 3 Connect-OER with the certificate naming the domain: error: ; identity check: app-only certificate session with the identity's app id: True; service principal is the token's signed-in object: True; tenant is the test tenant: True; label is the domain: True; ARM token for the test tenant: True
+[oer-s153] 4 (signed in by domain), Graph read naming the tenant by its domain: rows 5, digest 9d4e1f209dc6; errors: ; session after: certificate True, label is the tenant ID False, label is the domain True, signed-in object is the identity True
+[oer-s153] 4 (signed in by domain), ARM read naming the tenant by its domain: rows 1, digest 6510588245d9; errors: ; session after: certificate True, label is the tenant ID False, label is the domain True, signed-in object is the identity True
+[oer-s153] 4 (signed in by domain), Graph read naming the tenant by its tenant ID: rows 0, digest none; errors: InteractiveSignInUnavailable,Initialize-OERAuth, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused,Get-OERCatalog; session after: certificate True, label is the tenant ID False, label is the domain True, signed-in object is the identity True
+[oer-s153] 4 (signed in by domain), ARM read naming the tenant by its tenant ID: rows 0, digest none; errors: InteractiveSignInUnavailable,Initialize-OERAuth, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused,Get-OERSubscription; session after: certificate True, label is the tenant ID False, label is the domain True, signed-in object is the identity True
+[oer-s153] Fence hits so far: 0
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s153] 5 (signed in by tenant ID again), Graph read naming the tenant by its tenant ID: rows 5, digest 9d4e1f209dc6; errors: ; session after: certificate True, label is the tenant ID True, label is the domain False, signed-in object is the identity True
+[oer-s153] 5 (signed in by tenant ID again), ARM read naming the tenant by its tenant ID: rows 1, digest 6510588245d9; errors: ; session after: certificate True, label is the tenant ID True, label is the domain False, signed-in object is the identity True
+[oer-s153] Fence hits in all: 0
+```
 
 ### A.2. The same sequence on main
 
-- [ ] **A.2** The block of A.1 with `$Variant = 'main'`, in a process of its own.
+- [x] **A.2** The block of A.1 with `$Variant = 'main'`, in a process of its own.
 
 ```powershell
 $Variant = 'main'
@@ -318,11 +382,49 @@ Disconnect-OerLive
 **Expect:** `from the worktree's build: False` (main's source is loaded), and otherwise what A.1 expects.
 **Failure looks like:** as A.1.
 
-Result:
+Result: 2026-11-11 13:30 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. main's source (commit 9e748cc, loaded as source, manifest version 0.0.1) printed the same outcome lines as A.1: rows, digests, error ids, session lines, fence hits 0.
+
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s153] Variant main; module 0.0.1; from the worktree's build: False
+[oer-s153] 1 (signed in by tenant ID), Graph read naming the tenant by its tenant ID: rows 5, digest 9d4e1f209dc6; errors: ; session after: certificate True, label is the tenant ID True, label is the domain False, signed-in object is the identity True
+[oer-s153] 1 (signed in by tenant ID), ARM read naming the tenant by its tenant ID: rows 1, digest 6510588245d9; errors: ; session after: certificate True, label is the tenant ID True, label is the domain False, signed-in object is the identity True
+[oer-s153] 1 (signed in by tenant ID), Graph read naming the tenant by its domain: rows 0, digest none; errors: InteractiveSignInUnavailable,Initialize-OERAuth, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused,Get-OERCatalog; session after: certificate True, label is the tenant ID True, label is the domain False, signed-in object is the identity True
+[oer-s153] 1 (signed in by tenant ID), ARM read naming the tenant by its domain: rows 0, digest none; errors: InteractiveSignInUnavailable,Initialize-OERAuth, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused,Get-OERSubscription; session after: certificate True, label is the tenant ID True, label is the domain False, signed-in object is the identity True
+[oer-s153] Fence hits so far: 0
+[oer-s153] 3 Connect-OER with the certificate naming the domain: error: ; identity check: app-only certificate session with the identity's app id: True; service principal is the token's signed-in object: True; tenant is the test tenant: True; label is the domain: True; ARM token for the test tenant: True
+[oer-s153] 4 (signed in by domain), Graph read naming the tenant by its domain: rows 5, digest 9d4e1f209dc6; errors: ; session after: certificate True, label is the tenant ID False, label is the domain True, signed-in object is the identity True
+[oer-s153] 4 (signed in by domain), ARM read naming the tenant by its domain: rows 1, digest 6510588245d9; errors: ; session after: certificate True, label is the tenant ID False, label is the domain True, signed-in object is the identity True
+[oer-s153] 4 (signed in by domain), Graph read naming the tenant by its tenant ID: rows 0, digest none; errors: InteractiveSignInUnavailable,Initialize-OERAuth, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused,Get-OERCatalog; session after: certificate True, label is the tenant ID False, label is the domain True, signed-in object is the identity True
+[oer-s153] 4 (signed in by domain), ARM read naming the tenant by its tenant ID: rows 0, digest none; errors: InteractiveSignInUnavailable,Initialize-OERAuth, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused, SignInRefused,Get-OERSubscription; session after: certificate True, label is the tenant ID False, label is the domain True, signed-in object is the identity True
+[oer-s153] Fence hits so far: 0
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s153] 5 (signed in by tenant ID again), Graph read naming the tenant by its tenant ID: rows 5, digest 9d4e1f209dc6; errors: ; session after: certificate True, label is the tenant ID True, label is the domain False, signed-in object is the identity True
+[oer-s153] 5 (signed in by tenant ID again), ARM read naming the tenant by its tenant ID: rows 1, digest 6510588245d9; errors: ; session after: certificate True, label is the tenant ID True, label is the domain False, signed-in object is the identity True
+[oer-s153] Fence hits in all: 0
+```
 
 ### A.3. Branch and main print the same lines
 
-- [ ] **A.3** The outcome files of A.1 and A.2 are identical, line for line.
+- [x] **A.3** The outcome files of A.1 and A.2 are identical, line for line.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -339,7 +441,13 @@ foreach ($D in $Diff) { Write-OerLiveStep "$($D.SideIndicator) $($D.InputObject)
 **Expect:** the same number of lines (above 0) and `lines that differ: 0`.
 **Failure looks like:** any differing line: name it in the report.
 
-Result:
+Result: 2026-11-11 13:30 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. 14 outcome lines on each side, 0 lines differ: the app-only session behaves on this branch exactly as on main under both labels.
+
+[oer-s153] Lines: branch 14, main 14; lines that differ: 0
+```
 
 ## C, for Philip, optional
 
@@ -349,7 +457,7 @@ test tenant.
 
 ### C.1. Another account picked for a command that names the tenant by its domain is refused
 
-- [ ] **C.1** After an interactive sign-in naming the tenant by its tenant ID, a command naming it by its domain, answered in the browser by ANOTHER account, is refused with `SignInSuperseded`, and the session is still the first account.
+- [~] **C.1** After an interactive sign-in naming the tenant by its tenant ID, a command naming it by its domain, answered in the browser by ANOTHER account, is refused with `SignInSuperseded`, and the session is still the first account.
 
 Steps, in a new PowerShell 7 window (not started with `-NonInteractive`), with this branch's build:
 
@@ -371,13 +479,17 @@ account 1 signed in with `-DeviceCode` or with an own `-ClientId` -- run the sam
 closes: on this branch step 5 lists `SignInSuperseded,Initialize-OERAuth` there too.
 **Failure looks like:** no error at step 4 and account 2 at step 6.
 
-Result:
+Result: 2026-11-11 13:30 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Not run by Claude Code: the identity oer-live-cc is app-only and cannot make a user sign-in (A5, class C). Optional for Philip after the merge; it does not block it. The refusal itself is class B: the Context 'a user sign-in that names the session's tenant by another label is held to the account whatever its method or application (A5)' and the no-try Context 'a public command that names the session's tenant by another label after a device code sign-in, in a script with no try above it (A5)' in tests/Unit/Private/Initialize-OERAuth.Tests.ps1.
+```
 
 ## T. Teardown
 
 ### T.1. Nothing carries the prefix
 
-- [ ] **T.1** The sweep for `oer-s153-` is 0, and the module holds no session.
+- [x] **T.1** The sweep for `oer-s153-` is 0, and the module holds no session.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -394,4 +506,22 @@ Write-OerLiveStep "The module holds a session: $($null -ne (& (Get-Module Omnici
 **Expect:** `Objects with the prefix: 0; unread kinds: 0`; `The module holds a session: False`.
 **Failure looks like:** a prefixed object (this file creates none -- STOP and report it), or an unread kind.
 
-Result:
+Result: 2026-11-11 13:30 UTC, written by Write-OerLiveResult (OerLive 1.1.0).
+
+```text
+Verdict: PASS. Nothing was created: the sweep for oer-s153- is 0 with 0 unread kinds, and the module holds no session afterwards.
+
+[oer-s153] Omnicit.EntraRBAC 1.6.1 loaded from REPO\.claude\worktrees\s15-steg3\output\module\Omnicit.EntraRBAC\1.6.1.
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s153] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s153] Sweep: no user, group, administrative unit, catalog, access package, access review definition or app registration starting with 'oer-s153-' is left.
+[oer-s153] Objects with the prefix: 0; unread kinds: 0
+[oer-s153] The module holds a session: False
+```
