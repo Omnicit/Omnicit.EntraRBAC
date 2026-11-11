@@ -1278,8 +1278,10 @@ function Invoke-OERGraphRequest {
                 -AtPage $PageNumber -AtUri $NextUri -Aggregated $AllValues.ToArray())
             return
         }
-        # SEC (BL-179, A10): the Graph SDK has no allowed-hosts list of its own, so a next link is
-        # requested wherever it points, with the session's bearer token. Page 1 is the caller's own
+        # SEC (BL-179, A10): the SDK's token provider carries an allowed-hosts list (measured in Sprint 15
+        # step 1, docs/development/rationale.md#arm-transport), but it holds the Graph host of every
+        # cloud and two Microsoft test hosts, so it does not keep a next link inside the session's
+        # cloud; this check does. Page 1 is the caller's own
         # -Uri (always a literal); only a LATER page is a value a response supplied. Decided here on the
         # parsed address: https, no user info, the port and IdnHost of the session cloud's Graph address
         # (https, no user info, same Port, IdnHost equal ignoring case). A relative link is refused like
