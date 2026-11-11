@@ -7633,3 +7633,92 @@ Describe 'Invoke-OERStructure looks each directory role and principal up once pe
         $script:LoCount.User | Should -Be 2
     }
 }
+
+Describe 'Invoke-OERStructure accessReviews: an unanswered review read creates nothing and reaches the caller' {
+    # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere above
+    # it, as at a prompt, with the runspace's own error preference (Continue). The entry is a group review
+    # that no definition of its name answers for. In the first scenario the read returns nothing and
+    # publishes nothing: the refusal AccessReviewAbsenceUnproven must reach the caller's -ErrorVariable
+    # and the error stream once, with one Failed row and no create. In the control the read publishes the
+    # cmdlet's own AccessReviewDefinitionNotFound answer (through a local function of that name, as the
+    # handler suite does), so the scenario can tell the refusal from silence. The script installs its own
+    # fakes in ITS copy of the module scope, checks that each one is the stub there and prints it as
+    # STUBS:, and logs every call with AppendAllText, whose path is substituted into the text. Both
+    # transports are stubs that log and throw, so nothing is sent.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        function script:New-AuNoTryScenario {
+            param([string]$Log, [ValidateSet('unanswered', 'notfound')][string]$Read)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Stubs = & (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { $null = 'OERSTUB' }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value { $null = 'OERSTUB'; [System.IO.File]::AppendAllText('#LOG#', "TRANSPORT Graph`n"); throw 'unexpected Graph request' }
+    Set-Item -Path function:script:Invoke-OERArmRequest -Value { $null = 'OERSTUB'; [System.IO.File]::AppendAllText('#LOG#', "TRANSPORT Arm`n"); throw 'unexpected ARM request' }
+    Set-Item -Path function:script:New-OERAccessReviewDefinition -Value {
+        $null = 'OERSTUB'
+        [System.IO.File]::AppendAllText('#LOG#', "REVIEW CREATE`n")
+        [pscustomobject]@{ Id = 'cccc3333-0000-0000-0000-000000000002'; DisplayName = 'AR-NoTry' }
+    }
+    Set-Item -Path function:script:Publish-AuNotFound -Value {
+        $null = 'OERSTUB'
+        function Get-OERAccessReviewDefinition {
+            [CmdletBinding()]
+            param()
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('No access review definition found for the ByFilter query.'),
+                    'AccessReviewDefinitionNotFound',
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound, 'ByFilter'))
+        }
+        & (Get-Item -LiteralPath 'function:Get-OERAccessReviewDefinition') -ErrorAction SilentlyContinue
+    }
+    Set-Item -Path function:script:Get-OERAccessReviewDefinition -Value {
+        [CmdletBinding()]
+        param([string]$Filter)
+        $null = 'OERSTUB'
+        [System.IO.File]::AppendAllText('#LOG#', "REVIEW READ $Filter`n")
+        if ('#READ#' -eq 'notfound') { Publish-AuNotFound }
+    }
+    $All = foreach ($Name in 'Initialize-OERAuth', 'Invoke-OERGraphRequest', 'Invoke-OERArmRequest', 'New-OERAccessReviewDefinition', 'Publish-AuNotFound', 'Get-OERAccessReviewDefinition') {
+        (Get-Item -LiteralPath "function:$Name").ScriptBlock.ToString().Contains("'OERSTUB'")
+    }
+    -not ($All -contains $false)
+}
+"STUBS:$Stubs"
+$Json = '{ "version": "1.0", "accessReviews": [ { "displayName": "AR-NoTry", "group": "11111111-1111-1111-1111-111111111111", "reviewers": [], "recurrence": "OneTime", "durationInDays": 3 } ] }'
+Invoke-OERStructure -Json $Json -Confirm:$false -ErrorVariable RunErrors | ForEach-Object { "ROW:$($_.Action):$($_.Item)" }
+$RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' } | ForEach-Object { "ERRID:$($_.FullyQualifiedErrorId)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#READ#', $Read))
+        }
+    }
+
+    It 'reaches the end of a script with no try above it, with one Failed row and the refusal in the caller''s errors, and creates nothing' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-AuNoTryScenario -Log $Log -Read 'unanswered')
+        $Run.Output | Should -Contain 'STUBS:True'
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
+        # Reached: the read of the display name was made.
+        @($Logged | Where-Object { $_ -like 'REVIEW READ *' }).Count | Should -BeGreaterThan 0
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @('ROW:Failed:AR-NoTry')
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -Be @('ERRID:AccessReviewAbsenceUnproven,Invoke-OERStructure')
+        @($Run.Errors).Count | Should -Be 1
+        $Logged | Should -Not -Contain 'REVIEW CREATE'
+        @($Logged | Where-Object { $_ -like 'TRANSPORT*' }) | Should -BeNullOrEmpty
+        @($Run.Prompts).Count | Should -Be 0
+    }
+
+    It 'creates the review in the same script when the read publishes its own not-found answer, so the scenario can tell a refusal from silence' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-AuNoTryScenario -Log $Log -Read 'notfound')
+        $Run.Output | Should -Contain 'STUBS:True'
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @('ROW:Created:AR-NoTry')
+        @($Logged | Where-Object { $_ -eq 'REVIEW CREATE' }).Count | Should -Be 1
+        @($Run.Output | Where-Object { $_ -like 'ERRID:*' }) | Should -BeNullOrEmpty
+        @($Run.Errors).Count | Should -Be 0
+        @($Logged | Where-Object { $_ -like 'TRANSPORT*' }) | Should -BeNullOrEmpty
+    }
+}
