@@ -8479,6 +8479,7 @@ Describe 'Test-OERStructureSchema authenticationContextId is a string matched wh
         }
     }
 }
+
 Describe 'Test-OERStructureSchema an administrative unit name or reference in the form of an object id is a Warning (BL-181 a)' {
     # The administrativeUnits[] entry is reconciled by NAME, but New-OERGroup reads a group's
     # administrativeUnit with -as [guid] (braced and dash-less forms too) as an object id, so a group

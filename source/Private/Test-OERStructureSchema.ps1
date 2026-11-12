@@ -2293,8 +2293,10 @@ function Test-OERStructureSchema {
         }
 
         # An empty string is the documented "disable the authentication context" value; any other
-        # non-c<digits> value is rejected at runtime by Set-OERRoleManagementPolicy and
-        # Set-OERDirectoryRoleManagementPolicy alike, so catch it offline instead.
+        # non-c<digits> value is refused at runtime by Set-OERRoleManagementPolicy and
+        # Set-OERDirectoryRoleManagementPolicy alike, so catch it offline instead. The offline check
+        # is stricter: it also refuses a non-string and a trailing line break, which the cmdlets'
+        # '^...$' pattern lets through.
         if (Test-HasProp -Node $Node -Name 'authenticationContextId') {
             # BL-187 (b): a declared value is a string and is matched whole (\A and \z; '$' would also
             # accept a trailing line feed). Case stays insensitive, as in the cmdlets: 'C1' is valid.
