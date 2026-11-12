@@ -3244,7 +3244,7 @@ Describe 'Test-OERStructureSchema group administrativeUnit placement warning (is
                     '"groups": [ { "displayName": "GroupX", "administrativeUnit": "66666666-6666-6666-6666-AAAAAAAAAAAA" } ], ' +
                     '"administrativeUnits": [ { "displayName": "AU-1", "id": "66666666-6666-6666-6666-aaaaaaaaaaaa", "members": [ "SomeoneElse" ] } ] }') | ConvertFrom-Json
                 $V = Test-OERStructureSchema -Document $Doc
-                $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' })
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' -and $_.Message -notlike '*has the form of an object id*' })
                 $Hit.Count | Should -Be 1
                 $Hit[0].Severity | Should -BeExactly 'Warning'
                 $Hit[0].Message | Should -BeLike "Group 'GroupX' at groups[[]0] declares administrativeUnit '66666666-6666-6666-6666-AAAAAAAAAAAA', but administrativeUnits[[]0].members does not list 'GroupX'. *"
@@ -3258,7 +3258,7 @@ Describe 'Test-OERStructureSchema group administrativeUnit placement warning (is
                     '"groups": [ { "displayName": "GroupX", "administrativeUnit": "66666666-6666-6666-6666-aaaaaaaaaaaa" } ], ' +
                     '"administrativeUnits": [ { "displayName": "AU-1", "id": "66666666-6666-6666-6666-aaaaaaaaaaaa", "members": [ "GroupX" ] } ] }') | ConvertFrom-Json
                 $V = Test-OERStructureSchema -Document $Doc
-                @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' }).Count | Should -Be 0
+                @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' -and $_.Message -notlike '*has the form of an object id*' }).Count | Should -Be 0
             }
         }
 
@@ -3274,7 +3274,7 @@ Describe 'Test-OERStructureSchema group administrativeUnit placement warning (is
                     '"groups": [ { "displayName": "GroupX", "administrativeUnit": "' + $Ref + '" } ], ' +
                     '"administrativeUnits": [ { "displayName": "AU-1", "id": "66666666-6666-6666-6666-aaaaaaaaaaaa", "members": [ "SomeoneElse" ] } ] }') | ConvertFrom-Json
                 $V = Test-OERStructureSchema -Document $Doc
-                $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' })
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' -and $_.Message -notlike '*has the form of an object id*' })
                 $Hit.Count | Should -Be 1
                 $Hit[0].Message | Should -BeLike "Group 'GroupX' at groups[[]0] declares administrativeUnit '$([System.Management.Automation.WildcardPattern]::Escape($Ref))', but administrativeUnits[[]0].members does not list 'GroupX'. *"
             }
@@ -3286,12 +3286,12 @@ Describe 'Test-OERStructureSchema group administrativeUnit placement warning (is
                     '"groups": [ { "displayName": "GroupX", "administrativeUnit": "AU-Ghost" } ], ' +
                     '"administrativeUnits": [ { "displayName": "AU-0", "id": "not-an-object-id", "members": [] } ] }') | ConvertFrom-Json
                 $V = Test-OERStructureSchema -Document $Doc
-                @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' }).Count | Should -Be 0
+                @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' -and $_.Message -notlike '*has the form of an object id*' }).Count | Should -Be 0
                 # Control: the same entry named by its display name is matched and warns.
                 $Named = ('{ "version": "1.0", ' +
                     '"groups": [ { "displayName": "GroupX", "administrativeUnit": "AU-0" } ], ' +
                     '"administrativeUnits": [ { "displayName": "AU-0", "id": "not-an-object-id", "members": [] } ] }') | ConvertFrom-Json
-                @((Test-OERStructureSchema -Document $Named).Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' }).Count | Should -Be 1
+                @((Test-OERStructureSchema -Document $Named).Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' -and $_.Message -notlike '*has the form of an object id*' }).Count | Should -Be 1
             }
         }
     }
@@ -3305,7 +3305,7 @@ Describe 'Test-OERStructureSchema group administrativeUnit placement warning (is
                     '{ "displayName": "AU-1", "members": null }, { "displayName": "AU-2", "members": [ "GroupX" ] }, ' +
                     '{ "displayName": "AU-3", "scopedRoles": null } ] }') | ConvertFrom-Json
                 $V = Test-OERStructureSchema -Document $Doc
-                $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' })
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' -and $_.Message -notlike '*has the form of an object id*' })
                 $Hit.Count | Should -Be 1
                 $Hit[0].Severity | Should -BeExactly 'Warning'
                 $Hit[0].Item | Should -BeExactly 'GroupX'
@@ -3325,11 +3325,11 @@ Describe 'Test-OERStructureSchema group administrativeUnit placement warning (is
                 $NullMembersDoc = ('{ "version": "1.0", ' +
                     '"groups": [ { "displayName": "GroupX", "administrativeUnit": "66666666-6666-6666-6666-666666666666" } ], ' +
                     '"administrativeUnits": [ { "displayName": "AU-0", "members": null } ] }') | ConvertFrom-Json
-                @((Test-OERStructureSchema -Document $NullMembersDoc).Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' }).Count | Should -Be 0
+                @((Test-OERStructureSchema -Document $NullMembersDoc).Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' -and $_.Message -notlike '*has the form of an object id*' }).Count | Should -Be 0
                 $EmptyMembersDoc = ('{ "version": "1.0", ' +
                     '"groups": [ { "displayName": "GroupX", "administrativeUnit": "66666666-6666-6666-6666-666666666666" } ], ' +
                     '"administrativeUnits": [ { "displayName": "AU-0", "members": [] } ] }') | ConvertFrom-Json
-                @((Test-OERStructureSchema -Document $EmptyMembersDoc).Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' }).Count | Should -Be 1
+                @((Test-OERStructureSchema -Document $EmptyMembersDoc).Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' -and $_.Message -notlike '*has the form of an object id*' }).Count | Should -Be 1
             }
         }
 
@@ -3340,7 +3340,7 @@ Describe 'Test-OERStructureSchema group administrativeUnit placement warning (is
                     '"administrativeUnits": [ { "displayName": "AU-0", "members": [ "groupx" ] }, ' +
                     '{ "displayName": "AU-1", "members": [ "88888888-8888-8888-8888-888888888888" ] } ] }') | ConvertFrom-Json
                 $V = Test-OERStructureSchema -Document $Doc
-                @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' }).Count | Should -Be 0
+                @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' -and $_.Message -notlike '*has the form of an object id*' }).Count | Should -Be 0
             }
         }
 
@@ -3350,7 +3350,7 @@ Describe 'Test-OERStructureSchema group administrativeUnit placement warning (is
                     '"groups": [ { "displayName": "GroupX", "administrativeUnit": "66666666666666666666666666666666" } ], ' +
                     '"administrativeUnits": [ { "displayName": "AU-0", "members": [] } ] }') | ConvertFrom-Json
                 $V = Test-OERStructureSchema -Document $Doc
-                $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' })
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' -and $_.Message -notlike '*has the form of an object id*' })
                 $Hit.Count | Should -Be 1
                 $Hit[0].Message | Should -BeLike "Group 'GroupX' at groups[[]0] declares administrativeUnit '66666666666666666666666666666666', an object id that no administrativeUnits[[]] entry declares as its id, *(administrativeUnits[[]0]).*"
             }
@@ -3363,13 +3363,13 @@ Describe 'Test-OERStructureSchema group administrativeUnit placement warning (is
                     '"administrativeUnits": [ { "displayName": "AU-0", "id": "77777777-7777-7777-7777-777777777777", "members": [] }, ' +
                     '{ "displayName": "AU-1", "members": [] } ] }') | ConvertFrom-Json
                 $V = Test-OERStructureSchema -Document $Doc
-                $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' })
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' -and $_.Message -notlike '*has the form of an object id*' })
                 $Hit.Count | Should -Be 1
                 $Hit[0].Message | Should -BeLike "*whose members do not list 'GroupX' (administrativeUnits[[]1]). *"
                 $OnlyOther = ('{ "version": "1.0", ' +
                     '"groups": [ { "displayName": "GroupX", "administrativeUnit": "66666666-6666-6666-6666-666666666666" } ], ' +
                     '"administrativeUnits": [ { "displayName": "AU-0", "id": "77777777-7777-7777-7777-777777777777", "members": [] } ] }') | ConvertFrom-Json
-                @((Test-OERStructureSchema -Document $OnlyOther).Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' }).Count | Should -Be 0
+                @((Test-OERStructureSchema -Document $OnlyOther).Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' -and $_.Message -notlike '*has the form of an object id*' }).Count | Should -Be 0
             }
         }
 
@@ -3379,7 +3379,7 @@ Describe 'Test-OERStructureSchema group administrativeUnit placement warning (is
                     '"groups": [ { "displayName": "GroupX", "administrativeUnit": "AU-Ghost" } ], ' +
                     '"administrativeUnits": [ { "displayName": "AU-0", "members": [] } ] }') | ConvertFrom-Json
                 $V = Test-OERStructureSchema -Document $Doc
-                @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' }).Count | Should -Be 0
+                @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' -and $_.Message -notlike '*has the form of an object id*' }).Count | Should -Be 0
             }
         }
     }
@@ -3391,7 +3391,7 @@ Describe 'Test-OERStructureSchema group administrativeUnit placement warning (is
                     '"groups": [ { "displayName": "GroupX", "administrativeUnit": "AU-1" } ], ' +
                     '"administrativeUnits": [ { "displayName": "AU-1", "members": [ "person1@example.com", "99999999-9999-9999-9999-999999999999" ] } ] }') | ConvertFrom-Json
                 $V = Test-OERStructureSchema -Document $Doc
-                @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' }).Count | Should -Be 0
+                @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' -and $_.Message -notlike '*has the form of an object id*' }).Count | Should -Be 0
                 $V.Valid | Should -BeTrue
             }
         }
@@ -3402,14 +3402,14 @@ Describe 'Test-OERStructureSchema group administrativeUnit placement warning (is
                     '"groups": [ { "displayName": "GroupX", "administrativeUnit": "AU-1" }, { "displayName": "GroupY", "id": "99999999-9999-9999-9999-999999999999", "members": null } ], ' +
                     '"administrativeUnits": [ { "displayName": "AU-1", "members": [ "99999999-9999-9999-9999-999999999999" ] } ] }') | ConvertFrom-Json
                 $V = Test-OERStructureSchema -Document $Doc
-                $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' })
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' -and $_.Message -notlike '*has the form of an object id*' })
                 $Hit.Count | Should -Be 1
                 $Hit[0].Message | Should -BeLike "Group 'GroupX' at groups[[]0] declares administrativeUnit 'AU-1', but administrativeUnits[[]0].members does not list 'GroupX'. *"
                 # Control: one more object id that no groups[] entry declares may still be GroupX.
                 $WithOther = ('{ "version": "1.0", ' +
                     '"groups": [ { "displayName": "GroupX", "administrativeUnit": "AU-1" }, { "displayName": "GroupY", "id": "99999999-9999-9999-9999-999999999999", "members": null } ], ' +
                     '"administrativeUnits": [ { "displayName": "AU-1", "members": [ "99999999-9999-9999-9999-999999999999", "55555555-5555-5555-5555-555555555555" ] } ] }') | ConvertFrom-Json
-                @((Test-OERStructureSchema -Document $WithOther).Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' }).Count | Should -Be 0
+                @((Test-OERStructureSchema -Document $WithOther).Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' -and $_.Message -notlike '*has the form of an object id*' }).Count | Should -Be 0
             }
         }
 
@@ -4427,8 +4427,9 @@ Describe 'Test-OERStructureSchema renames of administrative units, catalogs, acc
             $Id = '11111111-1111-1111-1111-111111111111'
             $Doc = Get-RenameRefDoc -Doc $Doc -DisplayName 'New' -Previous $Id -Reference $Id
             $V = Invoke-RenameValidation -Doc $Doc
-            @(Get-RenameFindingAt -Validation $V -Path $RefPath) | Should -BeNullOrEmpty
-            @($V.Errors) | Should -BeNullOrEmpty
+            @(Get-RenameFindingAt -Validation $V -Path $RefPath | Where-Object { $_.Message -notlike '*has the form of an object id*' }) | Should -BeNullOrEmpty
+            # A reference that is an object id also draws the BL-181 (a) Warning of a group's administrativeUnit; that is the only other finding allowed.
+            @($V.Errors | Where-Object { $_.Message -notlike '*has the form of an object id*' }) | Should -BeNullOrEmpty
             $V.Valid | Should -BeTrue
         }
 
@@ -8476,5 +8477,66 @@ Describe 'Test-OERStructureSchema authenticationContextId is a string matched wh
                 @($V.Errors | Where-Object { $_.Path -eq "$Section[0].authenticationContextId" }).Count | Should -Be 0
             }
         }
+    }
+}
+Describe 'Test-OERStructureSchema an administrative unit name or reference in the form of an object id is a Warning (BL-181 a)' {
+    # The administrativeUnits[] entry is reconciled by NAME, but New-OERGroup reads a group's
+    # administrativeUnit with -as [guid] (braced and dash-less forms too) as an object id, so a group
+    # cannot name a unit by such a name. Both findings are Warnings. No id below is version-4 shaped.
+    BeforeAll {
+        function Invoke-UnitGuidValidation {
+            param([string]$Json)
+            $Doc = $Json | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+    }
+
+    It 'warns at administrativeUnits[0].displayName for <Shown>, with the exact text' -ForEach @(
+        @{ Shown = 'a canonical GUID'; Value = '11111111-2222-3333-4444-555555555555' }
+        @{ Shown = 'a braced GUID'; Value = '{11111111-2222-3333-4444-555555555555}' }
+        @{ Shown = 'a dash-less GUID'; Value = '11111111222233334444555555555555' }
+    ) {
+        $V = Invoke-UnitGuidValidation -Json ('{ "version": "1.0", "administrativeUnits": [ { "displayName": "' + $Value + '" } ] }')
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'administrativeUnits[0].displayName' -and $_.Message -like '*has the form of an object id*' })
+        $Hit.Count | Should -Be 1
+        $Hit[0].Severity | Should -BeExactly 'Warning'
+        $Hit[0].Section | Should -BeExactly 'administrativeUnits'
+        $Hit[0].Item | Should -BeExactly $Value
+        $Hit[0].Message | Should -BeExactly "'displayName' at administrativeUnits[0] has the form of an object id ('$Value'): New-OERGroup reads a group's 'administrativeUnit' of that form as an object id, not as a display name, so a group that names this unit by its display name is not placed in it. Give the administrative unit a name that is not a GUID."
+    }
+
+    It 'raises no such Warning for an ordinary unit name, a non-string displayName or an empty one' -ForEach @(
+        @{ Json = '"Contoso-Unit"' }
+        @{ Json = '5' }
+        @{ Json = '["11111111-2222-3333-4444-555555555555"]' }
+        @{ Json = '""' }
+    ) {
+        $V = Invoke-UnitGuidValidation -Json ('{ "version": "1.0", "administrativeUnits": [ { "displayName": ' + $Json + ' } ] }')
+        @($V.Errors | Where-Object { $_.Message -like '*has the form of an object id*' }).Count | Should -Be 0
+    }
+
+    It 'warns at groups[0].administrativeUnit for <Shown>, with the exact text' -ForEach @(
+        @{ Shown = 'a canonical GUID'; Value = '11111111-2222-3333-4444-555555555555' }
+        @{ Shown = 'a braced GUID'; Value = '{11111111-2222-3333-4444-555555555555}' }
+        @{ Shown = 'a dash-less GUID'; Value = '11111111222233334444555555555555' }
+    ) {
+        $V = Invoke-UnitGuidValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "G-One", "members": null, "administrativeUnit": "' + $Value + '" } ] }')
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' -and $_.Message -like '*has the form of an object id*' })
+        $Hit.Count | Should -Be 1
+        $Hit[0].Severity | Should -BeExactly 'Warning'
+        $Hit[0].Section | Should -BeExactly 'groups'
+        $Hit[0].Item | Should -BeExactly 'G-One'
+        $Hit[0].Message | Should -BeExactly "'administrativeUnit' at groups[0] has the form of an object id ('$Value'): New-OERGroup reads it as the object id of an administrative unit, never as a display name, so it names the unit with that object id, not a unit whose display name is '$Value'. Keep it only when it is the unit's object id."
+    }
+
+    It 'raises no such Warning for a group administrativeUnit that is a name or an empty string' -ForEach @(
+        @{ Json = '"Contoso-Unit"' }
+        @{ Json = '""' }
+    ) {
+        $V = Invoke-UnitGuidValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "G-One", "members": null, "administrativeUnit": ' + $Json + ' } ] }')
+        @($V.Errors | Where-Object { $_.Message -like '*has the form of an object id*' }).Count | Should -Be 0
     }
 }

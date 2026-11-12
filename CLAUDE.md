@@ -909,7 +909,9 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   (do not migrate those two), and the places that read a group's `administrativeUnit` the way
   `New-OERGroup` does -- the created-membership match in `Sync-OERStructureAdministrativeUnit`, and
   in `Test-OERStructureSchema` the unit placement check (Rule 12) and the restricted-unit check
-  (Rule 16), which share one local helper.
+  (Rule 16), which share one local helper, and the two Warnings of `Add-GuidDisplayNameWarning
+  -UnitReference` (an administrative unit's `displayName` and a group's `administrativeUnit` of the
+  form of an object id).
   `Why: docs/development/rationale.md#guid-predicate`
 - **`Test-OERAzureRootScope` is the single owner of whether an Azure role assignment scope addresses
   the root scope `/` (any spelling the ARM transport sends there)**; `Format-OERRootScopeAssignment`

@@ -122,7 +122,11 @@ function Test-OERStructureSchema {
     entry the engine creates the package with that name, and a GUID is read as an object id wherever an access review
     or another reference names the package; for a groups or catalogs entry Invoke-OERStructure reads the
     GUID as an object id, so the entry reconciles the object with that id and not one with that name. An
-    accessReviews displayName is not checked: the engine looks a review up by its name only.
+    accessReviews displayName is not checked: the engine looks a review up by its name only. Two
+    more Warnings (BL-181 a) read a value the way New-OERGroup reads a group's administrativeUnit
+    (a GUID in any form: braced and dash-less too): an administrativeUnits displayName of that form,
+    which a group cannot name the unit by, and a group's administrativeUnit of that form, which names
+    a unit by object id and never by display name.
     A group that declares template and no displayName, and whose template Resolve-OERName cannot
     resolve with the tokens given (a placeholder no token supplies, a name over 256 characters), is an Error at
     groups[i].template carrying Resolve-OERName's reason (BL-139); a value in tokens is inserted as
@@ -582,9 +586,20 @@ function Test-OERStructureSchema {
     # stands; accessReviews is not checked, since the engine looks a review up by name, R-7). Only a declared displayName that is a string is checked; a type problem is
     # Add-DisplayNameTypeFinding's, and a template entry declares no displayName.
     function Add-GuidDisplayNameWarning {
-        param([object]$Node, [string]$Section, [string]$Path, [string]$Noun, [string]$Other)
-        if (-not (Test-HasProp -Node $Node -Name 'displayName')) { return }
-        $NameValue = $Node.displayName
+        param([object]$Node, [string]$Section, [string]$Path, [string]$Noun, [string]$Other,
+            [string]$Property = 'displayName', [switch]$UnitReference, [string]$Message, [string]$Item)
+        if (-not (Test-HasProp -Node $Node -Name $Property)) { return }
+        $NameValue = $Node.$Property
+        if ($UnitReference) {
+            # BL-181 (a): a value read the way New-OERGroup reads a group's administrativeUnit
+            # (-as [guid]: braced, parenthesised and dash-less forms count too), so the check
+            # follows what the cmdlet does and not Test-OERGuid's canonical form. The caller's
+            # -Message is the text; an empty string is no reference.
+            if ($NameValue -isnot [string] -or $NameValue.Length -eq 0 -or -not ($NameValue -as [guid])) { return }
+            $UnitItem = if ($PSBoundParameters.ContainsKey('Item')) { $Item } else { $NameValue }
+            Add-Finding -Section $Section -Item $UnitItem -Path "$Path.$Property" -Severity 'Warning' -Message $Message
+            return
+        }
         if ($NameValue -isnot [string] -or -not (Test-OERGuid -Value $NameValue)) { return }
         Add-Finding -Section $Section -Item $NameValue -Path "$Path.displayName" -Severity 'Warning' `
             -Message ("'displayName' at $Path is the GUID '$NameValue': Invoke-OERStructure reads a GUID as an object id, not as a name, " +
@@ -769,6 +784,12 @@ function Test-OERStructureSchema {
                                 -Message "'$GStringProp' at $GPath must be a string."
                         }
                     }
+                }
+                # BL-181 (a): New-OERGroup reads an administrativeUnit that is a GUID in any form as an object
+                # id, never as a display name; a string that is not one is looked up by name.
+                if ((Test-HasProp -Node $G -Name 'administrativeUnit') -and $G.administrativeUnit -is [string]) {
+                    Add-GuidDisplayNameWarning -Node $G -Section 'groups' -Path $GPath -Property 'administrativeUnit' -UnitReference -Item $GItem `
+                        -Message "'administrativeUnit' at $GPath has the form of an object id ('$($G.administrativeUnit)'): New-OERGroup reads it as the object id of an administrative unit, never as a display name, so it names the unit with that object id, not a unit whose display name is '$($G.administrativeUnit)'. Keep it only when it is the unit's object id."
                 }
 
                 # BL-132: Microsoft Graph was measured (2026-10-13, PATCH on a security group) to refuse
@@ -1073,6 +1094,12 @@ function Test-OERStructureSchema {
                         -Consequence $AUConsequence
                 }
                 Add-DisplayNameTypeFinding -Node $AU -Section 'administrativeUnits' -Path $AUPath
+                # BL-181 (a): the entry is reconciled by name, but a group's administrativeUnit of this form
+                # is read by New-OERGroup as an object id, so no group can name this unit by its name.
+                if ((Test-HasProp -Node $AU -Name 'displayName') -and $AU.displayName -is [string]) {
+                    Add-GuidDisplayNameWarning -Node $AU -Section 'administrativeUnits' -Path $AUPath -UnitReference `
+                        -Message "'displayName' at $AUPath has the form of an object id ('$($AU.displayName)'): New-OERGroup reads a group's 'administrativeUnit' of that form as an object id, not as a display name, so a group that names this unit by its display name is not placed in it. Give the administrative unit a name that is not a GUID."
+                }
                 # A unit renamed through the document is found under its previousDisplayName too, so that
                 # name is a claim of its own, checked after the displayName claim just as the groups' is.
                 $AUPrev = Test-SupportedRename -Node $AU -Section 'administrativeUnits' -Item $AUItem -Path $AUPath `

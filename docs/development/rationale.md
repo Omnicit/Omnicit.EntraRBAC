@@ -3756,6 +3756,17 @@ restricted-unit check (Rule 16) reads a group's `administrativeUnit` with the sa
 through the one local helper Rule 12 calls (`Test-UnitNamedByReference`), so the two rules name the
 same unit ([#restricted-unit-pim](#restricted-unit-pim)).
 
+BL-181 (a), Sprint 16 step 2: the validator reads with the same cast in two more places, both inside
+`Add-GuidDisplayNameWarning -UnitReference`: an `administrativeUnits[]` entry's `displayName` and a
+group's `administrativeUnit`, each a Warning when the string parses as a GUID in any form. Why: the
+unit entry is looked up by NAME even when the name is a GUID (`Resolve-OERAdministrativeUnitId
+-DisplayName`), so the entry itself reconciles, but a group's `administrativeUnit` of that form is read
+by `New-OERGroup` as an object id, so no group can name such a unit by its name, and a group whose
+`administrativeUnit` has that form names a unit by id, not by name. `Sync-OERStructureGroup` passes the
+declared value to `New-OERGroup -AdministrativeUnit` unchanged, so the cast decides there too. The
+export is unchanged: `Get-OERInventory` and `Get-OERInventoryGroup` never write a group's
+`administrativeUnit`. Rule 12 and Rule 16 are untouched.
+
 ### CLAUDE.md text for guid-predicate
 
 What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
