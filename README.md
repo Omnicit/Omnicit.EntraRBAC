@@ -1220,7 +1220,8 @@ access package's catalog reference included), and its own `groups` entry is left
 unread, as is the own `catalogs` entry of a catalog and the own `accessPackages` entry of an access
 package with such a name, since `Invoke-OERStructure`
 reads such a name as an object id. `Test-OERStructure` warns on a hand-written `groups`, `catalogs`
-or `accessPackages` `displayName` of that form. The export warns once, and its `README.md` lists each
+or `accessPackages` `displayName` of that form, and on an `administrativeUnits` `displayName`, or a group's
+`administrativeUnit`, in the form of an object id (`New-OERGroup` reads such a reference as an object id). The export warns once, and its `README.md` lists each
 name, with how many objects carry it, under "Names two or more objects share". An access package's `catalog`, an access review's `accessPackage` or `assignmentPolicy`, and
 a group named as the principal of a role assignment or a directory role assignment (with
 `principalType` `Group`) are written by object id when their name is shared, and an access review's

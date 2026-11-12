@@ -3763,7 +3763,8 @@ unit entry is looked up by NAME even when the name is a GUID (`Resolve-OERAdmini
 -DisplayName`), so the entry itself reconciles, but a group's `administrativeUnit` of that form is read
 by `New-OERGroup` as an object id, so no group can name such a unit by its name, and a group whose
 `administrativeUnit` has that form names a unit by id, not by name. `Sync-OERStructureGroup` passes the
-declared value to `New-OERGroup -AdministrativeUnit` unchanged, so the cast decides there too. The
+declared value, or the unit id the run's rename map holds for it, to `New-OERGroup -AdministrativeUnit`,
+so the cast decides there too. The
 export is unchanged: `Get-OERInventory` and `Get-OERInventoryGroup` never write a group's
 `administrativeUnit`. Rule 12 and Rule 16 are untouched.
 
@@ -3803,6 +3804,13 @@ where the builder's binding refused it and the policy was reported Failed.
 - `NoSubjects` (maps to `notSpecified`, issue #86) and `SpecificDirectoryServicePrincipals` (map value
   `$null`, bindable but never built) are keys, since both are values the inventory or old documents
   carry.
+- One deliberate second list: `ConvertTo-OERAssignmentPolicy` keeps its own READ map (Graph wire value
+  to friendly name, about lines 130-147), the inverse of the owner's write map. The validator compares
+  case-insensitively and never reads it; do not merge the two blindly.
+- Residual: `ConvertTo-OERAssignmentPolicy` passes a raw `allowedTargetScope` it has no row for through
+  unchanged, and the validator refuses such a value as an Error. Microsoft Graph sends a value newer
+  than the client's enum as `unknownFutureValue` unless the `Prefer: include-unknown-enum-members`
+  header is sent, which the module never sends, so the case is theoretical.
 
 ## mfa-authcontext-exclusion
 

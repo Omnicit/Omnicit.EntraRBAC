@@ -13,12 +13,11 @@ address's answer was read as the Azure Resource Manager answer. Such an answer i
 error `ArmRedirectRefused`, and nothing is sent on. Every other transport failure is still
 `ArmTransportError`.
 
-`Get-OERAccessReviewDefinition -DisplayName` and `-All` refuse a first page without a value list with
-`GraphPagingIncomplete` instead of returning nothing, and `Get-OERInventory` then reports the access
-reviews section unread (`InventoryPartial`). A piped assignment policy binds its `AccessPackageId` in
-`Get-OERAccessPackageAssignmentPolicy`. `Test-OERStructure` now refuses a `requestorScope.scope` outside the
-known scopes and an `authenticationContextId` that is not a string or does not match `c` and digits
-whole (a trailing line break fails): a document that passed before is refused. It warns for an
+`Get-OERAccessReviewDefinition -DisplayName` and `-All` refuse a first page without a value list
+(`GraphPagingIncomplete`) instead of reading it as none, and `Get-OERInventory` reports the access reviews
+unread. A piped assignment policy binds its `AccessPackageId` in `Get-OERAccessPackageAssignmentPolicy`.
+`Test-OERStructure` refuses a `requestorScope.scope` outside the known scopes and, in the role management
+policy sections, an `authenticationContextId` that is not a string or ends in a line break. It warns for an
 administrative unit name, or a group's `administrativeUnit`, written as an object id.
 
 ## [1.7.0] - 2026-11-12
