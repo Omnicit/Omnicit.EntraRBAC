@@ -1237,7 +1237,7 @@ Describe 'Invoke-OERArmRequest sign-in latch gate (A19)' {
             & (Get-Module Omnicit.EntraRBAC) {
                 function script:Invoke-WebRequest {
                     [CmdletBinding()]
-                    param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
+                    param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType, $MaximumRedirection)
                     $global:OERLatchArmCalls++
                     if ($global:OERLatchArmCalls -gt 5) { exit }
                     [pscustomobject]@{ StatusCode = 401; Content = '{}'; Headers = @{} }
@@ -1328,7 +1328,7 @@ $global:OERSupInitCalls = 0
 & (Get-Module Omnicit.EntraRBAC) {
     function script:Invoke-WebRequest {
         [CmdletBinding()]
-        param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
+        param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType, $MaximumRedirection)
         $global:OERSupArmCalls++
         if ($global:OERSupArmCalls -gt 5) { exit }
 __RESPOND__
@@ -2235,7 +2235,7 @@ $global:OERStopInitCalls = 0
 & (Get-Module Omnicit.EntraRBAC) {
     function script:Invoke-WebRequest {
         [CmdletBinding()]
-        param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
+        param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType, $MaximumRedirection)
         $global:OERStopArmCalls++
         if ($global:OERStopArmCalls -gt 5) { exit }
 __RESPOND__
@@ -2362,6 +2362,56 @@ foreach ($Id in $Ids) { 'ERROR ID: {0}' -f $Id }
         $R.Output | Should -Contain 'END OF SCRIPT REACHED'
         $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
         Get-StopProbeErrorId -Probe $R | Should -Be @('ArmTransportError')
+        $R.Output | Should -Contain 'ARM CALLS: 2'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+    It 'S-R1: a redirect refusal ends the call with ArmRedirectRefused as the only record, one request, nothing returned' {
+        # The stub raises the measured MaximumRedirectExceeded record the way the real cmdlet does
+        # (WriteError under the splat's -ErrorAction Stop); its target is a real request message
+        # carrying the token.
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-ArmStopProbe -AuthMethod Interactive -Respond {
+            $Request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, 'https://management.azure.com/subscriptions?api-version=2022-12-01')
+            $null = $Request.Headers.TryAddWithoutValidation('Authorization', 'Bearer NOT-A-REAL-TOKEN-redirect')
+            $Record = [System.Management.Automation.ErrorRecord]::new(
+                [System.InvalidOperationException]::new('Operation is not valid due to the current state of the object.'),
+                'MaximumRedirectExceeded,Microsoft.PowerShell.Commands.InvokeWebRequestCommand',
+                [System.Management.Automation.ErrorCategory]::InvalidOperation, $Request)
+            $PSCmdlet.WriteError($Record)
+        } -Call {
+            Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('ArmRedirectRefused')
+        $R.Output | Should -Contain 'ARM CALLS: 1'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S-R2: a redirect refusal on page 2 of an -All walk ends it: ArmRedirectRefused only, two requests, nothing returned' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-ArmStopProbe -AuthMethod Interactive -Respond {
+            if ($global:OERStopArmCalls -eq 1) {
+                return [pscustomobject]@{
+                    StatusCode = 200; Headers = @{}
+                    Content    = '{"value":["a","b"],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=p2"}'
+                }
+            }
+            $Request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, 'https://management.azure.com/subscriptions?api-version=2022-12-01')
+            $null = $Request.Headers.TryAddWithoutValidation('Authorization', 'Bearer NOT-A-REAL-TOKEN-redirect')
+            $Record = [System.Management.Automation.ErrorRecord]::new(
+                [System.InvalidOperationException]::new('Operation is not valid due to the current state of the object.'),
+                'MaximumRedirectExceeded,Microsoft.PowerShell.Commands.InvokeWebRequestCommand',
+                [System.Management.Automation.ErrorCategory]::InvalidOperation, $Request)
+            $PSCmdlet.WriteError($Record)
+        } -Call {
+            Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -All -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('ArmRedirectRefused')
         $R.Output | Should -Contain 'ARM CALLS: 2'
         $R.Output | Should -Contain 'RESULT COUNT: 0'
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
@@ -2858,7 +2908,7 @@ $global:OERNoTokenArmCalls = 0
 & (Get-Module Omnicit.EntraRBAC) {
     function script:Invoke-WebRequest {
         [CmdletBinding()]
-        param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
+        param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType, $MaximumRedirection)
         $global:OERNoTokenArmCalls++
         if ($global:OERNoTokenArmCalls -gt 5) { exit }
         [pscustomobject]@{ StatusCode = 200; Content = '{"value":["sent"]}'; Headers = @{} }
@@ -3385,7 +3435,7 @@ $global:OERGuardProbeArmCalls = 0
 & (Get-Module Omnicit.EntraRBAC) {
     function script:Invoke-WebRequest {
         [CmdletBinding()]
-        param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
+        param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType, $MaximumRedirection)
         $global:OERGuardProbeArmCalls++
         $global:OERGuardProbeUriType = $Uri.GetType().FullName
         if ($global:OERGuardProbeArmCalls -gt 5) { exit }
@@ -3444,14 +3494,16 @@ foreach ($Id in $Ids) { 'ERROR ID: {0}' -f $Id }
     }
 }
 
-Describe 'Invoke-OERArmRequest follows a redirect only without the token (Sprint 15 step 1, A3)' {
+Describe 'Invoke-OERArmRequest follows no redirect: the measured parameters and MaximumRedirection 0 (Sprint 15 step 1, A3; Sprint 16 step 1, A9)' {
     # Measured 2026-11-10 in pwsh 7.6.9 against loopback listeners (docs/development/rationale.md,
     # #arm-transport, "Sprint 15 step 1"): Invoke-WebRequest, called with exactly the parameters below,
     # followed a 302 to another port, another host and the same origin, and a 307 (a PUT) to another
     # port, and sent the Authorization header on the first request only. That was measured for THIS
-    # parameter set. These
-    # tests pin it: a parameter added to the send -- the token moved out of -Headers,
-    # PreserveAuthorizationOnRedirect, a web session -- turns them red until it has been measured too.
+    # parameter set. Sprint 16 step 1 (BL-185, A9) then measured that -MaximumRedirection 0 with
+    # -ErrorAction Stop makes PowerShell stop with MaximumRedirectExceeded and send nothing to the next
+    # host, so every send binds it. These tests pin the set and the 0 on every send: a parameter added
+    # to the send -- the token moved out of -Headers, PreserveAuthorizationOnRedirect, a web session --
+    # or a different MaximumRedirection turns them red until it has been measured too.
     BeforeEach {
         InModuleScope Omnicit.EntraRBAC {
             $script:_OERAuthState = @{
@@ -3466,6 +3518,7 @@ Describe 'Invoke-OERArmRequest follows a redirect only without the token (Sprint
         Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest {
             $global:OERRedirectArmSends.Add([PSCustomObject]@{
                     Names       = @($PesterBoundParameters.Keys | Sort-Object)
+                    MaxRedirect = $PesterBoundParameters['MaximumRedirection']
                     HeaderNames = @(@($PesterBoundParameters['Headers'].Keys) | Sort-Object)
                 })
             $global:OERRedirectArmPage++
@@ -3486,8 +3539,9 @@ Describe 'Invoke-OERArmRequest follows a redirect only without the token (Sprint
         $null = InModuleScope Omnicit.EntraRBAC { Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' }
 
         $global:OERRedirectArmSends.Count | Should -Be 1
-        $global:OERRedirectArmSends[0].Names | Should -Be @('ErrorAction', 'Headers', 'Method', 'SkipHttpErrorCheck', 'Uri', 'Verbose')
+        $global:OERRedirectArmSends[0].Names | Should -Be @('ErrorAction', 'Headers', 'MaximumRedirection', 'Method', 'SkipHttpErrorCheck', 'Uri', 'Verbose')
         $global:OERRedirectArmSends[0].HeaderNames | Should -Be @('Authorization')
+        $global:OERRedirectArmSends[0].MaxRedirect | Should -Be 0
     }
 
     It 'sends a write with exactly the measured parameters and its body' {
@@ -3496,8 +3550,9 @@ Describe 'Invoke-OERArmRequest follows a redirect only without the token (Sprint
         }
 
         $global:OERRedirectArmSends.Count | Should -Be 1
-        $global:OERRedirectArmSends[0].Names | Should -Be @('Body', 'ContentType', 'ErrorAction', 'Headers', 'Method', 'SkipHttpErrorCheck', 'Uri', 'Verbose')
+        $global:OERRedirectArmSends[0].Names | Should -Be @('Body', 'ContentType', 'ErrorAction', 'Headers', 'MaximumRedirection', 'Method', 'SkipHttpErrorCheck', 'Uri', 'Verbose')
         $global:OERRedirectArmSends[0].HeaderNames | Should -Be @('Authorization')
+        $global:OERRedirectArmSends[0].MaxRedirect | Should -Be 0
     }
 
     It 'sends every page of an -All walk with exactly the measured parameters' {
@@ -3505,18 +3560,280 @@ Describe 'Invoke-OERArmRequest follows a redirect only without the token (Sprint
 
         $global:OERRedirectArmSends.Count | Should -Be 2
         foreach ($Send in $global:OERRedirectArmSends) {
-            $Send.Names | Should -Be @('ErrorAction', 'Headers', 'Method', 'SkipHttpErrorCheck', 'Uri', 'Verbose')
+            $Send.Names | Should -Be @('ErrorAction', 'Headers', 'MaximumRedirection', 'Method', 'SkipHttpErrorCheck', 'Uri', 'Verbose')
             $Send.HeaderNames | Should -Be @('Authorization')
+            $Send.MaxRedirect | Should -Be 0
         }
     }
 
-    It 'binds no parameter that decides what a redirect carries' {
+    It 'sends the 401 retry with the same parameters and MaximumRedirection 0 on every send' {
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest {
+            $global:OERRedirectArmSends.Add([PSCustomObject]@{
+                    Names       = @($PesterBoundParameters.Keys | Sort-Object)
+                    HeaderNames = @(@($PesterBoundParameters['Headers'].Keys) | Sort-Object)
+                    MaxRedirect = $PesterBoundParameters['MaximumRedirection']
+                })
+            if ($global:OERRedirectArmSends.Count -eq 1) { return [PSCustomObject]@{ StatusCode = 401; Content = '{}'; Headers = @{} } }
+            [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"b"}]}'; Headers = @{} }
+        }
+
+        $null = InModuleScope Omnicit.EntraRBAC { Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' }
+
+        $global:OERRedirectArmSends.Count | Should -Be 2
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly
+        foreach ($Send in $global:OERRedirectArmSends) {
+            $Send.Names | Should -Be @('ErrorAction', 'Headers', 'MaximumRedirection', 'Method', 'SkipHttpErrorCheck', 'Uri', 'Verbose')
+            $Send.HeaderNames | Should -Be @('Authorization')
+            $Send.MaxRedirect | Should -Be 0
+        }
+    }
+
+    It 'sends the 429 retry with the same parameters and MaximumRedirection 0 on every send' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest {
+            $global:OERRedirectArmSends.Add([PSCustomObject]@{
+                    Names       = @($PesterBoundParameters.Keys | Sort-Object)
+                    HeaderNames = @(@($PesterBoundParameters['Headers'].Keys) | Sort-Object)
+                    MaxRedirect = $PesterBoundParameters['MaximumRedirection']
+                })
+            if ($global:OERRedirectArmSends.Count -eq 1) { return [PSCustomObject]@{ StatusCode = 429; Content = '{}'; Headers = @{ 'Retry-After' = '1' } } }
+            [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"b"}]}'; Headers = @{} }
+        }
+
+        $null = InModuleScope Omnicit.EntraRBAC { Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' }
+
+        $global:OERRedirectArmSends.Count | Should -Be 2
+        foreach ($Send in $global:OERRedirectArmSends) {
+            $Send.Names | Should -Be @('ErrorAction', 'Headers', 'MaximumRedirection', 'Method', 'SkipHttpErrorCheck', 'Uri', 'Verbose')
+            $Send.HeaderNames | Should -Be @('Authorization')
+            $Send.MaxRedirect | Should -Be 0
+        }
+    }
+
+    It 'binds no parameter that decides what a redirect carries, and MaximumRedirection is 0' {
         $null = InModuleScope Omnicit.EntraRBAC { Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' }
 
         $global:OERRedirectArmSends.Count | Should -Be 1
-        foreach ($Name in @('PreserveAuthorizationOnRedirect', 'AllowInsecureRedirect', 'MaximumRedirection',
+        $global:OERRedirectArmSends[0].MaxRedirect | Should -Be 0
+        foreach ($Name in @('PreserveAuthorizationOnRedirect', 'AllowInsecureRedirect',
                 'WebSession', 'SessionVariable', 'Authentication', 'Token', 'Credential', 'UseDefaultCredentials')) {
             $global:OERRedirectArmSends[0].Names | Should -Not -Contain $Name
         }
+    }
+}
+
+Describe 'Invoke-OERArmRequest refuses a redirect (Sprint 16 step 1, BL-185, A9)' {
+    # Measured 2026-11-12: with -MaximumRedirection 0 and -ErrorAction Stop, Invoke-WebRequest stops with
+    # MaximumRedirectExceeded (category InvalidOperation, target the request message, which carries the
+    # Authorization header) and keeps no status, headers or body. The wrapper refuses it as
+    # ArmRedirectRefused, targets the path, and names nothing of the original record.
+    BeforeAll {
+        $global:OERRedirMessage = 'Azure Resource Manager answered this request with a redirect. The redirect was refused: it was not followed, and no request was sent on.'
+        # Builds the measured record around a fresh request; the request is kept in $global:OERRedirRequest.
+        function global:New-OERRedirMeasuredRecord ([string]$Id = 'MaximumRedirectExceeded,Microsoft.PowerShell.Commands.InvokeWebRequestCommand') {
+            $Request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, 'https://management.azure.com/subscriptions?api-version=2022-12-01')
+            $null = $Request.Headers.TryAddWithoutValidation('Authorization', 'Bearer NOT-A-REAL-TOKEN-redirect')
+            $global:OERRedirRequest = $Request
+            $Record = [System.Management.Automation.ErrorRecord]::new(
+                [System.InvalidOperationException]::new('Operation is not valid due to the current state of the object.'),
+                $Id, [System.Management.Automation.ErrorCategory]::InvalidOperation, $Request)
+            $Record.ErrorDetails = [System.Management.Automation.ErrorDetails]::new('The maximum redirection count has been exceeded. To increase the number of redirections allowed, supply a higher value to the -MaximumRedirection parameter.')
+            $global:OERRedirOriginal = $Record
+            $Record
+        }
+        # Asserts the request lost its token and that no record in $Error carries it.
+        function global:Assert-OERRedirNoToken {
+            $global:OERRedirRequest.Headers.Authorization | Should -BeNullOrEmpty
+            $global:OERRedirRequest.Headers.Contains('Authorization') | Should -BeFalse
+            foreach ($Rec in @($global:Error)) {
+                $Rec.TargetObject -is [System.Net.Http.HttpRequestMessage] | Should -BeFalse
+                [object]::ReferenceEquals($Rec.Exception, $global:OERRedirOriginal.Exception) | Should -BeFalse
+                foreach ($Text in @(($Rec | Out-String), $Rec.Exception.ToString(), [string]$Rec.ErrorDetails, [string]$Rec.TargetObject)) {
+                    $Text | Should -Not -BeLike '*NOT-A-REAL-TOKEN*'
+                }
+            }
+        }
+    }
+
+    AfterAll {
+        Remove-Item -Path function:global:New-OERRedirMeasuredRecord, function:global:Assert-OERRedirNoToken -ErrorAction Ignore
+        Remove-Variable -Scope Global -Name OERRedirMessage, OERRedirRequest, OERRedirOriginal, OERRedirThrowOn, OERRedirCalls, OERRedirId -ErrorAction Ignore
+    }
+
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC {
+            $script:_OERAuthState = @{
+                AuthMethod     = 'Interactive'
+                TenantId       = 'organizations'
+                ArmToken       = (ConvertTo-SecureString 'NOT-A-REAL-TOKEN-arm' -AsPlainText -Force)
+                ArmResourceUrl = 'https://management.azure.com/'
+            }
+        }
+        $global:OERRedirCalls = 0
+        $global:OERRedirThrowOn = 1
+        $global:OERRedirId = 'MaximumRedirectExceeded,Microsoft.PowerShell.Commands.InvokeWebRequestCommand'
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Start-Sleep { }
+        # Sends before $global:OERRedirThrowOn answer by the script in $global:OERRedirPre (a 200 page
+        # with a next link, a 401, a 429); the send numbered OERRedirThrowOn raises the measured record.
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest {
+            $global:OERRedirCalls++
+            if ($global:OERRedirCalls -eq $global:OERRedirThrowOn) { throw (New-OERRedirMeasuredRecord -Id $global:OERRedirId) }
+            & $global:OERRedirPre $global:OERRedirCalls
+        }
+        $global:OERRedirPre = { param($N) [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[]}'; Headers = @{} } }
+        $global:Error.Clear()
+    }
+
+    AfterEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Remove-Variable -Scope Global -Name OERRedirPre -ErrorAction Ignore
+    }
+
+    It 'R1: a single read is refused as ArmRedirectRefused, targets the path and leaves no token anywhere' {
+        $Caught = $null
+        try {
+            $null = InModuleScope Omnicit.EntraRBAC { Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -ErrorAction Stop }
+        } catch { $Caught = $PSItem }
+
+        ($Caught.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'ArmRedirectRefused'
+        $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidResult)
+        $Caught.TargetObject | Should -BeOfType ([string])
+        $Caught.TargetObject | Should -BeExactly '/subscriptions?api-version=2022-12-01'
+        $Caught.Exception.InnerException | Should -BeNullOrEmpty
+        $Caught.Exception.Message | Should -BeExactly $global:OERRedirMessage
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 1 -Exactly
+        Assert-OERRedirNoToken
+    }
+
+    It 'R2: a write with a body is refused the same way, with one send and no second' {
+        $Caught = $null
+        try {
+            $null = InModuleScope Omnicit.EntraRBAC {
+                Invoke-OERArmRequest -Method PUT -Path '/subscriptions/x/providers/y?api-version=2022-04-01' -Body @{ properties = @{ x = 1 } } -ErrorAction Stop
+            }
+        } catch { $Caught = $PSItem }
+
+        ($Caught.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'ArmRedirectRefused'
+        $Caught.TargetObject | Should -BeExactly '/subscriptions/x/providers/y?api-version=2022-04-01'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 1 -Exactly
+        Assert-OERRedirNoToken
+    }
+
+    It 'R3: a redirect on page 2 of an -All walk is refused with PageNumber 2 and the first page as PartialValue' {
+        $global:OERRedirThrowOn = 2
+        $global:OERRedirPre = { param($N) [PSCustomObject]@{ StatusCode = 200; Headers = @{}
+                Content = '{"value":[{"id":"a"}],"nextLink":"https://management.azure.com/paged?api-version=2022-12-01&$skiptoken=X"}' } }
+        $Caught = $null
+        try {
+            $null = InModuleScope Omnicit.EntraRBAC { Invoke-OERArmRequest -Path '/paged?api-version=2022-12-01' -All -ErrorAction Stop }
+        } catch { $Caught = $PSItem }
+
+        ($Caught.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'ArmRedirectRefused'
+        $Caught.Exception.PageNumber | Should -Be 2
+        @($Caught.Exception.PartialValue).Count | Should -Be 1
+        @($Caught.Exception.PartialValue)[0].id | Should -BeExactly 'a'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 2 -Exactly
+        Assert-OERRedirNoToken
+    }
+
+    It 'R4: a redirect on the first request of an -All walk is refused with PageNumber 1' {
+        $Caught = $null
+        try {
+            $null = InModuleScope Omnicit.EntraRBAC { Invoke-OERArmRequest -Path '/paged?api-version=2022-12-01' -All -ErrorAction Stop }
+        } catch { $Caught = $PSItem }
+
+        ($Caught.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'ArmRedirectRefused'
+        $Caught.Exception.PageNumber | Should -Be 1
+        @($Caught.Exception.PartialValue).Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 1 -Exactly
+        Assert-OERRedirNoToken
+    }
+
+    It 'R5: a redirect on the 401 retry is refused after exactly one refresh' {
+        $global:OERRedirThrowOn = 2
+        $global:OERRedirPre = { param($N) [PSCustomObject]@{ StatusCode = 401; Content = '{}'; Headers = @{} } }
+        $Caught = $null
+        try {
+            $null = InModuleScope Omnicit.EntraRBAC { Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -ErrorAction Stop }
+        } catch { $Caught = $PSItem }
+
+        ($Caught.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'ArmRedirectRefused'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 2 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly
+        Assert-OERRedirNoToken
+    }
+
+    It 'R6: a redirect on the retry after a 429 is refused' {
+        $global:OERRedirThrowOn = 2
+        $global:OERRedirPre = { param($N) [PSCustomObject]@{ StatusCode = 429; Content = '{}'; Headers = @{ 'Retry-After' = '1' } } }
+        $Caught = $null
+        try {
+            $null = InModuleScope Omnicit.EntraRBAC { Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -ErrorAction Stop }
+        } catch { $Caught = $PSItem }
+
+        ($Caught.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'ArmRedirectRefused'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 2 -Exactly
+        Assert-OERRedirNoToken
+    }
+
+    It 'R7: <Id> is <Expected>' -ForEach @(
+        @{ Id = 'MaximumRedirectExceededX,Microsoft.PowerShell.Commands.InvokeWebRequestCommand'; Expected = 'ArmTransportError'; Category = 'ConnectionError' }
+        @{ Id = 'maximumredirectexceeded,Microsoft.PowerShell.Commands.InvokeWebRequestCommand'; Expected = 'ArmTransportError'; Category = 'ConnectionError' }
+        @{ Id = ',MaximumRedirectExceeded'; Expected = 'ArmTransportError'; Category = 'ConnectionError' }
+        @{ Id = 'WebCmdletWebResponseException,Microsoft.PowerShell.Commands.InvokeWebRequestCommand'; Expected = 'ArmTransportError'; Category = 'ConnectionError' }
+        @{ Id = 'XMaximumRedirectExceeded,Microsoft.PowerShell.Commands.InvokeWebRequestCommand'; Expected = 'ArmTransportError'; Category = 'ConnectionError' }
+        @{ Id = 'MaximumRedirectExceeded'; Expected = 'ArmRedirectRefused'; Category = 'InvalidResult' }
+    ) {
+        $global:OERRedirId = $Id
+        $Caught = $null
+        try {
+            $null = InModuleScope Omnicit.EntraRBAC { Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -ErrorAction Stop }
+        } catch { $Caught = $PSItem }
+
+        ($Caught.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly $Expected
+        $Caught.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]$Category)
+        $Caught.TargetObject | Should -BeExactly '/subscriptions?api-version=2022-12-01'
+        Assert-OERRedirNoToken
+    }
+
+    It 'R8a: a 2xx answer is returned unchanged' {
+        $global:OERRedirThrowOn = 0
+        $global:OERRedirPre = { param($N) [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"b"}]}'; Headers = @{} } }
+        $Out = InModuleScope Omnicit.EntraRBAC { Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -ErrorAction Stop }
+        $Out.value[0].id | Should -BeExactly 'b'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 1 -Exactly
+    }
+
+    It 'R8b: an app-only 401 is still AppOnlyTokenRefreshUnsatisfiable after one send' {
+        $global:OERRedirThrowOn = 0
+        $global:OERRedirPre = { param($N) [PSCustomObject]@{ StatusCode = 401; Content = '{}'; Headers = @{} } }
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState.AuthMethod = 'ClientCertificate' }
+        $Caught = $null
+        try {
+            $null = InModuleScope Omnicit.EntraRBAC { Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -ErrorAction Stop }
+        } catch { $Caught = $PSItem }
+        ($Caught.FullyQualifiedErrorId -split ',')[0] | Should -BeExactly 'AppOnlyTokenRefreshUnsatisfiable'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 1 -Exactly
+    }
+
+    It 'R8c: a 429 that recovers to 200 returns the data after two sends' {
+        $global:OERRedirThrowOn = 0
+        $global:OERRedirPre = { param($N)
+            if ($N -eq 1) { return [PSCustomObject]@{ StatusCode = 429; Content = '{}'; Headers = @{ 'Retry-After' = '1' } } }
+            [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"b"}]}'; Headers = @{} } }
+        $Out = InModuleScope Omnicit.EntraRBAC { Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -ErrorAction Stop }
+        $Out.value[0].id | Should -BeExactly 'b'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 2 -Exactly
+    }
+
+    It 'R8d: a 503 with Retry-After that recovers returns the data after two sends' {
+        $global:OERRedirThrowOn = 0
+        $global:OERRedirPre = { param($N)
+            if ($N -eq 1) { return [PSCustomObject]@{ StatusCode = 503; Content = '{}'; Headers = @{ 'Retry-After' = '1' } } }
+            [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"b"}]}'; Headers = @{} } }
+        $Out = InModuleScope Omnicit.EntraRBAC { Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -ErrorAction Stop }
+        $Out.value[0].id | Should -BeExactly 'b'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 2 -Exactly
     }
 }

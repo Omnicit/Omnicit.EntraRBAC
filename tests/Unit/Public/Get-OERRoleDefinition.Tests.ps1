@@ -261,7 +261,7 @@ $global:OERRdGuardUri = ''
     }
     function script:Invoke-WebRequest {
         [CmdletBinding()]
-        param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
+        param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType, $MaximumRedirection)
         # OER-GUARD-WEB-STUB
         $global:OERRdGuardArmCalls++
         $global:OERRdGuardUri = [string]$Uri
@@ -334,5 +334,98 @@ Describe 'Get-OERRoleDefinition: a role value is a path only when it begins with
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
             $Path -ceq "$Role`?api-version=2022-04-01"
         }
+    }
+}
+
+Describe "Get-OERRoleDefinition: a redirect is refused and reaches the caller's -ErrorVariable without the token, outside any try (Sprint 16 step 1, BL-185, A9)" {
+    # Invoke-WebRequest is a stub in the module's scope that raises the measured MaximumRedirectExceeded
+    # record (target: a real request message carrying a token) with WriteError, as the real cmdlet does
+    # under -ErrorAction Stop. The cmdlet runs in a runspace with no try. The engine collects the
+    # ORIGINAL record in the caller's -ErrorVariable before the wrapper's catch runs (measured), so that
+    # variable may still hold a request message; the wrapper's scrub has emptied its Authorization header.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+    }
+
+    It 'writes one ArmRedirectRefused record with a string target, no output, and no token in any record' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $Text = @'
+Import-Module Omnicit.EntraRBAC
+$global:OERRdRedirArmCalls = 0
+& (Get-Module Omnicit.EntraRBAC) {
+    $script:_OERAuthState = @{
+        TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'
+        ClientId = ''; Environment = 'Global'
+        ArmToken = ConvertTo-SecureString 'NOT-A-REAL-TOKEN-arm' -AsPlainText -Force
+        ArmTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+        ArmResourceUrl = 'https://management.azure.com/'
+    }
+    function script:Initialize-OERAuth {
+        [CmdletBinding()]
+        param($TenantId, $AuthMethod, $ClientId, [switch]$IncludeARM, [switch]$ForceRefresh)
+        # OER-REDIR-AUTH-STUB
+    }
+    function script:Invoke-WebRequest {
+        [CmdletBinding()]
+        param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType, $MaximumRedirection)
+        # OER-REDIR-WEB-STUB
+        $global:OERRdRedirArmCalls++
+        if ($global:OERRdRedirArmCalls -gt 5) { exit }
+        $Request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, 'https://management.azure.com/subscriptions?api-version=2022-12-01')
+        $null = $Request.Headers.TryAddWithoutValidation('Authorization', 'Bearer NOT-A-REAL-TOKEN-rd')
+        $Record = [System.Management.Automation.ErrorRecord]::new(
+            [System.InvalidOperationException]::new('Operation is not valid due to the current state of the object.'),
+            'MaximumRedirectExceeded,Microsoft.PowerShell.Commands.InvokeWebRequestCommand',
+            [System.Management.Automation.ErrorCategory]::InvalidOperation, $Request)
+        $PSCmdlet.WriteError($Record)
+    }
+}
+$StubsInPlace = & (Get-Module Omnicit.EntraRBAC) {
+    (Get-Command -Name Initialize-OERAuth -CommandType Function).ScriptBlock.ToString().Contains('OER-REDIR-AUTH-STUB') -and
+    (Get-Command -Name Invoke-WebRequest -CommandType Function).ScriptBlock.ToString().Contains('OER-REDIR-WEB-STUB')
+}
+$Error.Clear()
+$Output = @(Get-OERRoleDefinition -Role '/providers/Microsoft.Authorization/roleDefinitions/aaaa1111-0000-0000-0000-000000000001' -ErrorAction SilentlyContinue -ErrorVariable OerProbeErrors)
+# -ErrorVariable also holds the inner layers' copies of the record; the cmdlet's own carries its name as the id suffix.
+$Own = @($OerProbeErrors | Where-Object { ([string]$_.FullyQualifiedErrorId -split ',')[0] -ceq 'ArmRedirectRefused' -and ([string]$_.FullyQualifiedErrorId).EndsWith(',Get-OERRoleDefinition', [System.StringComparison]::Ordinal) })
+$Both = @(@($OerProbeErrors) + @($Error))
+$HeadersLeft = @($Both | Where-Object { $_.TargetObject -is [System.Net.Http.HttpRequestMessage] -and $_.TargetObject.Headers.Contains('Authorization') }).Count
+$TargetsInError = @($Error | Where-Object { $_.TargetObject -is [System.Net.Http.HttpRequestMessage] }).Count
+$TargetsInVariable = @($OerProbeErrors | Where-Object { $_.TargetObject -is [System.Net.Http.HttpRequestMessage] }).Count
+$TokenInVariable = @(@($OerProbeErrors) | ForEach-Object { ($_ | Out-String) + $_.Exception.ToString() + [string]$_.ErrorDetails + [string]$_.TargetObject } | Where-Object { $_ -like '*NOT-A-REAL-TOKEN*' }).Count -gt 0
+$TokenInError = @(@($Error) | ForEach-Object { ($_ | Out-String) + $_.Exception.ToString() + [string]$_.ErrorDetails + [string]$_.TargetObject } | Where-Object { $_ -like '*NOT-A-REAL-TOKEN*' }).Count -gt 0
+# Unqualified, from the module scope: removes the nearest definition, which is the stub.
+& (Get-Module Omnicit.EntraRBAC) { Remove-Item -Path function:Invoke-WebRequest; Remove-Item -Path function:Initialize-OERAuth }
+$Resolved = & (Get-Module Omnicit.EntraRBAC) { Get-Command -Name Invoke-WebRequest -CommandType Function -ErrorAction Ignore }
+'TRIPWIRE RESTORED: {0}' -f ([bool]$Resolved -and $Resolved.ScriptBlock.ToString().Contains('OER-TRANSPORT-TRIPWIRE'))
+'STUBS IN PLACE: {0}' -f $StubsInPlace
+'ARM CALLS: {0}' -f $global:OERRdRedirArmCalls
+'OUTPUT COUNT: {0}' -f $Output.Count
+'OWN RECORDS: {0}' -f $Own.Count
+foreach ($Record in $Own) { 'OWN ID: {0}' -f ([string]$Record.FullyQualifiedErrorId -split ',')[0] }
+foreach ($Record in $Own) { 'OWN TARGET IS STRING: {0}' -f ($Record.TargetObject -is [string]) }
+'TOKEN IN ERRORVARIABLE: {0}' -f $TokenInVariable
+'TOKEN IN ERROR: {0}' -f $TokenInError
+'REQUEST HEADERS LEFT: {0}' -f $HeadersLeft
+'REQUEST TARGETS IN ERROR: {0}' -f $TargetsInError
+'REQUEST TARGETS IN ERRORVARIABLE: {0}' -f $TargetsInVariable
+'END OF SCRIPT REACHED'
+'@
+        $R = Invoke-OERWithConfirmAnswer -Answer '&No' -Script ([scriptblock]::Create($Text))
+        foreach ($Line in @($R.Output | Where-Object { "$_" -match '^(STUBS|TRIPWIRE|ARM CALLS|OUTPUT|OWN|TOKEN|REQUEST)' })) { Write-Host "PROBE: $Line" }
+
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'STUBS IN PLACE: True'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'ARM CALLS: 1'
+        $R.Output | Should -Contain 'OUTPUT COUNT: 0'
+        $R.Output | Should -Contain 'OWN RECORDS: 1'
+        $R.Output | Should -Contain 'OWN ID: ArmRedirectRefused'
+        $R.Output | Should -Contain 'OWN TARGET IS STRING: True'
+        $R.Output | Should -Contain 'TOKEN IN ERRORVARIABLE: False'
+        $R.Output | Should -Contain 'TOKEN IN ERROR: False'
+        $R.Output | Should -Contain 'REQUEST HEADERS LEFT: 0'
+        $R.Output | Should -Contain 'REQUEST TARGETS IN ERROR: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
     }
 }
