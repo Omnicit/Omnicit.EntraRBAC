@@ -24,8 +24,10 @@ function Format-OERUnreadCauseClause {
     At most 23 distinct causes are shown. When the cap drops some, the clause says how many distinct
     ones were dropped and where to find them (the verbose stream carries every cause as it is seen).
     The dropped count is derived from the keys, so it can never disagree with what the clause shows.
-    The clause ends in exactly one full stop: a cause's own closing full stop is dropped wherever the
-    cause stands in the clause.
+    Exactly one closing full stop of each cause is dropped, wherever the cause stands in the clause,
+    and the clause adds its own at the end. A cause ending in an ellipsis keeps its other two dots:
+    shown last, the clause's own full stop makes it three again; in the middle it is followed by
+    '; ' with two.
 
     Returns an empty string when no non-blank cause was given, so the caller can append the result
     to a message without a condition.
@@ -107,9 +109,13 @@ function Format-OERUnreadCauseClause {
     # what the list actually holds.
     $Suppressed = $UnreadCauseKeys.Count - $Shown.Count
     $MoreClause = if ($Suppressed -gt 0) { ", plus $Suppressed more distinct cause(s) not shown -- rerun with -Verbose for all of them" } else { '' }
-    # Every cause is shown without its own closing full stop, so the clause ends in exactly one and a cause in the middle
-    # is followed by '; ' alone. A cause may arrive with one (a Graph or ARM error message, Get-OERSharedNameCause) or
-    # without one; the dedupe key and the verbose stream keep the full message.
-    $Stripped = foreach ($Text in $Shown) { $Text.TrimEnd().TrimEnd('.') }
+    # Every cause is shown without ONE closing full stop (not all of them), so the clause ends in the clause's own full
+    # stop and a cause in the middle is followed by '; ' alone. A cause may arrive with one (a Graph or ARM error
+    # message, Get-OERSharedNameCause) or without one; a cause ending in an ellipsis keeps its other two dots. The
+    # dedupe key and the verbose stream keep the full message.
+    $Stripped = foreach ($Text in $Shown) {
+        $Trimmed = $Text.TrimEnd()
+        if ($Trimmed.EndsWith('.')) { $Trimmed.Substring(0, $Trimmed.Length - 1) } else { $Trimmed }
+    }
     " ${Label}: $($Stripped -join '; ')$MoreClause."
 }
