@@ -35,7 +35,9 @@ function Get-OERAccessReviewDefinition {
     this can return the one the server matched where the client-side walk returned both. If you
     rely on case-insensitive name matching, pass a wildcard (for example 'ar-*') to force the
     client-side walk.
-    No match produces a non-terminating AccessReviewDefinitionNotFound error.
+    No match produces a non-terminating AccessReviewDefinitionNotFound error. A first page of either
+    read that comes back empty, JSON null or without a value member is a read that did not answer,
+    and is published as GraphPagingIncomplete, never as AccessReviewDefinitionNotFound.
 
     .PARAMETER Filter
     A server-side OData filter expression (without the $filter= prefix). Measured against a live
@@ -46,7 +48,9 @@ function Get-OERAccessReviewDefinition {
     expressions are untested. For name matching use -DisplayName, which issues the displayName eq
     form itself and falls back to a client-side match. A first page that comes back empty or without
     a value list is a read that did not answer, and is published as GraphPagingIncomplete, never as
-    AccessReviewDefinitionNotFound.
+    AccessReviewDefinitionNotFound. The same holds for -DisplayName (both of its reads) and -All; an
+    answer whose value is an empty array is unchanged (-All: no output and no error; no match:
+    AccessReviewDefinitionNotFound).
 
     .PARAMETER All
     Lists every access review definition in the tenant using an unfiltered, paged GET
@@ -134,7 +138,12 @@ function Get-OERAccessReviewDefinition {
                     # @odata.nextLink the wrapper makes exactly one request -- and it removes the
                     # possibility of silently truncating a multi-page result if several definitions
                     # ever share one display name (Graph does not enforce displayName uniqueness).
-                    $NameResponse = Invoke-OERGraphRequest -Uri $NameUri -All
+                    #
+                    # -RequireValue: a first page that is empty, JSON null or has no value member is a
+                    # read that did not answer, refused as GraphPagingIncomplete and published below
+                    # as itself; only an answer with an empty value list is "none matched" (and then
+                    # falls back to the list read below).
+                    $NameResponse = Invoke-OERGraphRequest -Uri $NameUri -All -RequireValue
                     $Raw = @($NameResponse.value | Where-Object { $_ })
                     # Zero rows is NOT proof the definition is absent, so it is not treated as one:
                     # -like is case-insensitive while OData eq may not be. This fallback is
@@ -152,7 +161,10 @@ function Get-OERAccessReviewDefinition {
                     # unfiltered definitions list and narrow CLIENT-SIDE. $top=100 is a deliberate
                     # page-size choice for this heavily throttled endpoint; the wrapper's -All switch
                     # follows @odata.nextLink and aggregates every page.
-                    $Response = Invoke-OERGraphRequest -Uri 'v1.0/identityGovernance/accessReviews/definitions?$top=100' -All
+                    # -RequireValue: a first page that is empty, JSON null or has no value member is a
+                    # read that did not answer, refused as GraphPagingIncomplete and published below
+                    # as itself; only an answer with an empty value list is "none" / "none matched".
+                    $Response = Invoke-OERGraphRequest -Uri 'v1.0/identityGovernance/accessReviews/definitions?$top=100' -All -RequireValue
                     $Raw = if ($PSCmdlet.ParameterSetName -eq 'ByName') {
                         @($Response.value | Where-Object { $_.displayName -like $DisplayName })
                     }
