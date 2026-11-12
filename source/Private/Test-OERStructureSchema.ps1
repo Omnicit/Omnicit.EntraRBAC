@@ -82,7 +82,12 @@ function Test-OERStructureSchema {
     count, but isApprovalRequiredForUpdate falls to its Existing carry-forward branch and re-sends the
     live policy's value, so an undeclared flag is not an absent one and Graph refuses the emptied stage
     list while approval is still required for update. Exactly one of the two fires for any one policy.
-    A requestorScope declaring a non-empty users or
+    A declared requestorScope.scope is checked against the keys of Get-OERRequestorScopeMap, the
+    list New-OERAccessPackageRequestorScope sends from (BL-187 c): a string outside the list, or a
+    value that is not a string, is an Error at its requestorScope.scope path, any letter case of a
+    listed name is accepted with no finding, and unknownFutureValue (the value the inventory passes
+    through for a scope this module cannot read) is a Warning, since Invoke-OERStructure reports such
+    a policy Failed and writes nothing to it. A requestorScope declaring a non-empty users or
     groups array with no scope is a Warning (issue #69): Invoke-OERStructure infers scope as
     SpecificDirectoryUsers for that shape, so the document is no longer refused. The shape it
     replaces was an Error here, and Invoke-OERStructure refuses any document carrying one with no
@@ -1413,6 +1418,7 @@ function Test-OERStructureSchema {
 
                             if (Test-HasProp -Node $Pol -Name 'requestorScope') {
                                 $RScope = $Pol.requestorScope
+                                $RequestorScopeNames = @((Get-OERRequestorScopeMap).Keys)
 
                                 # Issue #69: a requestorScope declaring users/groups but no scope no longer
                                 # refuses the document outright -- Build-OERPolicyParts infers
@@ -1457,6 +1463,28 @@ function Test-OERStructureSchema {
                                             -Path "$PolPath.requestorScope.scope" `
                                             -Message "'requestorScope.scope' at $PolPath must be a non-empty string."
                                     }
+                                } elseif ($RScope.scope -isnot [string] -or
+                                    (($ScopeVal -ine 'unknownFutureValue') -and
+                                        (@($RequestorScopeNames) -inotcontains $ScopeVal))) {
+                                    # BL-187 (c): the scope names are Get-OERRequestorScopeMap's keys, the
+                                    # list New-OERAccessPackageRequestorScope sends from; any letter case of
+                                    # one is accepted without a finding (the builder's ValidateSet binds any
+                                    # case, and schema.json declares no enum for scope). A value that is not
+                                    # a string is named by its type, never shown as a string.
+                                    Add-Finding -Section 'accessPackages' -Item $APItem `
+                                        -Path "$PolPath.requestorScope.scope" `
+                                        -Message ("'requestorScope.scope' at $PolPath must be one of: $($RequestorScopeNames -join ', '). " +
+                                            "Got: $(Get-FoundValueText -Value $RScope.scope).")
+                                } elseif ($ScopeVal -ieq 'unknownFutureValue') {
+                                    # A Warning, never an Error: the export passes this value through for a
+                                    # live policy whose scope it cannot read, so a document it wrote must
+                                    # validate. A declared one fails the builder's ValidateSet inside the
+                                    # handler's build try, so the policy is reported Failed, nothing written.
+                                    Add-Finding -Section 'accessPackages' -Item $APItem `
+                                        -Path "$PolPath.requestorScope.scope" -Severity 'Warning' `
+                                        -Message ("'requestorScope.scope' at $PolPath is 'unknownFutureValue', the value Microsoft Graph " +
+                                            'returns for a requestor scope this module cannot read; Invoke-OERStructure reports this ' +
+                                            'assignment policy Failed and writes nothing to it. Leave the policy out of the document.')
                                 } elseif (($ScopeVal -ne 'SpecificDirectoryUsers') -and $HasNonEmptyTarget) {
                                     # Case 3 (Ruling R-3, new diagnostics only): the explicit scope stands
                                     # and Build-OERPolicyParts never infers over it, so the declared

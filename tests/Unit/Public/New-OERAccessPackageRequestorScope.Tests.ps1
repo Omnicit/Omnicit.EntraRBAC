@@ -32,6 +32,23 @@ Describe 'New-OERAccessPackageRequestorScope' {
         $S.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.RequestorScope'
     }
 
+    It 'declares a -Scope ValidateSet equal to the keys of Get-OERRequestorScopeMap, in order (BL-187 c)' {
+        $Set = (Get-Command New-OERAccessPackageRequestorScope).Parameters['Scope'].Attributes |
+            Where-Object { $_ -is [System.Management.Automation.ValidateSetAttribute] }
+        @($Set).Count | Should -Be 1
+        $Keys = InModuleScope $script:moduleName { @((Get-OERRequestorScopeMap).Keys) }
+        @($Set[0].ValidValues) | Should -BeExactly $Keys
+    }
+
+    It 'sends the owner value for every scope it builds' {
+        $Map = InModuleScope $script:moduleName { Get-OERRequestorScopeMap }
+        foreach ($Name in $Map.Keys) {
+            if ($Name -eq 'SpecificDirectoryServicePrincipals') { continue }
+            (New-OERAccessPackageRequestorScope -Scope $Name -WarningAction SilentlyContinue).AllowedTargetScope |
+                Should -BeExactly $Map[$Name]
+        }
+    }
+
     It 'maps each scope value to its Graph token' {
         (New-OERAccessPackageRequestorScope -Scope AllDirectoryUsers).AllowedTargetScope | Should -Be 'allDirectoryUsers'
         (New-OERAccessPackageRequestorScope -Scope SpecificConnectedOrganizationUsers).AllowedTargetScope | Should -Be 'specificConnectedOrganizationUsers'

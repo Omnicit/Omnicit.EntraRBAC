@@ -627,8 +627,9 @@ The machine-readable form of this contract is schema.json -- your output must va
 
 # Common values (resolved live against the tenant -- NOT closed enums in schema.json)
 
-Role and requestorScope values are free strings validated live against the tenant, not by
-schema.json. Any valid name works; these are common least-privilege choices:
+Role values are free strings validated live against the tenant, not by schema.json. Any valid
+name works; these are common least-privilege choices. requestorScope.scope is not a closed enum in
+schema.json either, but Test-OERStructure refuses a value outside the scopes named below:
 
 - Azure roles (roleAssignments[].role, roleManagementPolicies[].role): Reader, Contributor, Owner,
   User Access Administrator, Role Based Access Control Administrator. Prefer Reader / Contributor;

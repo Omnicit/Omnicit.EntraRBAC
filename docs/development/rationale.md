@@ -3768,6 +3768,31 @@ What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule
   (Rule 12) and the restricted-unit check (Rule 16), which share one local helper.
   `Why: docs/development/rationale.md#guid-predicate`
 
+## requestor-scope-list
+
+`Get-OERRequestorScopeMap` is the single owner of the requestor scope names of an assignment policy
+(Sprint 16 step 2, BL-187 c, decision A4). Before it, the list lived twice, in
+`New-OERAccessPackageRequestorScope` (a write map and a static `ValidateSet`) and nowhere in the
+offline validator, so `Test-OERStructure` accepted any non-empty string and a typo reached the apply,
+where the builder's binding refused it and the policy was reported Failed.
+
+- The builder sends the map's values; `Test-OERStructureSchema` checks a declared scope against its
+  keys. The `ValidateSet` is an attribute and cannot read a function, so it stays and a test holds it
+  equal to the keys, in order.
+- `unknownFutureValue` is a Warning, never an Error. `ConvertTo-OERAssignmentPolicy` passes the value
+  through for a live policy whose scope Graph only names with the `include-unknown-enum-members`
+  header the module never sends, so a document the export wrote must validate. A declared one fails
+  the builder's binding inside the handler's build, so the policy is reported Failed and nothing is
+  written; the Warning says so.
+- Case is not canonicalised: any letter case of a listed name is accepted with no finding, since the
+  builder's `ValidateSet` binds any case and `schema.json` declares no enum for `scope`, so there is no
+  canonical spelling to warn about.
+- `schema.json` is unchanged: `scope` stays `{ "type": "string", "minLength": 1 }`. A closed enum
+  there would refuse the export's own `unknownFutureValue` at the schema level.
+- `NoSubjects` (maps to `notSpecified`, issue #86) and `SpecificDirectoryServicePrincipals` (map value
+  `$null`, bindable but never built) are keys, since both are values the inventory or old documents
+  carry.
+
 ## mfa-authcontext-exclusion
 
 Entra PIM treats an enabled Conditional Access authentication context and

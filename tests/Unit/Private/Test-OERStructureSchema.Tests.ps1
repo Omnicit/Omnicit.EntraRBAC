@@ -2788,6 +2788,165 @@ Describe 'Test-OERStructureSchema accessPackages emptied approvalStages with an 
     }
 }
 
+Describe 'Test-OERStructureSchema requestorScope.scope against Get-OERRequestorScopeMap (BL-187 c)' {
+    BeforeAll {
+        $script:ScopePath = 'accessPackages[0].assignmentPolicies[0].requestorScope.scope'
+    }
+
+    It 'accepts <Name> with no finding at its path' -ForEach @(
+        @{ Name = 'AllMemberUsers' }, @{ Name = 'AllDirectoryUsers' }, @{ Name = 'AllExternalUsers' },
+        @{ Name = 'SpecificDirectoryUsers' }, @{ Name = 'SpecificConnectedOrganizationUsers' },
+        @{ Name = 'AllConfiguredConnectedOrganizationUsers' }, @{ Name = 'AllDirectoryServicePrincipals' },
+        @{ Name = 'AllDirectoryAgentIdentities' }, @{ Name = 'SpecificDirectoryServicePrincipals' },
+        @{ Name = 'NoSubjects' }, @{ Name = 'NotSpecified' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Name = $Name; Path = $script:ScopePath } {
+            param($Name, $Path)
+            $Doc = ('{ "version": "1.0", "accessPackages": [ { "displayName": "ap1", "catalog": "cat1", "assignmentPolicies": [ { "displayName": "p1", "requestorScope": { "scope": "' + $Name + '" } } ] } ] }') | ConvertFrom-Json
+            $V = Test-OERStructureSchema -Document $Doc
+            # AllExternalUsers with no approval draws its own BL-54 Warning at this path: not a scope finding.
+            @($V.Errors | Where-Object { $_.Path -eq $Path -and $_.Message -notmatch 'has requestorScope.scope .AllExternalUsers.' }).Count | Should -Be 0
+        }
+    }
+
+    It 'accepts a lower-case and an upper-case spelling of a listed name with no finding' -ForEach @(
+        @{ Spelling = 'allmemberusers' }, @{ Spelling = 'ALLEXTERNALUSERS' }, @{ Spelling = 'specificdirectoryusers' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Spelling = $Spelling; Path = $script:ScopePath } {
+            param($Spelling, $Path)
+            $Doc = ('{ "version": "1.0", "accessPackages": [ { "displayName": "ap1", "catalog": "cat1", "assignmentPolicies": [ { "displayName": "p1", "requestorScope": { "scope": "' + $Spelling + '" } } ] } ] }') | ConvertFrom-Json
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors | Where-Object { $_.Path -eq $Path -and $_.Message -match 'must be one of' }).Count | Should -Be 0
+            @($V.Errors | Where-Object { $_.Path -eq $Path -and $_.Severity -eq 'Warning' -and $_.Message -match 'unknownFutureValue' }).Count | Should -Be 0
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'refuses a string outside the list as an Error naming the list and the value' {
+        InModuleScope $script:moduleName -Parameters @{ Path = $script:ScopePath } {
+            param($Path)
+            $Doc = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap1", "catalog": "cat1", "assignmentPolicies": [ { "displayName": "p1", "requestorScope": { "scope": "Everyone" } } ] } ] }' | ConvertFrom-Json
+            $V = Test-OERStructureSchema -Document $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq $Path })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Error'
+            $Hit[0].Message | Should -BeExactly ("'requestorScope.scope' at accessPackages[0].assignmentPolicies[0] must be one of: " +
+                ((Get-OERRequestorScopeMap).Keys -join ', ') + ". Got: 'Everyone'.")
+            $V.Valid | Should -BeFalse
+        }
+    }
+
+    It 'refuses an array holding a listed name as an Error naming the type' {
+        InModuleScope $script:moduleName -Parameters @{ Path = $script:ScopePath } {
+            param($Path)
+            $Doc = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap1", "catalog": "cat1", "assignmentPolicies": [ { "displayName": "p1", "requestorScope": { "scope": ["AllMemberUsers"] } } ] } ] }' | ConvertFrom-Json
+            $V = Test-OERStructureSchema -Document $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq $Path })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Error'
+            $Hit[0].Message | Should -BeLike "*must be one of: *. Got: a value that is not a string (*)."
+            $Hit[0].Message | Should -Not -Match "Got: 'AllMemberUsers'"
+            $V.Valid | Should -BeFalse
+        }
+    }
+
+    It 'refuses a number as an Error naming the type' {
+        InModuleScope $script:moduleName -Parameters @{ Path = $script:ScopePath } {
+            param($Path)
+            $Doc = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap1", "catalog": "cat1", "assignmentPolicies": [ { "displayName": "p1", "requestorScope": { "scope": 5 } } ] } ] }' | ConvertFrom-Json
+            $V = Test-OERStructureSchema -Document $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq $Path })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Error'
+            $Hit[0].Message | Should -BeLike "*Got: a value that is not a string (*)."
+        }
+    }
+
+    It 'reports unknownFutureValue as a Warning only, in any letter case, and the document stays Valid' -ForEach @(
+        @{ Spelling = 'unknownFutureValue' }, @{ Spelling = 'UNKNOWNFUTUREVALUE' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Spelling = $Spelling; Path = $script:ScopePath } {
+            param($Spelling, $Path)
+            $Doc = ('{ "version": "1.0", "accessPackages": [ { "displayName": "ap1", "catalog": "cat1", "assignmentPolicies": [ { "displayName": "p1", "requestorScope": { "scope": "' + $Spelling + '" } } ] } ] }') | ConvertFrom-Json
+            $V = Test-OERStructureSchema -Document $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq $Path })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Message | Should -BeExactly ("'requestorScope.scope' at accessPackages[0].assignmentPolicies[0] is 'unknownFutureValue', the value Microsoft Graph returns for a requestor scope this module cannot read; " +
+                'Invoke-OERStructure reports this assignment policy Failed and writes nothing to it. Leave the policy out of the document.')
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'keeps the empty-string and undeclared behaviours unchanged' {
+        InModuleScope $script:moduleName -Parameters @{ Path = $script:ScopePath } {
+            param($Path)
+            $Empty = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap1", "catalog": "cat1", "assignmentPolicies": [ { "displayName": "p1", "requestorScope": { "scope": "" } } ] } ] }' | ConvertFrom-Json
+            $Hit = @((Test-OERStructureSchema -Document $Empty).Errors | Where-Object { $_.Path -eq $Path })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -BeExactly "'requestorScope.scope' at accessPackages[0].assignmentPolicies[0] must be a non-empty string."
+            $None = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap1", "catalog": "cat1", "assignmentPolicies": [ { "displayName": "p1", "requestorScope": {} } ] } ] }' | ConvertFrom-Json
+            $Hit = @((Test-OERStructureSchema -Document $None).Errors | Where-Object { $_.Path -eq $Path })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -BeExactly "'requestorScope.scope' at accessPackages[0].assignmentPolicies[0] must be a non-empty string."
+            $NoBlock = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap1", "catalog": "cat1", "assignmentPolicies": [ { "displayName": "p1" } ] } ] }' | ConvertFrom-Json
+            @((Test-OERStructureSchema -Document $NoBlock).Errors | Where-Object { $_.Path -eq $Path }).Count | Should -Be 0
+        }
+    }
+
+    It 'agrees with the export: the scope ConvertTo-OERAssignmentPolicy writes for <Wire> draws no Error at its path' -ForEach @(
+        @{ Wire = 'allMemberUsers'; Warns = $false }
+        @{ Wire = 'allDirectoryUsers'; Warns = $false }
+        @{ Wire = 'allExternalUsers'; Warns = $false }
+        @{ Wire = 'specificDirectoryUsers'; Warns = $false }
+        @{ Wire = 'specificConnectedOrganizationUsers'; Warns = $false }
+        @{ Wire = 'allConfiguredConnectedOrganizationUsers'; Warns = $false }
+        @{ Wire = 'allDirectoryServicePrincipals'; Warns = $false }
+        @{ Wire = 'allDirectoryAgentIdentities'; Warns = $false }
+        @{ Wire = 'specificDirectoryServicePrincipals'; Warns = $false }
+        @{ Wire = 'noSubjects'; Warns = $false }
+        @{ Wire = 'notSpecified'; Warns = $false }
+        @{ Wire = 'unknownFutureValue'; Warns = $true }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Wire = $Wire; Warns = $Warns; Path = $script:ScopePath } {
+            param($Wire, $Warns, $Path)
+            $Raw = @{
+                id                = '00000000-0000-0000-0000-000000000001'
+                displayName       = 'p1'
+                allowedTargetScope = $Wire
+                accessPackage     = @{ id = '00000000-0000-0000-0000-000000000002' }
+            }
+            $Policy = ConvertTo-OERAssignmentPolicy -InputObject $Raw
+            $Policy.RequestorScope | Should -Not -BeNullOrEmpty
+            $Exported = [string]$Policy.RequestorScope.scope
+            $Doc = [PSCustomObject]@{
+                version        = '1.0'
+                accessPackages = @([PSCustomObject]@{
+                        displayName        = 'ap1'
+                        catalog            = 'cat1'
+                        assignmentPolicies = @([PSCustomObject]@{
+                                displayName    = 'p1'
+                                requestorScope = [PSCustomObject]@{ scope = $Exported }
+                            })
+                    })
+            }
+            $V = Test-OERStructureSchema -Document $Doc
+            # AllExternalUsers with no approval draws its own BL-54 Warning at this path: not a scope finding.
+            $Hits = @($V.Errors | Where-Object { $_.Path -eq $Path -and $_.Message -notmatch 'has requestorScope.scope .AllExternalUsers.' })
+            @($Hits | Where-Object { $_.Severity -ne 'Warning' }).Count | Should -Be 0
+            if ($Warns) {
+                $Hits.Count | Should -Be 1
+                $Hits[0].Severity | Should -BeExactly 'Warning'
+                $Exported | Should -BeExactly 'unknownFutureValue'
+            }
+            else {
+                $Hits.Count | Should -Be 0
+            }
+            $V.Valid | Should -BeTrue
+        }
+    }
+}
+
 Describe 'Test-OERStructureSchema requestorScope scope inference (issue #69)' {
     # Case 1: scope absent (or explicit null) + non-empty users/groups -> Warning, document stays Valid.
     # This is the split half of the old blanket Error that must relax, since Build-OERPolicyParts now

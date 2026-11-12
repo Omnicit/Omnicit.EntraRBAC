@@ -946,6 +946,13 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   package's name past a refusal the map reports (an unidentified package, or AccessPackages left
   out by `-Include`).
   `Why: docs/development/rationale.md#review-package-in-the-same-run`
+- **`Get-OERRequestorScopeMap` is the single owner of the requestor scope names.**
+  `New-OERAccessPackageRequestorScope` sends its values, `Test-OERStructureSchema` checks a declared
+  `requestorScope.scope` against its keys (any letter case accepted; a value outside the list or not a
+  string is an Error), and the builder's static `-Scope` `ValidateSet` is held equal to the keys, in
+  order, by a test. `unknownFutureValue` is a Warning, never an Error: the export passes it through.
+  Never spell the scope list a second time; `schema.json` keeps `scope` a free string.
+  `Why: docs/development/rationale.md#requestor-scope-list`
 - **`ConvertTo-OERCanonicalScope` is the single owner of how a document scope is compared,
   `ConvertTo-OERScopeSplat` of the `sub:`/`subscription:`/`mg:` scope syntax;** never re-implement
   either inline (the first is pure: the offline validator uses it). The validator REFUSES, not
