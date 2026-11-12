@@ -33,7 +33,9 @@ function Invoke-OERArmRequest {
     the sign-in latch and supersession gates, so a refused or replaced sign-in is still reported as
     itself.
 
-    Invoke-WebRequest is called with -SkipHttpErrorCheck so HTTP errors do not throw. Each response is
+    Invoke-WebRequest is called with -SkipHttpErrorCheck so HTTP errors do not throw (a redirect is the
+    exception: it stops with MaximumRedirectExceeded and is refused, see the redirect paragraph above).
+    Each response is
     normalized to a { StatusCode; Content; Headers } object before the status logic runs; the header
     collection stays inside this wrapper and only its Retry-After entry is ever read. The wrapper
     returns the parsed JSON content for 2xx responses ($null when the body is empty, e.g. 204);
@@ -295,8 +297,9 @@ function Invoke-OERArmRequest {
             # no Location or address (that is the other host's), and chains no inner exception.
             $FailedId = ([string]$PSItem.FullyQualifiedErrorId -split ',')[0]
             # if/else, never two sequential statements: the two throws are exclusive by construction.
-            # Measured (Sprint 16 step 1): a throw inside a catch resumes after the whole try statement
-            # (see the check below), so a second throw in sequence would not run today; the exclusive
+            # Measured (Sprint 16 step 1): under -ErrorAction SilentlyContinue or Ignore with no try up the
+            # call stack, a throw inside a catch resumes after the whole try statement; otherwise the first
+            # throw propagates. Either way a second throw in sequence would not run today; the exclusive
             # shape keeps it so should that behaviour change.
             if ([string]::Equals($FailedId, 'MaximumRedirectExceeded', [System.StringComparison]::Ordinal)) {
                 throw [System.Management.Automation.ErrorRecord]::new(

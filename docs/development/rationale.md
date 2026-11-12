@@ -1848,7 +1848,9 @@ redirect only without the token (Sprint 15 step 1, A3)": the bound parameter nam
 an expected-error read (Graph) and every page of an `-All` walk equal the pinned set exactly (for ARM
 the measured set), the Graph claims-challenge retry and the token-rejected 401 retry send the same set on
 every call, the ARM `Headers` hold `Authorization` alone, and no redirect or session parameter is
-bound.
+bound. (Sprint 16 step 1 renamed and extended the ARM Describe to "Invoke-OERArmRequest follows no
+redirect: the measured parameters and MaximumRedirection 0 (Sprint 15 step 1, A3; Sprint 16 step 1, A9)":
+it now pins `MaximumRedirection` 0 on every ARM send; see the Sprint 16 step 1 section below.)
 **Mutations** (each on a scratch copy of the built module): on the ARM send, adding
 `PreserveAuthorizationOnRedirect = $true`, moving the token from `-Headers` to
 `-Authentication Bearer -Token`, and adding `MaximumRedirection = 5` each turned all 4 ARM tests red;
@@ -1902,8 +1904,9 @@ request, the throttled retries, the 401 retry and every page of a walk share it)
 `ArmRedirectRefused` (category `InvalidResult`, `TargetObject` the request path string, no inner
 exception) with the message "Azure Resource Manager answered this request with a redirect. The redirect
 was refused: it was not followed, and no request was sent on."; otherwise the unchanged
-`ArmTransportError`. A later PowerShell that renames the id gives `ArmTransportError`, which still sends
-nothing on; a unit test pins the id.
+`ArmTransportError`. The unit tests pin the id the wrapper expects, using records they build
+themselves; nothing in CI runs the real `Invoke-WebRequest` against a redirect, so CI would not notice a
+PowerShell that renames the id. It would surface as `ArmTransportError`, which still sends nothing on.
 
 **The caller's -ErrorVariable.** Measured 2026-11-12 on loopback, no module code: with the send inside a
 function whose catch scrubs and throws a new record, called from an advanced function whose catch writes
@@ -1939,8 +1942,9 @@ the RoleDefinition probe); `OrdinalIgnoreCase` for the comparison, 1 (R7 lower-c
 case stays green, since the whole id equals the segment there); `$PSItem.TargetObject` as the target, 8;
 chaining the inner exception, 1 (R1); appending the original message, 1 (R1, exact message); dropping
 `Remove-OERErrorRecord`, 15. **One mutation is equivalent and stays (M11):** turning the if/else into two
-sequential throws changes nothing (25 of 25 green), since a throw inside a catch resumes after the whole
-try statement and the second throw is never reached; the if/else is defence in depth, not a tested
+sequential throws changes nothing (25 of 25 green), since the second throw is never reached either way (under
+`-ErrorAction SilentlyContinue` or `Ignore` with no try up the call stack a throw inside a catch resumes
+after the whole try statement; otherwise the first throw propagates); the if/else is defence in depth, not a tested
 exclusivity.
 
 ### CLAUDE.md text for arm-transport
