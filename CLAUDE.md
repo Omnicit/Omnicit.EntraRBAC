@@ -1313,13 +1313,19 @@ session's ARM address, in `Invoke-ArmCall` after the two gates and before the to
 the parsed `[System.Uri]` it hands to `Invoke-WebRequest`; never send a string that was not that
 object. The token is materialized only after the wrapper's last gate. `Why: docs/development/rationale.md#arm-requests`
 
-**No token follows a redirect, and the parameter set is what keeps it so** (measured 2026-11-10,
-Sprint 15 step 1): `Invoke-WebRequest` with the ARM wrapper's parameters, and the Graph SDK after
-`Connect-MgGraph -AccessToken`, follow a redirect without the `Authorization` header when it changes the
-host or the port. Never add a parameter to either transport's send (`PreserveAuthorizationOnRedirect`,
-a web session, the token outside `-Headers`, `-Headers` on the Graph call, the `Connect-MgGraph` call,
-or an SDK option (`Set-MgRequestContext`, `Set-MgGraphOption`)) without measuring it first; the unit
-tests of both wrappers pin the sets, the Graph retries included. `Why: docs/development/rationale.md#arm-transport`
+**No ARM request follows a redirect, and no token follows a Graph redirect; the parameter sets keep it
+so.** Every ARM send binds `MaximumRedirection = 0`: PowerShell then stops with `MaximumRedirectExceeded`
+(measured 2026-11-12, Sprint 16 step 1: the status code, headers and body are lost and nothing reaches the
+next host; without the parameter a 302 and a 307 were followed with the method and the body), and
+`Invoke-ArmCall`'s catch refuses exactly that id (its first comma segment, whole and ordinal, after the
+scrub) with `ArmRedirectRefused`, naming no status, body, `Location` or address and never targeting the
+request message; every other failure stays `ArmTransportError`. The Graph SDK after
+`Connect-MgGraph -AccessToken` follows a redirect without the `Authorization` header when it changes the
+host or the port (measured 2026-11-10, Sprint 15 step 1). Never add a parameter to either transport's
+send (`PreserveAuthorizationOnRedirect`, a web session, the token outside `-Headers`, `-Headers` on the
+Graph call, the `Connect-MgGraph` call, or an SDK option (`Set-MgRequestContext`, `Set-MgGraphOption`)),
+nor remove `MaximumRedirection`, without measuring it first; the unit tests of both wrappers pin the
+sets, the retries included. `Why: docs/development/rationale.md#arm-transport`
 
 The throttle retries (a 429, and a 503 carrying `Retry-After`; the constants and their values are
 under the Why link) are bounded at the decision to wait, never by stopping a paging loop part-way --
