@@ -56,7 +56,7 @@ the redactor.
 
 ### H.1. The helpers every check uses
 
-- [ ] **H.1** The helpers load; nothing is printed and nothing is sent. #type/subtask
+- [x] **H.1** The helpers load; nothing is printed and nothing is sent. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -115,7 +115,7 @@ function Show-S161 {
 
 ## 1. Ordinary reads work as before
 
-- [ ] **1.1** A single read of the subscription and a public role assignment read get their answers, every send bound `MaximumRedirection 0`. #type/subtask
+- [x] **1.1** A single read of the subscription and a public role assignment read get their answers, every send bound `MaximumRedirection 0`. #type/subtask
 
 ```powershell
 Connect-S161
@@ -133,9 +133,9 @@ Disconnect-OerLive
 
 **Expect:** `single read: own records 0, id none, output 1`, `sends 1`, `every send to the cloud host True`, `every send with MaximumRedirection 0 True`, and the answer names the subscription. `role assignment read: own records 0`, `sends` at least 1, both booleans True, at least one assignment.
 **Failure looks like:** `ArmRedirectRefused` or `ArmTransportError` on an ordinary read; a send without the parameter; a send to another host.
-**Result:**
+**Result (2026-11-12, as oer-live-cc, the module the worktree built, 1.7.1):** PASS. The identity check printed True for app, service principal and tenant. `single read: own records 0, id none, output 1, arm calls 1, sends 1, every send to the cloud host True, every send with MaximumRedirection 0 True`; the answer names the subscription: True. `role assignment read: own records 0, id none, output 13, arm calls 1, sends 1, every send to the cloud host True, every send with MaximumRedirection 0 True`; assignments read: True.
 
-- [ ] **1.2** A read that really follows a next link: every page binds `MaximumRedirection 0`, goes to the cloud's own host, and the walk returns more than one page. #type/subtask
+- [x] **1.2** A read that really follows a next link: every page binds `MaximumRedirection 0`, goes to the cloud's own host, and the walk returns more than one page. #type/subtask
 
 ```powershell
 Connect-S161
@@ -150,14 +150,14 @@ Disconnect-OerLive
 
 **Expect:** `paged read: own records 0, arm calls 1`, `every send to the cloud host True`, `every send with MaximumRedirection 0 True`, more than one send, `more than one page: True`.
 **Failure looks like:** a refusal on a page, a single page reported as the walk (no paging exercised), a send without the parameter, or a send to another host.
-**Result:**
+**Result (2026-11-12, as oer-live-cc, the module the worktree built, 1.7.1):** PASS. `paged read: own records 0, id none, output 1, arm calls 1, sends 6, every send to the cloud host True, every send with MaximumRedirection 0 True`; `Items: 6; sends match items: True; more than one page: True`.
 
 ## Teardown
 
 Nothing was created; there is nothing to remove. A sweep for the prefix still runs once and must
 list nothing.
 
-- [ ] **T.1** The sweep finds nothing with the prefix `oer-s161-`. #type/subtask
+- [x] **T.1** The sweep finds nothing with the prefix `oer-s161-`. #type/subtask
 
 ```powershell
 Connect-S161
@@ -168,4 +168,4 @@ Disconnect-OerLive
 
 **Expect:** `Objects with the prefix: 0`.
 **Failure looks like:** anything else: stop, nothing here created an object.
-**Result:**
+**Result (2026-11-12, as oer-live-cc, the module the worktree built, 1.7.1):** PASS. `Objects with the prefix: 0`; the sweep named every kind as clear.
