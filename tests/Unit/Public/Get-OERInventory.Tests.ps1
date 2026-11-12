@@ -2414,6 +2414,60 @@ Describe 'Get-OERInventory' {
                 'and retried, and none of them was published by the read cmdlet. Warned: ' +
                 (@($ArNoise | ForEach-Object { [string]$_ }) -join ' | '))
         }
+
+        # BL-189 (a): the REAL Get-OERAccessReviewDefinition reads with -RequireValue, so a definitions
+        # answer without a value member is a read that did not answer. Only Invoke-OERGraphRequest is
+        # mocked, and it emulates the wrapper (GraphPagingIncomplete, InvalidResult, under -RequireValue).
+        It 'counts the accessReviews section unread, never empty, when the -All definitions read has no value' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                param($Uri, $All, $RequireValue)
+                if ($RequireValue) {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Microsoft Graph page 1 of this enumeration cannot be read as part of a complete walk: it has no value member.'),
+                        'GraphPagingIncomplete', [System.Management.Automation.ErrorCategory]::InvalidResult, $Uri)
+                }
+                return @{ 'odata.count' = 0 }
+            }
+            $ArErr = $null
+            $ArWarned = $null
+            $null = Get-OERInventory -Include AccessReviews `
+                -WarningVariable ArWarned -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ArErr
+            $Partial = @($ArErr | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].Exception.Message | Should -Match 'Could not read access reviews: .*it has no value member'
+            ([string]$Partial[0].TargetObject -split ', ') | Should -Contain 'accessReviews'
+            @($ArWarned | Where-Object { [string]$_ -like 'Could not read access reviews: *it has no value member*' }).Count | Should -Be 1
+        }
+
+        It 'counts the accessReviews section unread, never empty, when the -AccessReviewFilter name read has no value' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                param($Uri, $All, $RequireValue)
+                if ($RequireValue) {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Microsoft Graph page 1 of this enumeration cannot be read as part of a complete walk: it has no value member.'),
+                        'GraphPagingIncomplete', [System.Management.Automation.ErrorCategory]::InvalidResult, $Uri)
+                }
+                return @{ 'odata.count' = 0 }
+            }
+            $ArErr = $null
+            $ArWarned = $null
+            $null = Get-OERInventory -Include AccessReviews -AccessReviewFilter 'oer-name' `
+                -WarningVariable ArWarned -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ArErr
+            $Partial = @($ArErr | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].Exception.Message | Should -Match 'Could not read access reviews: .*it has no value member'
+            ([string]$Partial[0].TargetObject -split ', ') | Should -Contain 'accessReviews'
+            @($ArWarned | Where-Object { [string]$_ -like 'Could not read access reviews: *it has no value member*' }).Count | Should -Be 1
+        }
+
+        It 'leaves the accessReviews section an empty list and not unread when the definitions answer is a well-formed empty list' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { param($Uri, $All, $RequireValue) @{ value = @() } }
+            $ArErr = $null
+            $Inv = Get-OERInventory -Include AccessReviews `
+                -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ArErr
+            @($Inv.AccessReviews).Count | Should -Be 0
+            @($ArErr | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+        }
     }
 
     Context 'reviewer scope queries carrying the API version prefix Graph adds on read' {

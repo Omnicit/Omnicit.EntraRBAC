@@ -909,7 +909,9 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   (do not migrate those two), and the places that read a group's `administrativeUnit` the way
   `New-OERGroup` does -- the created-membership match in `Sync-OERStructureAdministrativeUnit`, and
   in `Test-OERStructureSchema` the unit placement check (Rule 12) and the restricted-unit check
-  (Rule 16), which share one local helper.
+  (Rule 16), which share one local helper, and the two Warnings of `Add-GuidDisplayNameWarning
+  -UnitReference` (an administrative unit's `displayName` and a group's `administrativeUnit` of the
+  form of an object id).
   `Why: docs/development/rationale.md#guid-predicate`
 - **`Test-OERAzureRootScope` is the single owner of whether an Azure role assignment scope addresses
   the root scope `/` (any spelling the ARM transport sends there)**; `Format-OERRootScopeAssignment`
@@ -946,6 +948,16 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   package's name past a refusal the map reports (an unidentified package, or AccessPackages left
   out by `-Include`).
   `Why: docs/development/rationale.md#review-package-in-the-same-run`
+- **`Get-OERRequestorScopeMap` is the single owner of the requestor scope names.**
+  `New-OERAccessPackageRequestorScope` sends its values, `Test-OERStructureSchema` checks a declared
+  `requestorScope.scope` against its keys (any letter case accepted; a value outside the list or not a
+  string is an Error), and the builder's static `-Scope` `ValidateSet` is held equal to the keys, in
+  order, by a test. `unknownFutureValue` is a Warning, never an Error: the export passes it through.
+  Never spell the scope list a second time; `schema.json` keeps `scope` a free string. One named
+  exception: `ConvertTo-OERAssignmentPolicy` keeps its own READ map (Graph wire value to friendly name),
+  the inverse of the owner's write map, which the validator's case-insensitive comparison never reads;
+  do not merge it into the owner blindly.
+  `Why: docs/development/rationale.md#requestor-scope-list`
 - **`ConvertTo-OERCanonicalScope` is the single owner of how a document scope is compared,
   `ConvertTo-OERScopeSplat` of the `sub:`/`subscription:`/`mg:` scope syntax;** never re-implement
   either inline (the first is pure: the offline validator uses it). The validator REFUSES, not

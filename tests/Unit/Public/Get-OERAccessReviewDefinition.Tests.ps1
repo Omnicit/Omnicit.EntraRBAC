@@ -259,15 +259,142 @@ Describe 'Get-OERAccessReviewDefinition' {
         }
     }
 
-    It 'passes -RequireValue on the -Filter read and on no other read' {
+    It 'passes -RequireValue on the -Filter, -All, exact -DisplayName (both reads) and wildcard reads, not on the instances read' {
         Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
-            @{ value = @(@{ id = 'd1'; displayName = 'Scoped' }) }
+            param($Uri, $All, $RequireValue)
+            if ($Uri -like '*displayName eq*') { return @{ value = @() } }
+            if ($Uri -like '*/instances') { return @{ value = @() } }
+            return @{ value = @(@{ id = 'd1'; displayName = 'Scoped' }) }
         }
+        # -Filter
         $null = Get-OERAccessReviewDefinition -Filter "contains(scope/microsoft.graph.accessReviewQueryScope/query, '/groups')"
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $RequireValue }
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Uri -like '*?$filter=contains*' -and $RequireValue
+        }
+        # -All
         $null = Get-OERAccessReviewDefinition -All
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $RequireValue }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Uri -eq 'v1.0/identityGovernance/accessReviews/definitions?$top=100' -and $RequireValue
+        }
+        # Exact -DisplayName: the name read and the list fallback read (the name read answers an empty list)
+        $null = Get-OERAccessReviewDefinition -DisplayName 'Scoped'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Uri -like '*displayName eq*' -and $RequireValue
+        }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 2 -Exactly -ParameterFilter {
+            $Uri -eq 'v1.0/identityGovernance/accessReviews/definitions?$top=100' -and $RequireValue
+        }
+        # Wildcard -DisplayName
+        $null = Get-OERAccessReviewDefinition -DisplayName 'Sco*'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 3 -Exactly -ParameterFilter {
+            $Uri -eq 'v1.0/identityGovernance/accessReviews/definitions?$top=100' -and $RequireValue
+        }
+        # The instances read stays without it
+        $null = Get-OERAccessReviewDefinition -Id 'd1' -IncludeInstances
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Uri -like '*/instances' -and -not $RequireValue
+        }
+        # Every read that carries -RequireValue is accounted for above: filter 1, name 1, list 3.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 5 -Exactly -ParameterFilter { $RequireValue }
+    }
+
+    Context 'a first page that did not answer (BL-189 a)' {
+        # Every mock below emulates the wrapper: with -RequireValue and an answer without a value member
+        # it throws the typed GraphPagingIncomplete record (InvalidResult) that Invoke-OERGraphRequest
+        # builds. The name read (displayName eq) and the list read ($top=100) answer independently.
+
+        It '-All with a first page without value emits nothing and publishes GraphPagingIncomplete only' {
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+                param($Uri, $All, $RequireValue)
+                if ($RequireValue) {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Microsoft Graph page 1 of this enumeration cannot be read as part of a complete walk: it has no value member.'),
+                        'GraphPagingIncomplete', [System.Management.Automation.ErrorCategory]::InvalidResult, $Uri)
+                }
+                return @{ 'odata.count' = 0 }
+            }
+            $Errs = $null
+            $Result = Get-OERAccessReviewDefinition -All -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Result | Should -BeNullOrEmpty
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'GraphPagingIncomplete*' }).Count | Should -BeGreaterOrEqual 1
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'AccessReviewDefinitionNotFound*' }).Count | Should -Be 0
+            # The cmdlet's own published record (the last one) carries the id and the cmdlet name.
+            ([string]$Errs[-1].FullyQualifiedErrorId) | Should -BeLike 'GraphPagingIncomplete,*'
+        }
+
+        It '-DisplayName (exact) with a name lookup without value publishes GraphPagingIncomplete and never reads the list' {
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+                param($Uri, $All, $RequireValue)
+                if ($RequireValue) {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Microsoft Graph page 1 of this enumeration cannot be read as part of a complete walk: it has no value member.'),
+                        'GraphPagingIncomplete', [System.Management.Automation.ErrorCategory]::InvalidResult, $Uri)
+                }
+                return @{ 'odata.count' = 0 }
+            }
+            $Errs = $null
+            $Result = Get-OERAccessReviewDefinition -DisplayName 'x' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Result | Should -BeNullOrEmpty
+            ([string]$Errs[-1].FullyQualifiedErrorId) | Should -BeLike 'GraphPagingIncomplete,*'
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'AccessReviewDefinitionNotFound*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter {
+                $Uri -like '*$top=100*'
+            }
+        }
+
+        It '-DisplayName (exact) with an empty name lookup and a list without value publishes GraphPagingIncomplete' {
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+                param($Uri, $All, $RequireValue)
+                if ($Uri -like '*displayName eq*') { return @{ value = @() } }
+                if ($RequireValue) {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Microsoft Graph page 1 of this enumeration cannot be read as part of a complete walk: it has no value member.'),
+                        'GraphPagingIncomplete', [System.Management.Automation.ErrorCategory]::InvalidResult, $Uri)
+                }
+                return @{ 'odata.count' = 0 }
+            }
+            $Errs = $null
+            $Result = Get-OERAccessReviewDefinition -DisplayName 'x' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Result | Should -BeNullOrEmpty
+            ([string]$Errs[-1].FullyQualifiedErrorId) | Should -BeLike 'GraphPagingIncomplete,*'
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'AccessReviewDefinitionNotFound*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -like '*$top=100*'
+            }
+        }
+
+        It '-DisplayName with a wildcard and a list without value publishes GraphPagingIncomplete' {
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+                param($Uri, $All, $RequireValue)
+                if ($RequireValue) {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Microsoft Graph page 1 of this enumeration cannot be read as part of a complete walk: it has no value member.'),
+                        'GraphPagingIncomplete', [System.Management.Automation.ErrorCategory]::InvalidResult, $Uri)
+                }
+                return @{ 'odata.count' = 0 }
+            }
+            $Errs = $null
+            $Result = Get-OERAccessReviewDefinition -DisplayName 'x*' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Result | Should -BeNullOrEmpty
+            ([string]$Errs[-1].FullyQualifiedErrorId) | Should -BeLike 'GraphPagingIncomplete,*'
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'AccessReviewDefinitionNotFound*' }).Count | Should -Be 0
+        }
+
+        It 'well-formed empty answers are unchanged: -All is silent, an unmatched exact name is AccessReviewDefinitionNotFound' {
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+                param($Uri, $All, $RequireValue)
+                return @{ value = @() }
+            }
+            $Errs = $null
+            $Result = Get-OERAccessReviewDefinition -All -ErrorVariable Errs -ErrorAction SilentlyContinue
+            $Result | Should -BeNullOrEmpty
+            @($Errs).Count | Should -Be 0
+
+            $Errs = $null
+            $null = Get-OERAccessReviewDefinition -DisplayName 'x' -ErrorVariable Errs -ErrorAction SilentlyContinue
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'AccessReviewDefinitionNotFound,*' }).Count | Should -Be 1
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'GraphPagingIncomplete*' }).Count | Should -Be 0
+        }
     }
 
     It 'still publishes AccessReviewDefinitionNotFound for a -Filter answer with an empty value list' {

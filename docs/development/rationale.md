@@ -3756,6 +3756,18 @@ restricted-unit check (Rule 16) reads a group's `administrativeUnit` with the sa
 through the one local helper Rule 12 calls (`Test-UnitNamedByReference`), so the two rules name the
 same unit ([#restricted-unit-pim](#restricted-unit-pim)).
 
+BL-181 (a), Sprint 16 step 2: the validator reads with the same cast in two more places, both inside
+`Add-GuidDisplayNameWarning -UnitReference`: an `administrativeUnits[]` entry's `displayName` and a
+group's `administrativeUnit`, each a Warning when the string parses as a GUID in any form. Why: the
+unit entry is looked up by NAME even when the name is a GUID (`Resolve-OERAdministrativeUnitId
+-DisplayName`), so the entry itself reconciles, but a group's `administrativeUnit` of that form is read
+by `New-OERGroup` as an object id, so no group can name such a unit by its name, and a group whose
+`administrativeUnit` has that form names a unit by id, not by name. `Sync-OERStructureGroup` passes the
+declared value, or the unit id the run's rename map holds for it, to `New-OERGroup -AdministrativeUnit`,
+so the cast decides there too. The
+export is unchanged: `Get-OERInventory` and `Get-OERInventoryGroup` never write a group's
+`administrativeUnit`. Rule 12 and Rule 16 are untouched.
+
 ### CLAUDE.md text for guid-predicate
 
 What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
@@ -3767,6 +3779,38 @@ What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule
   `Sync-OERStructureAdministrativeUnit`, and in `Test-OERStructureSchema` the unit placement check
   (Rule 12) and the restricted-unit check (Rule 16), which share one local helper.
   `Why: docs/development/rationale.md#guid-predicate`
+
+## requestor-scope-list
+
+`Get-OERRequestorScopeMap` is the single owner of the requestor scope names of an assignment policy
+(Sprint 16 step 2, BL-187 c, decision A4). Before it, the list lived twice, in
+`New-OERAccessPackageRequestorScope` (a write map and a static `ValidateSet`) and nowhere in the
+offline validator, so `Test-OERStructure` accepted any non-empty string and a typo reached the apply,
+where the builder's binding refused it and the policy was reported Failed.
+
+- The builder sends the map's values; `Test-OERStructureSchema` checks a declared scope against its
+  keys. The `ValidateSet` is an attribute and cannot read a function, so it stays and a test holds it
+  equal to the keys, in order.
+- `unknownFutureValue` is a Warning, never an Error. `ConvertTo-OERAssignmentPolicy` passes the value
+  through for a live policy whose scope Graph only names with the `include-unknown-enum-members`
+  header the module never sends, so a document the export wrote must validate. A declared one fails
+  the builder's binding inside the handler's build, so the policy is reported Failed and nothing is
+  written; the Warning says so.
+- Case is not canonicalised: any letter case of a listed name is accepted with no finding, since the
+  builder's `ValidateSet` binds any case and `schema.json` declares no enum for `scope`, so there is no
+  canonical spelling to warn about.
+- `schema.json` is unchanged: `scope` stays `{ "type": "string", "minLength": 1 }`. A closed enum
+  there would refuse the export's own `unknownFutureValue` at the schema level.
+- `NoSubjects` (maps to `notSpecified`, issue #86) and `SpecificDirectoryServicePrincipals` (map value
+  `$null`, bindable but never built) are keys, since both are values the inventory or old documents
+  carry.
+- One deliberate second list: `ConvertTo-OERAssignmentPolicy` keeps its own READ map (Graph wire value
+  to friendly name, about lines 130-147), the inverse of the owner's write map. The validator compares
+  case-insensitively and never reads it; do not merge the two blindly.
+- Residual: `ConvertTo-OERAssignmentPolicy` passes a raw `allowedTargetScope` it has no row for through
+  unchanged, and the validator refuses such a value as an Error. Microsoft Graph sends a value newer
+  than the client's enum as `unknownFutureValue` unless the `Prefer: include-unknown-enum-members`
+  header is sent, which the module never sends, so the case is theoretical.
 
 ## mfa-authcontext-exclusion
 

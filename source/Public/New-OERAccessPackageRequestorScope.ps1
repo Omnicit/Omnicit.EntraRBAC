@@ -127,7 +127,7 @@ function New-OERAccessPackageRequestorScope {
         # targets only. Building it would send the scope with no targets at all, so it is refused
         # here, before anything is resolved -- and Sync-OERStructureAccessPackage, which calls this
         # builder with -ErrorAction Stop, reports the policy Failed before its diff and ShouldProcess.
-        # It is deliberately absent from the write map below.
+        # The owner's map holds $null for it, never a value to send.
         if ($PSCmdlet.ParameterSetName -eq 'Scoped' -and $Scope -eq 'SpecificDirectoryServicePrincipals') {
             Write-CmdletError `
                 -Message ([System.Exception]::new(
@@ -137,30 +137,10 @@ function New-OERAccessPackageRequestorScope {
             return
         }
 
-        $ScopeMap = @{
-            AllMemberUsers                          = 'allMemberUsers'
-            AllDirectoryUsers                       = 'allDirectoryUsers'
-            AllExternalUsers                        = 'allExternalUsers'
-            SpecificDirectoryUsers                  = 'specificDirectoryUsers'
-            SpecificConnectedOrganizationUsers      = 'specificConnectedOrganizationUsers'
-            AllConfiguredConnectedOrganizationUsers = 'allConfiguredConnectedOrganizationUsers'
-            AllDirectoryServicePrincipals           = 'allDirectoryServicePrincipals'
-            AllDirectoryAgentIdentities             = 'allDirectoryAgentIdentities'
-            # Issue #86: NoSubjects maps to notSpecified, NOT to 'noSubjects'. 'noSubjects' is the
-            # legacy BETA requestorSettings.scopeType spelling and is not a member of the v1.0
-            # allowedTargetScope enum at all, so sending it put an out-of-enum value on the wire and
-            # entitlement management rejected the whole policy with "InvalidModel: The model is
-            # invalid." -- measured on 2026-09-11 against a create body whose only unusual field was
-            # this one. Its v1.0 equivalent is notSpecified: no subjects and administrator direct
-            # assignment only are the same state, which this cmdlet's own help already said. The
-            # value stays in the ValidateSet so existing scripts and apply documents keep binding --
-            # nothing can depend on the old behaviour, since the old behaviour was a hard Graph
-            # rejection -- and the substitution is warned about on every call below. This is the
-            # ONLY place the mapping lives: both the cmdlet path and Sync-OERStructureAccessPackage
-            # funnel through this builder.
-            NoSubjects                              = 'notSpecified'
-            NotSpecified                            = 'notSpecified'
-        }
+        # The scope names and the values sent live in Get-OERRequestorScopeMap, the single owner (the
+        # NoSubjects mapping, issue #86, is explained there). The -Scope ValidateSet above is static and
+        # a unit test holds it equal to the owner's keys.
+        $ScopeMap = Get-OERRequestorScopeMap
 
         $AllowedTargetScope = if ($PSCmdlet.ParameterSetName -eq 'AdminOnly') {
             'notSpecified'

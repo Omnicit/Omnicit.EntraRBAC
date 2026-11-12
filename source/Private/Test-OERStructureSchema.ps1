@@ -33,8 +33,8 @@ function Test-OERStructureSchema {
     requireJustificationOnActivation, requireTicketOnActivation, requireApproval,
     requireMfaOnActiveAssignment, requireJustificationOnActiveAssignment), day-count ranges
     (eligibleDurationDays, activeDurationDays: 1-3650), an approvers object with optional users/groups
-    string arrays, and authenticationContextId (a c<digits> claim value, or an empty string to disable
-    it; an explicit null means "not declared -- leave the live setting untouched", the same rule
+    string arrays, and authenticationContextId (a string: a c<digits> claim value matched whole, so a
+    trailing line feed is refused, or an empty string to disable it; an explicit null means "not declared -- leave the live setting untouched", the same rule
     Test-HasProp applies to every field here and the apply-layer diffs apply in lockstep). A
     requireApproval of false declared together with a non-empty approvers block is a Warning naming
     the precedence: the apply engine drops the approvers, because supplying them to Azure Resource
@@ -82,7 +82,12 @@ function Test-OERStructureSchema {
     count, but isApprovalRequiredForUpdate falls to its Existing carry-forward branch and re-sends the
     live policy's value, so an undeclared flag is not an absent one and Graph refuses the emptied stage
     list while approval is still required for update. Exactly one of the two fires for any one policy.
-    A requestorScope declaring a non-empty users or
+    A declared requestorScope.scope is checked against the keys of Get-OERRequestorScopeMap, the
+    list New-OERAccessPackageRequestorScope sends from (BL-187 c): a string outside the list, or a
+    value that is not a string, is an Error at its requestorScope.scope path, any letter case of a
+    listed name is accepted with no finding, and unknownFutureValue (the value the inventory passes
+    through for a scope this module cannot read) is a Warning, since Invoke-OERStructure reports such
+    a policy Failed and writes nothing to it. A requestorScope declaring a non-empty users or
     groups array with no scope is a Warning (issue #69): Invoke-OERStructure infers scope as
     SpecificDirectoryUsers for that shape, so the document is no longer refused. The shape it
     replaces was an Error here, and Invoke-OERStructure refuses any document carrying one with no
@@ -117,7 +122,11 @@ function Test-OERStructureSchema {
     entry the engine creates the package with that name, and a GUID is read as an object id wherever an access review
     or another reference names the package; for a groups or catalogs entry Invoke-OERStructure reads the
     GUID as an object id, so the entry reconciles the object with that id and not one with that name. An
-    accessReviews displayName is not checked: the engine looks a review up by its name only.
+    accessReviews displayName is not checked: the engine looks a review up by its name only. Two
+    more Warnings (BL-181 a) read a value the way New-OERGroup reads a group's administrativeUnit
+    (a GUID in any form: braced and dash-less too): an administrativeUnits displayName of that form,
+    which a group cannot name the unit by, and a group's administrativeUnit of that form, which names
+    a unit by object id and never by display name.
     A group that declares template and no displayName, and whose template Resolve-OERName cannot
     resolve with the tokens given (a placeholder no token supplies, a name over 256 characters), is an Error at
     groups[i].template carrying Resolve-OERName's reason (BL-139); a value in tokens is inserted as
@@ -577,9 +586,20 @@ function Test-OERStructureSchema {
     # stands; accessReviews is not checked, since the engine looks a review up by name, R-7). Only a declared displayName that is a string is checked; a type problem is
     # Add-DisplayNameTypeFinding's, and a template entry declares no displayName.
     function Add-GuidDisplayNameWarning {
-        param([object]$Node, [string]$Section, [string]$Path, [string]$Noun, [string]$Other)
-        if (-not (Test-HasProp -Node $Node -Name 'displayName')) { return }
-        $NameValue = $Node.displayName
+        param([object]$Node, [string]$Section, [string]$Path, [string]$Noun, [string]$Other,
+            [string]$Property = 'displayName', [switch]$UnitReference, [string]$Message, [string]$Item)
+        if (-not (Test-HasProp -Node $Node -Name $Property)) { return }
+        $NameValue = $Node.$Property
+        if ($UnitReference) {
+            # BL-181 (a): a value read the way New-OERGroup reads a group's administrativeUnit
+            # (-as [guid]: braced, parenthesised and dash-less forms count too), so the check
+            # follows what the cmdlet does and not Test-OERGuid's canonical form. The caller's
+            # -Message is the text; an empty string is no reference.
+            if ($NameValue -isnot [string] -or $NameValue.Length -eq 0 -or -not ($NameValue -as [guid])) { return }
+            $UnitItem = if ($PSBoundParameters.ContainsKey('Item')) { $Item } else { $NameValue }
+            Add-Finding -Section $Section -Item $UnitItem -Path "$Path.$Property" -Severity 'Warning' -Message $Message
+            return
+        }
         if ($NameValue -isnot [string] -or -not (Test-OERGuid -Value $NameValue)) { return }
         Add-Finding -Section $Section -Item $NameValue -Path "$Path.displayName" -Severity 'Warning' `
             -Message ("'displayName' at $Path is the GUID '$NameValue': Invoke-OERStructure reads a GUID as an object id, not as a name, " +
@@ -764,6 +784,12 @@ function Test-OERStructureSchema {
                                 -Message "'$GStringProp' at $GPath must be a string."
                         }
                     }
+                }
+                # BL-181 (a): New-OERGroup reads an administrativeUnit that is a GUID in any form as an object
+                # id, never as a display name; a string that is not one is looked up by name.
+                if ((Test-HasProp -Node $G -Name 'administrativeUnit') -and $G.administrativeUnit -is [string]) {
+                    Add-GuidDisplayNameWarning -Node $G -Section 'groups' -Path $GPath -Property 'administrativeUnit' -UnitReference -Item $GItem `
+                        -Message "'administrativeUnit' at $GPath has the form of an object id ('$($G.administrativeUnit)'): New-OERGroup reads it as the object id of an administrative unit, never as a display name, so it names the unit with that object id, not a unit whose display name is '$($G.administrativeUnit)'. Keep it only when it is the unit's object id."
                 }
 
                 # BL-132: Microsoft Graph was measured (2026-10-13, PATCH on a security group) to refuse
@@ -1068,6 +1094,12 @@ function Test-OERStructureSchema {
                         -Consequence $AUConsequence
                 }
                 Add-DisplayNameTypeFinding -Node $AU -Section 'administrativeUnits' -Path $AUPath
+                # BL-181 (a): the entry is reconciled by name, but a group's administrativeUnit of this form
+                # is read by New-OERGroup as an object id, so no group can name this unit by its name.
+                if ((Test-HasProp -Node $AU -Name 'displayName') -and $AU.displayName -is [string]) {
+                    Add-GuidDisplayNameWarning -Node $AU -Section 'administrativeUnits' -Path $AUPath -UnitReference `
+                        -Message "'displayName' at $AUPath has the form of an object id ('$($AU.displayName)'): New-OERGroup reads a group's 'administrativeUnit' of that form as an object id, not as a display name, so a group that names this unit by its display name is not placed in it. Give the administrative unit a name that is not a GUID."
+                }
                 # A unit renamed through the document is found under its previousDisplayName too, so that
                 # name is a claim of its own, checked after the displayName claim just as the groups' is.
                 $AUPrev = Test-SupportedRename -Node $AU -Section 'administrativeUnits' -Item $AUItem -Path $AUPath `
@@ -1413,6 +1445,7 @@ function Test-OERStructureSchema {
 
                             if (Test-HasProp -Node $Pol -Name 'requestorScope') {
                                 $RScope = $Pol.requestorScope
+                                $RequestorScopeNames = @((Get-OERRequestorScopeMap).Keys)
 
                                 # Issue #69: a requestorScope declaring users/groups but no scope no longer
                                 # refuses the document outright -- Build-OERPolicyParts infers
@@ -1457,6 +1490,28 @@ function Test-OERStructureSchema {
                                             -Path "$PolPath.requestorScope.scope" `
                                             -Message "'requestorScope.scope' at $PolPath must be a non-empty string."
                                     }
+                                } elseif ($RScope.scope -isnot [string] -or
+                                    (($ScopeVal -ine 'unknownFutureValue') -and
+                                        (@($RequestorScopeNames) -inotcontains $ScopeVal))) {
+                                    # BL-187 (c): the scope names are Get-OERRequestorScopeMap's keys, the
+                                    # list New-OERAccessPackageRequestorScope sends from; any letter case of
+                                    # one is accepted without a finding (the builder's ValidateSet binds any
+                                    # case, and schema.json declares no enum for scope). A value that is not
+                                    # a string is named by its type, never shown as a string.
+                                    Add-Finding -Section 'accessPackages' -Item $APItem `
+                                        -Path "$PolPath.requestorScope.scope" `
+                                        -Message ("'requestorScope.scope' at $PolPath must be one of: $($RequestorScopeNames -join ', '). " +
+                                            "Got: $(Get-FoundValueText -Value $RScope.scope).")
+                                } elseif ($ScopeVal -ieq 'unknownFutureValue') {
+                                    # A Warning, never an Error: the export passes this value through for a
+                                    # live policy whose scope it cannot read, so a document it wrote must
+                                    # validate. A declared one fails the builder's ValidateSet inside the
+                                    # handler's build try, so the policy is reported Failed, nothing written.
+                                    Add-Finding -Section 'accessPackages' -Item $APItem `
+                                        -Path "$PolPath.requestorScope.scope" -Severity 'Warning' `
+                                        -Message ("'requestorScope.scope' at $PolPath is 'unknownFutureValue', the value Microsoft Graph " +
+                                            'returns for a requestor scope this module cannot read; Invoke-OERStructure reports this ' +
+                                            'assignment policy Failed and writes nothing to it. Leave the policy out of the document.')
                                 } elseif (($ScopeVal -ne 'SpecificDirectoryUsers') -and $HasNonEmptyTarget) {
                                     # Case 3 (Ruling R-3, new diagnostics only): the explicit scope stands
                                     # and Build-OERPolicyParts never infers over it, so the declared
@@ -2238,11 +2293,20 @@ function Test-OERStructureSchema {
         }
 
         # An empty string is the documented "disable the authentication context" value; any other
-        # non-c<digits> value is rejected at runtime by Set-OERRoleManagementPolicy and
-        # Set-OERDirectoryRoleManagementPolicy alike, so catch it offline instead.
+        # non-c<digits> value is refused at runtime by Set-OERRoleManagementPolicy and
+        # Set-OERDirectoryRoleManagementPolicy alike, so catch it offline instead. The offline check
+        # is stricter: it also refuses a non-string and a trailing line break, which the cmdlets'
+        # '^...$' pattern lets through.
         if (Test-HasProp -Node $Node -Name 'authenticationContextId') {
+            # BL-187 (b): a declared value is a string and is matched whole (\A and \z; '$' would also
+            # accept a trailing line feed). Case stays insensitive, as in the cmdlets: 'C1' is valid.
+            if ($Node.authenticationContextId -isnot [string]) {
+                Add-Finding -Section $Section -Item $Item `
+                    -Path "$Path.authenticationContextId" `
+                    -Message "'authenticationContextId' at $Path must be a string that looks like 'c1', or an empty string to disable it. Got: $(Get-FoundValueText -Value $Node.authenticationContextId)."
+            }
             $AuthCtx = [string]$Node.authenticationContextId
-            if ($AuthCtx -and $AuthCtx -notmatch '^c\d+$') {
+            if ($AuthCtx -and $AuthCtx -notmatch '\Ac\d+\z' -and $Node.authenticationContextId -is [string]) {
                 Add-Finding -Section $Section -Item $Item `
                     -Path "$Path.authenticationContextId" `
                     -Message "'authenticationContextId' at $Path must look like 'c1', or be an empty string to disable it. Got: '$AuthCtx'."

@@ -117,6 +117,39 @@ Describe 'Format-OERUnreadCauseClause' {
         }
     }
 
+    Context 'exactly one closing full stop of a cause is dropped (BL-178a)' {
+        It 'keeps the other two dots of an ellipsis, and the clause adds its own' {
+            InModuleScope Omnicit.EntraRBAC {
+                $Cause = @([PSCustomObject]@{ Cause = 'Retry later...'; Target = '' })
+                Format-OERUnreadCauseClause -Cause $Cause | Should -BeExactly ' Causes: Retry later...'
+            }
+        }
+
+        It 'gives one full stop for a cause that ends in one' {
+            InModuleScope Omnicit.EntraRBAC {
+                $Cause = @([PSCustomObject]@{ Cause = 'Done.'; Target = '' })
+                Format-OERUnreadCauseClause -Cause $Cause | Should -BeExactly ' Causes: Done.'
+            }
+        }
+
+        It 'gives one full stop for a cause that ends in none' {
+            InModuleScope Omnicit.EntraRBAC {
+                $Cause = @([PSCustomObject]@{ Cause = 'Done'; Target = '' })
+                Format-OERUnreadCauseClause -Cause $Cause | Should -BeExactly ' Causes: Done.'
+            }
+        }
+
+        It 'leaves two dots before the separator of an ellipsis cause in the middle' {
+            InModuleScope Omnicit.EntraRBAC {
+                $Cause = @(
+                    [PSCustomObject]@{ Cause = 'Wait...'; Target = '' },
+                    [PSCustomObject]@{ Cause = 'Done.'; Target = '' }
+                )
+                Format-OERUnreadCauseClause -Cause $Cause | Should -BeExactly ' Causes: Wait..; Done.'
+            }
+        }
+    }
+
     Context 'deduplication' {
         It 'shows one cause, the first message, for causes that differ only by their target id' {
             InModuleScope Omnicit.EntraRBAC {

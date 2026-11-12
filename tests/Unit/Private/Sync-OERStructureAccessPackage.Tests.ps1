@@ -5295,6 +5295,33 @@ Describe 'Sync-OERStructureAccessPackage -- every Microsoft Graph v1.0 requestor
         }
     }
 
+    Context 'a DECLARED unknownFutureValue is refused by the builder (BL-187 c)' {
+        It 'reports a declared unknownFutureValue Failed with no Set or New and no write request (<Kind>, WhatIf: <UseWhatIf>)' -ForEach @(
+            @{ Kind = 'policy to create'; HasLive = $false; UseWhatIf = $false }
+            @{ Kind = 'policy to create'; HasLive = $false; UseWhatIf = $true }
+            @{ Kind = 'existing policy with a readable scope'; HasLive = $true; UseWhatIf = $false }
+            @{ Kind = 'existing policy with a readable scope'; HasLive = $true; UseWhatIf = $true }
+        ) {
+            Mock -ModuleName $script:moduleName Set-OERAccessPackageAssignmentPolicy { }
+            Mock -ModuleName $script:moduleName New-OERAccessPackageAssignmentPolicy { }
+            $Live = if ($HasLive) { @(New-Bl11RawPolicy -DisplayName 'Future' -AllowedTargetScope 'allMemberUsers') } else { @() }
+            $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "displayName": "Future", "description": "live description", "requestorScope": { "scope": "unknownFutureValue" } } ] }' |
+                ConvertFrom-Json
+
+            $Run = Invoke-Bl11Sync -Item $Item -Live $Live -UseWhatIf $UseWhatIf
+
+            # Positive proof: the builder was reached (the -Scope ValidateSet refused the value) and the
+            # row says so; nothing else was reported for the policy.
+            $Failed = @($Run.Rows | Where-Object { $_.Action -eq 'Failed' })
+            $Failed.Count | Should -Be 1
+            $Failed[0].Detail | Should -BeLike "failed to build assignmentPolicy 'Future':*unknownFutureValue*"
+            @($Run.Rows | Where-Object { $_.Detail -like "*assignmentPolicy 'Future'*" -and $_.Action -ne 'Failed' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackageAssignmentPolicy -Times 0
+            Should -Invoke -ModuleName $script:moduleName New-OERAccessPackageAssignmentPolicy -Times 0
+            $Run.Sent.Count | Should -Be 0
+        }
+    }
+
     Context 'a live unknownFutureValue is refused (R4)' {
         It 'reports a live unknownFutureValue policy Failed and calls no Set or New, whatever the entry declares (<Declares>, WhatIf: <UseWhatIf>)' -ForEach @(
             @{ Declares = 'a changed description'; Policy = '{ "displayName": "Future", "description": "new description" }'; UseWhatIf = $false }

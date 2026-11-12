@@ -41,8 +41,9 @@ function Get-OERStructureSchemaJson {
     cannot honour is visible rather than silent; a pimPolicy key matching one of the five field names the
     inventory README used to document before they were renamed gets a did-you-mean hint pointing at its
     replacement. Tenant-dependent values that the
-    offline validator does not enforce (role names, requestorScope scope strings) are intentionally
-    left as free strings here and documented in the bundle prompt instead. Pure string builder: no
+    offline validator does not enforce (role names) are intentionally left as free strings here and
+    documented in the bundle prompt instead. requestorScope.scope also stays a free string in this
+    schema, but Test-OERStructureSchema checks it against Get-OERRequestorScopeMap. Pure string builder: no
     Graph, ARM, or filesystem access. SharePointSite catalog resources carry the site URL in a
     distinct url field; name stays the human-readable site title. roleManagementPolicies items declare
     activation window and enablement, approval and approvers, authentication context, and eligible
