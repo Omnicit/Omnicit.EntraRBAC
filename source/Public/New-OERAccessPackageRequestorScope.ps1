@@ -138,7 +138,8 @@ function New-OERAccessPackageRequestorScope {
         }
 
         # The scope names and the values sent live in Get-OERRequestorScopeMap, the single owner (the
-        # NoSubjects mapping, issue #86, is explained there). The -Scope ValidateSet above is static and\n        # a unit test holds it equal to the owner's keys.
+        # NoSubjects mapping, issue #86, is explained there). The -Scope ValidateSet above is static and
+        # a unit test holds it equal to the owner's keys.
         $ScopeMap = Get-OERRequestorScopeMap
 
         $AllowedTargetScope = if ($PSCmdlet.ParameterSetName -eq 'AdminOnly') {
