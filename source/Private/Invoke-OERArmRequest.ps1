@@ -16,6 +16,11 @@ function Invoke-OERArmRequest {
     Az.Accounts cannot reliably reuse an externally acquired (AzAuth) access token, so the bearer
     token is sent directly.
 
+    A redirect is never followed: every send binds -MaximumRedirection 0, and an answer that redirects is
+    refused with ArmRedirectRefused (category InvalidResult, the request path as target). Nothing is sent
+    to the address the redirect named, and the message names neither a status code (PowerShell does not
+    keep it) nor that address.
+
     A request is never sent without an ARM token. When the session holds none -- no state, no
     ArmToken, or an empty or blank one -- the request is refused after the sign-in latch and
     supersession gates and before anything is sent, with ArmTokenAcquisitionFailed. Run
@@ -28,7 +33,9 @@ function Invoke-OERArmRequest {
     the sign-in latch and supersession gates, so a refused or replaced sign-in is still reported as
     itself.
 
-    Invoke-WebRequest is called with -SkipHttpErrorCheck so HTTP errors do not throw. Each response is
+    Invoke-WebRequest is called with -SkipHttpErrorCheck so HTTP errors do not throw (a redirect is the
+    exception: it stops with MaximumRedirectExceeded and is refused, see the redirect paragraph above).
+    Each response is
     normalized to a { StatusCode; Content; Headers } object before the status logic runs; the header
     collection stays inside this wrapper and only its Retry-After entry is ever read. The wrapper
     returns the parsed JSON content for 2xx responses ($null when the body is empty, e.g. 204);
@@ -51,7 +58,7 @@ function Invoke-OERArmRequest {
     ArmPagingIncomplete, and no page is ever requested twice. A page after the first whose value is an
     empty array is a normal page. A 2xx body that cannot be read as JSON, on a single request or on any
     page, is refused with ArmResponseUnreadable; the message names the request path and never the
-    body. Under -All every failure of a page (a refusal above, a non-2xx answer, a transport failure)
+    body. Under -All every failure of a page (a refusal above, a non-2xx answer, a refused redirect, a transport failure)
     carries PartialValue (the items aggregated before it, an empty array for the first page), NextLink
     (the link, or the -Path for the first page; for ArmResponseUnreadable on a later page, the path of
     the failing page, not the absolute link) and PageNumber (1-based) as note properties on the
@@ -258,6 +265,13 @@ function Invoke-OERArmRequest {
             Uri                = $SendUri
             Headers            = @{ Authorization = "Bearer $Plain" }
             SkipHttpErrorCheck = $true
+            # SEC (BL-185, A9): never follow a redirect. Measured 2026-11-12 (Sprint 16 step 1): with
+            # ErrorAction Stop PowerShell then stops with MaximumRedirectExceeded, loses the status,
+            # headers and body, and sends nothing to the next host; without it a 302 and a 307 were
+            # followed with the method and the body. Every send passes through this one splat -- the
+            # first request, each throttled retry, the 401 retry and every page. See
+            # docs/development/rationale.md#arm-transport.
+            MaximumRedirection = 0
             ErrorAction        = 'Stop'
             Verbose            = $false
         }
@@ -274,11 +288,32 @@ function Invoke-OERArmRequest {
             Remove-OERErrorRecord -Record $PSItem
             # Read straight after this try statement; see the check there.
             $TransportFailed = $true
-            throw [System.Management.Automation.ErrorRecord]::new(
-                [System.Exception]::new("Azure Resource Manager request failed before a response was received: $($PSItem.Exception.Message)"),
-                'ArmTransportError',
-                [System.Management.Automation.ErrorCategory]::ConnectionError,
-                $CallPath)
+            # SEC (BL-185, A9): a redirect is recognised by the FIRST comma-separated segment of the
+            # record's id (the measured id is 'MaximumRedirectExceeded,Microsoft.PowerShell.Commands.
+            # InvokeWebRequestCommand'), compared whole and ordinal: a prefix, another case or the whole
+            # id would take another failure for a redirect, or a redirect for another failure. The
+            # refusal's target is the request PATH: the original record's target is the request message,
+            # which carries the token. The message names no status (PowerShell keeps none), no body and
+            # no Location or address (that is the other host's), and chains no inner exception.
+            $FailedId = ([string]$PSItem.FullyQualifiedErrorId -split ',')[0]
+            # if/else, never two sequential statements: the two throws are exclusive by construction.
+            # Measured (Sprint 16 step 1): under -ErrorAction SilentlyContinue or Ignore with no try up the
+            # call stack, a throw inside a catch resumes after the whole try statement; otherwise the first
+            # throw propagates. Either way a second throw in sequence would not run today; the exclusive
+            # shape keeps it so should that behaviour change.
+            if ([string]::Equals($FailedId, 'MaximumRedirectExceeded', [System.StringComparison]::Ordinal)) {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Azure Resource Manager answered this request with a redirect. The redirect was refused: it was not followed, and no request was sent on.'),
+                    'ArmRedirectRefused',
+                    [System.Management.Automation.ErrorCategory]::InvalidResult,
+                    $CallPath)
+            } else {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("Azure Resource Manager request failed before a response was received: $($PSItem.Exception.Message)"),
+                    'ArmTransportError',
+                    [System.Management.Automation.ErrorCategory]::ConnectionError,
+                    $CallPath)
+            }
         } finally {
             $Plain = $null
         }
@@ -712,7 +747,7 @@ function Invoke-OERArmRequest {
     # stale $Response in a caller's scope is never read. The F3 case S13 holds the result.)
     #
     # No response object at all means a nested function already raised and returned: the latch gate,
-    # the supersession gate, the host refusal, the missing-token refusal or the transport failure in Invoke-ArmCall, or
+    # the supersession gate, the host refusal, the missing-token refusal, the redirect refusal or the transport failure in Invoke-ArmCall, or
     # the app-only refusal in Invoke-ArmCallWithRefresh.
     # Its record is the call's answer. Converting the missing response would add a parameter-binding
     # record of its own, since Convert-ArmHttpException requires one.

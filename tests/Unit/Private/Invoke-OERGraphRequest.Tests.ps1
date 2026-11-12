@@ -3165,7 +3165,7 @@ Describe 'Initialize-OERAuth refusal leaves no ARM token for another tenant (A18
             & (Get-Module Omnicit.EntraRBAC) {
                 function script:Invoke-WebRequest {
                     [CmdletBinding()]
-                    param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
+                    param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType, $MaximumRedirection)
                     $global:OERArmStubCalls++
                     if ($global:OERArmStubCalls -gt 5) { exit }
                     if ([string]$Headers['Authorization'] -like '*tenant-A*') { $global:OERArmStubTenantACalls++ }
@@ -5075,7 +5075,7 @@ Describe 'A command whose sign-in was refused sends nothing through either trans
                 }
                 function script:Invoke-WebRequest {
                     [CmdletBinding()]
-                    param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
+                    param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType, $MaximumRedirection)
                     if ($global:OERA10ArmRequests.Count -ge 10) { exit }
                     $global:OERA10ArmRequests.Add([string]$Uri)
                     [pscustomobject]@{ StatusCode = 200; Content = '{"value":[]}'; Headers = @{} }
@@ -5278,7 +5278,7 @@ Describe 'A command whose sign-in was refused sends nothing through either trans
                 }
                 function script:Invoke-WebRequest {
                     [CmdletBinding()]
-                    param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
+                    param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType, $MaximumRedirection)
                     if ($global:OERF1ArmRequests.Count -ge 10) { exit }
                     $global:OERF1ArmRequests.Add([string]$Uri)
                     [pscustomobject]@{ StatusCode = 200; Content = '{"value":[]}'; Headers = @{} }
@@ -5463,7 +5463,7 @@ Describe 'A command whose sign-in was refused sends nothing through either trans
                 }
                 function script:Invoke-WebRequest {
                     [CmdletBinding()]
-                    param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
+                    param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType, $MaximumRedirection)
                     if ($global:OERA12ArmRequests.Count -ge 10) { exit }
                     $global:OERA12ArmRequests.Add([string]$Uri)
                     [pscustomobject]@{ StatusCode = 200; Content = '{"value":[]}'; Headers = @{} }
@@ -5663,7 +5663,7 @@ Describe 'A command whose sign-in was refused sends nothing through either trans
                 }
                 function script:Invoke-WebRequest {
                     [CmdletBinding()]
-                    param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
+                    param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType, $MaximumRedirection)
                     if ($global:OERA13ArmRequests.Count -ge 10) { exit }
                     [string]$Bearer = [string]$Headers['Authorization']
                     [string]$Label = if ($Bearer -match 'tenant-A') { 'tenant A' } elseif ($Bearer -match 'tenant-B') { 'tenant B' } else { 'other' }
@@ -5987,7 +5987,7 @@ $global:OERA20ArmRejections = 0
     }
     function script:Invoke-WebRequest {
         [CmdletBinding()]
-        param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
+        param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType, $MaximumRedirection)
         if ($global:OERA20ArmRequests.Count -ge 10) { exit }
         $global:OERA20ArmRequests.Add([string]$Uri)
         if ($global:OERA20ArmRejections -gt 0) {

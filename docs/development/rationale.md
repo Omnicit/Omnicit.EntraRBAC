@@ -1724,7 +1724,8 @@ Behaviour that follows from this design:
   asked to keep it (documented default, not measured here), the wrapper never asks, and the unit
   test holds that `PreserveAuthorizationOnRedirect` is not bound.
   Measured in Sprint 15 step 1 with the wrapper's parameters (below): the redirect IS followed,
-  without the header.
+  without the header. Since Sprint 16 step 1 a redirect is not followed at all: see "Sprint 16 step 1:
+  no Azure Resource Manager request follows a redirect" below.
   The Graph transport is left as it is by this step. Sprint 14 step 3 changed that for the one
   address a response supplies: see #graph-wrapper. Read, not measured
   (Microsoft.Graph.Authentication 2.40.0, its IL, and every `Invoke-OERGraphRequest -Uri` under
@@ -1838,7 +1839,7 @@ it as the Microsoft Graph or Azure Resource Manager answer (the wrapper itself w
 listeners). On Azure Resource Manager a 307 sent a write's body to another port again; on Microsoft Graph the 307
 POST arrived at the other port as a POST, with the test host allowed, and whether its body arrived was
 not logged. Reported to the architect in the Sprint 15 step 1 report as a finding outside the step's
-scope.
+scope. Sprint 16 step 1 changed it for Azure Resource Manager (below); the Graph transport is as it was.
 
 **Proofs.** `tests/Unit/Private/Invoke-OERArmRequest.Tests.ps1`, Describe "Invoke-OERArmRequest follows a
 redirect only without the token (Sprint 15 step 1, A3)", and
@@ -1847,7 +1848,9 @@ redirect only without the token (Sprint 15 step 1, A3)": the bound parameter nam
 an expected-error read (Graph) and every page of an `-All` walk equal the pinned set exactly (for ARM
 the measured set), the Graph claims-challenge retry and the token-rejected 401 retry send the same set on
 every call, the ARM `Headers` hold `Authorization` alone, and no redirect or session parameter is
-bound.
+bound. (Sprint 16 step 1 renamed and extended the ARM Describe to "Invoke-OERArmRequest follows no
+redirect: the measured parameters and MaximumRedirection 0 (Sprint 15 step 1, A3; Sprint 16 step 1, A9)":
+it now pins `MaximumRedirection` 0 on every ARM send; see the Sprint 16 step 1 section below.)
 **Mutations** (each on a scratch copy of the built module): on the ARM send, adding
 `PreserveAuthorizationOnRedirect = $true`, moving the token from `-Headers` to
 `-Authentication Bearer -Token`, and adding `MaximumRedirection = 5` each turned all 4 ARM tests red;
@@ -1857,6 +1860,92 @@ existed); adding `UserAgent` on the expected-error path only turned 1 red ("a re
 error"), since only that case takes the path. With the retry cases in, adding `-UserAgent` to the first
 send turned 6 of 7 Graph tests red (the expected-error case takes another path), and adding it to the
 claims-challenge retry only, or to the 401 retry only, turned 1 red each (that retry's own test).
+
+### Sprint 16 step 1: no Azure Resource Manager request follows a redirect (BL-185, A3, A9)
+
+**Why.** Sprint 15 step 1 (above) found that the ARM send followed a 302 or 307 to another host, without
+the token but with a write's body, and that the other host's answer was read as the Azure Resource
+Manager answer. The token was safe; the body and the answer were not. No ARM path the module uses
+answers 3xx (read, not measured), so refusing every redirect costs nothing.
+
+**Measured 2026-11-12** (pwsh 7.6.9, no module code). Two loopback listeners on 127.0.0.1, A and B on
+different ports; A answered 302 or 307 with a `Location` to B and a small JSON body, B answered 200. The
+listeners logged only whether a request arrived, its method and path, whether an `Authorization` header
+was present (True or False) and the body length, never a header value. `Invoke-WebRequest` took exactly
+the wrapper's parameters (`Method`, `Uri` as a `System.Uri`, `Headers` holding `Authorization` with a
+`NOT-A-REAL-TOKEN` value, `SkipHttpErrorCheck`, `ErrorAction Stop`, `Verbose $false`; an 87-byte JSON
+`Body` and `ContentType` on a PUT), addresses http://127.0.0.1:port (no local certificate).
+
+| Case | With `-MaximumRedirection 0` | Without it (control) |
+|---|---|---|
+| 302 GET, 302 PUT, 307 GET, 307 PUT | all four threw `MaximumRedirectExceeded`; B received nothing | all four followed; B received the GET or PUT, the 87-byte body on 302 as well as 307, without `Authorization`; B's 200 became the answer |
+
+The record that was thrown: `FullyQualifiedErrorId`
+`MaximumRedirectExceeded,Microsoft.PowerShell.Commands.InvokeWebRequestCommand`, category
+`InvalidOperation`, exception `System.InvalidOperationException` ("Operation is not valid due to the
+current state of the object."), `ErrorDetails` "The maximum redirection count has been exceeded. ...",
+no inner exception, no `Response` member (the status code, headers and body are lost), `TargetObject` a
+`System.Net.Http.HttpRequestMessage` carrying the `Authorization` header, and a new record in `$Error`.
+Neither the message nor `ErrorDetails` named `Location` or B's address.
+
+**Decision (A9, 2026-11-12): way 1.** The parameter in the one send, plus recognition of exactly
+`MaximumRedirectExceeded` (the first comma segment of the id, whole and ordinal, after the scrub) in the
+existing catch, refused with a new id carrying no status, body, `Location` or address and not targeting
+the token-carrying request message; every other failure stays `ArmTransportError`. The security goal is
+met at the one send site, with no new send path and no change to the transport's error contract. Way 2
+(not taken): with `-ErrorAction SilentlyContinue` the 3xx response came back untouched, but always
+together with the same non-terminating record carrying the request with the token header, and the
+transport's error contract changes. That the text names no status code departs from A3 and is accepted.
+
+**What the wrapper does.** `Invoke-ArmCall` adds `MaximumRedirection = 0` to the one splat (so the first
+request, the throttled retries, the 401 retry and every page of a walk share it). Its catch keeps
+`Remove-OERErrorRecord -Record $PSItem` first, then reads the first comma segment of
+`[string]$PSItem.FullyQualifiedErrorId`; when that equals `MaximumRedirectExceeded` ordinally it throws
+`ArmRedirectRefused` (category `InvalidResult`, `TargetObject` the request path string, no inner
+exception) with the message "Azure Resource Manager answered this request with a redirect. The redirect
+was refused: it was not followed, and no request was sent on."; otherwise the unchanged
+`ArmTransportError`. The unit tests pin the id the wrapper expects, using records they build
+themselves; nothing in CI runs the real `Invoke-WebRequest` against a redirect, so CI would not notice a
+PowerShell that renames the id. It would surface as `ArmTransportError`, which still sends nothing on.
+
+**The caller's -ErrorVariable.** Measured 2026-11-12 on loopback, no module code: with the send inside a
+function whose catch scrubs and throws a new record, called from an advanced function whose catch writes
+it, under `-ErrorAction SilentlyContinue -ErrorVariable EV`, `EV` holds the ORIGINAL
+`MaximumRedirectExceeded` record with its `HttpRequestMessage` target (the engine collects it before the
+catch runs, as for every transport failure today) plus the new record; `$Error` holds only the new record
+after the scrub removed the original. So the tests assert that no record in `$Error` or `-ErrorVariable`
+carries the token (text, or an `Authorization` header on an `HttpRequestMessage` target) and that the new
+record never targets the request; they do not assert that `-ErrorVariable` holds no `HttpRequestMessage`.
+The scrub clears the original's header.
+
+**Not measured.** https listeners; a real ARM host answering 3xx; a later PowerShell (it may rename the
+id, see above). That no ARM path the module uses answers 3xx is read, not measured.
+
+**Proofs** (`tests/Unit/Private/Invoke-OERArmRequest.Tests.ps1`): the Describe "Invoke-OERArmRequest
+follows no redirect: the measured parameters and MaximumRedirection 0 (Sprint 15 step 1, A3; Sprint 16
+step 1, A9)" pins the bound names of a read, a write, every page, the 401 retry and the 429 retry, each
+with `MaximumRedirection` 0; the Describe "Invoke-OERArmRequest refuses a redirect (Sprint 16 step 1,
+BL-185, A9)" holds the id, category, target, exact message, no inner exception and no token in `$Error` or
+`-ErrorVariable` for a read (R1), a write with one send (R2), page 2 and page 1 of an `-All` walk (R3, R4),
+the 401 retry (R5) and the retry after a 429 (R6); five near-miss ids stay `ArmTransportError` and an id with no comma is refused (R7); and a
+2xx, an app-only 401, a recovered 429 and a recovered 503 are unchanged (R8a-d); S-R1 and S-R2 in "stops at
+each of its own throws, outside any try (F3)" run it with no `try`; and
+`tests/Unit/Public/Get-OERRoleDefinition.Tests.ps1`, Describe "Get-OERRoleDefinition: a redirect is
+refused and reaches the caller's -ErrorVariable without the token, outside any try (Sprint 16 step 1,
+BL-185, A9)", runs a cmdlet in a runspace with no `try`.
+
+**Mutations** (each on a scratch copy of the built module, filtered to the redirect Describes, S-R and the
+RoleDefinition file): dropping the splat entry turned 6 red (the six "follows no redirect" tests);
+setting it to 1, the same 6; deleting the redirect branch, 10 (S-R1, S-R2, R1-R6, the R7 no-comma case,
+the RoleDefinition probe); `OrdinalIgnoreCase` for the comparison, 1 (R7 lower-case id); `StartsWith`, 1
+(R7 `MaximumRedirectExceededX`); comparing the whole id instead of the first segment, 9 (the R7 no-comma
+case stays green, since the whole id equals the segment there); `$PSItem.TargetObject` as the target, 8;
+chaining the inner exception, 1 (R1); appending the original message, 1 (R1, exact message); dropping
+`Remove-OERErrorRecord`, 15. **One mutation is equivalent and stays (M11):** turning the if/else into two
+sequential throws changes nothing (25 of 25 green), since the second throw is never reached either way (under
+`-ErrorAction SilentlyContinue` or `Ignore` with no try up the call stack a throw inside a catch resumes
+after the whole try statement; otherwise the first throw propagates); the if/else is defence in depth, not a tested
+exclusivity.
 
 ### CLAUDE.md text for arm-transport
 

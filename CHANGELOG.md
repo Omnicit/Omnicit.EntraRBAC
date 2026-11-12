@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No changes to the module since 1.7.0. A preview published from this point differs from 1.7.0 only in
-documentation, tests or the build.
+Azure Resource Manager requests no longer follow a redirect. Before, a request answered with a redirect
+was sent on to the address the answer named, without the access token but with a write's body, and that
+address's answer was read as the Azure Resource Manager answer. Such an answer is now refused with the new
+error `ArmRedirectRefused`, and nothing is sent on. Every other transport failure is still
+`ArmTransportError`.
 
 ## [1.7.0] - 2026-11-12
 
