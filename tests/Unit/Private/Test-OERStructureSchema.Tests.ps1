@@ -8409,3 +8409,72 @@ Describe 'Test-OERStructureSchema refuses a one-element array for every enum val
         }
     }
 }
+
+Describe 'Test-OERStructureSchema authenticationContextId is a string matched whole (BL-187 b)' {
+    BeforeAll {
+        function Get-NstAuthCtxDoc {
+            param([string]$Section, [string]$Value)
+            $Item = if ($Section -eq 'roleManagementPolicies') {
+                '{ "scope": "/subscriptions/sub-1", "role": "Contributor", "authenticationContextId": ' + $Value + ' }'
+            }
+            else {
+                '{ "role": "Reports Reader", "authenticationContextId": ' + $Value + ' }'
+            }
+            '{ "version": "1.0", "' + $Section + '": [ ' + $Item + ' ] }' | ConvertFrom-Json
+        }
+    }
+
+    Context 'section <Section>' -ForEach @(
+        @{ Section = 'roleManagementPolicies' }
+        @{ Section = 'directoryRoleManagementPolicies' }
+    ) {
+        It 'refuses a value with a trailing line feed' {
+            $Doc = Get-NstAuthCtxDoc -Section $Section -Value '"c1\n"'
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Section = $Section } {
+                param($Doc, $Section)
+                $V = Test-OERStructureSchema -Document $Doc
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq "$Section[0].authenticationContextId" })
+                $Hit.Count | Should -Be 1
+                $Hit[0].Severity | Should -BeExactly 'Error'
+                $V.Valid | Should -BeFalse
+            }
+        }
+
+        It 'refuses an array, naming the type' {
+            $Doc = Get-NstAuthCtxDoc -Section $Section -Value '["c1"]'
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Section = $Section } {
+                param($Doc, $Section)
+                $V = Test-OERStructureSchema -Document $Doc
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq "$Section[0].authenticationContextId" })
+                $Hit.Count | Should -Be 1
+                $Hit[0].Severity | Should -BeExactly 'Error'
+                $Hit[0].Message | Should -BeLike "*must be a string that looks like 'c1', or an empty string to disable it. Got: a value that is not a string (*"
+            }
+        }
+
+        It 'refuses a number, naming the type' {
+            $Doc = Get-NstAuthCtxDoc -Section $Section -Value '1'
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Section = $Section } {
+                param($Doc, $Section)
+                $V = Test-OERStructureSchema -Document $Doc
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq "$Section[0].authenticationContextId" })
+                $Hit.Count | Should -Be 1
+                $Hit[0].Message | Should -BeLike "*Got: a value that is not a string (*"
+            }
+        }
+
+        It 'gives no finding at the path for <Shown>' -ForEach @(
+            @{ Shown = 'c1'; Json = '"c1"' }
+            @{ Shown = 'C1'; Json = '"C1"' }
+            @{ Shown = 'an empty string'; Json = '""' }
+            @{ Shown = 'null'; Json = 'null' }
+        ) {
+            $Doc = Get-NstAuthCtxDoc -Section $Section -Value $Json
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Section = $Section } {
+                param($Doc, $Section)
+                $V = Test-OERStructureSchema -Document $Doc
+                @($V.Errors | Where-Object { $_.Path -eq "$Section[0].authenticationContextId" }).Count | Should -Be 0
+            }
+        }
+    }
+}

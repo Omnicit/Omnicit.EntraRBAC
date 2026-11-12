@@ -33,8 +33,8 @@ function Test-OERStructureSchema {
     requireJustificationOnActivation, requireTicketOnActivation, requireApproval,
     requireMfaOnActiveAssignment, requireJustificationOnActiveAssignment), day-count ranges
     (eligibleDurationDays, activeDurationDays: 1-3650), an approvers object with optional users/groups
-    string arrays, and authenticationContextId (a c<digits> claim value, or an empty string to disable
-    it; an explicit null means "not declared -- leave the live setting untouched", the same rule
+    string arrays, and authenticationContextId (a string: a c<digits> claim value matched whole, so a
+    trailing line feed is refused, or an empty string to disable it; an explicit null means "not declared -- leave the live setting untouched", the same rule
     Test-HasProp applies to every field here and the apply-layer diffs apply in lockstep). A
     requireApproval of false declared together with a non-empty approvers block is a Warning naming
     the precedence: the apply engine drops the approvers, because supplying them to Azure Resource
@@ -2269,8 +2269,15 @@ function Test-OERStructureSchema {
         # non-c<digits> value is rejected at runtime by Set-OERRoleManagementPolicy and
         # Set-OERDirectoryRoleManagementPolicy alike, so catch it offline instead.
         if (Test-HasProp -Node $Node -Name 'authenticationContextId') {
+            # BL-187 (b): a declared value is a string and is matched whole (\A and \z; '$' would also
+            # accept a trailing line feed). Case stays insensitive, as in the cmdlets: 'C1' is valid.
+            if ($Node.authenticationContextId -isnot [string]) {
+                Add-Finding -Section $Section -Item $Item `
+                    -Path "$Path.authenticationContextId" `
+                    -Message "'authenticationContextId' at $Path must be a string that looks like 'c1', or an empty string to disable it. Got: $(Get-FoundValueText -Value $Node.authenticationContextId)."
+            }
             $AuthCtx = [string]$Node.authenticationContextId
-            if ($AuthCtx -and $AuthCtx -notmatch '^c\d+$') {
+            if ($AuthCtx -and $AuthCtx -notmatch '\Ac\d+\z' -and $Node.authenticationContextId -is [string]) {
                 Add-Finding -Section $Section -Item $Item `
                     -Path "$Path.authenticationContextId" `
                     -Message "'authenticationContextId' at $Path must look like 'c1', or be an empty string to disable it. Got: '$AuthCtx'."
