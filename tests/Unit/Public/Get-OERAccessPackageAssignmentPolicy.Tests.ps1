@@ -261,6 +261,42 @@ Describe 'Get-OERAccessPackageAssignmentPolicy' {
             }
         }
     }
+
+    Context 'a piped assignment policy binds its access package id, never its own display name (BL-187 a)' {
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } }
+            # The resolver echoes the value it was given, so the list request shows what was resolved.
+            Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId { param($DisplayName) $DisplayName }
+        }
+
+        It 'resolves the AccessPackageId of an AssignmentPolicy and filters the list on it' {
+            $Policy = InModuleScope $script:moduleName {
+                ConvertTo-OERAssignmentPolicy -InputObject @{
+                    id            = '00000000-0000-0000-0000-000000000041'
+                    displayName   = 'Policy-Display-Name'
+                    accessPackage = @{ id = '00000000-0000-0000-0000-000000000042' }
+                }
+            }
+            $Policy.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.AssignmentPolicy'
+            $Policy.AccessPackageId | Should -Be '00000000-0000-0000-0000-000000000042'
+            $Policy | Get-OERAccessPackageAssignmentPolicy -ErrorAction SilentlyContinue | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter {
+                $DisplayName -eq '00000000-0000-0000-0000-000000000042'
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -like "*accessPackage/id eq '00000000-0000-0000-0000-000000000042'*" -and $Uri -notlike '*Policy-Display-Name*'
+            }
+        }
+
+        It 'still resolves a piped access package by its own Id (no AccessPackageId on it)' {
+            $Ap = [pscustomobject]@{ Id = '00000000-0000-0000-0000-000000000043'; DisplayName = 'AP-Piped' }
+            $Ap.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.AccessPackage')
+            $Ap | Get-OERAccessPackageAssignmentPolicy -ErrorAction SilentlyContinue | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter {
+                $DisplayName -eq '00000000-0000-0000-0000-000000000043'
+            }
+        }
+    }
 }
 
 Describe 'Get-OERAccessPackageAssignmentPolicy -- a piped package of another catalog with the real resolver' {

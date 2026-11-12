@@ -13,8 +13,11 @@ function Get-OERAccessPackageAssignmentPolicy {
 
     .PARAMETER AccessPackage
     The access package id or display name whose policies are listed. Accepts pipeline input by
-    property name from Get-OERAccessPackage (binds DisplayName or AccessPackageId; the Id alias is
-    not used here because this cmdlet has its own -Id parameter for the ById set). An access package
+    property name (binds AccessPackageId before DisplayName; the Id alias is not used here because
+    this cmdlet has its own -Id parameter for the ById set). An object carrying both, such as an
+    AssignmentPolicy from this cmdlet, binds its access package id, never its own display name. An
+    access package from Get-OERAccessPackage carries no AccessPackageId, so it binds DisplayName and
+    is resolved by its own id. An access package
     name is unique only within its catalog: use -Catalog for a name several catalogs share. An access
     package piped from Get-OERAccessPackage is resolved by its own id, and with -Catalog checked
     against that catalog.
@@ -52,7 +55,7 @@ function Get-OERAccessPackageAssignmentPolicy {
         [string]$Id,
 
         [Parameter(ParameterSetName = 'ByPackage', Mandatory, ValueFromPipelineByPropertyName)]
-        [Alias('DisplayName', 'AccessPackageId')]
+        [Alias('AccessPackageId', 'DisplayName')]
         [string]$AccessPackage,
 
         [ValidateNotNullOrEmpty()]
