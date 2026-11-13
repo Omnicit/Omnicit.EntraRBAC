@@ -1070,32 +1070,32 @@ token's value is inserted as text, so a `$` in it stays as written.
 `roleManagementPolicies` entry, or a group's `pimPolicy` for that access type, is `Failed` with the
 read's error (`PolicyNotFound` or `PimPolicyNotFound` for an empty answer), also under `-WhatIf`. A
 group's `pimPolicy` access type that declares one half of an expiration pair alone
-(`allowPermanentEligibility` or `eligibleDurationDays`, `allowPermanentActive` or
-`activeDurationDays`) is `Failed` the same way, with `PimRuleValueUnknown`, when the live policy
-gives no value for the other half, or a duration that is not a positive whole number of days, and the
-declared half does not already match; declare both halves. A group's `pimPolicy` access type that
-declares `authenticationContextId`, `activationEnablement` or `activeEnablement` over a rule the read did not
-return is `Failed` the same way, with `PimRuleValueUnknown`, and nothing is sent. A PIM policy change that empties an
-approver side while no other approver remains is `Failed` with `ApproverRequired` in a `-WhatIf`
-plan, as in a run, and so, for a directory role or a group policy, is `requireApproval` true over a
-live approval stage that names nobody. `-Prune` never removes a group's last remaining owner, nor its
-last remaining user owner, which Microsoft Graph refuses to remove even while a service principal is
-an owner (measured); the row is `Skipped`. An owner the same run adds counts as one standing, and as
-a user owner when the document names it by user principal name, so replacing a user owner with one
-named that way completes in one run. An owner that PIM for Groups holds, or makes eligible, does not
-count as standing. A section set to `null` is not declared and gives no row. In a
-runspace with no host of its own, such as a thread job, in `pwsh` started with `-NonInteractive`, and in
-`pwsh` whose standard input is redirected (a pipe, a file, or a child process whose input is not a
-console), a run without `-WhatIf` or `-Confirm:$false` (or a `$ConfirmPreference` of `None`) is refused
-with `ConfirmationUnavailable` before it signs in, also one that would change nothing; run it with
+(`allowPermanentEligibility` or `eligibleDurationDays`, `allowPermanentActive` or `activeDurationDays`)
+is `Failed` the same way, with `PimRuleValueUnknown`, when the live policy gives no value for the other
+half, or a duration that is not a positive whole number of days, and the declared half does not already
+match; declare both halves. A group's `pimPolicy` access type that declares `authenticationContextId`,
+`activationEnablement` or `activeEnablement` over a rule the read did not return is `Failed` the same
+way, with `PimRuleValueUnknown`, and nothing is sent. A PIM policy change that empties an approver side
+while no other approver remains is `Failed` with `ApproverRequired` in a `-WhatIf` plan, as in a run,
+and so, for a directory role or a group policy, is `requireApproval` true over a live approval stage
+that names nobody. `-Prune` never removes a group's last remaining owner, nor its last remaining user
+owner, which Microsoft Graph refuses to remove even while a service principal is an owner (measured);
+the row is `Skipped`. An owner the same run adds counts as one standing, and as a user owner when the
+document names it by user principal name, so replacing a user owner with one named that way completes in
+one run. An owner that PIM for Groups holds, or makes eligible, does not count as standing. A section
+set to `null` is not declared and gives no row. In a runspace with no host of its own, such as a thread
+job started without `-StreamingHost`, in `pwsh` started with `-NonInteractive`, and in `pwsh` whose
+standard input is redirected (a pipe, a file, or a child process whose input is not a console), a run
+without `-WhatIf` or `-Confirm:$false` (or a `$ConfirmPreference` of `None`) is refused with
+`ConfirmationUnavailable` before it signs in, also one that would change nothing; run it with
 `-Confirm:$false` or `-WhatIf`. In another host that cannot show the prompt, an entry stopped by it is
 `Failed`, with a row that says the host cannot show the confirmation prompt and that nothing was
 written. A background job (`Start-Job`) and a console nobody sees (`Start-Process -WindowStyle Hidden`)
 are not refused: the run signs in and waits at the first change's prompt, which in a job `Receive-Job`
 shows in the host that receives the job and which in a hidden console nobody can answer; run it there
-with `-Confirm:$false` or `-WhatIf`. A run within about 30 seconds of a write can send the same update again, since Microsoft Graph
-can still answer a read with the value from before the write; the update changes nothing more, but its
-row reads `Updated` again.
+with `-Confirm:$false` or `-WhatIf`. A run within about 30 seconds of a write can send the same update
+again, since Microsoft Graph can still answer a read with the value from before the write; the update
+changes nothing more, but its row reads `Updated` again.
 
 `Test-OERStructure -NamingStandard` checks the names in a document, or in an exported
 `inventory.json`, against a naming standard file. A name gets one `Warning` for each rule it breaks, a
