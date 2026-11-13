@@ -8522,7 +8522,7 @@ Describe 'Test-OERStructureSchema authenticationContextId is a string matched wh
         }
 
         It 'BL-197: refuses a non-ASCII digit after the c, and still accepts c1 and C1' {
-            $Doc = Get-NstAuthCtxDoc -Section $Section -Value '"c٣"'
+            $Doc = Get-NstAuthCtxDoc -Section $Section -Value ('"c' + [char]0x0663 + '"')
             InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Section = $Section } {
                 param($Doc, $Section)
                 $V = Test-OERStructureSchema -Document $Doc
@@ -8625,7 +8625,7 @@ Describe 'Test-OERStructureSchema a group pimPolicy authenticationContextId is a
         }
 
         It 'BL-197: refuses a non-ASCII digit after the c, with the exact text, and still accepts c1 and C1' {
-            $Doc = Get-NstGroupAuthCtxDoc -Form $Form -Value '"c٣"'
+            $Doc = Get-NstGroupAuthCtxDoc -Form $Form -Value ('"c' + [char]0x0663 + '"')
             $Path = Get-NstGroupAuthCtxPath -Form $Form
             InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Path = $Path } {
                 param($Doc, $Path)
