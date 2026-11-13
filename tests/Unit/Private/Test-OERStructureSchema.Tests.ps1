@@ -2797,9 +2797,11 @@ Describe 'Test-OERStructureSchema requestorScope.scope against Get-OERRequestorS
         @{ Name = 'AllMemberUsers' }, @{ Name = 'AllDirectoryUsers' }, @{ Name = 'AllExternalUsers' },
         @{ Name = 'SpecificDirectoryUsers' }, @{ Name = 'SpecificConnectedOrganizationUsers' },
         @{ Name = 'AllConfiguredConnectedOrganizationUsers' }, @{ Name = 'AllDirectoryServicePrincipals' },
-        @{ Name = 'AllDirectoryAgentIdentities' }, @{ Name = 'SpecificDirectoryServicePrincipals' },
+        @{ Name = 'AllDirectoryAgentIdentities' },
         @{ Name = 'NoSubjects' }, @{ Name = 'NotSpecified' }
     ) {
+        # BL-194: the key the owner maps to $null is a Warning, no longer "no finding"; the conformance
+        # Describe below (BL-194) reads those keys from the owner and holds the Warning.
         InModuleScope $script:moduleName -Parameters @{ Name = $Name; Path = $script:ScopePath } {
             param($Name, $Path)
             $Doc = ('{ "version": "1.0", "accessPackages": [ { "displayName": "ap1", "catalog": "cat1", "assignmentPolicies": [ { "displayName": "p1", "requestorScope": { "scope": "' + $Name + '" } } ] } ] }') | ConvertFrom-Json
@@ -2903,7 +2905,7 @@ Describe 'Test-OERStructureSchema requestorScope.scope against Get-OERRequestorS
         @{ Wire = 'allConfiguredConnectedOrganizationUsers'; Warns = $false }
         @{ Wire = 'allDirectoryServicePrincipals'; Warns = $false }
         @{ Wire = 'allDirectoryAgentIdentities'; Warns = $false }
-        @{ Wire = 'specificDirectoryServicePrincipals'; Warns = $false }
+        @{ Wire = 'specificDirectoryServicePrincipals'; Warns = $true }
         @{ Wire = 'noSubjects'; Warns = $false }
         @{ Wire = 'notSpecified'; Warns = $false }
         @{ Wire = 'unknownFutureValue'; Warns = $true }
@@ -2937,12 +2939,90 @@ Describe 'Test-OERStructureSchema requestorScope.scope against Get-OERRequestorS
             if ($Warns) {
                 $Hits.Count | Should -Be 1
                 $Hits[0].Severity | Should -BeExactly 'Warning'
-                $Exported | Should -BeExactly 'unknownFutureValue'
+                $Exported | Should -BeIn @('unknownFutureValue', 'SpecificDirectoryServicePrincipals')
             }
             else {
                 $Hits.Count | Should -Be 0
             }
             $V.Valid | Should -BeTrue
+        }
+    }
+}
+
+Describe 'Test-OERStructureSchema warns on a requestor scope the owner maps to null (BL-194)' {
+    # The keys are read from Get-OERRequestorScopeMap at run time, never listed here.
+    # If (a) ever fails, the export can no longer write the value, and decision A3 (c) of Sprint 17
+    # makes the validator's finding an Error instead of a Warning: change the validator then.
+    It '(a) the export can write every null-valued owner key' {
+        InModuleScope $script:moduleName {
+            $Map = Get-OERRequestorScopeMap
+            $Keys = @($Map.Keys | Where-Object { $null -eq $Map[$_] })
+            $Keys.Count | Should -BeGreaterThan 0
+            foreach ($Key in $Keys) {
+                $Wire = $Key.Substring(0, 1).ToLowerInvariant() + $Key.Substring(1)
+                $Raw = @{
+                    id                 = '00000000-0000-0000-0000-000000000001'
+                    displayName        = 'p1'
+                    allowedTargetScope = $Wire
+                    accessPackage      = @{ id = '00000000-0000-0000-0000-000000000002' }
+                }
+                $Policy = ConvertTo-OERAssignmentPolicy -InputObject $Raw
+                $Policy.RequestorScope | Should -Not -BeNullOrEmpty -Because "the export writes $Key"
+                ([string]$Policy.RequestorScope.scope -ceq $Key) | Should -BeTrue -Because "the export writes $Key as the owner spells it"
+            }
+        }
+    }
+
+    It '(b) the validator gives exactly one Warning and no Error for every null-valued owner key' {
+        InModuleScope $script:moduleName {
+            $Map = Get-OERRequestorScopeMap
+            $Keys = @($Map.Keys | Where-Object { $null -eq $Map[$_] })
+            $Keys.Count | Should -BeGreaterThan 0
+            $Path = 'accessPackages[0].assignmentPolicies[0].requestorScope.scope'
+            foreach ($Key in $Keys) {
+                $Doc = [PSCustomObject]@{
+                    version        = '1.0'
+                    accessPackages = @([PSCustomObject]@{
+                            displayName        = 'ap1'
+                            catalog            = 'cat1'
+                            assignmentPolicies = @([PSCustomObject]@{
+                                    displayName    = 'p1'
+                                    requestorScope = [PSCustomObject]@{ scope = $Key }
+                                })
+                        })
+                }
+                $V = Test-OERStructureSchema -Document $Doc
+                @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq $Path })
+                $Hit.Count | Should -Be 1
+                $Hit[0].Severity | Should -BeExactly 'Warning'
+                $Hit[0].Message | Should -BeExactly ("'requestorScope.scope' at accessPackages[0].assignmentPolicies[0] is '$Key', a scope whose service principal targets this module does not model; " +
+                    "Invoke-OERStructure reports this assignment policy Failed and writes nothing to it. Omit 'requestorScope' to apply the policy's other fields and keep the live scope.")
+                $V.Valid | Should -BeTrue
+            }
+        }
+    }
+
+    It 'names the key as the owner spells it for any letter case of the declared value' {
+        InModuleScope $script:moduleName {
+            $Map = Get-OERRequestorScopeMap
+            $Key = @($Map.Keys | Where-Object { $null -eq $Map[$_] })[0]
+            $Doc = [PSCustomObject]@{
+                version        = '1.0'
+                accessPackages = @([PSCustomObject]@{
+                        displayName        = 'ap1'
+                        catalog            = 'cat1'
+                        assignmentPolicies = @([PSCustomObject]@{
+                                displayName    = 'p1'
+                                requestorScope = [PSCustomObject]@{ scope = $Key.ToUpperInvariant() }
+                            })
+                    })
+            }
+            $V = Test-OERStructureSchema -Document $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'accessPackages[0].assignmentPolicies[0].requestorScope.scope' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Message | Should -BeLike "*is '$Key', a scope whose*"
         }
     }
 }

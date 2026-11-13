@@ -88,8 +88,10 @@ function Test-OERStructureSchema {
     value that is not a string, is an Error at its requestorScope.scope path, any letter case of a
     listed name is accepted with no finding, and unknownFutureValue (the value the inventory passes
     through for a scope this module cannot read) is a Warning, since Invoke-OERStructure reports such
-    a policy Failed and writes nothing to it. A requestorScope declaring a non-empty users or
-    groups array with no scope is a Warning (issue #69): Invoke-OERStructure infers scope as
+    a policy Failed and writes nothing to it. A scope the owner maps to $null (read from the owner on
+    each validation; SpecificDirectoryServicePrincipals) is a Warning for the same reason: the export
+    writes it and Invoke-OERStructure reports that policy Failed (BL-194). A requestorScope declaring
+    a non-empty users or groups array with no scope is a Warning (issue #69): Invoke-OERStructure infers scope as
     SpecificDirectoryUsers for that shape, so the document is no longer refused. The shape it
     replaces was an Error here, and Invoke-OERStructure refuses any document carrying one with no
     -SkipValidation escape, so the AllMemberUsers default this inference displaces was never actually
@@ -1458,7 +1460,10 @@ function Test-OERStructureSchema {
 
                             if (Test-HasProp -Node $Pol -Name 'requestorScope') {
                                 $RScope = $Pol.requestorScope
-                                $RequestorScopeNames = @((Get-OERRequestorScopeMap).Keys)
+                                $RequestorScopeMap = Get-OERRequestorScopeMap
+                                $RequestorScopeNames = @($RequestorScopeMap.Keys)
+                                # Keys the owner maps to $null: names that bind but are never built (BL-194).
+                                $UnbuildableScopeNames = @($RequestorScopeMap.Keys | Where-Object { $null -eq $RequestorScopeMap[$_] })
 
                                 # Issue #69: a requestorScope declaring users/groups but no scope no longer
                                 # refuses the document outright -- Build-OERPolicyParts infers
@@ -1525,6 +1530,20 @@ function Test-OERStructureSchema {
                                         -Message ("'requestorScope.scope' at $PolPath is 'unknownFutureValue', the value Microsoft Graph " +
                                             'returns for a requestor scope this module cannot read; Invoke-OERStructure reports this ' +
                                             'assignment policy Failed and writes nothing to it. Leave the policy out of the document.')
+                                } elseif (@($UnbuildableScopeNames) -icontains $ScopeVal) {
+                                    # BL-194 (decision A3 c): a scope the owner maps to $null. The export
+                                    # CAN write it (ConvertTo-OERAssignmentPolicy reads the wire value and
+                                    # Get-OERInventory copies it unfiltered), so a document it wrote must
+                                    # validate: a Warning, never an Error. The builder refuses it inside
+                                    # the handler's build try, so the policy is reported Failed before
+                                    # ShouldProcess and nothing is written for it.
+                                    $UnbuildableName = @($UnbuildableScopeNames | Where-Object { $_ -ieq $ScopeVal })[0]
+                                    Add-Finding -Section 'accessPackages' -Item $APItem `
+                                        -Path "$PolPath.requestorScope.scope" -Severity 'Warning' `
+                                        -Message ("'requestorScope.scope' at $PolPath is '$UnbuildableName', a scope whose service " +
+                                            'principal targets this module does not model; Invoke-OERStructure reports this ' +
+                                            'assignment policy Failed and writes nothing to it. Omit ''requestorScope'' to apply ' +
+                                            "the policy's other fields and keep the live scope.")
                                 } elseif (($ScopeVal -ne 'SpecificDirectoryUsers') -and $HasNonEmptyTarget) {
                                     # Case 3 (Ruling R-3, new diagnostics only): the explicit scope stands
                                     # and Build-OERPolicyParts never infers over it, so the declared
