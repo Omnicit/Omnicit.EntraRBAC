@@ -207,8 +207,12 @@ function Invoke-OERStructure {
     nothing is signed in to, read or changed for it, and the next piped document is handled the same
     way. Another host (an editor's console, a custom host) may fail only when it asks: there an entry
     whose handler stops at that prompt is reported Failed with a Detail saying that the host cannot
-    show the confirmation prompt and that nothing was written for the entry. Run the command with
-    -Confirm:$false to apply without prompts, or with -WhatIf to plan.
+    show the confirmation prompt and that nothing was written for the entry. A background job
+    (Start-Job) and a console nobody sees (Start-Process -WindowStyle Hidden) are not refused: the run
+    signs in and waits at the first change's prompt, which in a job Receive-Job shows in the host that
+    receives the job (Wait-Job stops with an error while the job waits), and which in a hidden console
+    nobody can answer. Run the command with -Confirm:$false to apply without prompts, or with -WhatIf to
+    plan.
 
     Prune mode (-Prune): passed through to every handler. Each handler gates its prune pass
     with $Caller.ShouldProcess, honouring -WhatIf. Prune is child-scope only -- no handler ever

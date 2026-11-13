@@ -114,6 +114,23 @@ Describe 'Test-OERHostCanConfirm (BL-53)' {
         $Run.Errors | Should -BeNullOrEmpty
     }
 
+    It 'answers $true in a background job (Start-Job, ServerRemoteHost), whose prompt Receive-Job shows (BL-198)' {
+        $Job = Start-Job -ScriptBlock {
+            Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+            "HOST:$($Host.Name)"
+            "SENDER:$($null -ne $PSSenderInfo)"
+            "ANSWER:$(& (Get-Module Omnicit.EntraRBAC) { Test-OERHostCanConfirm })"
+        }
+        try {
+            $null = $Job | Wait-Job -Timeout 120
+            $Output = @($Job | Receive-Job -ErrorAction Stop | ForEach-Object { "$_" })
+            $Job.State | Should -BeExactly 'Completed'
+        } finally {
+            $Job | Remove-Job -Force
+        }
+        $Output | Should -Be @('HOST:ServerRemoteHost', 'SENDER:True', 'ANSWER:True')
+    }
+
     It 'returns a [bool]' {
         InModuleScope $script:moduleName { (Test-OERHostCanConfirm) -is [bool] } | Should -BeTrue
     }

@@ -28,10 +28,28 @@ function Test-OERHostCanConfirm {
     whatever the input; only with the console as input and without -NonInteractive did it wait for an
     answer. [Environment]::UserInteractive was True in every case and decides nothing.
 
-    Limits: another host (an editor's integrated console, a runspace on an application's own PSHost)
-    answers $true and was not measured. A terminal that hands pwsh a pipe instead of a console is refused
-    although a person may be typing into it; that is the safer side, since -Confirm:$false or -WhatIf runs
-    the document. Test-OERConfirmPromptFailure names the cause when a prompt fails anyway.
+    Measured on 2026-11-14 in pwsh 7.6 on Windows (BL-198), with the same kind of function, in more hosts.
+    A background job (Start-Job) runs in the host 'ServerRemoteHost' with $PSSenderInfo set. Its
+    ShouldProcess did not throw: the job turned Blocked, Wait-Job stopped with an error, and Receive-Job
+    showed the prompt in the host that received the job, where a typed answer was read (Yes and No);
+    received in pwsh -NonInteractive, the job's ShouldProcess threw. A person can answer it there, so it
+    answers $true. A thread job started with -StreamingHost $Host runs in its caller's console host and
+    prompts there, so (b) and (c) decide it as they decide its caller; without -StreamingHost it is the
+    Default Host (a). A console host in a new console with no visible window (Start-Process -WindowStyle
+    Hidden) waited for an answer nobody could give, and answers $true: its host name and type,
+    $PSSenderInfo, [Console]::IsInputRedirected, [Environment]::UserInteractive and process session id
+    read as in a console a person types into, and its console window was not visible, as it was not for
+    pwsh in a pseudo console made with CreatePseudoConsole (the kind of console Windows Terminal gives a
+    shell; Windows Terminal itself was not started), where a typed answer was read. No signal measured
+    tells the hidden console apart, so it is not refused.
+
+    Limits: a console nobody sees answers $true and its prompt waits; a scheduled task or a service was
+    not measured. A background job's prompt waits until Receive-Job shows it. Another host (an editor's
+    integrated console, a runspace on an application's own PSHost) answers $true and was not measured.
+    Run the command there with -Confirm:$false or -WhatIf. A terminal that hands pwsh a pipe instead of a
+    console is refused although a person may be typing into it; that is the safer side, since
+    -Confirm:$false or -WhatIf runs the document. Test-OERConfirmPromptFailure names the cause when a
+    prompt fails anyway.
 
     .EXAMPLE
     Test-OERHostCanConfirm
