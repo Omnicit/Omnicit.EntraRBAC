@@ -63,7 +63,7 @@ answer from the input would read Yes (the 2026-10-20 measurement); the fences st
 
 ### H.1. The helpers every check uses
 
-- [ ] **H.1** The helpers load; nothing is printed and nothing is sent. #type/subtask
+- [x] **H.1** The helpers load; nothing is printed and nothing is sent. #type/subtask
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -127,7 +127,7 @@ function Show-S172 {
 
 ## 1. A redirected or non-interactive console is refused before the sign-in
 
-- [ ] **1.1** Launched as `pwsh -NoProfile -File` with standard input redirected (the shape of F-6): a run of a document with a change, without `-Confirm:$false` and without `-WhatIf`, is refused with `ConfirmationUnavailable`, no row and no request; the same document under `-WhatIf` gives the plan. #type/subtask
+- [x] **1.1** Launched as `pwsh -NoProfile -File` with standard input redirected (the shape of F-6): a run of a document with a change, without `-Confirm:$false` and without `-WhatIf`, is refused with `ConfirmationUnavailable`, no row and no request; the same document under `-WhatIf` gives the plan. #type/subtask
 
 ```powershell
 Connect-S172
@@ -152,9 +152,9 @@ least 1 with writes 0, arm requests 0; the plan would create the prefixed group:
 it would create is `Skipped` with the Detail `would create group oer-s172-absent` (the engine's plan form of a create).
 **Failure looks like:** a `Failed` row saying the host cannot show the prompt (the F-6 behaviour), any
 request in the refused run, a token request (the fence throws), a write, or no plan.
-**Result:**
+**Result (2026-11-13, as oer-live-cc, the module the worktree built at the commit `docs: rewrap the console reader's help to the file's line width`, 1.7.2; each block in its own `pwsh`, standard input redirected and holding `y`, output redacted with OerLive before it was read):** PASS. Identity check True for app, service principal and tenant (and the organization, the verified domain and the test subscription); the module is the worktree's build: True; token fence and request fences in place: True. `host ConsoleHost, standard input redirected True, started with -NonInteractive False, can confirm False`; `run: own records 1 (ConfirmationUnavailable), rows 0 [none], graph requests 0 (writes 0), arm requests 0 (writes 0)`; the plan printed `What if: Performing the operation "Create group" on target "oer-s172-absent".` and `plan: own records 0 (none), rows 1 [groups|oer-s172-absent|Skipped], graph requests 1 (writes 0), arm requests 0 (writes 0)`; the plan would create the prefixed group: True. No `Failed` row, no token request. Exit code 0.
 
-- [ ] **1.2** Launched as `pwsh -NoProfile -NonInteractive -File`: the same run is refused the same way, and the plan still runs. #type/subtask
+- [x] **1.2** Launched as `pwsh -NoProfile -NonInteractive -File`: the same run is refused the same way, and the plan still runs. #type/subtask
 
 ```powershell
 Connect-S172
@@ -175,13 +175,13 @@ Disconnect-OerLive
 graph requests 0 (writes 0), arm requests 0 (writes 0)`; `plan: own records 0 (none), rows 1
 [groups|oer-s172-absent|Skipped]`, graph writes 0.
 **Failure looks like:** as 1.1.
-**Result:**
+**Result (2026-11-13, as oer-live-cc, the module the worktree built at the commit `docs: rewrap the console reader's help to the file's line width`, 1.7.2; each block in its own `pwsh`, standard input redirected and holding `y`, output redacted with OerLive before it was read):** PASS. Launched `pwsh -NoProfile -NonInteractive -File`. Identity check True; module is the worktree's build, fences in place: True. `host ConsoleHost, standard input redirected True, started with -NonInteractive True, can confirm False`; `run: own records 1 (ConfirmationUnavailable), rows 0 [none], graph requests 0 (writes 0), arm requests 0 (writes 0)`; `plan: own records 0 (none), rows 1 [groups|oer-s172-absent|Skipped], graph requests 1 (writes 0), arm requests 0 (writes 0)`. Exit code 0.
 
 ## Teardown
 
 Nothing to remove: no object was created. Close with a sweep for the prefix.
 
-- [ ] **T.1** The sweep finds no object with the prefix `oer-s172-`. #type/subtask
+- [x] **T.1** The sweep finds no object with the prefix `oer-s172-`. #type/subtask
 
 ```powershell
 Connect-OerLive -Graph
@@ -192,4 +192,4 @@ Disconnect-OerLive
 
 **Expect:** `Objects with the prefix: 0; kinds unread: 0`.
 **Failure looks like:** any object listed (a write got through), or a kind unread (the sweep proves nothing).
-**Result:**
+**Result (2026-11-13, as oer-live-cc, the module the worktree built at the commit `docs: rewrap the console reader's help to the file's line width`, 1.7.2; each block in its own `pwsh`, standard input redirected and holding `y`, output redacted with OerLive before it was read):** PASS. Identity check True (Microsoft Graph sign-in); `Objects with the prefix: 0; kinds unread: 0`. Nothing was created, so nothing was removed.
