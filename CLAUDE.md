@@ -1097,9 +1097,9 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Why: docs/development/rationale.md#confirmation-unavailable`
 - **`Test-OERHostNonInteractive` is the single owner of whether the console host was started with
   `-NonInteractive`** (a private field read by reflection; `$false` for every other host and on any
-  failure); only `Initialize-OERAuth` and `Test-OERHostCanConfirm` ask it. Never decide it elsewhere. Every unit test that reaches
-  the real `Initialize-OERAuth` with an interactive sign-in mocks it, since the tool host is
-  `-NonInteractive`.
+  failure); only `Initialize-OERAuth` and `Test-OERHostCanConfirm` ask it. Never decide it elsewhere.
+  Every unit test that reaches the real `Initialize-OERAuth` with an interactive sign-in mocks it,
+  since the tool host is `-NonInteractive`.
   `Why: docs/development/rationale.md#an-interactive-sign-in-is-refused-in-a-non-interactive-host`
 - **`Select-OERManagedDirectoryRoleAssignment` is the single owner of which live directory role
   assignment the apply engine may match or prune; `Get-OERTokenObjectId` of reading the signed-in

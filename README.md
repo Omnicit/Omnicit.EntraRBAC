@@ -1088,10 +1088,9 @@ runspace with no host of its own, such as a thread job, in `pwsh` started with `
 `pwsh` whose standard input is redirected (a pipe, a file, or a child process without a console), a run
 without `-WhatIf` or `-Confirm:$false` (or a `$ConfirmPreference` of `None`) is refused with
 `ConfirmationUnavailable` before it signs in, also one that would change nothing; run it with
-`-Confirm:$false` or `-WhatIf`. In another host that
-cannot show the prompt, an entry stopped by it is `Failed`, with a row that says the host cannot show
-the confirmation prompt and that nothing was written. A run within about 30 seconds of a write can
-send the same update again, since Microsoft Graph can still answer a read with the value from before
+`-Confirm:$false` or `-WhatIf`. In another host that cannot show the prompt, an entry stopped by it is
+`Failed`, with a row that says the host cannot show the confirmation prompt and that nothing was
+written. A run within about 30 seconds of a write can send the same update again, since Microsoft Graph can still answer a read with the value from before
 the write; the update changes nothing more, but its row reads `Updated` again.
 
 `Test-OERStructure -NamingStandard` checks the names in a document, or in an exported

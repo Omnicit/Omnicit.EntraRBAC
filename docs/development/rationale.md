@@ -15556,9 +15556,10 @@ may be typing there, and with redirected input a prompt could otherwise read its
 Windows with `pwsh` 7.6 was measured; an editor's integrated console and other hosts were not, and still
 answer `$true`; a host not told beforehand still gets the clear `Failed` row.
 
-**Held by** the tests of `Test-OERHostCanConfirm`, of `Test-OERConsoleInputRedirected` and the `(BL-53)`
-Describe of `Invoke-OERStructure.Tests.ps1`, which run the branches with the input read mocked and in child
-processes.
+**Held by** the tests of `Test-OERHostCanConfirm`, of `Test-OERConsoleInputRedirected` and the `(BL-195)`
+Describe of `Invoke-OERStructure.Tests.ps1` ('Invoke-OERStructure refuses a run in a console host that
+cannot ask a person (BL-195)'), which runs the refusal with the two host signals mocked and in a child
+process (`'y' | pwsh -File ...`) with no try above the engine.
 
 ### CLAUDE.md text for confirmation-unavailable
 
