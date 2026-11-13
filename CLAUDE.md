@@ -197,7 +197,7 @@ change on either side to the other, so they agree hit for hit.
 the manifest's cmdlet count; a new export moves the numbers it holds (item 3 of **Checklist: Adding
 a New Function**).
 
-**Test files named after no single function.** Eleven cross-cutting suites exist; do **NOT** delete any
+**Test files named after no single function.** Twelve cross-cutting suites exist; do **NOT** delete any
 of them as an orphan when auditing the one-test-file-per-function invariant
 (`Why: docs/development/rationale.md#qa-gates`):
 
@@ -214,6 +214,10 @@ of them as an orphan when auditing the one-test-file-per-function invariant
 - `Unit/Public/AdministrativeUnitAliasOrder.Cohort.Tests.ps1` -- the same AST-driven check for every
   `-AdministrativeUnit` parameter, so a piped member's own `Id`/`DisplayName` can never mis-bind as the
   parent unit.
+- `Unit/Public/AccessPackageAliasOrder.Cohort.Tests.ps1` -- AST-driven: every `source/Public/*.ps1`
+  `-AccessPackage` parameter whose `[Alias()]` list holds `AccessPackageId` lists it before `Id` and
+  `DisplayName`, so a piped policy, resource role or assignment binds its access package id, never its
+  own `Id`; a floor of the six carriers keeps the scan from being vacuous.
 - `Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` -- AST-driven: every public cmdlet declaring
   `-TenantId` carries `[ValidateNotNullOrEmpty()]`, except `Connect-OER`, which publishes its own
   `InvalidTenantId` refusal.
@@ -821,9 +825,10 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   the other four store `ResourceId` directly -- no shape stores the path twice.
   `Why: docs/development/rationale.md#property-naming`
 - **Alias declaration order:** in a parameter's `[Alias()]` list the specific `<Noun>Id` precedes
-  the generic `Id` (first match in declaration order wins). Two AST cohort suites hold it for
-  `-Group` and `-AdministrativeUnit`: `Unit/Public/GroupAliasOrder.Cohort.Tests.ps1` and
-  `Unit/Public/AdministrativeUnitAliasOrder.Cohort.Tests.ps1`.
+  the generic `Id` (first match in declaration order wins). Three AST cohort suites hold it for
+  `-Group`, `-AdministrativeUnit` and `-AccessPackage`: `Unit/Public/GroupAliasOrder.Cohort.Tests.ps1`,
+  `Unit/Public/AdministrativeUnitAliasOrder.Cohort.Tests.ps1` and
+  `Unit/Public/AccessPackageAliasOrder.Cohort.Tests.ps1`.
   `Why: docs/development/rationale.md#alias-declaration-order`
 - **`-Scope` binds from the pipeline only where the piped OBJECT is assignment-shaped, never where
   it is scope-DEFINING -- a split by object shape, not a blanket rule per cmdlet.** Assignment-shaped
@@ -953,6 +958,8 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `requestorScope.scope` against its keys (any letter case accepted; a value outside the list or not a
   string is an Error), and the builder's static `-Scope` `ValidateSet` is held equal to the keys, in
   order, by a test. `unknownFutureValue` is a Warning, never an Error: the export passes it through.
+  A scope the owner maps to `$null` (`SpecificDirectoryServicePrincipals`) is a Warning too: the export
+  writes it for a live policy, and the apply reports that policy Failed and writes nothing to it.
   Never spell the scope list a second time; `schema.json` keeps `scope` a free string. One named
   exception: `ConvertTo-OERAssignmentPolicy` keeps its own READ map (Graph wire value to friendly name),
   the inverse of the owner's write map, which the validator's case-insensitive comparison never reads;

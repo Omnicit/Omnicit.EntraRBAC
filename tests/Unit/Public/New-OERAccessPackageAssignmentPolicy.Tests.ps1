@@ -367,3 +367,53 @@ Describe 'New-OERAccessPackageAssignmentPolicy -- a failed resolver read is not 
         Should -Invoke -ModuleName 'Omnicit.EntraRBAC' Invoke-OERGraphRequest -Times 0 -Exactly
     }
 }
+
+Describe 'New-OERAccessPackageAssignmentPolicy -- a piped AccessPackageId binds before the object''s own Id (BL-192)' {
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId { 'ap-1' }
+    }
+    BeforeEach {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'pol-new'; displayName = 'Default' } }
+        $script:Scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
+    }
+
+    It 'an assignment policy binds its access package id, never its own Id' {
+        $Policy = [PSCustomObject]@{ Id = 'policy-id-1'; DisplayName = 'Policy One'; AccessPackageId = 'package-id-1' }
+        $Policy.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.AssignmentPolicy')
+        $Policy | New-OERAccessPackageAssignmentPolicy -DisplayName 'Default' -RequestorScope $script:Scope -Confirm:$false | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'package-id-1' }
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0 -ParameterFilter { $DisplayName -eq 'policy-id-1' }
+    }
+
+    It 'a resource role binds its AccessPackageId' {
+        $Role = [PSCustomObject]@{
+            ResourceRoleScopeId = 'scope-id-1'; RoleName = 'Member'; ResourceDisplayName = 'Sales'
+            ScopeDisplayName = 'Root'; OriginId = 'grp-1'; OriginSystem = 'AadGroup'; AccessPackageId = 'package-id-2'
+        }
+        $Role.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.AccessPackageResourceRole')
+        $Role | New-OERAccessPackageAssignmentPolicy -DisplayName 'Default' -RequestorScope $script:Scope -Confirm:$false | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'package-id-2' }
+    }
+
+    It 'an access package from Get-OERAccessPackage carries no AccessPackageId and binds its Id as before' {
+        $Package = [PSCustomObject]@{ Id = 'package-id-3'; DisplayName = 'AP-Sales'; Description = 'd'; CatalogId = 'cat-1'; IsHidden = $false }
+        $Package.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.AccessPackage')
+        $Package | New-OERAccessPackageAssignmentPolicy -DisplayName 'Default' -RequestorScope $script:Scope -Confirm:$false | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'package-id-3' }
+    }
+
+    It 'a piped object whose AccessPackageId is null fails binding and nothing is sent' {
+        $Review = [PSCustomObject]@{ Id = 'review-id-1'; DisplayName = 'Review'; AccessPackageId = $null }
+        { $Review | New-OERAccessPackageAssignmentPolicy -DisplayName 'Default' -RequestorScope $script:Scope -Confirm:$false } |
+            Should -Throw -ErrorId 'ParameterArgumentValidationErrorEmptyStringNotAllowed,New-OERAccessPackageAssignmentPolicy'
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+
+        # Control: the same pipeline with a value gets past binding and sends the request.
+        $Review.AccessPackageId = 'package-id-9'
+        $Review | New-OERAccessPackageAssignmentPolicy -DisplayName 'Default' -RequestorScope $script:Scope -Confirm:$false | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly
+    }
+}

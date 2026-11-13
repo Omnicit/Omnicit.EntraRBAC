@@ -19,10 +19,11 @@ BeforeAll {
     # The QA gate files are outside it on purpose: they call help, the analyzer and pure maps only.
     # =====================================================================================
 
-    # The two AST-only cohort suites parse source files and import nothing, so no module code can
-    # run in them. Named here, and the second It below fails if either starts importing, calls a
+    # The three AST-only cohort suites parse source files and import nothing, so no module code can
+    # run in them. Named here, and the second It below fails if any starts importing, calls a
     # Verb-OER* command or runs Get-Command -Module.
     $script:TripwireExempt = @(
+        'tests/Unit/Public/AccessPackageAliasOrder.Cohort.Tests.ps1'
         'tests/Unit/Public/AdministrativeUnitAliasOrder.Cohort.Tests.ps1'
         'tests/Unit/Public/GroupAliasOrder.Cohort.Tests.ps1'
     )

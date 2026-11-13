@@ -16,8 +16,13 @@ function Get-OERAccessPackageAssignment {
 
     .PARAMETER AccessPackage
     An access package id or display name to filter assignments by package. Accepts pipeline input by
-    property name from Get-OERAccessPackage (binds Id or DisplayName). An access package name is
-    unique only within its catalog: use -Catalog for a name several catalogs share.
+    property name (binds AccessPackageId first, then Id, then DisplayName). An object carrying an
+    AccessPackageId, such as an assignment policy, a resource role, an assignment or an assignment
+    request, binds its access package id, never its own Id. An access package from
+    Get-OERAccessPackage carries no AccessPackageId, so it binds its Id as before. A piped object
+    whose AccessPackageId is empty is refused with EmptyAccessPackageId and nothing is read; a typed
+    empty -AccessPackage without pipeline input still lists every assignment. An access package name
+    is unique only within its catalog: use -Catalog for a name several catalogs share.
 
     .PARAMETER Catalog
     A catalog name or id. With it the -AccessPackage name is looked up only in that catalog, and an
@@ -72,7 +77,7 @@ function Get-OERAccessPackageAssignment {
     [OutputType([PSCustomObject])]
     param(
         [Parameter(ValueFromPipelineByPropertyName)]
-        [Alias('Id', 'DisplayName', 'AccessPackageId')]
+        [Alias('AccessPackageId', 'Id', 'DisplayName')]
         [string]$AccessPackage,
         [string]$Target,
 
@@ -110,6 +115,18 @@ function Get-OERAccessPackageAssignment {
         Initialize-OERAuth @AuthParams
     }
     process {
+        # A piped object that carries an AccessPackageId property with no value binds '' (the alias
+        # binds first, so its own Id is never tried). Reading every assignment for it would be the
+        # opposite of what the caller piped, so it is refused before anything is read. A typed
+        # -AccessPackage '' without pipeline input keeps listing everything.
+        if ($MyInvocation.ExpectingInput -and $PSBoundParameters.ContainsKey('AccessPackage') -and
+            [string]::IsNullOrWhiteSpace($AccessPackage)) {
+            Write-CmdletError `
+                -Message ([System.Exception]::new('The piped object names no access package: its AccessPackageId is empty, so nothing was read. Pipe an object that names an access package, or call Get-OERAccessPackageAssignment without pipeline input to list every assignment.')) `
+                -ErrorId 'EmptyAccessPackageId' -Category InvalidArgument `
+                -TargetObject $PSItem -Cmdlet $PSCmdlet
+            return
+        }
         if ($PSBoundParameters.ContainsKey('Catalog') -and -not $AccessPackage) {
             Write-CmdletError `
                 -Message ([System.Exception]::new('-Catalog scopes the -AccessPackage lookup and filters nothing on its own: supply -AccessPackage with -Catalog, or omit -Catalog.')) `
