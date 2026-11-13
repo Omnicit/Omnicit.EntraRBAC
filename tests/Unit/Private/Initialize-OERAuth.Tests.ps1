@@ -8368,6 +8368,61 @@ Describe 'Initialize-OERAuth never continues a renewal as another account (BL-11
             $After.Oid | Should -BeExactly $script:A119OidB
             ($After.Identity -eq $Before.Identity) | Should -BeFalse -Because 'an explicit sign-in as another account moves the identity'
         }
+
+        # BL-188 (b): the SAME account answering under another method or client is not refused, but the
+        # rebuilt state carries the new method or client, so the sign-in identity moves and an outer command
+        # that began under the old sign-in is superseded (the safe direction: it sends nothing more).
+        It 'supersedes an outer command when the same account signs in under another <Case>, and not when the inner sign-in keeps the outer''s own method and client' -ForEach @(
+            @{ Case = 'method (device code outer, interactive inner)'; OuterMethod = 'DeviceCode'; OuterClient = ''; InnerMethod = ''; InnerClient = ''; Superseded = $true }
+            @{ Case = 'client (own -ClientId outer, default client inner)'; OuterMethod = 'Interactive'; OuterClient = '55555555-5555-5555-5555-555555555555'; InnerMethod = ''; InnerClient = ''; Superseded = $true }
+            @{ Case = 'nothing (control: a continuation with the outer''s method and client)'; OuterMethod = 'DeviceCode'; OuterClient = ''; InnerMethod = 'DeviceCode'; InnerClient = ''; Superseded = $false }
+        ) {
+            $Result = InModuleScope $script:moduleName -Parameters @{
+                T = $script:A119Tenant; D = $script:A119Domain
+                OM = $OuterMethod; OC = $OuterClient; IM = $InnerMethod; IC = $InnerClient
+            } {
+                param($T, $D, $OM, $OC, $IM, $IC)
+                $Holder = @{}
+                function Invoke-A5Inner {
+                    [CmdletBinding()]
+                    param()
+                    $InnerParameters = @{ TenantId = $D }
+                    if ($IM) { $InnerParameters.AuthMethod = $IM }
+                    if ($IC) { $InnerParameters.ClientId = $IC }
+                    try { Initialize-OERAuth @InnerParameters } catch { $Holder.InnerCaught = $PSItem }
+                }
+                function Invoke-A5Outer {
+                    [CmdletBinding()]
+                    param()
+                    $OuterParameters = @{ TenantId = $T; AuthMethod = $OM }
+                    if ($OC) { $OuterParameters.ClientId = $OC }
+                    Initialize-OERAuth @OuterParameters
+                    $Remembered = $null
+                    $Holder.OuterRemembers = $script:_OERSignInIdentity.TryGetValue($MyInvocation, [ref]$Remembered)
+                    $Holder.OuterIdentity = $Remembered
+                    $Holder.SupersededBefore = Get-OERSignInSupersession
+                    Invoke-A5Inner
+                    $Holder.SupersededAfter = Get-OERSignInSupersession
+                    $Holder.StateIdentity = Get-OERSignInIdentity
+                }
+                Invoke-A5Outer
+                $Holder
+            }
+
+            $Result.OuterRemembers | Should -BeTrue
+            $Result.SupersededBefore | Should -BeNullOrEmpty
+            $Result.InnerCaught | Should -BeNullOrEmpty -Because 'the same account answering is not refused'
+            (Get-A119Info).AccountId | Should -BeExactly $script:A119OidA
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
+            if ($Superseded) {
+                $Result.SupersededAfter | Should -BeExactly 'Invoke-A5Outer'
+                $Result.StateIdentity | Should -Not -BeExactly $Result.OuterIdentity
+            }
+            else {
+                $Result.SupersededAfter | Should -BeNullOrEmpty
+                $Result.StateIdentity | Should -BeExactly $Result.OuterIdentity
+            }
+        }
     }
 
     Context 'a normal run is not refused' {

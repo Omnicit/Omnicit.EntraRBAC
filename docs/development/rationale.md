@@ -3683,6 +3683,17 @@ What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule
   `Unit/Public/AdministrativeUnitAliasOrder.Cohort.Tests.ps1`.
   `Why: docs/development/rationale.md#alias-declaration-order`
 
+Sprint 17 step 1 (BL-192): the same collision exists on `-AccessPackage`.
+`Get-OERAccessPackageAssignment`, `Add-OERAccessPackageResourceRole` and
+`New-OERAccessPackageAssignmentPolicy` list `AccessPackageId` first in their `-AccessPackage` alias,
+so a piped object carrying `AccessPackageId` (an assignment policy, a resource role, an assignment,
+an assignment request) binds its access package and never its own `Id`; an access package from
+`Get-OERAccessPackage` carries no `AccessPackageId` and binds its `Id` as before. Ruling R-1: a piped
+object whose `AccessPackageId` is empty is refused at binding with `EmptyAccessPackageId`, nothing
+read, by the two cmdlets where `-AccessPackage` is Mandatory and by `Get-OERAccessPackageAssignment`,
+whose parameter is optional and where an empty value would list every assignment.
+`tests/Unit/Public/AccessPackageAliasOrder.Cohort.Tests.ps1` holds the order.
+
 ## scope-pipeline-binding
 
 `-Scope` deliberately does not bind from the pipeline on every Azure cmdlet, and the split is by
@@ -3796,6 +3807,14 @@ where the builder's binding refused it and the policy was reported Failed.
   header the module never sends, so a document the export wrote must validate. A declared one fails
   the builder's binding inside the handler's build, so the policy is reported Failed and nothing is
   written; the Warning says so.
+- A scope the owner maps to `$null` (`SpecificDirectoryServicePrincipals`) is a Warning, not an
+  Error: `ConvertTo-OERAssignmentPolicy` reads `specificDirectoryServicePrincipals` and
+  `Get-OERInventory` writes the scope unfiltered, so a document the export wrote must validate. A
+  declared one is refused by `New-OERAccessPackageRequestorScope` (`InvalidPolicyInput`) inside the
+  handler's build, so the policy is reported Failed and nothing is written for it (BL-194, Sprint 17
+  step 1, decision A3 c). The validator reads the null-valued keys from the owner, and a conformance
+  test in `Test-OERStructureSchema.Tests.ps1` holds both halves (the export writes the value; the
+  validator warns).
 - Case is not canonicalised: any letter case of a listed name is accepted with no finding, since the
   builder's `ValidateSet` binds any case and `schema.json` declares no enum for `scope`, so there is no
   canonical spelling to warn about.
@@ -6374,6 +6393,18 @@ One guard survives every test by construction: the `return` after the terminatin
 stack -- measured with a Pester probe that was not committed -- so the `return` is unreachable
 today, and it stays against a future change that stops that helper throwing. Gate 10 of
 [#static-source-gates](#static-source-gates) holds the two widened owner lists.
+
+An A5 sign-in (Sprint 17 step 1, BL-188 b) by the SAME account under another method (Interactive
+against DeviceCode) or another client is not refused, but it rebuilds the state with the new method
+or client, which moves the `AuthMethod` or `ClientId` term of the sign-in identity
+(`Get-OERSignInIdentity`), so an outer command that began under the old sign-in is refused with
+`SignInSuperseded` and sends nothing more. This is deliberate: another client can hold other granted
+permissions, and a command does not carry on under a sign-in a later one replaced. It is the safe
+direction and writes nothing silently. `Initialize-OERAuth.Tests.ps1` holds it in the A5 Context
+(a device code outer and an interactive inner, an own `-ClientId` outer and a default client inner,
+and a control where the inner keeps the outer's method and client and supersedes nothing); dropping
+the `AuthMethod` term, or the `ClientId` term, from `Get-OERSignInIdentity` turns the matching case
+red.
 
 ### A renewal never continues as another account
 

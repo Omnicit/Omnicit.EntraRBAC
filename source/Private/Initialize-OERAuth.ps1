@@ -142,6 +142,13 @@ function Initialize-OERAuth {
     client and cloud under another label), whose new token carries no oid never replaces the session's
     SignedInObjectId: it is carried over, so the next one is still compared with the known account; any
     other sign-in, an A5 sign-in included, records its own token's oid, as any other new sign-in does.
+    An A5 sign-in by the same account under another method (Interactive against DeviceCode) or
+    another client is not refused, but it rebuilds the state with the new method or client, which
+    moves the AuthMethod or ClientId term of the sign-in identity (Get-OERSignInIdentity), so an
+    outer command that began under the old sign-in is refused with SignInSuperseded and sends
+    nothing more. That is deliberate: another client can hold other granted permissions, and a
+    command does not carry on under a sign-in a later one replaced; it is the safe direction and
+    writes nothing silently.
     SignInAccountId is the fifth term of the sign-in identity (Get-OERSignInIdentity); a renewal or a
     D4 continuation carries it over, and any other sign-in, an A5 sign-in included, sets it to the new
     token's oid when that is a GUID. Every Azure Resource Manager token is held to the session's
