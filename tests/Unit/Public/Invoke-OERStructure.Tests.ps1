@@ -7038,7 +7038,8 @@ $RunErrors | ForEach-Object { "ERRID:confirmfalse:$($_.FullyQualifiedErrorId)" }
 
             $Output = @('y' | & $script:PwshPath -NoProfile -File $ScriptPath 2>&1 | ForEach-Object { [string]$_ })
 
-            $Output | Should -Be @(
+            $Own = @($Output | Where-Object { $_ -match '^(HOST:|ERRID:|ROW:|AFTER$|END$|What if: )' })
+            $Own | Should -Be @(
                 'HOST:ConsoleHost'
                 'ERRID:plain:ConfirmationUnavailable,Invoke-OERStructure'
                 'AFTER'

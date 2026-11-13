@@ -28,6 +28,23 @@ Describe 'Test-OERConsoleInputRedirected (BL-195)' {
         $Output = 'y' | & $script:PwshPath -NoProfile -Command $Command 2>&1
         @($Output | ForEach-Object { "$_" }) | Should -Contain 'ANSWER:True'
     }
+
+    It 'returns $false in a child pwsh whose standard input is a console (Windows, a new hidden console)' -Skip:(-not $IsWindows) {
+        $Out = Join-Path $TestDrive ('{0}.txt' -f [guid]::NewGuid())
+        $Command = "Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop; " +
+            "Set-Content -LiteralPath '$($Out.Replace("'", "''"))' -Value ('ANSWER:' + " +
+            "(& (Get-Module Omnicit.EntraRBAC) { Test-OERConsoleInputRedirected }))"
+        $Proc = Start-Process -FilePath $script:PwshPath -ArgumentList @('-NoProfile', '-Command', "`"$Command`"") `
+            -WindowStyle Hidden -PassThru
+        try {
+            $Exited = $Proc.WaitForExit(60000)
+        }
+        finally {
+            if (-not $Proc.HasExited) { Stop-Process -Id $Proc.Id -Force -ErrorAction SilentlyContinue }
+        }
+        $Exited | Should -BeTrue
+        (Get-Content -LiteralPath $Out -Raw).Trim() | Should -BeExactly 'ANSWER:False'
+    }
 }
 
 Describe 'Test-OERConsoleInputRedirected is the single reader of the console input state (BL-195)' {
