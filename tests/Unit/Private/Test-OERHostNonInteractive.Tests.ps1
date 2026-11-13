@@ -230,12 +230,12 @@ Describe 'Test-OERHostNonInteractive is the single owner of the host question (B
         $Named | Should -Be @('Test-OERHostNonInteractive.ps1')
     }
 
-    It 'is called in Initialize-OERAuth and by no other file under source' {
+    It 'is called in Initialize-OERAuth and Test-OERHostCanConfirm and by no other file under source' {
         $SourceRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../../source')).Path
         $Callers = @(Get-ChildItem -Path $SourceRoot -Recurse -File -Filter '*.ps1' |
                 Where-Object { $_.Name -ne 'Test-OERHostNonInteractive.ps1' -and
                     (Get-Content -LiteralPath $_.FullName -Raw) -match 'Test-OERHostNonInteractive' } |
-                ForEach-Object { $_.Name })
-        $Callers | Should -Be @('Initialize-OERAuth.ps1')
+                ForEach-Object { $_.Name } | Sort-Object)
+        $Callers | Should -Be @('Initialize-OERAuth.ps1', 'Test-OERHostCanConfirm.ps1')
     }
 }
