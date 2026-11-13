@@ -56,6 +56,14 @@ Describe 'Get-OERInventoryPromptTemplate' {
         }
     }
 
+    It 'limits the advice to omit requestorScope to an existing policy and names the new-policy default (BL-196)' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('omit requestorScope so the apply keeps the live scope and its targets'))
+            $T | Should -Match ([regex]::Escape('Omitting requestorScope holds for an existing policy only: a NEW policy declared without requestorScope is created with the scope AllMemberUsers.'))
+        }
+    }
+
     It 'tells the model groupsRoster.json carries each group''s id and type, and onPremisesSynced among its flags (A15, BL-131)' {
         InModuleScope $script:moduleName {
             $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
