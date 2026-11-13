@@ -1033,7 +1033,7 @@ function Test-OERStructureSchema {
                             if ($Block.authenticationContextId -isnot [string]) {
                                 Add-Finding -Section 'groups' -Item $GItem -Path "$BlockPath.authenticationContextId" `
                                     -Message "'authenticationContextId' at $BlockPath must be a string that looks like 'c1', or an empty string to disable it. Got: $(Get-FoundValueText -Value $Block.authenticationContextId)."
-                            } elseif ($Block.authenticationContextId -and $Block.authenticationContextId -notmatch '\Ac\d+\z') {
+                            } elseif ($Block.authenticationContextId -and $Block.authenticationContextId -notmatch '\Ac[0-9]+\z') {
                                 Add-Finding -Section 'groups' -Item $GItem -Path "$BlockPath.authenticationContextId" `
                                     -Message "'authenticationContextId' at $BlockPath must look like 'c1', or be an empty string to disable it. Got: '$($Block.authenticationContextId)'."
                             }
@@ -2339,7 +2339,7 @@ function Test-OERStructureSchema {
                     -Message "'authenticationContextId' at $Path must be a string that looks like 'c1', or an empty string to disable it. Got: $(Get-FoundValueText -Value $Node.authenticationContextId)."
             }
             $AuthCtx = [string]$Node.authenticationContextId
-            if ($AuthCtx -and $AuthCtx -notmatch '\Ac\d+\z' -and $Node.authenticationContextId -is [string]) {
+            if ($AuthCtx -and $AuthCtx -notmatch '\Ac[0-9]+\z' -and $Node.authenticationContextId -is [string]) {
                 Add-Finding -Section $Section -Item $Item `
                     -Path "$Path.authenticationContextId" `
                     -Message "'authenticationContextId' at $Path must look like 'c1', or be an empty string to disable it. Got: '$AuthCtx'."

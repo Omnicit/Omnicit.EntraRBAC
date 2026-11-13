@@ -119,7 +119,7 @@ function Set-OERGroupPimPolicy {
     .PARAMETER AuthenticationContextId
     Optional authentication-context claim value required on activation (e.g. c1). When supplied as an
     empty string, the AuthenticationContext_EndUser_Assignment rule is disabled so activation does not
-    require an authentication context. When supplied it must match the pattern c followed by digits or be
+    require an authentication context. When supplied it must match the pattern c followed by ASCII digits (0-9) or be
     empty. When omitted, the rule is normally left unpatched -- EXCEPT when -ActivationEnabledRules is
     bound together with MultiFactorAuthentication: PIM cannot hold both an enabled authentication
     context and MFA on activation, so the live authentication-context rule is read and, if it is
@@ -262,7 +262,7 @@ function Set-OERGroupPimPolicy {
         [ValidateRange(1, 24)]
         [int]$ActivationMaxHours,
 
-        [ValidatePattern('\Ac\d+\z|\A\z')]
+        [ValidatePattern('\Ac[0-9]+\z|\A\z')]
         [string]$AuthenticationContextId,
 
         [ValidateSet('Justification', 'MultiFactorAuthentication', 'Ticketing')]
@@ -554,7 +554,7 @@ function Set-OERGroupPimPolicy {
         }
 
         if ($Resolution -and $Resolution.Action -eq 'Conflict') {
-            # No escape in the example's -AuthenticationContextId value: [ValidatePattern('\Ac\d+\z|\A\z')]
+            # No escape in the example's -AuthenticationContextId value: [ValidatePattern('\Ac[0-9]+\z|\A\z')]
             # on the parameter admits no quote character of any kind, so the example is valid as typed.
             Write-CmdletError `
                 -Message ([System.Exception]::new(

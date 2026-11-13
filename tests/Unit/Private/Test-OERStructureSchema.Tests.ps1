@@ -8521,6 +8521,27 @@ Describe 'Test-OERStructureSchema authenticationContextId is a string matched wh
             }
         }
 
+        It 'BL-197: refuses a non-ASCII digit after the c, and still accepts c1 and C1' {
+            $Doc = Get-NstAuthCtxDoc -Section $Section -Value '"c٣"'
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Section = $Section } {
+                param($Doc, $Section)
+                $V = Test-OERStructureSchema -Document $Doc
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq "$Section[0].authenticationContextId" })
+                $Hit.Count | Should -Be 1
+                $Hit[0].Severity | Should -BeExactly 'Error'
+                $Hit[0].Message | Should -BeExactly "'authenticationContextId' at $Section[0] must look like 'c1', or be an empty string to disable it. Got: 'c$([char]0x0663)'."
+                $V.Valid | Should -BeFalse
+            }
+            foreach ($Ok in '"c1"', '"C1"') {
+                $DocOk = Get-NstAuthCtxDoc -Section $Section -Value $Ok
+                InModuleScope $script:moduleName -Parameters @{ Doc = $DocOk; Section = $Section } {
+                    param($Doc, $Section)
+                    $V = Test-OERStructureSchema -Document $Doc
+                    @($V.Errors | Where-Object { $_.Path -eq "$Section[0].authenticationContextId" }).Count | Should -Be 0
+                }
+            }
+        }
+
         It 'refuses an array, naming the type' {
             $Doc = Get-NstAuthCtxDoc -Section $Section -Value '["c1"]'
             InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Section = $Section } {
@@ -8600,6 +8621,29 @@ Describe 'Test-OERStructureSchema a group pimPolicy authenticationContextId is a
                 $BlockPath = $Path -replace '\.authenticationContextId$', ''
                 $Hit[0].Message | Should -BeExactly "'authenticationContextId' at $BlockPath must look like 'c1', or be an empty string to disable it. Got: 'c1`n'."
                 $V.Valid | Should -BeFalse
+            }
+        }
+
+        It 'BL-197: refuses a non-ASCII digit after the c, with the exact text, and still accepts c1 and C1' {
+            $Doc = Get-NstGroupAuthCtxDoc -Form $Form -Value '"c٣"'
+            $Path = Get-NstGroupAuthCtxPath -Form $Form
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Path = $Path } {
+                param($Doc, $Path)
+                $V = Test-OERStructureSchema -Document $Doc
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq $Path })
+                $Hit.Count | Should -Be 1
+                $Hit[0].Severity | Should -BeExactly 'Error'
+                $BlockPath = $Path -replace '\.authenticationContextId$', ''
+                $Hit[0].Message | Should -BeExactly "'authenticationContextId' at $BlockPath must look like 'c1', or be an empty string to disable it. Got: 'c$([char]0x0663)'."
+                $V.Valid | Should -BeFalse
+            }
+            foreach ($Ok in '"c1"', '"C1"') {
+                $DocOk = Get-NstGroupAuthCtxDoc -Form $Form -Value $Ok
+                InModuleScope $script:moduleName -Parameters @{ Doc = $DocOk; Path = $Path } {
+                    param($Doc, $Path)
+                    $V = Test-OERStructureSchema -Document $Doc
+                    @($V.Errors | Where-Object { $_.Path -eq $Path }).Count | Should -Be 0
+                }
             }
         }
 

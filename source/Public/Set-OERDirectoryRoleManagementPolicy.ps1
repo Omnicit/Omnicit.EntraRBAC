@@ -74,7 +74,7 @@ function Set-OERDirectoryRoleManagementPolicy {
     MFA. That is the Microsoft Graph convention, since each rule is PATCHed on its own; it differs
     from Set-OERRoleManagementPolicy, which clears MFA from such a policy on any change because
     Azure Resource Manager validates the complete rule set on every write. -AuthenticationContextId
-    is checked for its c<number> shape only; unlike Set-OERGroupPimPolicy, the value is not looked
+    is checked for its c followed by ASCII digits (0-9) shape only; unlike Set-OERGroupPimPolicy, the value is not looked
     up in the tenant, and Microsoft Graph accepts a claim value no authentication context defines,
     which end users then fail at activation. Check it with Get-OERAuthenticationContext first.
 
@@ -147,7 +147,7 @@ function Set-OERDirectoryRoleManagementPolicy {
     reported as that error itself.
 
     .PARAMETER AuthenticationContextId
-    Authentication context claim value required on activation (e.g. c1). An empty string disables
+    Authentication context claim value required on activation (e.g. c1): the letter c followed by ASCII digits (0-9). An empty string disables
     the authentication-context requirement. A non-empty value removes MFA from the activation
     enablement rule (see the DESCRIPTION). Only the value's shape is checked, not whether the tenant
     defines it.
@@ -274,7 +274,7 @@ function Set-OERDirectoryRoleManagementPolicy {
         if ($PSBoundParameters.ContainsKey('NotificationRule')) { $Setting.NotificationRule = $NotificationRule }
 
         # 2. The claim value's shape only -- no tenant lookup (parity with Set-OERRoleManagementPolicy).
-        if ($PSBoundParameters.ContainsKey('AuthenticationContextId') -and $AuthenticationContextId -and $AuthenticationContextId -notmatch '\Ac\d+\z') {
+        if ($PSBoundParameters.ContainsKey('AuthenticationContextId') -and $AuthenticationContextId -and $AuthenticationContextId -notmatch '\Ac[0-9]+\z') {
             Write-CmdletError -Message ([System.Exception]::new("AuthenticationContextId '$AuthenticationContextId' is invalid: use a value like 'c1', or an empty string to disable.")) -ErrorId 'InvalidAuthenticationContext' -Category InvalidArgument -TargetObject $AuthenticationContextId -Cmdlet $PSCmdlet
             return
         }
