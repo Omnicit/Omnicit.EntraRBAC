@@ -18,8 +18,11 @@ function New-OERAccessPackageAssignmentPolicy {
 
     .PARAMETER AccessPackage
     The access package id or display name to attach the policy to. Accepts pipeline input by property
-    name from Get-OERAccessPackage (binds Id or AccessPackageId). An access package name is unique
-    only within its catalog: use -Catalog for a name several catalogs share.
+    name (binds AccessPackageId, Id); AccessPackageId binds first. An object carrying an AccessPackageId, such as an
+    assignment policy or a resource role, binds its access package id, never its own Id; an access
+    package from Get-OERAccessPackage carries none and binds its Id as before. An object whose
+    AccessPackageId is empty is refused at binding. An access package name is unique only within its
+    catalog: use -Catalog for a name several catalogs share.
 
     .PARAMETER DisplayName
     The policy display name.
@@ -94,7 +97,7 @@ function New-OERAccessPackageAssignmentPolicy {
     [OutputType([PSCustomObject])]
     param(
         [Parameter(Mandatory, ValueFromPipelineByPropertyName)]
-        [Alias('Id', 'AccessPackageId')]
+        [Alias('AccessPackageId', 'Id')]
         [string]$AccessPackage,
 
         [Parameter(Mandatory)]

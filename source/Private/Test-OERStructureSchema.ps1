@@ -42,7 +42,8 @@ function Test-OERStructureSchema {
     validates requireApproval and approvers the same way a roleManagementPolicies item does: a boolean
     toggle, an approvers object with optional users/groups string arrays, and requireApproval false
     declared together with a non-empty approvers block is the same Warning naming the precedence, at
-    the pimPolicy block's own path. requireMfaOnActivation together with a non-empty authenticationContextId is an Error -- Azure
+    the pimPolicy block's own path. A pimPolicy block's authenticationContextId is held to the same
+    rule as a roleManagementPolicies item's: a string matched whole, or an empty string. requireMfaOnActivation together with a non-empty authenticationContextId is an Error -- Azure
     PIM rejects both being set at once, a rule draft-07 cannot express, so the offline validator
     enforces it here. A directoryRoleManagementPolicies item (the PIM policy of a Microsoft Entra
     directory role, which always lives at tenant scope) is validated by exactly the same rules as a
@@ -87,8 +88,10 @@ function Test-OERStructureSchema {
     value that is not a string, is an Error at its requestorScope.scope path, any letter case of a
     listed name is accepted with no finding, and unknownFutureValue (the value the inventory passes
     through for a scope this module cannot read) is a Warning, since Invoke-OERStructure reports such
-    a policy Failed and writes nothing to it. A requestorScope declaring a non-empty users or
-    groups array with no scope is a Warning (issue #69): Invoke-OERStructure infers scope as
+    a policy Failed and writes nothing to it. A scope the owner maps to $null (read from the owner on
+    each validation; SpecificDirectoryServicePrincipals) is a Warning for the same reason: the export
+    writes it and Invoke-OERStructure reports that policy Failed (BL-194). A requestorScope declaring
+    a non-empty users or groups array with no scope is a Warning (issue #69): Invoke-OERStructure infers scope as
     SpecificDirectoryUsers for that shape, so the document is no longer refused. The shape it
     replaces was an Error here, and Invoke-OERStructure refuses any document carrying one with no
     -SkipValidation escape, so the AllMemberUsers default this inference displaces was never actually
@@ -1024,6 +1027,18 @@ function Test-OERStructureSchema {
                             }
                         }
 
+                        # BL-193: a declared authenticationContextId is a string matched whole (\A and \z, the
+                        # same two checks and texts as the roleManagementPolicies sections below).
+                        if (Test-HasProp -Node $Block -Name 'authenticationContextId') {
+                            if ($Block.authenticationContextId -isnot [string]) {
+                                Add-Finding -Section 'groups' -Item $GItem -Path "$BlockPath.authenticationContextId" `
+                                    -Message "'authenticationContextId' at $BlockPath must be a string that looks like 'c1', or an empty string to disable it. Got: $(Get-FoundValueText -Value $Block.authenticationContextId)."
+                            } elseif ($Block.authenticationContextId -and $Block.authenticationContextId -notmatch '\Ac\d+\z') {
+                                Add-Finding -Section 'groups' -Item $GItem -Path "$BlockPath.authenticationContextId" `
+                                    -Message "'authenticationContextId' at $BlockPath must look like 'c1', or be an empty string to disable it. Got: '$($Block.authenticationContextId)'."
+                            }
+                        }
+
                         # PIM treats an enabled authentication context and MultiFactorAuthentication on
                         # activation as mutually exclusive. Unlike the roleManagementPolicies section --
                         # which raises an Error for the same collision -- this is only a Warning: group
@@ -1445,7 +1460,10 @@ function Test-OERStructureSchema {
 
                             if (Test-HasProp -Node $Pol -Name 'requestorScope') {
                                 $RScope = $Pol.requestorScope
-                                $RequestorScopeNames = @((Get-OERRequestorScopeMap).Keys)
+                                $RequestorScopeMap = Get-OERRequestorScopeMap
+                                $RequestorScopeNames = @($RequestorScopeMap.Keys)
+                                # Keys the owner maps to $null: names that bind but are never built (BL-194).
+                                $UnbuildableScopeNames = @($RequestorScopeMap.Keys | Where-Object { $null -eq $RequestorScopeMap[$_] })
 
                                 # Issue #69: a requestorScope declaring users/groups but no scope no longer
                                 # refuses the document outright -- Build-OERPolicyParts infers
@@ -1512,6 +1530,21 @@ function Test-OERStructureSchema {
                                         -Message ("'requestorScope.scope' at $PolPath is 'unknownFutureValue', the value Microsoft Graph " +
                                             'returns for a requestor scope this module cannot read; Invoke-OERStructure reports this ' +
                                             'assignment policy Failed and writes nothing to it. Leave the policy out of the document.')
+                                } elseif (@($UnbuildableScopeNames) -icontains $ScopeVal) {
+                                    # BL-194 (decision A3 c): a scope the owner maps to $null. The export
+                                    # CAN write it (ConvertTo-OERAssignmentPolicy reads the wire value and
+                                    # Get-OERInventory copies it unfiltered), so a document it wrote must
+                                    # validate: a Warning, never an Error. The builder refuses it inside
+                                    # the handler's build try, so the policy is reported Failed before
+                                    # ShouldProcess and nothing is written for it.
+                                    $UnbuildableName = @($UnbuildableScopeNames | Where-Object { $_ -ieq $ScopeVal })[0]
+                                    Add-Finding -Section 'accessPackages' -Item $APItem `
+                                        -Path "$PolPath.requestorScope.scope" -Severity 'Warning' `
+                                        -Message ("'requestorScope.scope' at $PolPath is '$UnbuildableName', a scope whose service " +
+                                            'principal targets this module does not model; Invoke-OERStructure reports this ' +
+                                            'assignment policy Failed and writes nothing to it. For an existing policy, omit ' +
+                                            '''requestorScope'' to apply its other fields and keep the live scope; a new policy ' +
+                                            'without ''requestorScope'' is created with the scope AllMemberUsers.')
                                 } elseif (($ScopeVal -ne 'SpecificDirectoryUsers') -and $HasNonEmptyTarget) {
                                     # Case 3 (Ruling R-3, new diagnostics only): the explicit scope stands
                                     # and Build-OERPolicyParts never infers over it, so the declared
@@ -2295,8 +2328,8 @@ function Test-OERStructureSchema {
         # An empty string is the documented "disable the authentication context" value; any other
         # non-c<digits> value is refused at runtime by Set-OERRoleManagementPolicy and
         # Set-OERDirectoryRoleManagementPolicy alike, so catch it offline instead. The offline check
-        # is stricter: it also refuses a non-string and a trailing line break, which the cmdlets'
-        # '^...$' pattern lets through.
+        # is stricter: it also refuses a non-string. Both read the value whole (\A and \z), so a
+        # trailing line break is refused alike.
         if (Test-HasProp -Node $Node -Name 'authenticationContextId') {
             # BL-187 (b): a declared value is a string and is matched whole (\A and \z; '$' would also
             # accept a trailing line feed). Case stays insensitive, as in the cmdlets: 'C1' is valid.

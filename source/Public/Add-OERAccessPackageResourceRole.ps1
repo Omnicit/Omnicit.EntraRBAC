@@ -22,7 +22,10 @@ function Add-OERAccessPackageResourceRole {
 
     .PARAMETER AccessPackage
     The access package id or display name to add the resource role to. Accepts pipeline input by
-    property name from Get-OERAccessPackage (binds Id or DisplayName). A display name is looked up in
+    property name (binds AccessPackageId first, then Id, then DisplayName). An object carrying an
+    AccessPackageId, such as an assignment policy or a resource role, binds its access package id,
+    never its own Id; an access package from Get-OERAccessPackage carries none and binds its Id as
+    before. An object whose AccessPackageId is empty is refused at binding. A display name is looked up in
     -Catalog only (access package names are unique only within a catalog); an id of an access package
     in another catalog is refused with AccessPackageNotInCatalog before the POST and before
     ShouldProcess.
@@ -67,7 +70,7 @@ function Add-OERAccessPackageResourceRole {
     [OutputType([PSCustomObject])]
     param(
         [Parameter(Mandatory, ValueFromPipelineByPropertyName)]
-        [Alias('Id', 'DisplayName', 'AccessPackageId')]
+        [Alias('AccessPackageId', 'Id', 'DisplayName')]
         [string]$AccessPackage,
 
         [Parameter(Mandatory)]

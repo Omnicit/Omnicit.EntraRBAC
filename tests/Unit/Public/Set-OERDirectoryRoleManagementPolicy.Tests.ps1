@@ -225,6 +225,17 @@ Describe 'Set-OERDirectoryRoleManagementPolicy' {
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
         }
 
+        It 'BL-193: reads the claim value whole -- a trailing line feed is InvalidAuthenticationContext and sends nothing, a case variant is not refused' {
+            Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -AuthenticationContextId "c1`n" -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidAuthenticationContext,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+            $Err2 = $null
+            Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -AuthenticationContextId 'C1' -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err2 | Out-Null
+            @($Err2 | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidAuthenticationContext,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 0
+        }
+
         It 'refuses an explicit request for both an authentication context and MFA as InvalidPolicyChange without naming Azure, and sends nothing' {
             # Live: MFA off, context off -- so only the caller's own request makes the combination.
             Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -AuthenticationContextId 'c1' -RequireMfaOnActivation $true `

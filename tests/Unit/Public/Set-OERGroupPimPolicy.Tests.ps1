@@ -1127,6 +1127,27 @@ Describe 'Set-OERGroupPimPolicy authentication context reconcile' {
         @($script:Patched) | Where-Object { $_.id -eq 'Enablement_EndUser_Assignment' } | Should -BeNullOrEmpty
     }
 
+    It 'BL-193: -AuthenticationContextId is read whole -- a trailing or lone line feed is refused, a case variant and an empty string are not' {
+        $Refused = @{}
+        foreach ($Value in @("c1`n", "`n")) {
+            $Caught = $null
+            try { $null = Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId $Value -Confirm:$false -ErrorAction Stop }
+            catch { $Caught = $_ }
+            $Refused[$Value] = if ($Caught) { [string]$Caught.FullyQualifiedErrorId } else { 'accepted' }
+        }
+        $Refused["c1`n"] | Should -BeExactly 'ParameterArgumentValidationError,Set-OERGroupPimPolicy'
+        $Refused["`n"] | Should -BeExactly 'ParameterArgumentValidationError,Set-OERGroupPimPolicy'
+        # Nothing was patched by the refused calls; the accepted forms below do reach Graph.
+        $script:Patched.Count | Should -Be 0
+        $script:Patched.Clear()
+        $null = Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId 'C1' -ActivationEnabledRules Justification -Confirm:$false `
+            -WarningAction SilentlyContinue
+        @($script:Patched) | Where-Object { $_.id -eq 'AuthenticationContext_EndUser_Assignment' } | Should -Not -BeNullOrEmpty
+        $script:Patched.Clear()
+        $null = Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId '' -Confirm:$false
+        @($script:Patched) | Where-Object { $_.id -eq 'AuthenticationContext_EndUser_Assignment' } | Should -Not -BeNullOrEmpty
+    }
+
     It 'case E: an explicit enablement list without MFA needs no reconcile read' {
         $Warn = $null
         $null = Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId 'c1' -ActivationEnabledRules Justification -Confirm:$false `
@@ -2506,7 +2527,7 @@ Describe 'Set-OERGroupPimPolicy: the examples in messages (BL-113)' {
     }
 
     It 'shows the -AuthenticationContextId example in MfaAuthContextConflict as it is typed, the pattern admitting no quote character' {
-        # [ValidatePattern('^c\d+$|^$')] keeps every quote out of the value, so this example needs no
+        # [ValidatePattern('\Ac\d+\z|\A\z')] keeps every quote out of the value, so this example needs no
         # escape; the test holds that it parses and gives the id back.
         $Err = $null
         $null = Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId 'c1' `

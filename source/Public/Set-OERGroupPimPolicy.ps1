@@ -262,7 +262,7 @@ function Set-OERGroupPimPolicy {
         [ValidateRange(1, 24)]
         [int]$ActivationMaxHours,
 
-        [ValidatePattern('^c\d+$|^$')]
+        [ValidatePattern('\Ac\d+\z|\A\z')]
         [string]$AuthenticationContextId,
 
         [ValidateSet('Justification', 'MultiFactorAuthentication', 'Ticketing')]
@@ -554,7 +554,7 @@ function Set-OERGroupPimPolicy {
         }
 
         if ($Resolution -and $Resolution.Action -eq 'Conflict') {
-            # No escape in the example's -AuthenticationContextId value: [ValidatePattern('^c\d+$|^$')]
+            # No escape in the example's -AuthenticationContextId value: [ValidatePattern('\Ac\d+\z|\A\z')]
             # on the parameter admits no quote character of any kind, so the example is valid as typed.
             Write-CmdletError `
                 -Message ([System.Exception]::new(

@@ -143,6 +143,13 @@ Describe 'Set-OERRoleManagementPolicy' {
             Set-OERRoleManagementPolicy -PolicyId '/s/providers/Microsoft.Authorization/roleManagementPolicies/pol1' -AuthenticationContextId 'bad' -ErrorVariable e -ErrorAction SilentlyContinue
             $e[0].FullyQualifiedErrorId | Should -Match 'InvalidAuthenticationContext'
         }
+        It 'BL-193: reads the claim value whole -- a trailing line feed is InvalidAuthenticationContext and sends nothing, a case variant is not refused' {
+            Set-OERRoleManagementPolicy -PolicyId '/s/providers/Microsoft.Authorization/roleManagementPolicies/pol1' -AuthenticationContextId "c1`n" -ErrorVariable e1 -ErrorAction SilentlyContinue
+            @($e1 | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidAuthenticationContext,Set-OERRoleManagementPolicy' }).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0
+            Set-OERRoleManagementPolicy -PolicyId '/s/providers/Microsoft.Authorization/roleManagementPolicies/pol1' -AuthenticationContextId 'C1' -ErrorVariable e2 -ErrorAction SilentlyContinue
+            @($e2 | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidAuthenticationContext,Set-OERRoleManagementPolicy' }).Count | Should -Be 0
+        }
     }
 
     Context 'pipeline binding: Subscription object binds SubscriptionId to scope' {

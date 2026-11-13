@@ -274,7 +274,7 @@ function Set-OERDirectoryRoleManagementPolicy {
         if ($PSBoundParameters.ContainsKey('NotificationRule')) { $Setting.NotificationRule = $NotificationRule }
 
         # 2. The claim value's shape only -- no tenant lookup (parity with Set-OERRoleManagementPolicy).
-        if ($PSBoundParameters.ContainsKey('AuthenticationContextId') -and $AuthenticationContextId -and $AuthenticationContextId -notmatch '^c\d+$') {
+        if ($PSBoundParameters.ContainsKey('AuthenticationContextId') -and $AuthenticationContextId -and $AuthenticationContextId -notmatch '\Ac\d+\z') {
             Write-CmdletError -Message ([System.Exception]::new("AuthenticationContextId '$AuthenticationContextId' is invalid: use a value like 'c1', or an empty string to disable.")) -ErrorId 'InvalidAuthenticationContext' -Category InvalidArgument -TargetObject $AuthenticationContextId -Cmdlet $PSCmdlet
             return
         }

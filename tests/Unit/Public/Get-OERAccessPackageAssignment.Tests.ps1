@@ -4,6 +4,7 @@ BeforeAll {
     Import-Module $script:moduleName -Force -ErrorAction Stop
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
+    . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
 }
 
 AfterAll {
@@ -494,5 +495,128 @@ Describe 'Get-OERAccessPackageAssignment -- a failed resolver read is not a not-
             'a permission failure booked as a missing object is the failed-read-as-an-empty-fact defect of issue #76')
         $Published[0].CategoryInfo.Category | Should -Be 'PermissionDenied'
         Should -Invoke -ModuleName 'Omnicit.EntraRBAC' Invoke-OERGraphRequest -Times 0 -Exactly
+    }
+}
+
+Describe 'Get-OERAccessPackageAssignment -- a piped AccessPackageId binds before the object''s own Id (BL-192)' {
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId { 'ap-1' }
+    }
+    BeforeAll {
+        $script:PolicyShape = {
+            $O = [PSCustomObject]@{ Id = 'policy-id-1'; DisplayName = 'Policy One'; AccessPackageId = 'package-id-1' }
+            $O.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.AssignmentPolicy')
+            $O
+        }
+        $script:ResourceRoleShape = {
+            $O = [PSCustomObject]@{
+                ResourceRoleScopeId = 'scope-id-1'; RoleName = 'Member'; ResourceDisplayName = 'Sales'
+                ScopeDisplayName = 'Root'; OriginId = 'grp-1'; OriginSystem = 'AadGroup'; AccessPackageId = 'package-id-2'
+            }
+            $O.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.AccessPackageResourceRole')
+            $O
+        }
+        $script:PackageShape = {
+            $O = [PSCustomObject]@{ Id = 'package-id-3'; DisplayName = 'AP-Sales'; Description = 'd'; CatalogId = 'cat-1'; IsHidden = $false }
+            $O.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.AccessPackage')
+            $O
+        }
+    }
+
+    It 'an assignment policy binds its access package id, never its own Id' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } }
+        & $script:PolicyShape | Get-OERAccessPackageAssignment | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'package-id-1' }
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0 -ParameterFilter { $DisplayName -eq 'policy-id-1' }
+    }
+
+    It 'a resource role binds its AccessPackageId' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } }
+        & $script:ResourceRoleShape | Get-OERAccessPackageAssignment | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'package-id-2' }
+    }
+
+    It 'an access package from Get-OERAccessPackage carries no AccessPackageId and binds its Id as before' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } }
+        & $script:PackageShape | Get-OERAccessPackageAssignment | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'package-id-3' }
+    }
+
+    It 'a piped object whose AccessPackageId is null is refused with EmptyAccessPackageId and nothing is read' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } }
+        $Review = [PSCustomObject]@{ Id = 'review-id-1'; DisplayName = 'Review'; AccessPackageId = $null }
+        $Err = $null
+        $Out = $Review | Get-OERAccessPackageAssignment -ErrorAction SilentlyContinue -ErrorVariable Err
+        @($Out).Count | Should -Be 0
+        $Own = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'EmptyAccessPackageId,Get-OERAccessPackageAssignment' })
+        # The refusal site was reached: exactly one record carries the id, with the category and target.
+        $Own.Count | Should -Be 1
+        $Own[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Own[0].TargetObject.Id | Should -Be 'review-id-1'
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
+    }
+
+    It 'the same pipeline with a non-empty AccessPackageId sends the request (control for the refusal)' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } }
+        $Review = [PSCustomObject]@{ Id = 'review-id-1'; DisplayName = 'Review'; AccessPackageId = 'package-id-9' }
+        $Review | Get-OERAccessPackageAssignment | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly
+    }
+
+    It 'an empty typed -AccessPackage without pipeline input still lists every assignment' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } }
+        $Err = $null
+        Get-OERAccessPackageAssignment -AccessPackage '' -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'EmptyAccessPackageId*' }).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Uri -like '*$expand=target,accessPackage*' -and $Uri -notlike '*$filter*'
+        }
+    }
+
+    It 'a piped object with none of AccessPackageId, Id and DisplayName is refused by the engine (InputObjectNotBound) and nothing is sent, as before the change' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } }
+        # -ErrorAction Stop: a binding failure on pipeline input is non-terminating, so without it the
+        # throw depends on the caller's preference (the gate's is not Stop here).
+        { [PSCustomObject]@{ Other = 'x' } | Get-OERAccessPackageAssignment -ErrorAction Stop } |
+            Should -Throw -ErrorId 'InputObjectNotBound,Get-OERAccessPackageAssignment'
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+    }
+
+It 'the refusal also stops a script with no try: under Stop nothing is sent, and the control sends one' {
+        $Script = {
+            param([string]$Log, [string]$Piped)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+Set-Item -Path function:script:Initialize-OERAuth -Value { }
+Set-Item -Path function:script:Resolve-OERAccessPackageId -Value { param($DisplayName, $Catalog) $DisplayName }
+Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+    param([string]$Method = 'GET', [string]$Uri, [switch]$All)
+    [System.IO.File]::AppendAllText('#LOG#', "$Method`n")
+    @{ value = @() }
+}
+}
+foreach ($Name in 'Initialize-OERAuth', 'Resolve-OERAccessPackageId', 'Invoke-OERGraphRequest') {
+if (-not (& $Module { param($N) Test-Path -Path "function:script:$N" } $Name)) { throw "stub $Name is not installed" }
+}
+[PSCustomObject]@{ Id = 'review-id-1'; AccessPackageId = #PIPED# } | Get-OERAccessPackageAssignment -ErrorAction Stop
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#PIPED#', $Piped))
+        }
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Refused = & $Script -Log $Log -Piped '$null'
+        $Thrown = { Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Refused } | Should -Throw -PassThru
+        $Thrown.Exception.InnerException.ErrorRecord.FullyQualifiedErrorId | Should -BeExactly 'EmptyAccessPackageId,Get-OERAccessPackageAssignment'
+        Test-Path -LiteralPath $Log | Should -BeFalse
+
+        $Log2 = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Control = & $Script -Log $Log2 -Piped "'package-id-9'"
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Control
+        ($Run.Output -join '|') | Should -Be 'END'
+        @(Get-Content -LiteralPath $Log2) | Should -Be @('GET')
     }
 }

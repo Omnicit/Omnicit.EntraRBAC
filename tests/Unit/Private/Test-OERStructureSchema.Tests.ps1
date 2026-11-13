@@ -2797,9 +2797,11 @@ Describe 'Test-OERStructureSchema requestorScope.scope against Get-OERRequestorS
         @{ Name = 'AllMemberUsers' }, @{ Name = 'AllDirectoryUsers' }, @{ Name = 'AllExternalUsers' },
         @{ Name = 'SpecificDirectoryUsers' }, @{ Name = 'SpecificConnectedOrganizationUsers' },
         @{ Name = 'AllConfiguredConnectedOrganizationUsers' }, @{ Name = 'AllDirectoryServicePrincipals' },
-        @{ Name = 'AllDirectoryAgentIdentities' }, @{ Name = 'SpecificDirectoryServicePrincipals' },
+        @{ Name = 'AllDirectoryAgentIdentities' },
         @{ Name = 'NoSubjects' }, @{ Name = 'NotSpecified' }
     ) {
+        # BL-194: the key the owner maps to $null is a Warning, no longer "no finding"; the conformance
+        # Describe below (BL-194) reads those keys from the owner and holds the Warning.
         InModuleScope $script:moduleName -Parameters @{ Name = $Name; Path = $script:ScopePath } {
             param($Name, $Path)
             $Doc = ('{ "version": "1.0", "accessPackages": [ { "displayName": "ap1", "catalog": "cat1", "assignmentPolicies": [ { "displayName": "p1", "requestorScope": { "scope": "' + $Name + '" } } ] } ] }') | ConvertFrom-Json
@@ -2895,21 +2897,21 @@ Describe 'Test-OERStructureSchema requestorScope.scope against Get-OERRequestorS
     }
 
     It 'agrees with the export: the scope ConvertTo-OERAssignmentPolicy writes for <Wire> draws no Error at its path' -ForEach @(
-        @{ Wire = 'allMemberUsers'; Warns = $false }
-        @{ Wire = 'allDirectoryUsers'; Warns = $false }
-        @{ Wire = 'allExternalUsers'; Warns = $false }
-        @{ Wire = 'specificDirectoryUsers'; Warns = $false }
-        @{ Wire = 'specificConnectedOrganizationUsers'; Warns = $false }
-        @{ Wire = 'allConfiguredConnectedOrganizationUsers'; Warns = $false }
-        @{ Wire = 'allDirectoryServicePrincipals'; Warns = $false }
-        @{ Wire = 'allDirectoryAgentIdentities'; Warns = $false }
-        @{ Wire = 'specificDirectoryServicePrincipals'; Warns = $false }
-        @{ Wire = 'noSubjects'; Warns = $false }
-        @{ Wire = 'notSpecified'; Warns = $false }
-        @{ Wire = 'unknownFutureValue'; Warns = $true }
+        @{ Wire = 'allMemberUsers'; Warns = $false; Expected = 'AllMemberUsers' }
+        @{ Wire = 'allDirectoryUsers'; Warns = $false; Expected = 'AllDirectoryUsers' }
+        @{ Wire = 'allExternalUsers'; Warns = $false; Expected = 'AllExternalUsers' }
+        @{ Wire = 'specificDirectoryUsers'; Warns = $false; Expected = 'SpecificDirectoryUsers' }
+        @{ Wire = 'specificConnectedOrganizationUsers'; Warns = $false; Expected = 'SpecificConnectedOrganizationUsers' }
+        @{ Wire = 'allConfiguredConnectedOrganizationUsers'; Warns = $false; Expected = 'AllConfiguredConnectedOrganizationUsers' }
+        @{ Wire = 'allDirectoryServicePrincipals'; Warns = $false; Expected = 'AllDirectoryServicePrincipals' }
+        @{ Wire = 'allDirectoryAgentIdentities'; Warns = $false; Expected = 'AllDirectoryAgentIdentities' }
+        @{ Wire = 'specificDirectoryServicePrincipals'; Warns = $true; Expected = 'SpecificDirectoryServicePrincipals' }
+        @{ Wire = 'noSubjects'; Warns = $false; Expected = 'NoSubjects' }
+        @{ Wire = 'notSpecified'; Warns = $false; Expected = 'NotSpecified' }
+        @{ Wire = 'unknownFutureValue'; Warns = $true; Expected = 'unknownFutureValue' }
     ) {
-        InModuleScope $script:moduleName -Parameters @{ Wire = $Wire; Warns = $Warns; Path = $script:ScopePath } {
-            param($Wire, $Warns, $Path)
+        InModuleScope $script:moduleName -Parameters @{ Wire = $Wire; Warns = $Warns; Expected = $Expected; Path = $script:ScopePath } {
+            param($Wire, $Warns, $Expected, $Path)
             $Raw = @{
                 id                = '00000000-0000-0000-0000-000000000001'
                 displayName       = 'p1'
@@ -2919,6 +2921,7 @@ Describe 'Test-OERStructureSchema requestorScope.scope against Get-OERRequestorS
             $Policy = ConvertTo-OERAssignmentPolicy -InputObject $Raw
             $Policy.RequestorScope | Should -Not -BeNullOrEmpty
             $Exported = [string]$Policy.RequestorScope.scope
+            $Exported | Should -BeExactly $Expected
             $Doc = [PSCustomObject]@{
                 version        = '1.0'
                 accessPackages = @([PSCustomObject]@{
@@ -2937,12 +2940,89 @@ Describe 'Test-OERStructureSchema requestorScope.scope against Get-OERRequestorS
             if ($Warns) {
                 $Hits.Count | Should -Be 1
                 $Hits[0].Severity | Should -BeExactly 'Warning'
-                $Exported | Should -BeExactly 'unknownFutureValue'
             }
             else {
                 $Hits.Count | Should -Be 0
             }
             $V.Valid | Should -BeTrue
+        }
+    }
+}
+
+Describe 'Test-OERStructureSchema warns on a requestor scope the owner maps to null (BL-194)' {
+    # The keys are read from Get-OERRequestorScopeMap at run time, never listed here.
+    # If (a) ever fails, the export can no longer write the value, and decision A3 (c) of Sprint 17
+    # makes the validator's finding an Error instead of a Warning: change the validator then.
+    It '(a) the export can write every null-valued owner key' {
+        InModuleScope $script:moduleName {
+            $Map = Get-OERRequestorScopeMap
+            $Keys = @($Map.Keys | Where-Object { $null -eq $Map[$_] })
+            $Keys.Count | Should -BeGreaterThan 0
+            foreach ($Key in $Keys) {
+                $Wire = $Key.Substring(0, 1).ToLowerInvariant() + $Key.Substring(1)
+                $Raw = @{
+                    id                 = '00000000-0000-0000-0000-000000000001'
+                    displayName        = 'p1'
+                    allowedTargetScope = $Wire
+                    accessPackage      = @{ id = '00000000-0000-0000-0000-000000000002' }
+                }
+                $Policy = ConvertTo-OERAssignmentPolicy -InputObject $Raw
+                $Policy.RequestorScope | Should -Not -BeNullOrEmpty -Because "the export writes $Key"
+                ([string]$Policy.RequestorScope.scope -ceq $Key) | Should -BeTrue -Because "the export writes $Key as the owner spells it"
+            }
+        }
+    }
+
+    It '(b) the validator gives exactly one Warning and no Error for every null-valued owner key' {
+        InModuleScope $script:moduleName {
+            $Map = Get-OERRequestorScopeMap
+            $Keys = @($Map.Keys | Where-Object { $null -eq $Map[$_] })
+            $Keys.Count | Should -BeGreaterThan 0
+            $Path = 'accessPackages[0].assignmentPolicies[0].requestorScope.scope'
+            foreach ($Key in $Keys) {
+                $Doc = [PSCustomObject]@{
+                    version        = '1.0'
+                    accessPackages = @([PSCustomObject]@{
+                            displayName        = 'ap1'
+                            catalog            = 'cat1'
+                            assignmentPolicies = @([PSCustomObject]@{
+                                    displayName    = 'p1'
+                                    requestorScope = [PSCustomObject]@{ scope = $Key }
+                                })
+                        })
+                }
+                $V = Test-OERStructureSchema -Document $Doc
+                @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq $Path })
+                $Hit.Count | Should -Be 1
+                $Hit[0].Severity | Should -BeExactly 'Warning'
+                $Hit[0].Message | Should -BeExactly ("'requestorScope.scope' at accessPackages[0].assignmentPolicies[0] is '$Key', a scope whose service principal targets this module does not model; " +
+                    "Invoke-OERStructure reports this assignment policy Failed and writes nothing to it. For an existing policy, omit 'requestorScope' to apply its other fields and keep the live scope; a new policy without 'requestorScope' is created with the scope AllMemberUsers.")
+                $V.Valid | Should -BeTrue
+            }
+        }
+    }
+
+    It 'names the key as the owner spells it for any letter case of the declared value' {
+        InModuleScope $script:moduleName {
+            $Map = Get-OERRequestorScopeMap
+            $Key = @($Map.Keys | Where-Object { $null -eq $Map[$_] })[0]
+            $Doc = [PSCustomObject]@{
+                version        = '1.0'
+                accessPackages = @([PSCustomObject]@{
+                        displayName        = 'ap1'
+                        catalog            = 'cat1'
+                        assignmentPolicies = @([PSCustomObject]@{
+                                displayName    = 'p1'
+                                requestorScope = [PSCustomObject]@{ scope = $Key.ToUpperInvariant() }
+                            })
+                    })
+            }
+            $V = Test-OERStructureSchema -Document $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'accessPackages[0].assignmentPolicies[0].requestorScope.scope' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Message | Should -BeLike "*is '$Key', a scope whose*"
         }
     }
 }
@@ -8475,6 +8555,92 @@ Describe 'Test-OERStructureSchema authenticationContextId is a string matched wh
                 param($Doc, $Section)
                 $V = Test-OERStructureSchema -Document $Doc
                 @($V.Errors | Where-Object { $_.Path -eq "$Section[0].authenticationContextId" }).Count | Should -Be 0
+            }
+        }
+    }
+}
+
+Describe 'Test-OERStructureSchema a group pimPolicy authenticationContextId is a string matched whole (BL-193)' {
+    BeforeAll {
+        function Get-NstGroupAuthCtxDoc {
+            param([string]$Form, [string]$Value)
+            $Block = '{ "authenticationContextId": ' + $Value + ' }'
+            $Policy = switch ($Form) {
+                'flat' { $Block }
+                'member' { '{ "member": ' + $Block + ' }' }
+                'owner' { '{ "owner": ' + $Block + ' }' }
+            }
+            '{ "version": "1.0", "groups": [ { "displayName": "g", "pimPolicy": ' + $Policy + ' } ] }' | ConvertFrom-Json
+        }
+        function Get-NstGroupAuthCtxPath {
+            param([string]$Form)
+            switch ($Form) {
+                'flat' { 'groups[0].pimPolicy.authenticationContextId' }
+                'member' { 'groups[0].pimPolicy.member.authenticationContextId' }
+                'owner' { 'groups[0].pimPolicy.owner.authenticationContextId' }
+            }
+        }
+    }
+
+    Context 'form <Form>' -ForEach @(
+        @{ Form = 'flat' }
+        @{ Form = 'member' }
+        @{ Form = 'owner' }
+    ) {
+        It 'refuses a value with a trailing line feed, with the exact text' {
+            $Doc = Get-NstGroupAuthCtxDoc -Form $Form -Value '"c1\n"'
+            $Path = Get-NstGroupAuthCtxPath -Form $Form
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Path = $Path } {
+                param($Doc, $Path)
+                $V = Test-OERStructureSchema -Document $Doc
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq $Path })
+                $Hit.Count | Should -Be 1
+                $Hit[0].Severity | Should -BeExactly 'Error'
+                $Hit[0].Section | Should -BeExactly 'groups'
+                $BlockPath = $Path -replace '\.authenticationContextId$', ''
+                $Hit[0].Message | Should -BeExactly "'authenticationContextId' at $BlockPath must look like 'c1', or be an empty string to disable it. Got: 'c1`n'."
+                $V.Valid | Should -BeFalse
+            }
+        }
+
+        It 'refuses an array, naming the type' {
+            $Doc = Get-NstGroupAuthCtxDoc -Form $Form -Value '["c1"]'
+            $Path = Get-NstGroupAuthCtxPath -Form $Form
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Path = $Path } {
+                param($Doc, $Path)
+                $V = Test-OERStructureSchema -Document $Doc
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq $Path })
+                $Hit.Count | Should -Be 1
+                $Hit[0].Severity | Should -BeExactly 'Error'
+                $Hit[0].Message | Should -BeLike "*must be a string that looks like 'c1', or an empty string to disable it. Got: a value that is not a string (*"
+            }
+        }
+
+        It 'refuses a number, naming the type' {
+            $Doc = Get-NstGroupAuthCtxDoc -Form $Form -Value '5'
+            $Path = Get-NstGroupAuthCtxPath -Form $Form
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Path = $Path } {
+                param($Doc, $Path)
+                $V = Test-OERStructureSchema -Document $Doc
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq $Path })
+                $Hit.Count | Should -Be 1
+                $Hit[0].Severity | Should -BeExactly 'Error'
+                $Hit[0].Message | Should -BeLike "*Got: a value that is not a string (*"
+            }
+        }
+
+        It 'gives no finding at the path for <Shown>' -ForEach @(
+            @{ Shown = 'c1'; Json = '"c1"' }
+            @{ Shown = 'C1'; Json = '"C1"' }
+            @{ Shown = 'c12'; Json = '"c12"' }
+            @{ Shown = 'an empty string'; Json = '""' }
+        ) {
+            $Doc = Get-NstGroupAuthCtxDoc -Form $Form -Value $Json
+            $Path = Get-NstGroupAuthCtxPath -Form $Form
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Path = $Path } {
+                param($Doc, $Path)
+                $V = Test-OERStructureSchema -Document $Doc
+                @($V.Errors | Where-Object { $_.Path -eq $Path }).Count | Should -Be 0
             }
         }
     }
