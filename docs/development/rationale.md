@@ -3689,8 +3689,8 @@ Sprint 17 step 1 (BL-192): the same collision exists on `-AccessPackage`.
 so a piped object carrying `AccessPackageId` (an assignment policy, a resource role, an assignment,
 an assignment request) binds its access package and never its own `Id`; an access package from
 `Get-OERAccessPackage` carries no `AccessPackageId` and binds its `Id` as before. Ruling R-1: a piped
-object whose `AccessPackageId` is empty is refused at binding. The two cmdlets where `-AccessPackage`
-is Mandatory refuse it through PowerShell's own Mandatory check
+object whose `AccessPackageId` is empty is refused. The two cmdlets where `-AccessPackage`
+is Mandatory refuse it at binding, through PowerShell's own Mandatory check
 (`ParameterArgumentValidationErrorEmptyStringNotAllowed`), nothing sent; `Get-OERAccessPackageAssignment`,
 whose parameter is optional and where an empty value would list every assignment, refuses it with
 `EmptyAccessPackageId`, nothing read.

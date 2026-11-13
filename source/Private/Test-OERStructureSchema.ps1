@@ -1542,8 +1542,9 @@ function Test-OERStructureSchema {
                                         -Path "$PolPath.requestorScope.scope" -Severity 'Warning' `
                                         -Message ("'requestorScope.scope' at $PolPath is '$UnbuildableName', a scope whose service " +
                                             'principal targets this module does not model; Invoke-OERStructure reports this ' +
-                                            'assignment policy Failed and writes nothing to it. Omit ''requestorScope'' to apply ' +
-                                            "the policy's other fields and keep the live scope.")
+                                            'assignment policy Failed and writes nothing to it. For an existing policy, omit ' +
+                                            '''requestorScope'' to apply its other fields and keep the live scope; a new policy ' +
+                                            'without ''requestorScope'' is created with the scope AllMemberUsers.')
                                 } elseif (($ScopeVal -ne 'SpecificDirectoryUsers') -and $HasNonEmptyTarget) {
                                     # Case 3 (Ruling R-3, new diagnostics only): the explicit scope stands
                                     # and Build-OERPolicyParts never infers over it, so the declared

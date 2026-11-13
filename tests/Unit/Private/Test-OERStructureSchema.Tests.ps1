@@ -2897,21 +2897,21 @@ Describe 'Test-OERStructureSchema requestorScope.scope against Get-OERRequestorS
     }
 
     It 'agrees with the export: the scope ConvertTo-OERAssignmentPolicy writes for <Wire> draws no Error at its path' -ForEach @(
-        @{ Wire = 'allMemberUsers'; Warns = $false }
-        @{ Wire = 'allDirectoryUsers'; Warns = $false }
-        @{ Wire = 'allExternalUsers'; Warns = $false }
-        @{ Wire = 'specificDirectoryUsers'; Warns = $false }
-        @{ Wire = 'specificConnectedOrganizationUsers'; Warns = $false }
-        @{ Wire = 'allConfiguredConnectedOrganizationUsers'; Warns = $false }
-        @{ Wire = 'allDirectoryServicePrincipals'; Warns = $false }
-        @{ Wire = 'allDirectoryAgentIdentities'; Warns = $false }
-        @{ Wire = 'specificDirectoryServicePrincipals'; Warns = $true }
-        @{ Wire = 'noSubjects'; Warns = $false }
-        @{ Wire = 'notSpecified'; Warns = $false }
-        @{ Wire = 'unknownFutureValue'; Warns = $true }
+        @{ Wire = 'allMemberUsers'; Warns = $false; Expected = 'AllMemberUsers' }
+        @{ Wire = 'allDirectoryUsers'; Warns = $false; Expected = 'AllDirectoryUsers' }
+        @{ Wire = 'allExternalUsers'; Warns = $false; Expected = 'AllExternalUsers' }
+        @{ Wire = 'specificDirectoryUsers'; Warns = $false; Expected = 'SpecificDirectoryUsers' }
+        @{ Wire = 'specificConnectedOrganizationUsers'; Warns = $false; Expected = 'SpecificConnectedOrganizationUsers' }
+        @{ Wire = 'allConfiguredConnectedOrganizationUsers'; Warns = $false; Expected = 'AllConfiguredConnectedOrganizationUsers' }
+        @{ Wire = 'allDirectoryServicePrincipals'; Warns = $false; Expected = 'AllDirectoryServicePrincipals' }
+        @{ Wire = 'allDirectoryAgentIdentities'; Warns = $false; Expected = 'AllDirectoryAgentIdentities' }
+        @{ Wire = 'specificDirectoryServicePrincipals'; Warns = $true; Expected = 'SpecificDirectoryServicePrincipals' }
+        @{ Wire = 'noSubjects'; Warns = $false; Expected = 'NoSubjects' }
+        @{ Wire = 'notSpecified'; Warns = $false; Expected = 'NotSpecified' }
+        @{ Wire = 'unknownFutureValue'; Warns = $true; Expected = 'unknownFutureValue' }
     ) {
-        InModuleScope $script:moduleName -Parameters @{ Wire = $Wire; Warns = $Warns; Path = $script:ScopePath } {
-            param($Wire, $Warns, $Path)
+        InModuleScope $script:moduleName -Parameters @{ Wire = $Wire; Warns = $Warns; Expected = $Expected; Path = $script:ScopePath } {
+            param($Wire, $Warns, $Expected, $Path)
             $Raw = @{
                 id                = '00000000-0000-0000-0000-000000000001'
                 displayName       = 'p1'
@@ -2921,6 +2921,7 @@ Describe 'Test-OERStructureSchema requestorScope.scope against Get-OERRequestorS
             $Policy = ConvertTo-OERAssignmentPolicy -InputObject $Raw
             $Policy.RequestorScope | Should -Not -BeNullOrEmpty
             $Exported = [string]$Policy.RequestorScope.scope
+            $Exported | Should -BeExactly $Expected
             $Doc = [PSCustomObject]@{
                 version        = '1.0'
                 accessPackages = @([PSCustomObject]@{
@@ -2939,7 +2940,6 @@ Describe 'Test-OERStructureSchema requestorScope.scope against Get-OERRequestorS
             if ($Warns) {
                 $Hits.Count | Should -Be 1
                 $Hits[0].Severity | Should -BeExactly 'Warning'
-                $Exported | Should -BeIn @('unknownFutureValue', 'SpecificDirectoryServicePrincipals')
             }
             else {
                 $Hits.Count | Should -Be 0
@@ -2997,7 +2997,7 @@ Describe 'Test-OERStructureSchema warns on a requestor scope the owner maps to n
                 $Hit.Count | Should -Be 1
                 $Hit[0].Severity | Should -BeExactly 'Warning'
                 $Hit[0].Message | Should -BeExactly ("'requestorScope.scope' at accessPackages[0].assignmentPolicies[0] is '$Key', a scope whose service principal targets this module does not model; " +
-                    "Invoke-OERStructure reports this assignment policy Failed and writes nothing to it. Omit 'requestorScope' to apply the policy's other fields and keep the live scope.")
+                    "Invoke-OERStructure reports this assignment policy Failed and writes nothing to it. For an existing policy, omit 'requestorScope' to apply its other fields and keep the live scope; a new policy without 'requestorScope' is created with the scope AllMemberUsers.")
                 $V.Valid | Should -BeTrue
             }
         }
