@@ -9,9 +9,9 @@ function Get-OERAccessPackageResourceRole {
     Invoke-OERGraphRequest and returns one tagged Omnicit.EntraRBAC.AccessPackageResourceRole object per
     binding. The access package is given by -AccessPackage (display name or GUID, resolved via
     Resolve-OERAccessPackageId) and binds from the pipeline by property name so Get-OERAccessPackage
-    pipes straight in. The output exposes ResourceRoleScopeId so it pipes into
-    Remove-OERAccessPackageResourceRole. An access package with no bindings returns nothing (not an
-    error).
+    and Get-OERAccessPackageAssignmentPolicy pipe straight in. The output exposes ResourceRoleScopeId
+    so it pipes into Remove-OERAccessPackageResourceRole. An access package with no bindings returns
+    nothing (not an error).
 
     Each binding's scope carries only a scope LABEL (commonly the literal string 'Root' for a
     root-scoped resource) and the resource's originId -- never the resource's own display name. To
@@ -23,7 +23,11 @@ function Get-OERAccessPackageResourceRole {
 
     .PARAMETER AccessPackage
     The access package display name or GUID whose resource role bindings are listed. An access package
-    name is unique only within its catalog: use -Catalog for a name several catalogs share.
+    name is unique only within its catalog: use -Catalog for a name several catalogs share. From the
+    pipeline a piped object's AccessPackageId property (an assignment policy, a resource role, an
+    assignment) is bound before its Id, so a piped policy names its own package; an object without
+    AccessPackageId (an access package from Get-OERAccessPackage) binds its Id; an object whose
+    AccessPackageId is empty is refused at binding, since the parameter is Mandatory.
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
@@ -45,12 +49,16 @@ function Get-OERAccessPackageResourceRole {
     .EXAMPLE
     Get-OERAccessPackage -DisplayName 'AP-Sales' | Get-OERAccessPackageResourceRole
     Pipes an access package into the resource-role read.
+
+    .EXAMPLE
+    Get-OERAccessPackageAssignmentPolicy -AccessPackage 'AP-Sales' | Get-OERAccessPackageResourceRole
+    Pipes each assignment policy of AP-Sales in: its AccessPackageId, not the policy's own Id, names the package.
     #>
     [CmdletBinding()]
     [OutputType([PSCustomObject])]
     param(
         [Parameter(Mandatory, ValueFromPipelineByPropertyName)]
-        [Alias('Id')]
+        [Alias('AccessPackageId', 'Id')]
         [string]$AccessPackage,
 
         [ValidateNotNullOrEmpty()]

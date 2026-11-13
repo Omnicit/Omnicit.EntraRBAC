@@ -1127,6 +1127,21 @@ Describe 'Set-OERGroupPimPolicy authentication context reconcile' {
         @($script:Patched) | Where-Object { $_.id -eq 'Enablement_EndUser_Assignment' } | Should -BeNullOrEmpty
     }
 
+    It 'BL-197: -AuthenticationContextId accepts only ASCII digits after the c -- an Arabic-Indic digit is refused and patches nothing, c1 and C1 are accepted' {
+        $Caught = $null
+        try { $null = Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId ('c' + [char]0x0663) -Confirm:$false -ErrorAction Stop }
+        catch { $Caught = $_ }
+        $Caught | Should -Not -BeNullOrEmpty
+        [string]$Caught.FullyQualifiedErrorId | Should -BeExactly 'ParameterArgumentValidationError,Set-OERGroupPimPolicy'
+        $script:Patched.Count | Should -Be 0
+        foreach ($Ok in 'c1', 'C1') {
+            $script:Patched.Clear()
+            $null = Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId $Ok -ActivationEnabledRules Justification -Confirm:$false `
+                -WarningAction SilentlyContinue
+            @($script:Patched) | Where-Object { $_.id -eq 'AuthenticationContext_EndUser_Assignment' } | Should -Not -BeNullOrEmpty
+        }
+    }
+
     It 'BL-193: -AuthenticationContextId is read whole -- a trailing or lone line feed is refused, a case variant and an empty string are not' {
         $Refused = @{}
         foreach ($Value in @("c1`n", "`n")) {
@@ -2527,7 +2542,7 @@ Describe 'Set-OERGroupPimPolicy: the examples in messages (BL-113)' {
     }
 
     It 'shows the -AuthenticationContextId example in MfaAuthContextConflict as it is typed, the pattern admitting no quote character' {
-        # [ValidatePattern('\Ac\d+\z|\A\z')] keeps every quote out of the value, so this example needs no
+        # [ValidatePattern('\Ac[0-9]+\z|\A\z')] keeps every quote out of the value, so this example needs no
         # escape; the test holds that it parses and gives the id back.
         $Err = $null
         $null = Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId 'c1' `

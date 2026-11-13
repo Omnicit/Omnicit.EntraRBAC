@@ -51,6 +51,17 @@ Describe 'Get-OERAuthenticationContext' {
         @(Get-OERAuthenticationContext -Id 'C1').Count | Should -Be 1
     }
 
+    It 'BL-197: -Id accepts only ASCII digits after the c -- an Arabic-Indic digit is refused before any request, c1 and C1 are accepted' {
+        $Caught = $null
+        try { $null = Get-OERAuthenticationContext -Id ('c' + [char]0x0663) -ErrorAction Stop }
+        catch { $Caught = $_ }
+        $Caught | Should -Not -BeNullOrEmpty
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'ParameterArgumentValidationError,Get-OERAuthenticationContext'
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+        @(Get-OERAuthenticationContext -Id 'c1').Count | Should -Be 1
+        @(Get-OERAuthenticationContext -Id 'C1').Count | Should -Be 1
+    }
+
     It 'filters to published contexts with -Available' {
         $R = @(Get-OERAuthenticationContext -Available)
         $R.Count | Should -Be 1

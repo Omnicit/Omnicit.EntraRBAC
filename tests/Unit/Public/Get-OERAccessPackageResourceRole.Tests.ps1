@@ -243,6 +243,71 @@ Describe 'Get-OERAccessPackageResourceRole' {
 
         }
     }
+
+    Context 'pipeline binding (BL-196)' {
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ resourceRoleScopes = @() } }
+        }
+
+        It 'binds a piped policy''s AccessPackageId, never its own Id' {
+            $Policy = [pscustomobject]@{ Id = 'policy-id-1'; AccessPackageId = 'package-id-1' }
+            $Policy | Get-OERAccessPackageResourceRole | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Exactly -Times 1 -ParameterFilter {
+                $DisplayName -eq 'package-id-1'
+            }
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0 -ParameterFilter {
+                $DisplayName -eq 'policy-id-1'
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter {
+                $Uri -like '*accessPackages/ap-1*'
+            }
+        }
+
+        It 'binds the Id of a piped access package, which carries no AccessPackageId' {
+            $Package = [pscustomobject]@{ Id = 'package-id-2'; DisplayName = 'AP-Sales' }
+            $Package | Get-OERAccessPackageResourceRole | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Exactly -Times 1 -ParameterFilter {
+                $DisplayName -eq 'package-id-2'
+            }
+        }
+
+        It 'binds the AccessPackageId of a piped resource role, which carries no Id' {
+            $Role = [pscustomobject]@{ ResourceRoleScopeId = 'rrs-1'; AccessPackageId = 'package-id-3' }
+            $Role | Get-OERAccessPackageResourceRole | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Exactly -Times 1 -ParameterFilter {
+                $DisplayName -eq 'package-id-3'
+            }
+        }
+
+        It 'refuses a piped object whose AccessPackageId is empty at binding' {
+            $Policy = [pscustomobject]@{ Id = 'policy-id-1'; AccessPackageId = '' }
+            $Caught = $null
+            try { $Policy | Get-OERAccessPackageResourceRole -ErrorAction Stop | Out-Null } catch { $Caught = $_ }
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.Exception | Should -BeOfType [System.Management.Automation.ParameterBindingException]
+            $Caught.FullyQualifiedErrorId | Should -Be 'ParameterArgumentValidationErrorEmptyStringNotAllowed,Get-OERAccessPackageResourceRole'
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly
+        }
+
+        It 'refuses a piped object whose AccessPackageId is null at binding' {
+            $Policy = [pscustomobject]@{ Id = 'policy-id-1'; AccessPackageId = $null }
+            $Caught = $null
+            try { $Policy | Get-OERAccessPackageResourceRole -ErrorAction Stop | Out-Null } catch { $Caught = $_ }
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.Exception | Should -BeOfType [System.Management.Automation.ParameterBindingException]
+            $Caught.FullyQualifiedErrorId | Should -Be 'ParameterArgumentValidationErrorEmptyStringNotAllowed,Get-OERAccessPackageResourceRole'
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly
+        }
+
+        It 'declares the aliases AccessPackageId then Id on -AccessPackage, in that order' {
+            $Param = (Get-Command Get-OERAccessPackageResourceRole).Parameters['AccessPackage']
+            $Alias = $Param.Attributes | Where-Object { $_ -is [System.Management.Automation.AliasAttribute] }
+            @($Alias).Count | Should -Be 1
+            ($Alias.AliasNames -join ',') | Should -Be 'AccessPackageId,Id'
+        }
+    }
 }
 
 Describe 'Get-OERAccessPackageResourceRole -- a failed resolver read is not a not-found (issue #71, fix round 1)' {

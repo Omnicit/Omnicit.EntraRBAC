@@ -105,8 +105,8 @@ function Set-OERRoleManagementPolicy {
     ApproverRequired, as for -ApproverUser.
 
     .PARAMETER AuthenticationContextId
-    Authentication context claim value required on activation (e.g. c1). An empty string disables the
-    authentication-context requirement.
+    Authentication context claim value required on activation (e.g. c1): the letter c followed by
+    ASCII digits (0-9). An empty string disables the authentication-context requirement.
 
     .PARAMETER AllowPermanentEligibility
     Allow permanent eligible assignments (sets isExpirationRequired false on the eligibility rule).
@@ -229,7 +229,7 @@ function Set-OERRoleManagementPolicy {
         if ($PSBoundParameters.ContainsKey('RequireJustificationOnActiveAssignment')) { $Setting.RequireJustificationOnActiveAssignment = $RequireJustificationOnActiveAssignment }
         if ($PSBoundParameters.ContainsKey('NotificationRule')) { $Setting.NotificationRule = $NotificationRule }
 
-        if ($PSBoundParameters.ContainsKey('AuthenticationContextId') -and $AuthenticationContextId -and $AuthenticationContextId -notmatch '\Ac\d+\z') {
+        if ($PSBoundParameters.ContainsKey('AuthenticationContextId') -and $AuthenticationContextId -and $AuthenticationContextId -notmatch '\Ac[0-9]+\z') {
             Write-CmdletError -Message ([System.Exception]::new("AuthenticationContextId '$AuthenticationContextId' is invalid: use a value like 'c1', or an empty string to disable.")) -ErrorId 'InvalidAuthenticationContext' -Category InvalidArgument -TargetObject $AuthenticationContextId -Cmdlet $PSCmdlet
             return
         }

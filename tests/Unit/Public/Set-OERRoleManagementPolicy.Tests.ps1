@@ -150,6 +150,16 @@ Describe 'Set-OERRoleManagementPolicy' {
             Set-OERRoleManagementPolicy -PolicyId '/s/providers/Microsoft.Authorization/roleManagementPolicies/pol1' -AuthenticationContextId 'C1' -ErrorVariable e2 -ErrorAction SilentlyContinue
             @($e2 | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidAuthenticationContext,Set-OERRoleManagementPolicy' }).Count | Should -Be 0
         }
+        It 'BL-197: a non-ASCII digit after the c is InvalidAuthenticationContext and sends nothing, c1 and C1 are not refused' {
+            Set-OERRoleManagementPolicy -PolicyId '/s/providers/Microsoft.Authorization/roleManagementPolicies/pol1' -AuthenticationContextId ('c' + [char]0x0663) -ErrorVariable e1 -ErrorAction SilentlyContinue
+            @($e1 | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidAuthenticationContext,Set-OERRoleManagementPolicy' }).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0
+            foreach ($Ok in 'c1', 'C1') {
+                $e2 = $null
+                Set-OERRoleManagementPolicy -PolicyId '/s/providers/Microsoft.Authorization/roleManagementPolicies/pol1' -AuthenticationContextId $Ok -ErrorVariable e2 -ErrorAction SilentlyContinue
+                @($e2 | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidAuthenticationContext,Set-OERRoleManagementPolicy' }).Count | Should -Be 0
+            }
+        }
     }
 
     Context 'pipeline binding: Subscription object binds SubscriptionId to scope' {

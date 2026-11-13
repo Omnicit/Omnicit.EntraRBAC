@@ -15,7 +15,7 @@ function Get-OERAuthenticationContext {
 
     .PARAMETER Id
     Return only the context with this claim value (for example c1). Must look like the letter c
-    followed by digits. When omitted, every context in the tenant is returned.
+    followed by ASCII digits (0-9). When omitted, every context in the tenant is returned.
 
     .PARAMETER Available
     Return only contexts that are published (isAvailable), matching what the portal offers when a
@@ -39,7 +39,7 @@ function Get-OERAuthenticationContext {
     [CmdletBinding()]
     [OutputType([PSCustomObject])]
     param(
-        [ValidatePattern('\Ac\d+\z')]
+        [ValidatePattern('\Ac[0-9]+\z')]
         [Alias('AuthenticationContextId')]
         [string]$Id,
 

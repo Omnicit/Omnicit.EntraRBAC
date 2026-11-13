@@ -236,6 +236,19 @@ Describe 'Set-OERDirectoryRoleManagementPolicy' {
             @($Err2 | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidAuthenticationContext,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 0
         }
 
+        It 'BL-197: a non-ASCII digit after the c is InvalidAuthenticationContext and sends nothing, c1 and C1 are not refused' {
+            Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -AuthenticationContextId ('c' + [char]0x0663) -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidAuthenticationContext,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+            foreach ($Ok in 'c1', 'C1') {
+                $Err2 = $null
+                Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -AuthenticationContextId $Ok -Confirm:$false `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err2 | Out-Null
+                @($Err2 | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidAuthenticationContext,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 0
+            }
+        }
+
         It 'refuses an explicit request for both an authentication context and MFA as InvalidPolicyChange without naming Azure, and sends nothing' {
             # Live: MFA off, context off -- so only the caller's own request makes the combination.
             Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -AuthenticationContextId 'c1' -RequireMfaOnActivation $true `
