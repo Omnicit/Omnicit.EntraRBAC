@@ -80,13 +80,15 @@ Describe 'Test-OERHostCanConfirm (BL-53)' {
     It 'answers $true in a host that is not the console host even when both console signals say refuse' {
         $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script {
             Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+            "HOST:$($Host.Name)"
             & (Get-Module Omnicit.EntraRBAC) {
                 Set-Item -Path function:script:Test-OERHostNonInteractive -Value { $true }
                 Set-Item -Path function:script:Test-OERConsoleInputRedirected -Value { $true }
             }
+            "STUB:$(& (Get-Module Omnicit.EntraRBAC) { (Test-OERHostNonInteractive) -and (Test-OERConsoleInputRedirected) })"
             "ANSWER:$(& (Get-Module Omnicit.EntraRBAC) { Test-OERHostCanConfirm })"
         }
-        $Run.Output | Should -Be @('ANSWER:True')
+        $Run.Output | Should -Be @('HOST:OERAnsweringHost', 'STUB:True', 'ANSWER:True')
         $Run.Errors | Should -BeNullOrEmpty
     }
 
