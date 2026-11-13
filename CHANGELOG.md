@@ -15,6 +15,12 @@ any declared value but `c<digits>` (any letter case) or `""` as an Error, so `In
 the document. It also warns on a `SpecificDirectoryServicePrincipals` requestor scope the apply cannot
 write.
 
+`Invoke-OERStructure` now refuses with `ConfirmationUnavailable`, before it signs in, a run that would
+prompt in `pwsh` started with `-NonInteractive` or whose standard input is redirected (piped, from a file,
+or a child process without a console). Before, it signed in and reported every entry `Failed`; with
+redirected input the prompt could also read its answer from the input. Run it with `-Confirm:$false` or
+`-WhatIf`.
+
 ## [1.7.1] - 2026-11-12
 
 Azure Resource Manager requests no longer follow a redirect. Before, a request answered with a redirect

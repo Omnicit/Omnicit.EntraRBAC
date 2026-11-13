@@ -1084,9 +1084,11 @@ an owner (measured); the row is `Skipped`. An owner the same run adds counts as 
 a user owner when the document names it by user principal name, so replacing a user owner with one
 named that way completes in one run. An owner that PIM for Groups holds, or makes eligible, does not
 count as standing. A section set to `null` is not declared and gives no row. In a
-runspace with no host of its own, such as a thread job, a run without `-WhatIf` or `-Confirm:$false`
-(or a `$ConfirmPreference` of `None`) is refused with `ConfirmationUnavailable` before it signs in,
-also one that would change nothing; run it with `-Confirm:$false` or `-WhatIf`. In another host that
+runspace with no host of its own, such as a thread job, in `pwsh` started with `-NonInteractive`, and in
+`pwsh` whose standard input is redirected (a pipe, a file, or a child process without a console), a run
+without `-WhatIf` or `-Confirm:$false` (or a `$ConfirmPreference` of `None`) is refused with
+`ConfirmationUnavailable` before it signs in, also one that would change nothing; run it with
+`-Confirm:$false` or `-WhatIf`. In another host that
 cannot show the prompt, an entry stopped by it is `Failed`, with a row that says the host cannot show
 the confirmation prompt and that nothing was written. A run within about 30 seconds of a write can
 send the same update again, since Microsoft Graph can still answer a read with the value from before

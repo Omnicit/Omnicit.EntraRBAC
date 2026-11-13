@@ -1087,13 +1087,17 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   elsewhere. `Why: docs/development/rationale.md#naming-standard`
 - **`Test-OERHostCanConfirm` is the single owner of whether the host can show a confirmation prompt
   that is decidable beforehand; `Test-OERConfirmPromptFailure` of whether a caught record is a
-  `ShouldProcess` that failed because the host could not ask.** When the first answers false,
-  `Invoke-OERStructure` refuses with `ConfirmationUnavailable`, before the sign-in, a document whose
-  run would prompt. Never decide either elsewhere.
+  `ShouldProcess` that failed because the host could not ask.** The first answers `$false` for the
+  Default Host, for a console host started with `-NonInteractive` (it asks
+  `Test-OERHostNonInteractive`) and for a console host whose standard input is redirected (it asks
+  `Test-OERConsoleInputRedirected`, the single reader of `[Console]::IsInputRedirected`, called only
+  by it); every other host answers `$true`. When it answers false, `Invoke-OERStructure` refuses
+  with `ConfirmationUnavailable`, before the sign-in, a document whose run would prompt. Never
+  decide either elsewhere.
   `Why: docs/development/rationale.md#confirmation-unavailable`
 - **`Test-OERHostNonInteractive` is the single owner of whether the console host was started with
   `-NonInteractive`** (a private field read by reflection; `$false` for every other host and on any
-  failure); only `Initialize-OERAuth` asks it. Never decide it elsewhere. Every unit test that reaches
+  failure); only `Initialize-OERAuth` and `Test-OERHostCanConfirm` ask it. Never decide it elsewhere. Every unit test that reaches
   the real `Initialize-OERAuth` with an interactive sign-in mocks it, since the tool host is
   `-NonInteractive`.
   `Why: docs/development/rationale.md#an-interactive-sign-in-is-refused-in-a-non-interactive-host`

@@ -661,8 +661,10 @@ VALIDATING AND APPLYING A DOCUMENT
     document names it by user principal name, so replacing a user owner with
     one named that way completes in one run. An owner that PIM for Groups
     holds, or makes eligible, does not count as standing. A section set to
-    null is not declared and gives no row. In a runspace with no host of its own, such
-    as a thread job, a run without -WhatIf or -Confirm:$false (or a
+    null is not declared and gives no row. In a runspace with no host of its own,
+    such as a thread job, in pwsh started with -NonInteractive, and in pwsh
+    whose standard input is redirected (a pipe, a file, or a child process
+    without a console), a run without -WhatIf or -Confirm:$false (or a
     $ConfirmPreference of None) is refused with ConfirmationUnavailable
     before it signs in, also one that would change nothing; run it with
     -Confirm:$false or -WhatIf. In another host that cannot show the prompt,
