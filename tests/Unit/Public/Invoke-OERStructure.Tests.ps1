@@ -6901,6 +6901,165 @@ Invoke-OERStructure -Json $Json -Include AccessPackages -ErrorAction Stop | ForE
     }
 }
 
+Describe 'Invoke-OERStructure refuses a run in a console host that cannot ask a person (BL-195)' {
+    # BL-195: in the console host a prompt is answered by a person only when the console's standard input is
+    # not redirected and the host was not started with -NonInteractive. Test-OERHostCanConfirm (the REAL owner,
+    # not mocked here) reads those two signals; this Describe mocks the two signals per case and proves the
+    # engine's refusal end to end, then runs the same refusal in a child process whose input is a pipe holding
+    # the answer y (the F-6 shape: a script with no try above the engine).
+    BeforeAll {
+        $script:CuMessage = 'Invoke-OERStructure asks for confirmation before each change (ConfirmImpact High), and this host cannot show a confirmation prompt, so nothing was read or changed; run it with -Confirm:$false to apply without prompts, or with -WhatIf to plan.'
+        $script:CuJson = '{ "version": "1.0", "groups": [ { "displayName": "g1" } ] }'
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Get-OERDocumentTenantMismatch { }
+        Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { [PSCustomObject]@{ Scope = $null; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null } }
+        Mock -ModuleName $script:moduleName Sync-OERStructureGroup { [PSCustomObject]@{ Section = 'groups'; Item = [string]$Item.displayName; Action = 'Unchanged'; Detail = 'stub row' } }
+        Mock -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit { }
+    }
+
+    It 'runs in the console host, the host whose two signals the real owner reads' {
+        $Host.Name | Should -BeExactly 'ConsoleHost'
+    }
+
+    It 'refuses a run that would prompt (<Case>) with ConfirmationUnavailable: no sign-in, no tenant check, no handler and no row' -TestCases @(
+        @{ Case = 'standard input redirected'; NonInteractive = $false; Redirected = $true }
+        @{ Case = 'started with -NonInteractive'; NonInteractive = $true; Redirected = $false }
+        @{ Case = 'redirected input and -NonInteractive'; NonInteractive = $true; Redirected = $true }
+    ) {
+        if ($NonInteractive) { Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $true } } else { Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $false } }
+        if ($Redirected) { Mock -ModuleName $script:moduleName Test-OERConsoleInputRedirected { $true } } else { Mock -ModuleName $script:moduleName Test-OERConsoleInputRedirected { $false } }
+        $global:ConfirmPreference | Should -Not -Be 'None'
+        $Rows = @(Invoke-OERStructure -Json $script:CuJson -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable CuErr)
+
+        # Reached: the real owner asked the -NonInteractive signal, once.
+        Should -Invoke -ModuleName $script:moduleName Test-OERHostNonInteractive -Times 1 -Exactly
+        @($CuErr).Count | Should -Be 1
+        $CuErr[0].FullyQualifiedErrorId | Should -BeExactly 'ConfirmationUnavailable,Invoke-OERStructure'
+        $CuErr[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidOperation)
+        $CuErr[0].Exception.Message | Should -BeExactly $script:CuMessage
+        $Rows | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERDocumentTenantMismatch -Times 0
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureGroup -Times 0
+    }
+
+    It 'is not refused <Case> in a console host that cannot ask, and applies the document' -TestCases @(
+        @{ Case = 'under -WhatIf with redirected input'; Params = @{ WhatIf = $true }; NonInteractive = $false; Redirected = $true; GlobalNone = $false }
+        @{ Case = 'under -WhatIf with -NonInteractive'; Params = @{ WhatIf = $true }; NonInteractive = $true; Redirected = $false; GlobalNone = $false }
+        @{ Case = 'under -Confirm:$false with redirected input'; Params = @{ Confirm = $false }; NonInteractive = $false; Redirected = $true; GlobalNone = $false }
+        @{ Case = 'under -Confirm:$false with -NonInteractive'; Params = @{ Confirm = $false }; NonInteractive = $true; Redirected = $false; GlobalNone = $false }
+        @{ Case = 'under $ConfirmPreference None with redirected input'; Params = @{}; NonInteractive = $false; Redirected = $true; GlobalNone = $true }
+        @{ Case = 'under $ConfirmPreference None with -NonInteractive'; Params = @{}; NonInteractive = $true; Redirected = $false; GlobalNone = $true }
+    ) {
+        if ($NonInteractive) { Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $true } } else { Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $false } }
+        if ($Redirected) { Mock -ModuleName $script:moduleName Test-OERConsoleInputRedirected { $true } } else { Mock -ModuleName $script:moduleName Test-OERConsoleInputRedirected { $false } }
+        $SavedPreference = $global:ConfirmPreference
+        try {
+            if ($GlobalNone) { $global:ConfirmPreference = 'None' }
+            $Rows = @(Invoke-OERStructure -Json $script:CuJson @Params -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable CuErr)
+        } finally {
+            $global:ConfirmPreference = $SavedPreference
+        }
+
+        @($CuErr) | Should -BeNullOrEmpty
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)" }) | Should -Be @('groups|g1|Unchanged')
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureGroup -Times 1 -Exactly
+    }
+
+    It 'runs a document in a console a person types into (neither signal set)' {
+        Mock -ModuleName $script:moduleName Test-OERHostNonInteractive { $false }
+        Mock -ModuleName $script:moduleName Test-OERConsoleInputRedirected { $false }
+        $Rows = @(Invoke-OERStructure -Json $script:CuJson -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable CuErr)
+
+        @($CuErr) | Should -BeNullOrEmpty
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)" }) | Should -Be @('groups|g1|Unchanged')
+        Should -Invoke -ModuleName $script:moduleName Test-OERHostNonInteractive -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Test-OERConsoleInputRedirected -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureGroup -Times 1 -Exactly
+    }
+
+    Context 'in a child process whose standard input is a pipe holding the answer y, with no try above the engine' {
+        BeforeAll {
+            $script:PwshPath = (Get-Process -Id $PID).Path
+            $script:ChildScript = @'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    foreach ($Name in 'Get-AzToken', 'Connect-MgGraph', 'Invoke-MgGraphRequest', 'Invoke-WebRequest', 'Invoke-RestMethod') {
+        Set-Item -Path "function:script:$Name" -Value ([scriptblock]::Create("[System.IO.File]::AppendAllText('#LOG#', 'TRANSPORT $Name' + [Environment]::NewLine); throw 'transport reached'"))
+    }
+    Set-Item -Path function:script:Initialize-OERAuth -Value { [System.IO.File]::AppendAllText('#LOG#', "AUTH`n") }
+    Set-Item -Path function:script:Get-OERDocumentTenantMismatch -Value {
+        param($Document, $Target, $RequestedTenantId, [switch]$IncludeARM)
+        [System.IO.File]::AppendAllText('#LOG#', "TENANTCHECK`n")
+    }
+    Set-Item -Path function:script:Sync-OERStructureGroup -Value {
+        [CmdletBinding()]
+        param($Item, $Caller, [switch]$Prune, $TenantAlias, $CreatedUnitMembership, $RenameMap)
+        [System.IO.File]::AppendAllText('#LOG#', "ASK group $($Item.displayName)`n")
+        if ($Caller.ShouldProcess([string]$Item.displayName, 'Update group')) { [System.IO.File]::AppendAllText('#LOG#', "WRITE group`n") }
+        ConvertTo-OERStructureResult -Section 'groups' -Item ([string]$Item.displayName) -Action 'Unchanged' -Detail 'stub row'
+    }
+}
+# The stubs must be the ones the module's own calls resolve to before the engine runs.
+$Resolved = & (Get-Module Omnicit.EntraRBAC) {
+    (Get-Command Initialize-OERAuth).ScriptBlock.ToString().Contains('AUTH') -and
+    (Get-Command Get-OERDocumentTenantMismatch).ScriptBlock.ToString().Contains('TENANTCHECK') -and
+    (Get-Command Sync-OERStructureGroup).ScriptBlock.ToString().Contains('ASK group') -and
+    (Get-Command Invoke-MgGraphRequest).ScriptBlock.ToString().Contains('TRANSPORT') -and
+    (Get-Command Get-AzToken).ScriptBlock.ToString().Contains('TRANSPORT')
+}
+if (-not $Resolved) { throw 'a stub does not resolve in the module scope' }
+"HOST:$($Host.Name)"
+$Json = '{ "version": "1.0", "groups": [ { "displayName": "g1" } ] }'
+[System.IO.File]::AppendAllText('#LOG#', "STEP plain`n")
+Invoke-OERStructure -Json $Json -ErrorAction SilentlyContinue -ErrorVariable RunErrors | ForEach-Object { "ROW:plain:$($_.Item):$($_.Action)" }
+$RunErrors | ForEach-Object { "ERRID:plain:$($_.FullyQualifiedErrorId)" }
+'AFTER'
+[System.IO.File]::AppendAllText('#LOG#', "STEP whatif`n")
+Invoke-OERStructure -Json $Json -WhatIf -ErrorAction SilentlyContinue -ErrorVariable RunErrors | ForEach-Object { "ROW:whatif:$($_.Item):$($_.Action)" }
+$RunErrors | ForEach-Object { "ERRID:whatif:$($_.FullyQualifiedErrorId)" }
+[System.IO.File]::AppendAllText('#LOG#', "STEP confirmfalse`n")
+Invoke-OERStructure -Json $Json -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable RunErrors | ForEach-Object { "ROW:confirmfalse:$($_.Item):$($_.Action)" }
+$RunErrors | ForEach-Object { "ERRID:confirmfalse:$($_.FullyQualifiedErrorId)" }
+'END'
+'@
+        }
+
+        It 'refuses the plain run before the sign-in although the pipe holds y, and still runs -WhatIf and -Confirm:$false' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $ScriptPath = Join-Path $TestDrive ('{0}.ps1' -f [guid]::NewGuid())
+            Set-Content -LiteralPath $ScriptPath -Value $script:ChildScript.Replace('#LOG#', $Log.Replace("'", "''")) -Encoding utf8
+
+            $Output = @('y' | & $script:PwshPath -NoProfile -File $ScriptPath 2>&1 | ForEach-Object { [string]$_ })
+
+            $Output | Should -Be @(
+                'HOST:ConsoleHost'
+                'ERRID:plain:ConfirmationUnavailable,Invoke-OERStructure'
+                'AFTER'
+                'What if: Performing the operation "Update group" on target "g1".'
+                'ROW:whatif:g1:Unchanged'
+                'ROW:confirmfalse:g1:Unchanged'
+                'END'
+            )
+            # The refused run signed nothing in, compared no tenant, asked no handler and wrote nothing (before the
+            # fix the y in the input answered Yes and WRITE group stood under STEP plain); no transport was reached.
+            @(Get-Content -LiteralPath $Log) | Should -Be @(
+                'STEP plain'
+                'STEP whatif'
+                'AUTH', 'TENANTCHECK', 'ASK group g1'
+                'STEP confirmfalse'
+                'AUTH', 'TENANTCHECK', 'ASK group g1', 'WRITE group'
+            )
+        }
+    }
+}
+
 Describe 'Invoke-OERStructure refuses a document the validator refuses, in a script with no try above it (BL-139, BL-154)' {
     # The validator refusal of this step, through the public engine in a runspace through
     # Invoke-OERWithConfirmAnswer, so no try stands anywhere above it: a group template the naming engine cannot
