@@ -41,6 +41,16 @@ Describe 'Get-OERAuthenticationContext' {
         $R[0].AuthenticationContextId | Should -Be 'c2'
     }
 
+    It 'BL-193: -Id is read whole -- a trailing line feed is refused before any request, a case variant is accepted' {
+        $Caught = $null
+        try { $null = Get-OERAuthenticationContext -Id "c1`n" -ErrorAction Stop }
+        catch { $Caught = $_ }
+        $Caught | Should -Not -BeNullOrEmpty
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'ParameterArgumentValidationError,Get-OERAuthenticationContext'
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+        @(Get-OERAuthenticationContext -Id 'C1').Count | Should -Be 1
+    }
+
     It 'filters to published contexts with -Available' {
         $R = @(Get-OERAuthenticationContext -Available)
         $R.Count | Should -Be 1

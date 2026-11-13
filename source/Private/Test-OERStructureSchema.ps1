@@ -42,7 +42,8 @@ function Test-OERStructureSchema {
     validates requireApproval and approvers the same way a roleManagementPolicies item does: a boolean
     toggle, an approvers object with optional users/groups string arrays, and requireApproval false
     declared together with a non-empty approvers block is the same Warning naming the precedence, at
-    the pimPolicy block's own path. requireMfaOnActivation together with a non-empty authenticationContextId is an Error -- Azure
+    the pimPolicy block's own path. A pimPolicy block's authenticationContextId is held to the same
+    rule as a roleManagementPolicies item's: a string matched whole, or an empty string. requireMfaOnActivation together with a non-empty authenticationContextId is an Error -- Azure
     PIM rejects both being set at once, a rule draft-07 cannot express, so the offline validator
     enforces it here. A directoryRoleManagementPolicies item (the PIM policy of a Microsoft Entra
     directory role, which always lives at tenant scope) is validated by exactly the same rules as a
@@ -1021,6 +1022,18 @@ function Test-OERStructureSchema {
                                         }
                                     }
                                 }
+                            }
+                        }
+
+                        # BL-193: a declared authenticationContextId is a string matched whole (\A and \z, the
+                        # same two checks and texts as the roleManagementPolicies sections below).
+                        if (Test-HasProp -Node $Block -Name 'authenticationContextId') {
+                            if ($Block.authenticationContextId -isnot [string]) {
+                                Add-Finding -Section 'groups' -Item $GItem -Path "$BlockPath.authenticationContextId" `
+                                    -Message "'authenticationContextId' at $BlockPath must be a string that looks like 'c1', or an empty string to disable it. Got: $(Get-FoundValueText -Value $Block.authenticationContextId)."
+                            } elseif ($Block.authenticationContextId -and $Block.authenticationContextId -notmatch '\Ac\d+\z') {
+                                Add-Finding -Section 'groups' -Item $GItem -Path "$BlockPath.authenticationContextId" `
+                                    -Message "'authenticationContextId' at $BlockPath must look like 'c1', or be an empty string to disable it. Got: '$($Block.authenticationContextId)'."
                             }
                         }
 
@@ -2295,8 +2308,8 @@ function Test-OERStructureSchema {
         # An empty string is the documented "disable the authentication context" value; any other
         # non-c<digits> value is refused at runtime by Set-OERRoleManagementPolicy and
         # Set-OERDirectoryRoleManagementPolicy alike, so catch it offline instead. The offline check
-        # is stricter: it also refuses a non-string and a trailing line break, which the cmdlets'
-        # '^...$' pattern lets through.
+        # is stricter: it also refuses a non-string. Both read the value whole (\A and \z), so a
+        # trailing line break is refused alike.
         if (Test-HasProp -Node $Node -Name 'authenticationContextId') {
             # BL-187 (b): a declared value is a string and is matched whole (\A and \z; '$' would also
             # accept a trailing line feed). Case stays insensitive, as in the cmdlets: 'C1' is valid.

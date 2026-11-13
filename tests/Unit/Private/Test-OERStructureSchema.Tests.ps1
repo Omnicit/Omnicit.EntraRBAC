@@ -8480,6 +8480,92 @@ Describe 'Test-OERStructureSchema authenticationContextId is a string matched wh
     }
 }
 
+Describe 'Test-OERStructureSchema a group pimPolicy authenticationContextId is a string matched whole (BL-193)' {
+    BeforeAll {
+        function Get-NstGroupAuthCtxDoc {
+            param([string]$Form, [string]$Value)
+            $Block = '{ "authenticationContextId": ' + $Value + ' }'
+            $Policy = switch ($Form) {
+                'flat' { $Block }
+                'member' { '{ "member": ' + $Block + ' }' }
+                'owner' { '{ "owner": ' + $Block + ' }' }
+            }
+            '{ "version": "1.0", "groups": [ { "displayName": "g", "pimPolicy": ' + $Policy + ' } ] }' | ConvertFrom-Json
+        }
+        function Get-NstGroupAuthCtxPath {
+            param([string]$Form)
+            switch ($Form) {
+                'flat' { 'groups[0].pimPolicy.authenticationContextId' }
+                'member' { 'groups[0].pimPolicy.member.authenticationContextId' }
+                'owner' { 'groups[0].pimPolicy.owner.authenticationContextId' }
+            }
+        }
+    }
+
+    Context 'form <Form>' -ForEach @(
+        @{ Form = 'flat' }
+        @{ Form = 'member' }
+        @{ Form = 'owner' }
+    ) {
+        It 'refuses a value with a trailing line feed, with the exact text' {
+            $Doc = Get-NstGroupAuthCtxDoc -Form $Form -Value '"c1\n"'
+            $Path = Get-NstGroupAuthCtxPath -Form $Form
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Path = $Path } {
+                param($Doc, $Path)
+                $V = Test-OERStructureSchema -Document $Doc
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq $Path })
+                $Hit.Count | Should -Be 1
+                $Hit[0].Severity | Should -BeExactly 'Error'
+                $Hit[0].Section | Should -BeExactly 'groups'
+                $BlockPath = $Path -replace '\.authenticationContextId$', ''
+                $Hit[0].Message | Should -BeExactly "'authenticationContextId' at $BlockPath must look like 'c1', or be an empty string to disable it. Got: 'c1`n'."
+                $V.Valid | Should -BeFalse
+            }
+        }
+
+        It 'refuses an array, naming the type' {
+            $Doc = Get-NstGroupAuthCtxDoc -Form $Form -Value '["c1"]'
+            $Path = Get-NstGroupAuthCtxPath -Form $Form
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Path = $Path } {
+                param($Doc, $Path)
+                $V = Test-OERStructureSchema -Document $Doc
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq $Path })
+                $Hit.Count | Should -Be 1
+                $Hit[0].Severity | Should -BeExactly 'Error'
+                $Hit[0].Message | Should -BeLike "*must be a string that looks like 'c1', or an empty string to disable it. Got: a value that is not a string (*"
+            }
+        }
+
+        It 'refuses a number, naming the type' {
+            $Doc = Get-NstGroupAuthCtxDoc -Form $Form -Value '5'
+            $Path = Get-NstGroupAuthCtxPath -Form $Form
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Path = $Path } {
+                param($Doc, $Path)
+                $V = Test-OERStructureSchema -Document $Doc
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq $Path })
+                $Hit.Count | Should -Be 1
+                $Hit[0].Severity | Should -BeExactly 'Error'
+                $Hit[0].Message | Should -BeLike "*Got: a value that is not a string (*"
+            }
+        }
+
+        It 'gives no finding at the path for <Shown>' -ForEach @(
+            @{ Shown = 'c1'; Json = '"c1"' }
+            @{ Shown = 'C1'; Json = '"C1"' }
+            @{ Shown = 'c12'; Json = '"c12"' }
+            @{ Shown = 'an empty string'; Json = '""' }
+        ) {
+            $Doc = Get-NstGroupAuthCtxDoc -Form $Form -Value $Json
+            $Path = Get-NstGroupAuthCtxPath -Form $Form
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Path = $Path } {
+                param($Doc, $Path)
+                $V = Test-OERStructureSchema -Document $Doc
+                @($V.Errors | Where-Object { $_.Path -eq $Path }).Count | Should -Be 0
+            }
+        }
+    }
+}
+
 Describe 'Test-OERStructureSchema an administrative unit name or reference in the form of an object id is a Warning (BL-181 a)' {
     # The administrativeUnits[] entry is reconciled by NAME, but New-OERGroup reads a group's
     # administrativeUnit with -as [guid] (braced and dash-less forms too) as an object id, so a group

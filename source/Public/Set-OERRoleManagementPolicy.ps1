@@ -229,7 +229,7 @@ function Set-OERRoleManagementPolicy {
         if ($PSBoundParameters.ContainsKey('RequireJustificationOnActiveAssignment')) { $Setting.RequireJustificationOnActiveAssignment = $RequireJustificationOnActiveAssignment }
         if ($PSBoundParameters.ContainsKey('NotificationRule')) { $Setting.NotificationRule = $NotificationRule }
 
-        if ($PSBoundParameters.ContainsKey('AuthenticationContextId') -and $AuthenticationContextId -and $AuthenticationContextId -notmatch '^c\d+$') {
+        if ($PSBoundParameters.ContainsKey('AuthenticationContextId') -and $AuthenticationContextId -and $AuthenticationContextId -notmatch '\Ac\d+\z') {
             Write-CmdletError -Message ([System.Exception]::new("AuthenticationContextId '$AuthenticationContextId' is invalid: use a value like 'c1', or an empty string to disable.")) -ErrorId 'InvalidAuthenticationContext' -Category InvalidArgument -TargetObject $AuthenticationContextId -Cmdlet $PSCmdlet
             return
         }

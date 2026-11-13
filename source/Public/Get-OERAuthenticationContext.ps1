@@ -39,7 +39,7 @@ function Get-OERAuthenticationContext {
     [CmdletBinding()]
     [OutputType([PSCustomObject])]
     param(
-        [ValidatePattern('^c\d+$')]
+        [ValidatePattern('\Ac\d+\z')]
         [Alias('AuthenticationContextId')]
         [string]$Id,
 
