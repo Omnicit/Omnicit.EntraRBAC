@@ -7787,7 +7787,8 @@ placement is the point: after the cached return (a session that needs no token i
 credential checks and the app-only check, and BEFORE the tenant lookup and every token call, so nothing
 is requested, the silent renewal included. The command stays latched and the session-uncertain marker
 stays set, like every refusal above it. A cached Graph session that needs a new ARM token, and a
-`-ForceRefresh` of a cached interactive session, are refused the same way.
+`-ForceRefresh` of a cached interactive session, are refused the same way. `Test-OERHostCanConfirm` is
+the second caller of `Test-OERHostNonInteractive` (Sprint 17 step 2, A9; see `#confirmation-unavailable`).
 
 **Known limits.** Only the console host started with `-NonInteractive` is detected. An editor's
 integrated console, a runspace of another application, and a service or scheduled task that runs `pwsh`
@@ -15477,9 +15478,10 @@ its own, or a thread job, `Start-ThreadJob`), a `PSInvalidOperationException` un
 live case of Sprint 8 step 3); with standard input redirected from a pipe that still held input it read
 the default answer, yes. `$Host.UI` is never null. `Invoke-OERStructure` runs with `ConfirmImpact` High,
 so each handler's `$Caller.ShouldProcess` threw there, and the engine's catch reported the entry
-`Failed` with the host's raw message, which did not say what was missing. Only the Default Host can be
-told beforehand, by `$Host.Name -eq 'Default Host'`; the other two would need the process command line
-or the console's state.
+`Failed` with the host's raw message, which did not say what was missing. The 2026-10-20 conclusion was
+that only the Default Host can be told beforehand, by `$Host.Name -eq 'Default Host'`; the other two
+would need the process command line or the console's state. Sprint 17 step 2 supersedes that: see the
+subsection on the console host with redirected input or `-NonInteractive` below.
 
 **The Default Host is refused before the sign-in.** When the run would prompt -- not `-WhatIf`, and
 `$ConfirmPreference` not `None`, which `-Confirm:$false` sets inside the command -- and
@@ -15505,6 +15507,59 @@ Cost (accepted): a Default Host run that would have changed nothing now needs `-
 `-WhatIf`. A host the refusal misses still gets the clear row. The `(BL-53)` Describe of
 `Invoke-OERStructure.Tests.ps1` holds it, in a real Default Host runspace with no `try` among others,
 beside the two helpers' own test files.
+
+### The console host with redirected input or -NonInteractive (Sprint 17 step 2, BL-195)
+
+**The case (F-6).** In Sprint 16 step 2 a live block ran `pwsh -File` with its output captured, from an
+agent's tool whose standard input is redirected. `Test-OERHostCanConfirm` answered `$true` (the host was
+not the Default Host), so the run signed in, and every entry became `Failed` with the row that says the
+host cannot show the confirmation prompt (a `NullReferenceException` at the first prompt), instead of
+`ConfirmationUnavailable` before the sign-in. Nothing was written.
+
+**Measured** on 2026-11-13, offline, in child `pwsh` processes (7.6, Windows) with no module code loaded:
+a function with `SupportsShouldProcess` and `ConfirmImpact` High calling `ShouldProcess` without
+`-Confirm:$false` or `-WhatIf`. The host was `ConsoleHost` and `[Environment]::UserInteractive` was true
+in every row.
+
+| launch | -NonInteractive | standard input | IsInputRedirected | ShouldProcess |
+|---|---|---|---|---|
+| -File or -Command | no | inherited from a redirected parent | True | throws (NullReferenceException) |
+| -File or -Command | no | redirected, closed at once | True | throws (NullReferenceException) |
+| -File or -Command | no | redirected, an empty line | True | returns true (the default answer, read from the pipe) |
+| -File or -Command | no | redirected, n | True | returns false (answer read from the pipe) |
+| -File or -Command | no | redirected, y | True | returns true (answer read from the pipe) |
+| -File or -Command | yes | any of the five above | True | throws (PSInvalidOperationException) |
+| -File or -Command | no | the console (a new hidden console) | False | waits for an answer (killed after 15 s), output redirected or not |
+| -File or -Command | yes | the console | False | throws (PSInvalidOperationException) |
+
+The reflection read of `Test-OERHostNonInteractive` answered true exactly under `-NonInteractive`. The F-6
+case is the first row. The measurement found no new exception form, so `Test-OERConfirmPromptFailure` is
+unchanged.
+
+**The decision (A4, A9).** In the console host a prompt can be answered by a person only when the
+console's standard input is not redirected and the host was not started with `-NonInteractive`.
+`Test-OERHostCanConfirm` therefore answers `$false` for the Default Host (as before), for the console host
+started with `-NonInteractive` (asked through `Test-OERHostNonInteractive`) and for the console host whose
+standard input is redirected; every other host (an editor's host, a custom PSHost) keeps `$true`, since its
+prompt is the host's own and it was not measured. `Invoke-OERStructure` refuses a
+run that would prompt with `ConfirmationUnavailable` before the sign-in when it answers `$false`; the id and
+message are unchanged, and `Test-OERHostCanConfirm` stays the only owner of the decision.
+
+**Ruling R-1.** `[System.Console]::IsInputRedirected` is read through the private
+`Test-OERConsoleInputRedirected`, the single reader, called only by `Test-OERHostCanConfirm`, since a
+static .NET property cannot be mocked in Pester. If that proves wrong, the read could be inlined and the
+branch tests run only in child processes.
+
+**Cost (accepted).** A terminal that hands `pwsh` a pipe instead of a console is refused although a person
+may be typing there, and with redirected input a prompt could otherwise read its answer from the input
+(rows three to five). A run that would change nothing needs `-Confirm:$false` or `-WhatIf` there too. Only
+Windows with `pwsh` 7.6 was measured; an editor's integrated console and other hosts were not, and still
+answer `$true`; a host not told beforehand still gets the clear `Failed` row.
+
+**Held by** the tests of `Test-OERHostCanConfirm`, of `Test-OERConsoleInputRedirected` and the `(BL-195)`
+Describe of `Invoke-OERStructure.Tests.ps1` ('Invoke-OERStructure refuses a run in a console host that
+cannot ask a person (BL-195)'), which runs the refusal with the two host signals mocked and in a child
+process (`'y' | pwsh -File ...`) with no try above the engine.
 
 ### CLAUDE.md text for confirmation-unavailable
 
