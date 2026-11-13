@@ -15561,6 +15561,71 @@ Describe of `Invoke-OERStructure.Tests.ps1` ('Invoke-OERStructure refuses a run 
 cannot ask a person (BL-195)'), which runs the refusal with the two host signals mocked and in a child
 process (`'y' | pwsh -File ...`) with no try above the engine.
 
+### Background jobs, thread jobs and hidden consoles (Sprint 18 step 2, BL-198)
+
+**The case (BL-198).** After Sprint 17 step 2, `Test-OERHostCanConfirm` answered `$true` for every host
+but the Default Host and a console host started with `-NonInteractive` or whose standard input is
+redirected. A background job (`Start-Job`), a thread job started with `-StreamingHost $Host` and a
+console host whose input is a console nobody sees were not measured.
+
+**Measured** on 2026-11-14, offline, in `pwsh` 7.6 on Windows with no module code loaded: the function
+of the subsections above, with a copy of the owner's four lines and its two readers. In every row
+`$Host.GetType().FullName` was `System.Management.Automation.Internal.Host.InternalHost`,
+`[Environment]::UserInteractive` was true and the process session id was 2. "Window" is
+`IsWindowVisible` of `GetConsoleWindow`; "none" means the process had no console window. A wait was
+ended after 15 s by the measuring script.
+
+| host | `$Host.Name` | `$PSSenderInfo` | IsInputRedirected | window | owner | ShouldProcess |
+|---|---|---|---|---|---|---|
+| `Start-Job`, not received | ServerRemoteHost | set | True | none | True | the job turned `Blocked` and waited; `Wait-Job` stopped with an error |
+| `Start-Job`, `Receive-Job` in `pwsh` in a pseudo console, `y` typed | ServerRemoteHost | set | True | none | True | returned true |
+| `Start-Job`, `Receive-Job` in `pwsh` with `y` or `n` piped | ServerRemoteHost | set | True | none | True | returned true or false, as piped |
+| `Start-Job`, `Receive-Job` in `pwsh -NonInteractive` | ServerRemoteHost | set | True | none | True | threw (`MethodInvocationException`, inner `RemoteException`) |
+| `Start-ThreadJob` | Default Host | null | True | none | False | threw (inner `HostException`) |
+| `Start-ThreadJob -StreamingHost $Host`, caller in a pseudo console, `y` typed | ConsoleHost | null | False | False | True | returned true |
+| `Start-ThreadJob -StreamingHost $Host`, caller's input piped (`y`, `n`) | ConsoleHost | null | True | none | False | returned true or false, as piped |
+| `Start-ThreadJob -StreamingHost $Host`, caller `-NonInteractive` | ConsoleHost | null | True | none | False | threw (inner `PSInvalidOperationException`) |
+| a new console, `Start-Process -WindowStyle Hidden` | ConsoleHost | null | False | False | True | waited |
+| a new console window, `conhost.exe pwsh` | ConsoleHost | null | False | True | True | waited |
+| a pseudo console (`CreatePseudoConsole`), nothing typed | ConsoleHost | null | False | False | True | waited |
+| a pseudo console, `y` or `n` typed | ConsoleHost | null | False | False | True | returned true or false, as typed |
+
+Windows Terminal (1.24) could not be started from the measuring session: `wt.exe` returned 0 and started
+no process, in three tries. The pseudo console was therefore made directly with `CreatePseudoConsole`
+(ConPTY), the Windows API through which terminal applications such as Windows Terminal host a shell, and
+an answer was written to its input as a terminal writes a key that is typed.
+
+**The decision (A4).** A signal is used only if it tells every host where nobody can answer apart from
+every host where a person can.
+
+- **A background job can ask a person.** Its `ShouldProcess` does not throw: the prompt goes to whoever
+  receives the job, and a typed answer was read there. `ServerRemoteHost` and `$PSSenderInfo` therefore
+  name no host to refuse, and the owner keeps `$true`. A job nobody receives waits in `Blocked`. A receiver
+  whose input is piped answers from the pipe, which the job cannot see. Received in `pwsh -NonInteractive`,
+  the inner exception is a `RemoteException`, which `Test-OERConfirmPromptFailure` does not count, so an
+  entry stopped there keeps PowerShell's own message in its `Failed` row (a finding of the step, not
+  changed: A4 corrects only the owner's decision).
+- **A thread job was already decided.** Without `-StreamingHost` it is the Default Host and is refused;
+  with `-StreamingHost $Host` it runs in its caller's console host, prompts there and is decided by the
+  two console signals as its caller is.
+- **The hidden console stays a documented limit.** Every candidate signal reads as in a console a person
+  types into, except window visibility, which is false for the hidden console and also for the pseudo
+  console where a typed answer was read; refusing on it would refuse a person typing into a terminal that
+  hosts `pwsh` in a pseudo console. The session id was 2 in every row and separates nothing measured; a
+  scheduled task or a service was not measured, since registering one was out of bounds.
+
+No code changed: the owner, its two readers and `Invoke-OERStructure` are as Sprint 17 step 2 left them.
+The owner's help, `Invoke-OERStructure`'s help, README.md and the about topic name the two waits; run
+such a document with `-Confirm:$false` or `-WhatIf`.
+
+**Ruling R-1 (Sprint 18 step 2).** Windows Terminal itself was not measured; a pseudo console made with
+`CreatePseudoConsole` stands in for it. If that is wrong, Windows Terminal could read differently; that
+matters only to a later step that takes window visibility into use, and this step takes no signal into
+use.
+
+**Held by** the `(BL-198)` It of `Test-OERHostCanConfirm.Tests.ps1`, which runs the real owner in a
+`Start-Job` and expects `ServerRemoteHost` and `$true`, so a change that refuses the job host fails it.
+
 ### CLAUDE.md text for confirmation-unavailable
 
 What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:

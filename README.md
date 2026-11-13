@@ -1090,7 +1090,10 @@ console), a run without `-WhatIf` or `-Confirm:$false` (or a `$ConfirmPreference
 with `ConfirmationUnavailable` before it signs in, also one that would change nothing; run it with
 `-Confirm:$false` or `-WhatIf`. In another host that cannot show the prompt, an entry stopped by it is
 `Failed`, with a row that says the host cannot show the confirmation prompt and that nothing was
-written. A run within about 30 seconds of a write can send the same update again, since Microsoft Graph
+written. A background job (`Start-Job`) and a console nobody sees (`Start-Process -WindowStyle Hidden`)
+are not refused: the run signs in and waits at the first change's prompt, which in a job `Receive-Job`
+shows in the host that receives the job and which in a hidden console nobody can answer; run it there
+with `-Confirm:$false` or `-WhatIf`. A run within about 30 seconds of a write can send the same update again, since Microsoft Graph
 can still answer a read with the value from before the write; the update changes nothing more, but its
 row reads `Updated` again.
 
