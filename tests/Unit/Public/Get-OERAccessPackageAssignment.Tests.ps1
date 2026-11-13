@@ -578,7 +578,9 @@ Describe 'Get-OERAccessPackageAssignment -- a piped AccessPackageId binds before
 
     It 'a piped object with none of AccessPackageId, Id and DisplayName is refused by the engine (InputObjectNotBound) and nothing is sent, as before the change' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } }
-        { [PSCustomObject]@{ Other = 'x' } | Get-OERAccessPackageAssignment } |
+        # -ErrorAction Stop: a binding failure on pipeline input is non-terminating, so without it the
+        # throw depends on the caller's preference (the gate's is not Stop here).
+        { [PSCustomObject]@{ Other = 'x' } | Get-OERAccessPackageAssignment -ErrorAction Stop } |
             Should -Throw -ErrorId 'InputObjectNotBound,Get-OERAccessPackageAssignment'
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
     }

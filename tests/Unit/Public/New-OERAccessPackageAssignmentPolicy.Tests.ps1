@@ -406,7 +406,9 @@ Describe 'New-OERAccessPackageAssignmentPolicy -- a piped AccessPackageId binds 
 
     It 'a piped object whose AccessPackageId is null fails binding and nothing is sent' {
         $Review = [PSCustomObject]@{ Id = 'review-id-1'; DisplayName = 'Review'; AccessPackageId = $null }
-        { $Review | New-OERAccessPackageAssignmentPolicy -DisplayName 'Default' -RequestorScope $script:Scope -Confirm:$false } |
+        # -ErrorAction Stop: a binding failure on pipeline input is non-terminating, so without it the
+        # throw depends on the caller's preference (the gate's is not Stop here).
+        { $Review | New-OERAccessPackageAssignmentPolicy -DisplayName 'Default' -RequestorScope $script:Scope -Confirm:$false -ErrorAction Stop } |
             Should -Throw -ErrorId 'ParameterArgumentValidationErrorEmptyStringNotAllowed,New-OERAccessPackageAssignmentPolicy'
         Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
