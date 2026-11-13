@@ -79,7 +79,9 @@ Write-OerLiveStep "Main clone: branch $MainBranch"
 Write-OerLiveStep "Worktree: branch $(git -C $Cfg.Repo branch --show-current); HEAD $(git -C $Cfg.Repo log -1 --format='%h %s'); tracked changes: $(@(git -C $Cfg.Repo status --porcelain --untracked-files=no).Count)"
 $Psm1 = Get-ChildItem -Path (Join-Path $Cfg.Repo 'output\module\Omnicit.EntraRBAC\*\Omnicit.EntraRBAC.psm1') | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 $Text = Get-Content -LiteralPath $Psm1.FullName -Raw
-$A = $Text.Contains("[Alias('AccessPackageId', 'Id')]`r`n        [string]`$AccessPackage") -or $Text.Contains("[Alias('AccessPackageId', 'Id')]`n        [string]`$AccessPackage")
+$Start = $Text.IndexOf('function Get-OERAccessPackageResourceRole {')
+$Region = if ($Start -ge 0) { $Text.Substring($Start) -replace '(?s)\r?\nfunction .*$', '' } else { '' }
+$A = $Region -match "\[Alias\('AccessPackageId', 'Id'\)\]\r?\n\s*\[string\]\`$AccessPackage"
 $B = $Text.Contains("[ValidatePattern('\Ac[0-9]+\z|\A\z')]") -and $Text.Contains("[ValidatePattern('\Ac[0-9]+\z')]") -and -not $Text.Contains('\Ac\d+\z')
 Write-OerLiveStep "The worktree's build carries A: $A; B: $B"
 ```
@@ -175,8 +177,9 @@ foreach ($Run in 'plan', 'first', 'second') {
 Disconnect-OerLive
 ```
 
-**Expect:** `plan`: every row `Skipped` (would create), no own error; `first`: the catalog and the
-access package rows `Created`; `second`: every row `Unchanged` (G8), no own error.
+**Expect:** `plan`: every row `Skipped` (would create), no own error; `first`: every row `Created`
+(the `catalogs oer-s181-cat` row and each `accessPackages oer-s181-ap` row), no `Failed` row, no own
+error; `second`: every row `Unchanged` (G8), no own error.
 **Failure looks like:** an own error, a `Failed` row, or a second run with a change.
 
 Result: not yet run.

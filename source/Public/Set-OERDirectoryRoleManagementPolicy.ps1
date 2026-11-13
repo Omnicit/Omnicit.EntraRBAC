@@ -74,9 +74,10 @@ function Set-OERDirectoryRoleManagementPolicy {
     MFA. That is the Microsoft Graph convention, since each rule is PATCHed on its own; it differs
     from Set-OERRoleManagementPolicy, which clears MFA from such a policy on any change because
     Azure Resource Manager validates the complete rule set on every write. -AuthenticationContextId
-    is checked for its c followed by ASCII digits (0-9) shape only; unlike Set-OERGroupPimPolicy, the value is not looked
-    up in the tenant, and Microsoft Graph accepts a claim value no authentication context defines,
-    which end users then fail at activation. Check it with Get-OERAuthenticationContext first.
+    is checked only for its shape, c followed by ASCII digits (0-9); unlike Set-OERGroupPimPolicy,
+    the value is not looked up in the tenant, and Microsoft Graph accepts a claim value no
+    authentication context defines, which end users then fail at activation. Check it with
+    Get-OERAuthenticationContext first.
 
     Notification rules are changed with the same builder objects the Azure cmdlet uses: pass one or
     more New-OERPolicyNotificationRule results to -NotificationRule.
@@ -147,10 +148,10 @@ function Set-OERDirectoryRoleManagementPolicy {
     reported as that error itself.
 
     .PARAMETER AuthenticationContextId
-    Authentication context claim value required on activation (e.g. c1): the letter c followed by ASCII digits (0-9). An empty string disables
-    the authentication-context requirement. A non-empty value removes MFA from the activation
-    enablement rule (see the DESCRIPTION). Only the value's shape is checked, not whether the tenant
-    defines it.
+    Authentication context claim value required on activation (e.g. c1): the letter c followed by
+    ASCII digits (0-9). An empty string disables the authentication-context requirement. A non-empty
+    value removes MFA from the activation enablement rule (see the DESCRIPTION). Only the value's
+    shape is checked, not whether the tenant defines it.
 
     .PARAMETER AllowPermanentEligibility
     Allow permanent eligible assignments (sets isExpirationRequired false on the eligibility rule).

@@ -9,9 +9,9 @@ function Get-OERAccessPackageResourceRole {
     Invoke-OERGraphRequest and returns one tagged Omnicit.EntraRBAC.AccessPackageResourceRole object per
     binding. The access package is given by -AccessPackage (display name or GUID, resolved via
     Resolve-OERAccessPackageId) and binds from the pipeline by property name so Get-OERAccessPackage
-    and Get-OERAccessPackageAssignmentPolicy pipe straight in. The output exposes ResourceRoleScopeId so it pipes into
-    Remove-OERAccessPackageResourceRole. An access package with no bindings returns nothing (not an
-    error).
+    and Get-OERAccessPackageAssignmentPolicy pipe straight in. The output exposes ResourceRoleScopeId
+    so it pipes into Remove-OERAccessPackageResourceRole. An access package with no bindings returns
+    nothing (not an error).
 
     Each binding's scope carries only a scope LABEL (commonly the literal string 'Root' for a
     root-scoped resource) and the resource's originId -- never the resource's own display name. To

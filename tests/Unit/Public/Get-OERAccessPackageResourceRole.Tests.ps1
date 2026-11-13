@@ -271,6 +271,14 @@ Describe 'Get-OERAccessPackageResourceRole' {
             }
         }
 
+        It 'binds the AccessPackageId of a piped resource role, which carries no Id' {
+            $Role = [pscustomobject]@{ ResourceRoleScopeId = 'rrs-1'; AccessPackageId = 'package-id-3' }
+            $Role | Get-OERAccessPackageResourceRole | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Exactly -Times 1 -ParameterFilter {
+                $DisplayName -eq 'package-id-3'
+            }
+        }
+
         It 'refuses a piped object whose AccessPackageId is empty at binding' {
             $Policy = [pscustomobject]@{ Id = 'policy-id-1'; AccessPackageId = '' }
             $Caught = $null
