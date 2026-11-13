@@ -21,7 +21,7 @@ function Test-OERHostCanConfirm {
     -NonInteractive (and -noni), and a NullReferenceException with standard input at its end, while with
     standard input redirected from a non-empty pipe it read the default answer (Yes).
 
-    Measured on 2026-11-13 in child pwsh 7.6 processes, with -File and -Command, with and without
+    Measured on 2026-11-13 in child pwsh 7.6 processes on Windows, with -File and -Command, with and without
     -NonInteractive, and standard input inherited redirected, closed, an empty line, n, y, and the console:
     with redirected input ShouldProcess read y, n or the empty line from the pipe, or threw a
     NullReferenceException at its end; under -NonInteractive it threw a PSInvalidOperationException

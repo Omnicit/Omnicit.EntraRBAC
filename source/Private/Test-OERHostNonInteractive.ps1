@@ -8,7 +8,8 @@ function Test-OERHostNonInteractive {
     pwsh -NonInteractive declares that nobody can answer a prompt, so the module does not start an
     interactive sign-in there (a policy; whether a browser could be completed in such a host is not
     measured), and AzAuth would still open the browser from the token request. This function is the
-    single place that decides it.
+    single place that decides it. Test-OERHostCanConfirm asks it too, so that Invoke-OERStructure refuses
+    a run that would prompt in such a host before it signs in (ConfirmationUnavailable).
 
     It returns $true only when $Host.Name is 'ConsoleHost' and the console's user interface has its
     ThrowOnReadAndPrompt switch set. PowerShell exposes that switch as a setter only, so it is read by

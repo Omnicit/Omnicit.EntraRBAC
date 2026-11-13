@@ -15541,7 +15541,7 @@ console's standard input is not redirected and the host was not started with `-N
 `Test-OERHostCanConfirm` therefore answers `$false` for the Default Host (as before), for the console host
 started with `-NonInteractive` (asked through `Test-OERHostNonInteractive`) and for the console host whose
 standard input is redirected; every other host (an editor's host, a custom PSHost) keeps `$true`, since its
-prompt does not read the console's standard input and it was not measured. `Invoke-OERStructure` refuses a
+prompt is the host's own and it was not measured. `Invoke-OERStructure` refuses a
 run that would prompt with `ConfirmationUnavailable` before the sign-in when it answers `$false`; the id and
 message are unchanged, and `Test-OERHostCanConfirm` stays the only owner of the decision.
 

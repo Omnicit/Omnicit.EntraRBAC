@@ -1454,6 +1454,11 @@ only if a `Justification` string is provided. Never suppress a rule that hides a
 - **Pin `-ErrorAction` on any call whose non-terminating error the test observes or has to survive**
   (module code reads the GLOBAL `$ErrorActionPreference`; a test-local one does not pin it).
   `Why: docs/development/rationale.md#bearer-scrub-tests`
+- **A test that runs `Invoke-OERStructure` without `-WhatIf` or `-Confirm:$false` mocks
+  `Test-OERHostCanConfirm` or its two signals (`Test-OERHostNonInteractive`,
+  `Test-OERConsoleInputRedirected`):** the real owner answers `$false` in a console host whose standard
+  input is redirected (CI, the tool host) and `$true` in a terminal, so the test would pass in one and
+  fail in the other. `Why: docs/development/rationale.md#confirmation-unavailable`
 - **Never write the word "because" inside a `-Because` string:** Pester deletes EVERY occurrence of
   `because` plus the whitespace after it from the rendered message. Use "since", or restructure the
   sentence. `Why: docs/development/rationale.md#bearer-scrub-tests`
