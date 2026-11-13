@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No changes to the module since 1.7.2. A preview published from this point differs from 1.7.2 only in
-documentation, tests or the build.
+`Get-OERAccessPackageResourceRole` binds a piped `AccessPackageId` before `Id`, so a piped policy or
+resource role reads its own package's roles; an empty one is refused. An authentication context id is `c`
+followed by the digits 0-9 only, in the cmdlets and in `Test-OERStructure`: a digit of another script is
+refused. The inventory bundle's advice to omit `requestorScope` now says it keeps the scope of an
+existing policy, and that a new policy without it is created with `AllMemberUsers`.
 
 ## [1.7.2] - 2026-11-13
 
