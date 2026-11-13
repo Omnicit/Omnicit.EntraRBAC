@@ -3689,9 +3689,11 @@ Sprint 17 step 1 (BL-192): the same collision exists on `-AccessPackage`.
 so a piped object carrying `AccessPackageId` (an assignment policy, a resource role, an assignment,
 an assignment request) binds its access package and never its own `Id`; an access package from
 `Get-OERAccessPackage` carries no `AccessPackageId` and binds its `Id` as before. Ruling R-1: a piped
-object whose `AccessPackageId` is empty is refused at binding with `EmptyAccessPackageId`, nothing
-read, by the two cmdlets where `-AccessPackage` is Mandatory and by `Get-OERAccessPackageAssignment`,
-whose parameter is optional and where an empty value would list every assignment.
+object whose `AccessPackageId` is empty is refused at binding. The two cmdlets where `-AccessPackage`
+is Mandatory refuse it through PowerShell's own Mandatory check
+(`ParameterArgumentValidationErrorEmptyStringNotAllowed`), nothing sent; `Get-OERAccessPackageAssignment`,
+whose parameter is optional and where an empty value would list every assignment, refuses it with
+`EmptyAccessPackageId`, nothing read.
 `tests/Unit/Public/AccessPackageAliasOrder.Cohort.Tests.ps1` holds the order.
 
 ## scope-pipeline-binding
@@ -6394,13 +6396,14 @@ stack -- measured with a Pester probe that was not committed -- so the `return` 
 today, and it stays against a future change that stops that helper throwing. Gate 10 of
 [#static-source-gates](#static-source-gates) holds the two widened owner lists.
 
-An A5 sign-in (Sprint 17 step 1, BL-188 b) by the SAME account under another method (Interactive
-against DeviceCode) or another client is not refused, but it rebuilds the state with the new method
+An A5 sign-in (Sprint 17 step 1, BL-188 b), one that names the session's tenant by another label,
+by the SAME account under another method (Interactive against DeviceCode) or another client is not
+refused, but it rebuilds the state with the new method
 or client, which moves the `AuthMethod` or `ClientId` term of the sign-in identity
 (`Get-OERSignInIdentity`), so an outer command that began under the old sign-in is refused with
 `SignInSuperseded` and sends nothing more. This is deliberate: another client can hold other granted
 permissions, and a command does not carry on under a sign-in a later one replaced. It is the safe
-direction and writes nothing silently. `Initialize-OERAuth.Tests.ps1` holds it in the A5 Context
+direction. `Initialize-OERAuth.Tests.ps1` holds it in the A5 Context
 (a device code outer and an interactive inner, an own `-ClientId` outer and a default client inner,
 and a control where the inner keeps the outer's method and client and supersedes nothing); dropping
 the `AuthMethod` term, or the `ClientId` term, from `Get-OERSignInIdentity` turns the matching case

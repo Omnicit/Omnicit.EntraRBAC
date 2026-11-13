@@ -147,8 +147,7 @@ function Initialize-OERAuth {
     moves the AuthMethod or ClientId term of the sign-in identity (Get-OERSignInIdentity), so an
     outer command that began under the old sign-in is refused with SignInSuperseded and sends
     nothing more. That is deliberate: another client can hold other granted permissions, and a
-    command does not carry on under a sign-in a later one replaced; it is the safe direction and
-    writes nothing silently.
+    command does not carry on under a sign-in a later one replaced; it is the safe direction.
     SignInAccountId is the fifth term of the sign-in identity (Get-OERSignInIdentity); a renewal or a
     D4 continuation carries it over, and any other sign-in, an A5 sign-in included, sets it to the new
     token's oid when that is a GUID. Every Azure Resource Manager token is held to the session's
