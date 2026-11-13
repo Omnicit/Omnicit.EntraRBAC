@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No changes to the module since 1.7.2. A preview published from this point differs from 1.7.2 only in
+documentation, tests or the build.
+
+## [1.7.2] - 2026-11-13
+
 `Get-OERAccessPackageAssignment`, `Add-OERAccessPackageResourceRole` and
 `New-OERAccessPackageAssignmentPolicy` bind a piped `AccessPackageId` before `Id`, so a piped policy or
 resource role names its package, not itself; an empty one is refused. An authentication context id is
