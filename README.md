@@ -1094,11 +1094,12 @@ whose input is not a console), a run without `-WhatIf` or `-Confirm:$false` (or 
 `Failed`, with a row that says the host cannot show the confirmation prompt and that nothing was
 written. A console nobody sees (`Start-Process -WindowStyle Hidden`) is not refused: the run signs
 in and waits at the first change's prompt, which nobody can answer. A remote session (`Enter-PSSession`,
-`Invoke-Command`, `Invoke-Command -AsJob`) is not refused either: its prompt goes to the client's host,
-which answers it from its input when that is piped (not measured). A scheduled task or a service was
-not measured and may wait the same way. Run it in any of them with `-Confirm:$false` or `-WhatIf`. A run within about 30 seconds of a write can send the same update
-again, since Microsoft Graph can still answer a read with the value from before the write; the update
-changes nothing more, but its row reads `Updated` again.
+`Invoke-Command`) is not refused either: its prompt goes to the client's host; nor is
+`Invoke-Command -AsJob`, whose prompt goes to the host running `Receive-Job`. Either host answers it from
+its input when that is piped (not measured). A scheduled task or a service was not measured and may
+wait the same way. Run it in any of them with `-Confirm:$false` or `-WhatIf`. A run within about 30
+seconds of a write can send the same update again, since Microsoft Graph can still answer a read with
+the value from before the write; the update changes nothing more, but its row reads `Updated` again.
 
 `Test-OERStructure -NamingStandard` checks the names in a document, or in an exported
 `inventory.json`, against a naming standard file. A name gets one `Warning` for each rule it breaks, a

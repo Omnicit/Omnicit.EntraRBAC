@@ -55,9 +55,9 @@ function Test-OERHostCanConfirm {
     Documented on Microsoft Learn, not measured: a WinRM session runs in wsmprovhost.exe and an SSH session
     in the subsystem pwsh -sshs; both report 'ServerRemoteHost' and answer $true.
 
-    Limits: a remote session (WinRM, SSH, Invoke-Command -AsJob) answers $true and is not refused: its
-    prompt goes to the client's host, which answers it from its input when that is piped (not measured);
-    run it with -Confirm:$false or -WhatIf. PowerShell Direct and container sessions were not measured. If
+    Limits: a remote session (WinRM, SSH) and Invoke-Command -AsJob answer $true and are not refused: the
+    prompt goes to the client's host or, for -AsJob, to the host running Receive-Job, which answers it
+    from its input when that is piped (not measured); run them with -Confirm:$false or -WhatIf. PowerShell Direct and container sessions were not measured. If
     a later PowerShell no longer has the startup parser field or its ServerMode property, the reader answers
     $false and a job is not refused (the behaviour before BL-202); the real Start-Job tests turn red on such
     a runner. A console nobody sees answers $true and its prompt waits; a scheduled task or a service was

@@ -15699,10 +15699,10 @@ refused.
 
 **Ruling R-3.** WinRM and SSH were not available locally and no setting was changed. The remote side
 rests on the Learn pages above and the offline `-sshs` measurement; WinRM itself was not measured, and
-neither was Windows Terminal. A remote session (WinRM, SSH, `Invoke-Command -AsJob`) is NOT refused and
-is not safe: its prompt goes to the client's host, which answers it from its input when that is piped (the
-same mechanism as the job's receiver; not measured), so `-Confirm:$false` or `-WhatIf` is the way there
-too. If WinRM turns out to read as a job server, it would be refused (the safer side).
+neither was Windows Terminal. A remote session (WinRM, SSH) and `Invoke-Command -AsJob` are NOT refused
+and are not safe: the prompt goes to the client's host or, for `-AsJob`, to the host running
+`Receive-Job`, which answers it from its input when that is piped (the same mechanism as the job's
+receiver; not measured), so `-Confirm:$false` or `-WhatIf` is the way there too. If WinRM turns out to read as a job server, it would be refused (the safer side).
 
 **Cost (accepted).** A person typing into the console that runs `Receive-Job` is refused too, since the
 job cannot see its receiver. A job that would change nothing needs `-Confirm:$false` or `-WhatIf` as well,
