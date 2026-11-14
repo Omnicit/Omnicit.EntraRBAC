@@ -1093,8 +1093,10 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Test-OERConsoleInputRedirected`, the single reader of `[Console]::IsInputRedirected`, called only
   by it); a `ServerRemoteHost` in a pwsh started as a job server (a background job, `Start-Job`,
   `pwsh -s`) answers `$false`, asked through `Test-OERProcessServerMode`, the single reader of the pwsh
-  startup switch `ServerMode`, called only by it; a remote session (WinRM, SSH) and a runspace attached
-  to another pwsh answer `$true`, and so does a console nobody sees, a documented limit: no measured
+  startup switch `ServerMode`, called only by it; every other host answers `$true`: a remote session
+  (WinRM, SSH, `Invoke-Command -AsJob`) is not refused, its prompt goes to the client's host, which
+  answers from piped input (not measured), a runspace attached to a pwsh that is not a job server is
+  not either, and neither is a console nobody sees, a documented limit: no measured
   signal tells it from a console a person types into (window visibility is false in a pseudo console
   too). `Test-OERConfirmPromptFailure` also counts the job's `RemoteException` whose serialized inner
   exception is one of the three measured types. When it answers false, `Invoke-OERStructure` refuses

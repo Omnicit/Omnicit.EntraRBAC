@@ -1088,16 +1088,15 @@ one run. An owner that PIM for Groups holds, or makes eligible, does not count a
 set to `null` is not declared and gives no row. In a runspace with no host of its own, such as a thread
 job started without `-StreamingHost`, in a background job (`Start-Job`), in `pwsh` started with
 `-NonInteractive`, and in `pwsh` whose standard input is redirected (a pipe, a file, or a child process
-whose input is not a console), a run
-without `-WhatIf` or `-Confirm:$false` (or a `$ConfirmPreference` of `None`) is refused with
+whose input is not a console), a run without `-WhatIf` or `-Confirm:$false` (or a `$ConfirmPreference` of `None`) is refused with
 `ConfirmationUnavailable` before it signs in, also one that would change nothing; run it with
 `-Confirm:$false` or `-WhatIf`. In another host that cannot show the prompt, an entry stopped by it is
 `Failed`, with a row that says the host cannot show the confirmation prompt and that nothing was
 written. A console nobody sees (`Start-Process -WindowStyle Hidden`) is not refused: the run signs
 in and waits at the first change's prompt, which nobody can answer. A remote session (`Enter-PSSession`,
-`Invoke-Command`) is not refused either: its prompt goes to the client's host. A scheduled task or a
-service was not measured and may wait the same way. Run it in any of them with `-Confirm:$false` or
-`-WhatIf`. A run within about 30 seconds of a write can send the same update
+`Invoke-Command`, `Invoke-Command -AsJob`) is not refused either: its prompt goes to the client's host,
+which answers it from its input when that is piped (not measured). A scheduled task or a service was
+not measured and may wait the same way. Run it in any of them with `-Confirm:$false` or `-WhatIf`. A run within about 30 seconds of a write can send the same update
 again, since Microsoft Graph can still answer a read with the value from before the write; the update
 changes nothing more, but its row reads `Updated` again.
 

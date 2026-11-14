@@ -36,10 +36,11 @@ function Test-OERHostCanConfirm {
     stopped with an error, and Receive-Job showed the prompt in the host that received the job, where an
     answer was read from the receiver's input (a piped y, n or empty line answered it; with no input left
     the job's ShouldProcess threw); received in pwsh -NonInteractive, the job's ShouldProcess threw. The
-    prompt therefore goes to the host that receives the job, so the job is refused. A remote session over
-    WinRM (wsmprovhost.exe) or SSH (pwsh -sshs) reports 'ServerRemoteHost' too but is not a job server, and
-    so is a runspace attached to any other pwsh; they answer $true. A runspace attached with
-    Enter-PSHostProcess to a job's own process reads like the job and is refused, the safer side. A thread
+    prompt therefore goes to the host that receives the job, so the job is refused (BL-202). A pwsh started
+    with -sshs (the SSH remoting subsystem line, driven over stdio) and a runspace attached over a named
+    pipe to a pwsh that is not a job server report 'ServerRemoteHost' too and were measured not to be a job
+    server; they answer $true. A runspace attached with Enter-PSHostProcess to a job's own process reads
+    like the job and is refused, the safer side. A thread
     job started with -StreamingHost $Host runs in its
     caller's console host and prompts there, so (b) and (c) decide it as they decide its caller; without
     -StreamingHost it is the Default Host (a). A console host in a new console with no visible window
@@ -51,7 +52,15 @@ function Test-OERHostCanConfirm {
     read differently), where a typed answer was read. No
     signal measured tells the hidden console apart, so it is not refused.
 
-    Limits: a console nobody sees answers $true and its prompt waits; a scheduled task or a service was
+    Documented on Microsoft Learn, not measured: a WinRM session runs in wsmprovhost.exe and an SSH session
+    in the subsystem pwsh -sshs; both report 'ServerRemoteHost' and answer $true.
+
+    Limits: a remote session (WinRM, SSH, Invoke-Command -AsJob) answers $true and is not refused: its
+    prompt goes to the client's host, which answers it from its input when that is piped (not measured);
+    run it with -Confirm:$false or -WhatIf. PowerShell Direct and container sessions were not measured. If
+    a later PowerShell no longer has the startup parser field or its ServerMode property, the reader answers
+    $false and a job is not refused (the behaviour before BL-202); the real Start-Job tests turn red on such
+    a runner. A console nobody sees answers $true and its prompt waits; a scheduled task or a service was
     not measured. Another host (an editor's
     integrated console, a runspace on an application's own PSHost) answers $true and was not measured.
     Run the command there with -Confirm:$false or -WhatIf. A terminal that hands pwsh a pipe instead of a

@@ -201,17 +201,18 @@ function Invoke-OERStructure {
     runspace made with [powershell]::Create() without a host of its own, or a thread job (Start-ThreadJob
     without -StreamingHost) -- a background job (Start-Job), the console host started with pwsh
     -NonInteractive, and the console host whose standard input is redirected (piped, read from a file, or
-    a child process whose input is not a console). In any of them a document run without -WhatIf or -Confirm:$false (or a $ConfirmPreference of
-    None) is refused with ConfirmationUnavailable once it has been read and validated, before the sign-in,
+    a child process whose input is not a console). In any of them a document run without -WhatIf or
+    -Confirm:$false (or a $ConfirmPreference of None) is refused with ConfirmationUnavailable once it has been read and validated, before the sign-in,
     also one that would change nothing, since the refusal is decided before anything is read: nothing is
     signed in to, read or changed for it, and the next piped document is handled the same way. Another
     host (an editor's console, a custom host) may fail only when it asks: there an entry whose handler
     stops at that prompt is reported Failed with a Detail saying that the host cannot show the
     confirmation prompt and that nothing was written for the entry. A console nobody sees
     (Start-Process -WindowStyle Hidden) is not refused: the run signs in and waits at the first change's
-    prompt, which nobody can answer. A remote session (Enter-PSSession, Invoke-Command) is not refused
-    either: its prompt goes to the client's host. A scheduled task or a service was not measured and may
-    wait the same way.
+    prompt, which nobody can answer. A remote session (Enter-PSSession, Invoke-Command, Invoke-Command
+    -AsJob) is not refused either: its prompt goes to the client's host, which answers it from its input
+    when that is piped (not measured). A scheduled task or a service was not measured and may wait the
+    same way.
     Run the command with -Confirm:$false to apply without prompts, or with -WhatIf to plan.
 
     Prune mode (-Prune): passed through to every handler. Each handler gates its prune pass

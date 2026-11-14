@@ -13,12 +13,13 @@ function Test-OERProcessServerMode {
     by reflection: the loaded assembly Microsoft.PowerShell.ConsoleHost -> its type
     Microsoft.PowerShell.ConsoleHost -> the static field s_cpp -> the property ServerMode.
 
-    Measured on 2026-11-14 in pwsh 7.6 on Windows (BL-198): ServerMode is $true in every local background
+    Measured on 2026-11-14 in pwsh 7.6 on Windows (BL-202): ServerMode is $true in every local background
     job, and also in a runspace attached with Enter-PSHostProcess to a job's own process (the switch is
     process wide). It is $false in a pwsh started with -sshs (the SSH remoting subsystem) and in a pwsh
     attached over a named pipe that was not started as a job server. A WinRM session runs in
-    wsmprovhost.exe, which is not started through pwsh's own entry point, so the parser is not set there
-    and the answer is $false (documented, not measured on this machine).
+    wsmprovhost.exe (documented on Microsoft Learn), which is not started through pwsh's own entry point, so
+    the parser is presumably not set there and the answer $false (inferred from the documented host
+    process and pwsh's entry point; not measured).
 
     It returns $false for a process that is not a job server, when the assembly, the field or the property
     is not there (a PowerShell build without them, for example) and on any other failure. It never throws

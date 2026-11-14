@@ -15601,10 +15601,11 @@ every host where a person can.
 - **A background job can ask a person.** Its `ShouldProcess` does not throw: the prompt goes to whoever
   receives the job, and a typed answer was read there. `ServerRemoteHost` and `$PSSenderInfo` therefore
   name no host to refuse, and the owner keeps `$true`. A job nobody receives waits in `Blocked`. A receiver
-  whose input is piped answers from the pipe, which the job cannot see. Sprint 19 step 1 (BL-202) refuses the job: see below. Received in `pwsh -NonInteractive`,
-  the inner exception is a `RemoteException`, which `Test-OERConfirmPromptFailure` does not count, so an
-  entry stopped there keeps PowerShell's own message in its `Failed` row (a finding of the step, not
-  changed: A4 corrects only the owner's decision).
+  whose input is piped answers from the pipe, which the job cannot see. Received in `pwsh -NonInteractive`,
+  the inner exception is a `RemoteException`, which `Test-OERConfirmPromptFailure` did not count (until
+  Sprint 19 step 1), so an entry stopped there kept PowerShell's own message in its `Failed` row (a
+  finding of the step, not changed: A4 corrected only the owner's decision).
+  Sprint 19 step 1 (BL-202) refuses the job and counts the `RemoteException`: see below.
 - **A thread job was already decided.** Without `-StreamingHost` it is the Default Host and is refused;
   with `-StreamingHost $Host` it runs in its caller's console host, prompts there and is decided by the
   two console signals as its caller is.
@@ -15650,8 +15651,8 @@ property `ServerMode` is true (`SSHServerMode` false).
 |---|---|---|---|---|---|---|
 | `Start-Job` job | `pwsh -s -NoLogo -NoProfile -wd ...`, parent the caller | ServerRemoteHost | `http://localhost` | True | False | the host running `Receive-Job` |
 | `pwsh -sshs` (the SSH subsystem line, driven over stdio, no ssh) | `pwsh -sshs -NoLogo -NoProfile` | ServerRemoteHost | `http://localhost` | False | True | the SSH client's host (documented) |
-| runspace attached over a named pipe to a plain pwsh (the `Enter-PSHostProcess` transport) | the target's own | ServerRemoteHost | `http://localhost` | False | False | the attaching host |
-| runspace attached over a named pipe to a job's process | `pwsh -s ...` | ServerRemoteHost | `http://localhost` | True | False | the attaching host (refused: Ruling R-2) |
+| runspace attached over a named pipe to a plain pwsh (the `Enter-PSHostProcess` transport) | the target's own | ServerRemoteHost | `http://localhost` | False | False | the attaching host (not measured; the remote host proxies to the attaching host) |
+| runspace attached over a named pipe to a job's process | `pwsh -s ...` | ServerRemoteHost | `http://localhost` | True | False | the attaching host (not measured; refused: Ruling R-2) |
 | WinRM session (not measured: WinRM stopped locally, nothing changed) | `Wsmprovhost.exe` (Learn) | ServerRemoteHost | the WS-Management URL | parser null (pwsh's entry point never ran) | -- | the client's host |
 
 `ShouldProcess` (ConfirmImpact High) in a job: the job turns `Blocked` and the receiver's input decides.
@@ -15684,7 +15685,7 @@ block, and the inner exception is a local `HostException` (already counted).
 
 **The decision (A3).** The signal is the job server switch `ServerMode` of the process: measured true in
 every local background job, false in a `-sshs` process (measured) and absent (a null parser) in
-`wsmprovhost.exe` (documented, not measured). `Test-OERHostCanConfirm` answers `$false` for
+`wsmprovhost.exe` (inferred from the documented host process and pwsh's entry point, not measured). `Test-OERHostCanConfirm` answers `$false` for
 `ServerRemoteHost` when the new single reader `Test-OERProcessServerMode` answers `$true`.
 `Test-OERConfirmPromptFailure` also counts a `RemoteException` inner exception whose
 `SerializedRemoteException` type names hold the deserialized name of one of the three measured types, so
@@ -15693,17 +15694,22 @@ public parameter.
 
 **Ruling R-2.** A runspace attached with `Enter-PSHostProcess` to a job's own process reads like the job
 (the switch is process-wide and the server transport is the same) and is refused, the safer side;
-`-Confirm:$false` or `-WhatIf` runs it. A runspace attached to any other pwsh is not refused.
+`-Confirm:$false` or `-WhatIf` runs it. A runspace attached to a pwsh that is not a job server is not
+refused.
 
 **Ruling R-3.** WinRM and SSH were not available locally and no setting was changed. The remote side
 rests on the Learn pages above and the offline `-sshs` measurement; WinRM itself was not measured, and
-neither was Windows Terminal. If that is wrong, a remote session would be refused (the safer side), with
-`-Confirm:$false` or `-WhatIf` as the way out.
+neither was Windows Terminal. A remote session (WinRM, SSH, `Invoke-Command -AsJob`) is NOT refused and
+is not safe: its prompt goes to the client's host, which answers it from its input when that is piped (the
+same mechanism as the job's receiver; not measured), so `-Confirm:$false` or `-WhatIf` is the way there
+too. If WinRM turns out to read as a job server, it would be refused (the safer side).
 
 **Cost (accepted).** A person typing into the console that runs `Receive-Job` is refused too, since the
 job cannot see its receiver. A job that would change nothing needs `-Confirm:$false` or `-WhatIf` as well,
 since the refusal is decided before anything is read. The hidden console of Sprint 18 step 2 stays a
-documented limit.
+documented limit. The reader fails open: if a later PowerShell no longer has the parser field or its
+`ServerMode` property, any reflection failure reads `$false`, so a job is not refused and its prompt goes
+to the receiver as before BL-202; the real `Start-Job` tests turn red on such a runner.
 
 **Held by** the tests of `Test-OERProcessServerMode`, of `Test-OERHostCanConfirm` (the job It now expects
 `$false`) and of `Test-OERConfirmPromptFailure` (the `RemoteException` Its), and the `(BL-202)` Describe of

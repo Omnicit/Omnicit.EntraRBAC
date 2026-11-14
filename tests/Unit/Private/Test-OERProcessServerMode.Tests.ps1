@@ -10,7 +10,7 @@ AfterAll {
     try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire }
 }
 
-Describe 'Test-OERProcessServerMode (BL-198)' {
+Describe 'Test-OERProcessServerMode (BL-202)' {
     BeforeAll {
         # Opens a runspace without blocking: OpenAsync, then a bounded poll of its state. $false on a
         # runspace that breaks, closes or is not open within the timeout.
@@ -113,7 +113,7 @@ Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
     }
 }
 
-Describe 'Test-OERProcessServerMode is the single reader of the startup parser (BL-198)' {
+Describe 'Test-OERProcessServerMode is the single reader of the startup parser (BL-202)' {
     BeforeAll {
         $script:SourceRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../../source')).Path
     }

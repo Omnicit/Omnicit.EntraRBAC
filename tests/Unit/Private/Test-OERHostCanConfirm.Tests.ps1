@@ -198,7 +198,7 @@ Describe 'Test-OERHostCanConfirm (BL-53)' {
         $Output | Should -Be @('HOST:ServerRemoteHost', 'STUB:True', 'ANSWER:False')
     }
 
-    It 'answers $true in a pwsh started with -sshs and driven over stdio (the SSH remoting subsystem) (BL-198)' {
+    It 'answers $true in a pwsh started with -sshs and driven over stdio (the SSH remoting subsystem) (BL-202)' {
         $Ppi = [System.Management.Automation.Runspaces.PowerShellProcessInstance]::new()
         $Runspace = $null
         $Shell = $null
@@ -246,7 +246,7 @@ Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
         $Output | Should -Contain 'ANSWER:True'
     }
 
-    It 'answers $true in a runspace attached over a named pipe to a pwsh that is not a job server (BL-198)' {
+    It 'answers $true in a runspace attached over a named pipe to a pwsh that is not a job server (BL-202)' {
         $PwshPath = (Get-Process -Id $PID).Path
         $StartArgs = @{
             FilePath     = $PwshPath
