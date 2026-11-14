@@ -662,25 +662,25 @@ VALIDATING AND APPLYING A DOCUMENT
     completes in one run. An owner that PIM for Groups holds, or makes
     eligible, does not count as standing. A section set to null is not
     declared and gives no row. In a runspace with no host of its own, such
-    as a thread job started without -StreamingHost, in pwsh started with
-    -NonInteractive, and in pwsh whose standard input is redirected (a pipe,
-    a file, or a child process whose input is not a console), a run without
-    -WhatIf or -Confirm:$false (or a $ConfirmPreference of None) is refused
-    with ConfirmationUnavailable before it signs in, also one that would
-    change nothing; run it with -Confirm:$false or -WhatIf. In another host
-    that cannot show the prompt, an entry stopped by it is Failed, with a
-    row that says the host cannot show the confirmation prompt and that
-    nothing was written. A background job (Start-Job) and a console nobody
-    sees (Start-Process -WindowStyle Hidden) are not refused: the run signs
-    in and waits at the first change's prompt. In a job, Receive-Job passes
-    the prompt to the host that receives the job: a person can answer it
-    there, a receiver whose standard input is piped answers it from the
-    pipe, and a receiver started with -NonInteractive fails the entry with
-    PowerShell's own message instead of that row. In a hidden console nobody
-    can answer it. A scheduled task or a service was not measured and may
+    as a thread job started without -StreamingHost, in a background job
+    (Start-Job), in pwsh started with -NonInteractive, and in pwsh whose
+    standard input is redirected (a pipe, a file, or a child process whose
+    input is not a console), a run without -WhatIf or -Confirm:$false (or a
+    $ConfirmPreference of None) is refused with ConfirmationUnavailable
+    before it signs in, also one that would change nothing; run it with
+    -Confirm:$false or -WhatIf. In another host that cannot show the prompt,
+    an entry stopped by it is Failed, with a row that says the host cannot
+    show the confirmation prompt and that nothing was written. A console
+    nobody sees (Start-Process -WindowStyle Hidden) is not refused: the run
+    signs in and waits at the first change's prompt, which nobody can
+    answer. A remote session (Enter-PSSession, Invoke-Command) is not
+    refused either: its prompt goes to the client's host; nor is
+    Invoke-Command -AsJob, whose prompt goes to the host running
+    Receive-Job. Either host answers it from its input when that is piped
+    (not measured). A scheduled task or a service was not measured and may
     wait the same way. Run it in any of them with -Confirm:$false or
-    -WhatIf. A run
-    within about 30 seconds of a write can send the same update again, since
+    -WhatIf. A run within about 30 seconds of a write can send the same
+    update again, since
     Microsoft Graph can still answer a read with the value from before the
     write; the update changes nothing more, but its row reads Updated again.
 
@@ -1098,9 +1098,9 @@ GRAPH SDK SESSION
     connection as its own session; a parallel fan-out across tenants or
     identities in one process gets GraphSessionChanged. Run each tenant in its
     own process instead, with Start-Job or a separate PowerShell process.
-    An Invoke-OERStructure run in such a job asks before each change in the
-    host that receives the job (see Invoke-OERStructure above); pass
-    -Confirm:$false or -WhatIf in the job.
+    An Invoke-OERStructure run in such a job that would prompt is refused
+    with ConfirmationUnavailable before it signs in (see Invoke-OERStructure
+    above); pass -Confirm:$false or -WhatIf in the job.
 
     A sign-in that fails or is refused usually leaves the module's session as
     it was -- the previous tenant's, or none -- and a script carries on past

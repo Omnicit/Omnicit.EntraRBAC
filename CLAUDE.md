@@ -1091,11 +1091,16 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   Default Host, for a console host started with `-NonInteractive` (it asks
   `Test-OERHostNonInteractive`) and for a console host whose standard input is redirected (it asks
   `Test-OERConsoleInputRedirected`, the single reader of `[Console]::IsInputRedirected`, called only
-  by it); every other host answers `$true`. A background job (`Start-Job`, host `ServerRemoteHost`)
-  answers `$true`, since `Receive-Job` passes its prompt to the host that receives the job, where a
-  person can answer it (a piped receiver answers from the pipe), and so does a console nobody
-  sees, a documented limit: no measured signal tells it from a console a person types into (window
-  visibility is false in a pseudo console too). When it answers false, `Invoke-OERStructure` refuses
+  by it); a `ServerRemoteHost` in a pwsh started as a job server (a background job, `Start-Job`,
+  `pwsh -s`) answers `$false`, asked through `Test-OERProcessServerMode`, the single reader of the pwsh
+  startup switch `ServerMode`, called only by it; every other host answers `$true`: a remote session
+  (WinRM, SSH) and `Invoke-Command -AsJob` are not refused (the prompt goes to the client's host or to
+  the host running `Receive-Job`, which answers it from its input when that is piped; not measured), a
+  runspace attached to a pwsh that is not a job server is not either, and neither is a console nobody
+  sees, a documented limit: no measured
+  signal tells it from a console a person types into (window visibility is false in a pseudo console
+  too). `Test-OERConfirmPromptFailure` also counts the job's `RemoteException` whose serialized inner
+  exception is one of the three measured types. When it answers false, `Invoke-OERStructure` refuses
   with `ConfirmationUnavailable`, before the sign-in, a document whose run would prompt. Never
   decide either elsewhere.
   `Why: docs/development/rationale.md#confirmation-unavailable`
