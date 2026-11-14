@@ -7,8 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No changes to the module since 1.7.3. A preview published from this point differs from 1.7.3 only in
-documentation, tests or the build.
+`Invoke-OERStructure` in a background job (`Start-Job`) now refuses a run that would prompt with
+`ConfirmationUnavailable` before it signs in, as in a host that cannot ask. A job's prompt went to the host
+running `Receive-Job`, where piped input could answer it. A remote session (WinRM, SSH) still asks. Use
+`-Confirm:$false` or `-WhatIf`.
 
 ## [1.7.3] - 2026-11-14
 
