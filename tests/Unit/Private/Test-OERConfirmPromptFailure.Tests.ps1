@@ -193,6 +193,7 @@ $Job = Start-Job -ScriptBlock {
     }
     try { Test-Prompt } catch {
         "INNER:$($PSItem.Exception.InnerException.GetType().FullName)"
+        "SERIALIZED:$($PSItem.Exception.InnerException.SerializedRemoteException.PSObject.TypeNames[0])"
         "ANSWER:$(& (Get-Module Omnicit.EntraRBAC) { param($Caught) Test-OERConfirmPromptFailure -Record $Caught } $PSItem)"
     }
 }
@@ -265,12 +266,14 @@ Remove-Job -Job $Job -Force
     It 'returns $true for the record a real background job raised, received in pwsh -NonInteractive' {
         $Lines = Invoke-JobChild -Name 'NonInteractive' -NonInteractive
         $Lines | Should -Contain 'INNER:System.Management.Automation.RemoteException'
+        $Lines | Should -Contain 'SERIALIZED:Deserialized.System.Management.Automation.PSInvalidOperationException'
         $Lines | Should -Contain 'ANSWER:True'
     }
 
     It 'returns $true for the record a real background job raised, received with standard input at its end' {
         $Lines = Invoke-JobChild -Name 'InputAtEnd' -EmptyInput
         $Lines | Should -Contain 'INNER:System.Management.Automation.RemoteException'
+        $Lines | Should -Contain 'SERIALIZED:Deserialized.System.NullReferenceException'
         $Lines | Should -Contain 'ANSWER:True'
     }
 }
