@@ -270,10 +270,18 @@ Remove-Job -Job $Job -Force
         $Lines | Should -Contain 'ANSWER:True'
     }
 
-    It 'returns $true for the record a real background job raised, received with standard input at its end' {
+    It 'returns $true for the record a real background job raised, received with standard input at its end (Windows)' -Skip:(-not $IsWindows) {
         $Lines = Invoke-JobChild -Name 'InputAtEnd' -EmptyInput
         $Lines | Should -Contain 'INNER:System.Management.Automation.RemoteException'
         $Lines | Should -Contain 'SERIALIZED:Deserialized.System.NullReferenceException'
         $Lines | Should -Contain 'ANSWER:True'
+    }
+
+    It 'on Linux and macOS a job received with empty standard input answers its prompt with the default (Yes), which is what the owner refusal of a job prevents' -Skip:$IsWindows {
+        # Measured on the CI runners 2026-11-14: the receiver shows the prompt and reads the default answer
+        # from the empty input, so the job's ShouldProcess returns True and no record arises.
+        $Lines = Invoke-JobChild -Name 'InputAtEndUnix' -EmptyInput
+        $Lines | Should -Contain 'True'
+        @($Lines | Where-Object { $_ -like 'INNER:*' }).Count | Should -Be 0
     }
 }

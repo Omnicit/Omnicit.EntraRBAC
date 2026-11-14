@@ -22,7 +22,9 @@ function Test-OERConfirmPromptFailure {
     ShouldProcess blocks until its receiver answers, and a receiver that cannot (Receive-Job in pwsh
     -NonInteractive, giving a PSInvalidOperationException, or with standard input at its end, giving a
     NullReferenceException) hands the job a System.Management.Automation.RemoteException instead of the
-    local type. Its SerializedRemoteException keeps only the type names, which hold the deserialized name
+    local type. The NullReferenceException form was measured on Windows; on Linux and macOS (the CI
+    runners, 2026-11-14) a receiver with empty standard input read the default answer, Yes, from it
+    instead, so no record arose there. Its SerializedRemoteException keeps only the type names, which hold the deserialized name
     of the measured type or of a type derived from it (compared with letter case). Every other record, a
     null record included, returns $false, so its row keeps the exception's own message. The record is only
     read: nothing is written, thrown or sent.
