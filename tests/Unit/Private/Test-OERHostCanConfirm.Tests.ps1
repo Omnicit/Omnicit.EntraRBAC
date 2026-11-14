@@ -57,7 +57,9 @@ Describe 'Test-OERHostCanConfirm (BL-53)' {
             param($NonInteractive, $Redirected, $Expected)
             Mock -ModuleName Omnicit.EntraRBAC Test-OERHostNonInteractive { $NonInteractive }
             Mock -ModuleName Omnicit.EntraRBAC Test-OERConsoleInputRedirected { $Redirected }
+            Mock -ModuleName Omnicit.EntraRBAC Test-OERProcessServerMode { $true }
             InModuleScope $script:moduleName { Test-OERHostCanConfirm } | Should -BeExactly $Expected
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Test-OERProcessServerMode -Times 0
             Should -Invoke -ModuleName Omnicit.EntraRBAC Test-OERHostNonInteractive -Times 1 -Exactly
             if ($NonInteractive) {
                 Should -Invoke -ModuleName Omnicit.EntraRBAC Test-OERConsoleInputRedirected -Times 0
@@ -114,11 +116,12 @@ Describe 'Test-OERHostCanConfirm (BL-53)' {
         $Run.Errors | Should -BeNullOrEmpty
     }
 
-    It 'answers $true in a background job (Start-Job: ServerRemoteHost, $PSSenderInfo set) (BL-198)' {
+    It 'answers $false in a background job (Start-Job: ServerRemoteHost, $PSSenderInfo set) (BL-198)' {
         $Job = Start-Job -ScriptBlock {
             Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
             "HOST:$($Host.Name)"
             "SENDER:$($null -ne $PSSenderInfo)"
+            "SERVERMODE:$(& (Get-Module Omnicit.EntraRBAC) { Test-OERProcessServerMode })"
             "ANSWER:$(& (Get-Module Omnicit.EntraRBAC) { Test-OERHostCanConfirm })"
         }
         try {
@@ -128,7 +131,132 @@ Describe 'Test-OERHostCanConfirm (BL-53)' {
         } finally {
             $Job | Remove-Job -Force
         }
-        $Output | Should -Be @('HOST:ServerRemoteHost', 'SENDER:True', 'ANSWER:True')
+        $Output | Should -Be @('HOST:ServerRemoteHost', 'SENDER:True', 'SERVERMODE:True', 'ANSWER:False')
+    }
+
+    It 'answers $true in a ServerRemoteHost when the reader answers $false (stubbed in a job)' {
+        $Job = Start-Job -ScriptBlock {
+            Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+            "HOST:$($Host.Name)"
+            & (Get-Module Omnicit.EntraRBAC) { Set-Item -Path function:script:Test-OERProcessServerMode -Value { $false } }
+            "STUB:$(& (Get-Module Omnicit.EntraRBAC) { Test-OERProcessServerMode })"
+            "ANSWER:$(& (Get-Module Omnicit.EntraRBAC) { Test-OERHostCanConfirm })"
+        }
+        try {
+            $null = $Job | Wait-Job -Timeout 120
+            $Output = @($Job | Receive-Job -ErrorAction Stop | ForEach-Object { "$_" })
+            $Job.State | Should -BeExactly 'Completed'
+        } finally {
+            $Job | Remove-Job -Force
+        }
+        $Output | Should -Be @('HOST:ServerRemoteHost', 'STUB:False', 'ANSWER:True')
+    }
+
+    It 'answers $false in a ServerRemoteHost when the reader answers $true and both console signals answer $false (stubbed in a job)' {
+        $Job = Start-Job -ScriptBlock {
+            Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+            "HOST:$($Host.Name)"
+            & (Get-Module Omnicit.EntraRBAC) {
+                Set-Item -Path function:script:Test-OERProcessServerMode -Value { $true }
+                Set-Item -Path function:script:Test-OERHostNonInteractive -Value { $false }
+                Set-Item -Path function:script:Test-OERConsoleInputRedirected -Value { $false }
+            }
+            "STUB:$(& (Get-Module Omnicit.EntraRBAC) { (Test-OERProcessServerMode) -and -not (Test-OERHostNonInteractive) -and -not (Test-OERConsoleInputRedirected) })"
+            "ANSWER:$(& (Get-Module Omnicit.EntraRBAC) { Test-OERHostCanConfirm })"
+        }
+        try {
+            $null = $Job | Wait-Job -Timeout 120
+            $Output = @($Job | Receive-Job -ErrorAction Stop | ForEach-Object { "$_" })
+            $Job.State | Should -BeExactly 'Completed'
+        } finally {
+            $Job | Remove-Job -Force
+        }
+        $Output | Should -Be @('HOST:ServerRemoteHost', 'STUB:True', 'ANSWER:False')
+    }
+
+    It 'answers $true in a pwsh started with -sshs and driven over stdio (the SSH remoting subsystem) (BL-198)' {
+        $Ppi = [System.Management.Automation.Runspaces.PowerShellProcessInstance]::new()
+        $Runspace = $null
+        $Shell = $null
+        $Output = $null
+        try {
+            $Field = $Ppi.GetType().GetField('_startInfo', [System.Reflection.BindingFlags]'Instance,NonPublic')
+            if ($null -ne $Field) {
+                $StartInfo = $Field.GetValue($Ppi)
+                $Index = -1
+                for ($i = 0; $i -lt $StartInfo.ArgumentList.Count; $i++) {
+                    if ($StartInfo.ArgumentList[$i] -eq '-s') { $Index = $i; break }
+                }
+                if ($Index -ge 0) {
+                    $StartInfo.ArgumentList[$Index] = '-sshs'
+                    $Runspace = [runspacefactory]::CreateOutOfProcessRunspace($null, $Ppi)
+                    $Runspace.Open()
+                    $Shell = [powershell]::Create()
+                    $Shell.Runspace = $Runspace
+                    $null = $Shell.AddScript(@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+"HOST:$($Host.Name)"
+"ARGS:$([Environment]::GetCommandLineArgs() -join ' ')"
+"ANSWER:$(& (Get-Module Omnicit.EntraRBAC) { Test-OERHostCanConfirm })"
+'@)
+                    $Output = @($Shell.Invoke() | ForEach-Object { "$_" })
+                }
+            }
+        } finally {
+            if ($Shell) { $Shell.Dispose() }
+            if ($Runspace) { $Runspace.Dispose() }
+            $Ppi.Dispose()
+        }
+        if ($null -eq $Output) {
+            Set-ItResult -Inconclusive -Because 'the PowerShellProcessInstance _startInfo field or its -s argument is not there in this PowerShell build'
+            return
+        }
+        $Output | Should -Contain 'HOST:ServerRemoteHost'
+        ($Output | Where-Object { $_ -like 'ARGS:*' }) | Should -Match '(^| )-sshs( |$)'
+        $Output | Should -Contain 'ANSWER:True'
+    }
+
+    It 'answers $true in a runspace attached over a named pipe to a pwsh that is not a job server (BL-198)' {
+        $PwshPath = (Get-Process -Id $PID).Path
+        $StartArgs = @{
+            FilePath     = $PwshPath
+            ArgumentList = @('-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep 120')
+            PassThru     = $true
+        }
+        if ($IsWindows) { $StartArgs['WindowStyle'] = 'Hidden' }
+        $Child = Start-Process @StartArgs
+        $Runspace = $null
+        $Shell = $null
+        $Output = $null
+        try {
+            $ConnectionInfo = [System.Management.Automation.Runspaces.NamedPipeConnectionInfo]::new($Child.Id)
+            $Runspace = [runspacefactory]::CreateRunspace($Host, $ConnectionInfo)
+            $Opened = $false
+            for ($Try = 0; $Try -lt 20 -and -not $Opened; $Try++) {
+                try {
+                    $Runspace.Open()
+                    $Opened = $true
+                } catch {
+                    Start-Sleep -Milliseconds 500
+                    $Runspace.Dispose()
+                    $Runspace = [runspacefactory]::CreateRunspace($Host, $ConnectionInfo)
+                }
+            }
+            $Opened | Should -BeTrue -Because 'the child pwsh must offer its named pipe within the retry bound'
+            $Shell = [powershell]::Create()
+            $Shell.Runspace = $Runspace
+            $null = $Shell.AddScript(@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+"HOST:$($Host.Name)"
+"ANSWER:$(& (Get-Module Omnicit.EntraRBAC) { Test-OERHostCanConfirm })"
+'@)
+            $Output = @($Shell.Invoke() | ForEach-Object { "$_" })
+        } finally {
+            if ($Shell) { $Shell.Dispose() }
+            if ($Runspace) { $Runspace.Dispose() }
+            Stop-Process -Id $Child.Id -Force -ErrorAction SilentlyContinue
+        }
+        $Output | Should -Be @('HOST:ServerRemoteHost', 'ANSWER:True')
     }
 
     It 'returns a [bool]' {
