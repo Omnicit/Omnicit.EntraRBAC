@@ -15665,6 +15665,12 @@ shape with `Deserialized.System.NullReferenceException` first. Receiver with `y`
 piped: answered from the pipe (True, False, True). Receiver in a runspace with no PSHost: the job does not
 block, and the inner exception is a local `HostException` (already counted).
 
+On Linux and macOS (the `ubuntu-latest` and `macos-latest` CI runners, 2026-11-14, the unit tests of this
+step) a receiver started with an empty redirected input file did not throw: it showed the prompt and read
+the default answer, Yes, from the empty input, so the job's `ShouldProcess` returned true. The
+`NullReferenceException` form above is the Windows one. The refusal of the job holds on all three runners
+(the real `Start-Job` tests passed there), and the `-sshs` and named-pipe tests answered `$true` there too.
+
 **Microsoft Learn.**
 
 - PowerShell Remoting FAQ, https://learn.microsoft.com/powershell/scripting/security/remoting/powershell-remoting-faq :
