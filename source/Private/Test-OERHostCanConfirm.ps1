@@ -37,7 +37,7 @@ function Test-OERHostCanConfirm {
     caller's console host and prompts there, so (b) and (c) decide it as they decide its caller; without
     -StreamingHost it is the Default Host (a). A console host in a new console with no visible window
     (Start-Process -WindowStyle Hidden) waited for an answer nobody could give, and answers $true: its
-    host name and type, $PSSenderInfo, [Console]::IsInputRedirected, [Environment]::UserInteractive and
+    host name and type, $PSSenderInfo, its input redirection (c), [Environment]::UserInteractive and
     process session id read as in a console a person types into, and its console window was not visible,
     as it was not for pwsh in a pseudo console made with CreatePseudoConsole (the API through which terminal
     applications such as Windows Terminal host a shell; Windows Terminal itself was not started and may
