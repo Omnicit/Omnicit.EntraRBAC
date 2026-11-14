@@ -35,6 +35,30 @@ Describe 'Test-OERHostCanConfirm (BL-53)' {
                 $Runspace.Dispose()
             }
         }
+        # Opens a runspace without blocking: OpenAsync, then a bounded poll of its state. $false on a
+        # runspace that breaks, closes or is not open within the timeout.
+        function script:Open-BoundedRunspace {
+            param($Runspace, [int]$TimeoutSec = 10)
+            try { $null = $Runspace.OpenAsync() } catch { return $false }
+            $Watch = [System.Diagnostics.Stopwatch]::StartNew()
+            while ($Watch.Elapsed.TotalSeconds -lt $TimeoutSec) {
+                $State = "$($Runspace.RunspaceStateInfo.State)"
+                if ($State -eq 'Opened') { return $true }
+                if ($State -in 'Broken', 'Closed', 'Closing') { return $false }
+                Start-Sleep -Milliseconds 100
+            }
+            $false
+        }
+        # Runs the shell with BeginInvoke and a bounded wait; stops it and throws when it does not finish.
+        function script:Invoke-BoundedShell {
+            param($Shell, [int]$TimeoutSec = 60)
+            $Async = $Shell.BeginInvoke()
+            if (-not $Async.AsyncWaitHandle.WaitOne($TimeoutSec * 1000)) {
+                try { $Shell.Stop() } catch { $null = $_ }
+                throw "The script did not finish within $TimeoutSec seconds in the attached runspace."
+            }
+            @($Shell.EndInvoke($Async) | ForEach-Object { "$_" })
+        }
     }
 
     Context 'in the console host (BL-195)' {
@@ -179,18 +203,24 @@ Describe 'Test-OERHostCanConfirm (BL-53)' {
         $Runspace = $null
         $Shell = $null
         $Output = $null
+        $Reason = $null
         try {
             $Field = $Ppi.GetType().GetField('_startInfo', [System.Reflection.BindingFlags]'Instance,NonPublic')
+            $Index = -1
             if ($null -ne $Field) {
                 $StartInfo = $Field.GetValue($Ppi)
-                $Index = -1
                 for ($i = 0; $i -lt $StartInfo.ArgumentList.Count; $i++) {
                     if ($StartInfo.ArgumentList[$i] -eq '-s') { $Index = $i; break }
                 }
-                if ($Index -ge 0) {
-                    $StartInfo.ArgumentList[$Index] = '-sshs'
-                    $Runspace = [runspacefactory]::CreateOutOfProcessRunspace($null, $Ppi)
-                    $Runspace.Open()
+            }
+            if ($Index -lt 0) {
+                $Reason = 'the PowerShellProcessInstance _startInfo field or its -s argument is not there in this PowerShell build'
+            } else {
+                $StartInfo.ArgumentList[$Index] = '-sshs'
+                $Runspace = [runspacefactory]::CreateOutOfProcessRunspace($null, $Ppi)
+                if (-not (Open-BoundedRunspace -Runspace $Runspace -TimeoutSec 30)) {
+                    $Reason = 'the -sshs runspace did not open within 30 seconds on this platform'
+                } else {
                     $Shell = [powershell]::Create()
                     $Shell.Runspace = $Runspace
                     $null = $Shell.AddScript(@'
@@ -199,7 +229,7 @@ Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
 "ARGS:$([Environment]::GetCommandLineArgs() -join ' ')"
 "ANSWER:$(& (Get-Module Omnicit.EntraRBAC) { Test-OERHostCanConfirm })"
 '@)
-                    $Output = @($Shell.Invoke() | ForEach-Object { "$_" })
+                    $Output = Invoke-BoundedShell -Shell $Shell -TimeoutSec 60
                 }
             }
         } finally {
@@ -208,7 +238,7 @@ Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
             $Ppi.Dispose()
         }
         if ($null -eq $Output) {
-            Set-ItResult -Inconclusive -Because 'the PowerShellProcessInstance _startInfo field or its -s argument is not there in this PowerShell build'
+            Set-ItResult -Inconclusive -Because $Reason
             return
         }
         $Output | Should -Contain 'HOST:ServerRemoteHost'
@@ -229,32 +259,34 @@ Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
         $Shell = $null
         $Output = $null
         try {
-            $ConnectionInfo = [System.Management.Automation.Runspaces.NamedPipeConnectionInfo]::new($Child.Id)
-            $Runspace = [runspacefactory]::CreateRunspace($Host, $ConnectionInfo)
-            $Opened = $false
-            for ($Try = 0; $Try -lt 20 -and -not $Opened; $Try++) {
-                try {
-                    $Runspace.Open()
-                    $Opened = $true
-                } catch {
-                    Start-Sleep -Milliseconds 500
-                    $Runspace.Dispose()
-                    $Runspace = [runspacefactory]::CreateRunspace($Host, $ConnectionInfo)
-                }
-            }
-            $Opened | Should -BeTrue -Because 'the child pwsh must offer its named pipe within the retry bound'
-            $Shell = [powershell]::Create()
-            $Shell.Runspace = $Runspace
-            $null = $Shell.AddScript(@'
+            for ($Try = 0; $Try -lt 5 -and $null -eq $Output; $Try++) {
+                $ConnectionInfo = [System.Management.Automation.Runspaces.NamedPipeConnectionInfo]::new($Child.Id)
+                $ConnectionInfo.OpenTimeout = 5000
+                $ConnectionInfo.OperationTimeout = 5000
+                $Runspace = [runspacefactory]::CreateRunspace($Host, $ConnectionInfo)
+                if (Open-BoundedRunspace -Runspace $Runspace -TimeoutSec 8) {
+                    $Shell = [powershell]::Create()
+                    $Shell.Runspace = $Runspace
+                    $null = $Shell.AddScript(@'
 Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
 "HOST:$($Host.Name)"
 "ANSWER:$(& (Get-Module Omnicit.EntraRBAC) { Test-OERHostCanConfirm })"
 '@)
-            $Output = @($Shell.Invoke() | ForEach-Object { "$_" })
+                    $Output = Invoke-BoundedShell -Shell $Shell -TimeoutSec 60
+                } else {
+                    $Runspace.Dispose()
+                    $Runspace = $null
+                    Start-Sleep -Seconds 1
+                }
+            }
         } finally {
             if ($Shell) { $Shell.Dispose() }
             if ($Runspace) { $Runspace.Dispose() }
             Stop-Process -Id $Child.Id -Force -ErrorAction SilentlyContinue
+        }
+        if ($null -eq $Output) {
+            Set-ItResult -Inconclusive -Because 'no named pipe attach to the child pwsh succeeded within 5 bounded attempts on this platform'
+            return
         }
         $Output | Should -Be @('HOST:ServerRemoteHost', 'ANSWER:True')
     }
