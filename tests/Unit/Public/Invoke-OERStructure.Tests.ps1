@@ -7061,6 +7061,142 @@ $RunErrors | ForEach-Object { "ERRID:confirmfalse:$($_.FullyQualifiedErrorId)" }
     }
 }
 
+Describe 'Invoke-OERStructure refuses a run in a background job (BL-202)' {
+    # BL-202: a Start-Job job runs in a pwsh server process (host ServerRemoteHost) whose ShouldProcess prompt is
+    # passed to the host that receives the job, and a job nobody receives stays Blocked. Test-OERHostCanConfirm
+    # (the REAL owner, through Test-OERProcessServerMode) answers false there, so the engine refuses a run that
+    # would prompt before it signs in. The same child script as BL-195, as the body of a real Start-Job; the
+    # stubs sit in the module's scope and are checked to resolve before the first call.
+    BeforeAll {
+        $script:PwshPath = (Get-Process -Id $PID).Path
+        $script:JobScript = @'
+param($Log)
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    foreach ($Name in 'Get-AzToken', 'Connect-MgGraph', 'Invoke-MgGraphRequest', 'Invoke-WebRequest', 'Invoke-RestMethod') {
+        Set-Item -Path "function:script:$Name" -Value ([scriptblock]::Create("[System.IO.File]::AppendAllText('#LOG#', 'TRANSPORT $Name' + [Environment]::NewLine); throw 'transport reached'"))
+    }
+    Set-Item -Path function:script:Initialize-OERAuth -Value { [System.IO.File]::AppendAllText('#LOG#', "AUTH`n") }
+    Set-Item -Path function:script:Get-OERDocumentTenantMismatch -Value {
+        param($Document, $Target, $RequestedTenantId, [switch]$IncludeARM)
+        [System.IO.File]::AppendAllText('#LOG#', "TENANTCHECK`n")
+    }
+    Set-Item -Path function:script:Sync-OERStructureGroup -Value {
+        [CmdletBinding()]
+        param($Item, $Caller, [switch]$Prune, $TenantAlias, $CreatedUnitMembership, $RenameMap)
+        [System.IO.File]::AppendAllText('#LOG#', "ASK group $($Item.displayName)`n")
+        if ($Caller.ShouldProcess([string]$Item.displayName, 'Update group')) { [System.IO.File]::AppendAllText('#LOG#', "WRITE group`n") }
+        ConvertTo-OERStructureResult -Section 'groups' -Item ([string]$Item.displayName) -Action 'Unchanged' -Detail 'stub row'
+    }
+}
+# The stubs must be the ones the module's own calls resolve to before the engine runs.
+$Resolved = & (Get-Module Omnicit.EntraRBAC) {
+    (Get-Command Initialize-OERAuth).ScriptBlock.ToString().Contains('AUTH') -and
+    (Get-Command Get-OERDocumentTenantMismatch).ScriptBlock.ToString().Contains('TENANTCHECK') -and
+    (Get-Command Sync-OERStructureGroup).ScriptBlock.ToString().Contains('ASK group') -and
+    (Get-Command Invoke-MgGraphRequest).ScriptBlock.ToString().Contains('TRANSPORT') -and
+    (Get-Command Get-AzToken).ScriptBlock.ToString().Contains('TRANSPORT')
+}
+if (-not $Resolved) { throw 'a stub does not resolve in the module scope' }
+"HOST:$($Host.Name)"
+$Json = '{ "version": "1.0", "groups": [ { "displayName": "g1" } ] }'
+[System.IO.File]::AppendAllText('#LOG#', "STEP plain`n")
+Invoke-OERStructure -Json $Json -ErrorAction SilentlyContinue -ErrorVariable RunErrors | ForEach-Object { "ROW:plain:$($_.Item):$($_.Action)" }
+$RunErrors | ForEach-Object { "ERRID:plain:$($_.FullyQualifiedErrorId)" }
+'AFTER'
+[System.IO.File]::AppendAllText('#LOG#', "STEP whatif`n")
+Invoke-OERStructure -Json $Json -WhatIf -ErrorAction SilentlyContinue -ErrorVariable RunErrors | ForEach-Object { "ROW:whatif:$($_.Item):$($_.Action)" }
+$RunErrors | ForEach-Object { "ERRID:whatif:$($_.FullyQualifiedErrorId)" }
+[System.IO.File]::AppendAllText('#LOG#', "STEP confirmfalse`n")
+Invoke-OERStructure -Json $Json -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable RunErrors | ForEach-Object { "ROW:confirmfalse:$($_.Item):$($_.Action)" }
+$RunErrors | ForEach-Object { "ERRID:confirmfalse:$($_.FullyQualifiedErrorId)" }
+[System.IO.File]::AppendAllText('#LOG#', "STEP globalnone`n")
+$ConfirmPreference = 'None'
+Invoke-OERStructure -Json $Json -ErrorAction SilentlyContinue -ErrorVariable RunErrors | ForEach-Object { "ROW:globalnone:$($_.Item):$($_.Action)" }
+$RunErrors | ForEach-Object { "ERRID:globalnone:$($_.FullyQualifiedErrorId)" }
+$ConfirmPreference = 'High'
+'END'
+'@
+        $script:ExpectedOwn = @(
+            'HOST:ServerRemoteHost'
+            'ERRID:plain:ConfirmationUnavailable,Invoke-OERStructure'
+            'AFTER'
+            'What if: Performing the operation "Update group" on target "g1".'
+            'ROW:whatif:g1:Unchanged'
+            'ROW:confirmfalse:g1:Unchanged'
+            'ROW:globalnone:g1:Unchanged'
+            'END'
+        )
+        $script:ExpectedLog = @(
+            'STEP plain'
+            'STEP whatif'
+            'AUTH', 'TENANTCHECK', 'ASK group g1'
+            'STEP confirmfalse'
+            'AUTH', 'TENANTCHECK', 'ASK group g1', 'WRITE group'
+            'STEP globalnone'
+            'AUTH', 'TENANTCHECK', 'ASK group g1', 'WRITE group'
+        )
+    }
+
+    It 'refuses the plain run before the sign-in in a real Start-Job, and still runs -WhatIf, -Confirm:$false and $ConfirmPreference None' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $JobText = $script:JobScript.Replace('#LOG#', $Log.Replace("'", "''"))
+        $Job = $null
+        try {
+            $Job = Start-Job -ScriptBlock ([scriptblock]::Create($JobText)) -ArgumentList $Log
+            # Wait-Job stops with a terminating error when the job is Blocked (waiting for a receiver); the state tells.
+            try { $null = Wait-Job -Job $Job -Timeout 120 -ErrorAction SilentlyContinue } catch { $null = $_ }
+            $State = [string]$Job.State
+            $Output = @()
+            if ($State -eq 'Completed') { $Output = @(Receive-Job -Job $Job -ErrorAction SilentlyContinue *>&1 | ForEach-Object { [string]$_ }) }
+        } finally {
+            if ($Job) {
+                Stop-Job -Job $Job -ErrorAction SilentlyContinue
+                Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        # A Blocked job means the refusal is gone: the prompt waited for a receiver.
+        $State | Should -BeExactly 'Completed'
+        $Own = @($Output | Where-Object { $_ -match '^(HOST:|ERRID:|ROW:|AFTER$|END$|What if: )' })
+        # The What if line is written to the receiving host (here Pester's), not to the job's output streams.
+        $Own | Should -Be @($script:ExpectedOwn | Where-Object { $_ -notlike 'What if: *' })
+        @(Get-Content -LiteralPath $Log) | Should -Be $script:ExpectedLog
+    }
+
+    It 'refuses the plain run although the receiver reads y from its input' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $JobPath = Join-Path $TestDrive ('{0}.job.ps1' -f [guid]::NewGuid())
+        $ReceiverPath = Join-Path $TestDrive ('{0}.receiver.ps1' -f [guid]::NewGuid())
+        $InPath = Join-Path $TestDrive ('{0}.in.txt' -f [guid]::NewGuid())
+        $OutPath = Join-Path $TestDrive ('{0}.out.txt' -f [guid]::NewGuid())
+        $ErrPath = Join-Path $TestDrive ('{0}.err.txt' -f [guid]::NewGuid())
+        Set-Content -LiteralPath $JobPath -Value $script:JobScript.Replace('#LOG#', $Log.Replace("'", "''")) -Encoding utf8
+        Set-Content -LiteralPath $InPath -Value 'y' -Encoding ascii
+        Set-Content -LiteralPath $ReceiverPath -Encoding utf8 -Value @"
+`$JobText = Get-Content -Raw -LiteralPath '$($JobPath.Replace("'", "''"))'
+`$Job = Start-Job -ScriptBlock ([scriptblock]::Create(`$JobText)) -ArgumentList '$($Log.Replace("'", "''"))'
+Receive-Job -Job `$Job -Wait *>&1 | ForEach-Object { [string]`$_ }
+Remove-Job -Job `$Job -Force
+"@
+        $Process = $null
+        $Exited = $false
+        try {
+            $Process = Start-Process -FilePath $script:PwshPath -ArgumentList @('-NoProfile', '-File', $ReceiverPath) -RedirectStandardInput $InPath -RedirectStandardOutput $OutPath -RedirectStandardError $ErrPath -PassThru
+            $Exited = $Process.WaitForExit(180000)
+        } finally {
+            if ($Process -and -not $Process.HasExited) { Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue }
+        }
+
+        $Exited | Should -BeTrue
+        $Output = @(Get-Content -LiteralPath $OutPath)
+        $Own = @($Output | Where-Object { $_ -match '^(HOST:|ERRID:|ROW:|AFTER$|END$|What if: )' })
+        $Own | Should -Be $script:ExpectedOwn
+        # Before the fix the y in the receiver's input answered the plain run's prompt: WRITE group stood under STEP plain.
+        @(Get-Content -LiteralPath $Log) | Should -Be $script:ExpectedLog
+    }
+}
+
 Describe 'Invoke-OERStructure refuses a document the validator refuses, in a script with no try above it (BL-139, BL-154)' {
     # The validator refusal of this step, through the public engine in a runspace through
     # Invoke-OERWithConfirmAnswer, so no try stands anywhere above it: a group template the naming engine cannot
