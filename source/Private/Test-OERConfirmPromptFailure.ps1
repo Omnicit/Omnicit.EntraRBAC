@@ -13,11 +13,11 @@ function Test-OERConfirmPromptFailure {
     It returns $true when the record's exception is a MethodInvocationException whose message contains
     'ShouldProcess' (compared ordinally, so letter case counts) and whose inner exception is one of the
     three types measured on 2026-10-20 in plain PowerShell, where a ShouldProcess with ConfirmImpact High,
-    no -Confirm:$false and no -WhatIf failed: a HostException (the Default Host, a runspace made without
-    a PSHost or a thread job), a PSInvalidOperationException (pwsh -NonInteractive) and a
-    NullReferenceException (standard input at its end). A type derived from one of the three counts as
-    that type. Every other record, a null record included, returns $false, so its row keeps the
-    exception's own message. The record is only read: nothing is written, thrown or sent.
+    no -Confirm:$false and no -WhatIf failed: a HostException (the Default Host, a runspace made without a
+    PSHost or a thread job started without -StreamingHost), a PSInvalidOperationException (pwsh
+    -NonInteractive) and a NullReferenceException (standard input at its end). A type derived from one of
+    the three counts as that type. Every other record, a null record included, returns $false, so its row
+    keeps the exception's own message. The record is only read: nothing is written, thrown or sent.
 
     .PARAMETER Record
     The error record a catch block caught ($PSItem). A null record is not a prompt failure.

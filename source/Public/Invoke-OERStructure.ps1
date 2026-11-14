@@ -198,17 +198,23 @@ function Invoke-OERStructure {
     Confirmation: the command asks for confirmation before each change (ConfirmImpact High), unless
     -WhatIf plans the run or -Confirm:$false, or a $ConfirmPreference of None, turns the prompt off. A
     host with no user interface cannot ask. Three hosts are told beforehand: the Default Host -- a
-    runspace made with [powershell]::Create() without a host of its own, or a thread job
-    (Start-ThreadJob) -- the console host started with pwsh -NonInteractive, and the console host whose
-    standard input is redirected (piped, read from a file, or a child process whose input is not a
-    console). In any of them a document run without -WhatIf or -Confirm:$false (or a $ConfirmPreference
-    of None) is refused with ConfirmationUnavailable once it has been read and validated, before the
-    sign-in, also one that would change nothing, since the refusal is decided before anything is read:
-    nothing is signed in to, read or changed for it, and the next piped document is handled the same
-    way. Another host (an editor's console, a custom host) may fail only when it asks: there an entry
-    whose handler stops at that prompt is reported Failed with a Detail saying that the host cannot
-    show the confirmation prompt and that nothing was written for the entry. Run the command with
-    -Confirm:$false to apply without prompts, or with -WhatIf to plan.
+    runspace made with [powershell]::Create() without a host of its own, or a thread job (Start-ThreadJob
+    without -StreamingHost) -- the console host started with pwsh -NonInteractive, and the console host
+    whose standard input is redirected (piped, read from a file, or a child process whose input is not a
+    console). In any of them a document run without -WhatIf or -Confirm:$false (or a $ConfirmPreference of
+    None) is refused with ConfirmationUnavailable once it has been read and validated, before the sign-in,
+    also one that would change nothing, since the refusal is decided before anything is read: nothing is
+    signed in to, read or changed for it, and the next piped document is handled the same way. Another
+    host (an editor's console, a custom host) may fail only when it asks: there an entry whose handler
+    stops at that prompt is reported Failed with a Detail saying that the host cannot show the
+    confirmation prompt and that nothing was written for the entry. A background job (Start-Job) and a
+    console nobody sees (Start-Process -WindowStyle Hidden) are not refused: the run signs in and waits at
+    the first change's prompt. In a job, Receive-Job passes the prompt to the host that receives the job
+    (Wait-Job stops with an error while the job waits): a person can answer it there, a receiver whose
+    standard input is piped answers it from the pipe, and a receiver started with pwsh -NonInteractive
+    fails the entry with PowerShell's own message instead of the Detail above. In a hidden console nobody
+    can answer it. A scheduled task or a service was not measured and may wait the same way.
+    Run the command with -Confirm:$false to apply without prompts, or with -WhatIf to plan.
 
     Prune mode (-Prune): passed through to every handler. Each handler gates its prune pass
     with $Caller.ShouldProcess, honouring -WhatIf. Prune is child-scope only -- no handler ever
@@ -699,14 +705,14 @@ function Invoke-OERStructure {
         # or a $ConfirmPreference of None, turns the prompt off -- the same two preferences ShouldProcess
         # reads. A host with no user interface cannot ask: its ShouldProcess throws at the first change, or
         # reads its answer from a pipe. Three hosts can be told beforehand: the Default Host (a
-        # [powershell]::Create() runspace, a thread job), the console host started with -NonInteractive and
-        # the console host whose standard input is redirected. Test-OERHostCanConfirm owns that decision, so
-        # there a run without -WhatIf or -Confirm:$false (or a $ConfirmPreference of None) is refused here --
-        # also one that would change nothing, since nothing has been read yet -- after the document is read
-        # and validated and before the ARM decision, the tenant comparisons and every sign-in step: nothing
-        # is signed in to, read or written. The next piped document is handled the same way. Another host
-        # that fails only when it asks cannot be told beforehand; the two handler-error rows below name
-        # the cause instead (Test-OERConfirmPromptFailure).
+        # [powershell]::Create() runspace, a thread job without -StreamingHost), the console host started with
+        # -NonInteractive and the console host whose standard input is redirected. Test-OERHostCanConfirm owns
+        # that decision, so there a run without -WhatIf or -Confirm:$false (or a $ConfirmPreference of None)
+        # is refused here -- also one that would change nothing, since nothing has been read yet -- after
+        # the document is read and validated and before the ARM decision, the tenant comparisons and every
+        # sign-in step: nothing is signed in to, read or written. The next piped document is handled the
+        # same way. Another host that fails only when it asks cannot be told beforehand; the two
+        # handler-error rows below name the cause instead (Test-OERConfirmPromptFailure).
         if (-not $WhatIfPreference -and $ConfirmPreference -ne 'None' -and -not (Test-OERHostCanConfirm)) {
             Write-CmdletError -Message ([System.Exception]::new('Invoke-OERStructure asks for confirmation before each change (ConfirmImpact High), and this host cannot show a confirmation prompt, so nothing was read or changed; run it with -Confirm:$false to apply without prompts, or with -WhatIf to plan.')) `
                 -ErrorId 'ConfirmationUnavailable' -Category InvalidOperation -TargetObject $DocumentTarget -Cmdlet $PSCmdlet
