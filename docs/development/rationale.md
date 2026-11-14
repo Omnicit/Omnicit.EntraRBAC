@@ -15573,7 +15573,7 @@ of the subsections above, with a copy of the owner's four lines and its two read
 `$Host.GetType().FullName` was `System.Management.Automation.Internal.Host.InternalHost`,
 `[Environment]::UserInteractive` was true and the process session id was 2. "Window" is
 `IsWindowVisible` of `GetConsoleWindow`; "none" means the process had no console window. A wait was
-ended after 15 s by the measuring script.
+ended after 15 s by the measuring script. The job was received with `Receive-Job -Wait`.
 
 | host | `$Host.Name` | `$PSSenderInfo` | IsInputRedirected | window | owner | ShouldProcess |
 |---|---|---|---|---|---|---|
@@ -15621,7 +15621,9 @@ such a document with `-Confirm:$false` or `-WhatIf`.
 **Ruling R-1 (Sprint 18 step 2).** Windows Terminal itself was not measured; a pseudo console made with
 `CreatePseudoConsole` stands in for it. If that is wrong, Windows Terminal could read differently; that
 matters only to a later step that takes window visibility into use, and this step takes no signal into
-use.
+use. The decision does not rest on Windows Terminal reading the same: the pseudo console is itself a
+console in which a written answer was read, the way a terminal writes a typed key, so refusing on
+window visibility would refuse that console whatever Windows Terminal reads.
 
 **Held by** the `(BL-198)` It of `Test-OERHostCanConfirm.Tests.ps1`, which runs the real owner in a
 `Start-Job` and expects `ServerRemoteHost` and `$true`, so a change that refuses the job host fails it.

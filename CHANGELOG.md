@@ -13,10 +13,10 @@ followed by the digits 0-9 only, in the cmdlets and in `Test-OERStructure`: a di
 refused. The inventory bundle's advice to omit `requestorScope` now says it keeps the scope of an
 existing policy, and that a new policy without it is created with `AllMemberUsers`.
 
-`Invoke-OERStructure`'s help, the README and the about topic say that a background job (`Start-Job`) and
-a console nobody sees (`Start-Process -WindowStyle Hidden`) are not refused: the run signs in and waits
-at the first change's prompt, which `Receive-Job` shows for a job and nobody can answer in a hidden
-console. Use `-Confirm:$false` or `-WhatIf` there.
+`Invoke-OERStructure` in a background job (`Start-Job`) or a console nobody sees
+(`Start-Process -WindowStyle Hidden`) is not refused: it signs in and waits at the first change's
+prompt, which a job passes to the host running `Receive-Job` (piped input answers it there,
+`-NonInteractive` fails the entry). Use `-Confirm:$false` or `-WhatIf` there.
 
 ## [1.7.2] - 2026-11-13
 

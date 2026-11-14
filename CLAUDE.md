@@ -1092,7 +1092,8 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Test-OERHostNonInteractive`) and for a console host whose standard input is redirected (it asks
   `Test-OERConsoleInputRedirected`, the single reader of `[Console]::IsInputRedirected`, called only
   by it); every other host answers `$true`. A background job (`Start-Job`, host `ServerRemoteHost`)
-  answers `$true`, since `Receive-Job` shows its prompt to a person, and so does a console nobody
+  answers `$true`, since `Receive-Job` passes its prompt to the host that receives the job, where a
+  person can answer it (a piped receiver answers from the pipe), and so does a console nobody
   sees, a documented limit: no measured signal tells it from a console a person types into (window
   visibility is false in a pseudo console too). When it answers false, `Invoke-OERStructure` refuses
   with `ConfirmationUnavailable`, before the sign-in, a document whose run would prompt. Never

@@ -209,8 +209,11 @@ function Invoke-OERStructure {
     stops at that prompt is reported Failed with a Detail saying that the host cannot show the
     confirmation prompt and that nothing was written for the entry. A background job (Start-Job) and a
     console nobody sees (Start-Process -WindowStyle Hidden) are not refused: the run signs in and waits at
-    the first change's prompt, which in a job Receive-Job shows in the host that receives the job
-    (Wait-Job stops with an error while the job waits), and which in a hidden console nobody can answer.
+    the first change's prompt. In a job, Receive-Job passes the prompt to the host that receives the job
+    (Wait-Job stops with an error while the job waits): a person can answer it there, a receiver whose
+    standard input is piped answers it from the pipe, and a receiver started with pwsh -NonInteractive
+    fails the entry with PowerShell's own message instead of the Detail above. In a hidden console nobody
+    can answer it. A scheduled task or a service was not measured and may wait the same way.
     Run the command with -Confirm:$false to apply without prompts, or with -WhatIf to plan.
 
     Prune mode (-Prune): passed through to every handler. Each handler gates its prune pass
@@ -706,11 +709,10 @@ function Invoke-OERStructure {
         # -NonInteractive and the console host whose standard input is redirected. Test-OERHostCanConfirm owns
         # that decision, so there a run without -WhatIf or -Confirm:$false (or a $ConfirmPreference of None)
         # is refused here -- also one that would change nothing, since nothing has been read yet -- after
-        # the document is read
-        # and validated and before the ARM decision, the tenant comparisons and every sign-in step: nothing
-        # is signed in to, read or written. The next piped document is handled the same way. Another host
-        # that fails only when it asks cannot be told beforehand; the two handler-error rows below name
-        # the cause instead (Test-OERConfirmPromptFailure).
+        # the document is read and validated and before the ARM decision, the tenant comparisons and every
+        # sign-in step: nothing is signed in to, read or written. The next piped document is handled the
+        # same way. Another host that fails only when it asks cannot be told beforehand; the two
+        # handler-error rows below name the cause instead (Test-OERConfirmPromptFailure).
         if (-not $WhatIfPreference -and $ConfirmPreference -ne 'None' -and -not (Test-OERHostCanConfirm)) {
             Write-CmdletError -Message ([System.Exception]::new('Invoke-OERStructure asks for confirmation before each change (ConfirmImpact High), and this host cannot show a confirmation prompt, so nothing was read or changed; run it with -Confirm:$false to apply without prompts, or with -WhatIf to plan.')) `
                 -ErrorId 'ConfirmationUnavailable' -Category InvalidOperation -TargetObject $DocumentTarget -Cmdlet $PSCmdlet

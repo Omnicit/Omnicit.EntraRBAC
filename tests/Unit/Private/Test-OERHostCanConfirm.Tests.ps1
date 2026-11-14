@@ -114,7 +114,7 @@ Describe 'Test-OERHostCanConfirm (BL-53)' {
         $Run.Errors | Should -BeNullOrEmpty
     }
 
-    It 'answers $true in a background job (Start-Job, ServerRemoteHost), whose prompt Receive-Job shows (BL-198)' {
+    It 'answers $true in a background job (Start-Job: ServerRemoteHost, $PSSenderInfo set) (BL-198)' {
         $Job = Start-Job -ScriptBlock {
             Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
             "HOST:$($Host.Name)"

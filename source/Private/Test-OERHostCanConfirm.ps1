@@ -39,12 +39,16 @@ function Test-OERHostCanConfirm {
     (Start-Process -WindowStyle Hidden) waited for an answer nobody could give, and answers $true: its
     host name and type, $PSSenderInfo, [Console]::IsInputRedirected, [Environment]::UserInteractive and
     process session id read as in a console a person types into, and its console window was not visible,
-    as it was not for pwsh in a pseudo console made with CreatePseudoConsole (the kind of console Windows
-    Terminal gives a shell; Windows Terminal itself was not started), where a typed answer was read. No
+    as it was not for pwsh in a pseudo console made with CreatePseudoConsole (the API through which terminal
+    applications such as Windows Terminal host a shell; Windows Terminal itself was not started and may
+    read differently), where a typed answer was read. No
     signal measured tells the hidden console apart, so it is not refused.
 
     Limits: a console nobody sees answers $true and its prompt waits; a scheduled task or a service was
-    not measured. A background job's prompt waits until Receive-Job shows it. Another host (an editor's
+    not measured. A background job's prompt waits until Receive-Job passes it to the host that
+    receives the job, which answers it from its input when that is piped, and fails it with a
+    RemoteException Test-OERConfirmPromptFailure does not count when it runs -NonInteractive. Another
+    host (an editor's
     integrated console, a runspace on an application's own PSHost) answers $true and was not measured.
     Run the command there with -Confirm:$false or -WhatIf. A terminal that hands pwsh a pipe instead of a
     console is refused although a person may be typing into it; that is the safer side, since

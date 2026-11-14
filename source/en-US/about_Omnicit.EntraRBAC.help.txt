@@ -672,9 +672,14 @@ VALIDATING AND APPLYING A DOCUMENT
     row that says the host cannot show the confirmation prompt and that
     nothing was written. A background job (Start-Job) and a console nobody
     sees (Start-Process -WindowStyle Hidden) are not refused: the run signs
-    in and waits at the first change's prompt, which in a job Receive-Job
-    shows in the host that receives the job and which in a hidden console
-    nobody can answer; run it there with -Confirm:$false or -WhatIf. A run
+    in and waits at the first change's prompt. In a job, Receive-Job passes
+    the prompt to the host that receives the job: a person can answer it
+    there, a receiver whose standard input is piped answers it from the
+    pipe, and a receiver started with -NonInteractive fails the entry with
+    PowerShell's own message instead of that row. In a hidden console nobody
+    can answer it. A scheduled task or a service was not measured and may
+    wait the same way. Run it in any of them with -Confirm:$false or
+    -WhatIf. A run
     within about 30 seconds of a write can send the same update again, since
     Microsoft Graph can still answer a read with the value from before the
     write; the update changes nothing more, but its row reads Updated again.
@@ -1093,6 +1098,9 @@ GRAPH SDK SESSION
     connection as its own session; a parallel fan-out across tenants or
     identities in one process gets GraphSessionChanged. Run each tenant in its
     own process instead, with Start-Job or a separate PowerShell process.
+    An Invoke-OERStructure run in such a job asks before each change in the
+    host that receives the job (see Invoke-OERStructure above); pass
+    -Confirm:$false or -WhatIf in the job.
 
     A sign-in that fails or is refused usually leaves the module's session as
     it was -- the previous tenant's, or none -- and a script carries on past
