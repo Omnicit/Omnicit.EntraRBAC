@@ -123,3 +123,154 @@ Describe 'Test-OERConfirmPromptFailure (BL-53)' {
         $Output | Should -Be @('INNER:System.Management.Automation.Host.HostException', 'ANSWER:True', 'END')
     }
 }
+
+Describe 'Test-OERConfirmPromptFailure, the RemoteException a background job raises' {
+    BeforeAll {
+        # What a Start-Job job's ShouldProcess throws when its receiver cannot answer (measured 2026-11-14):
+        # a MethodInvocationException whose inner exception is a RemoteException carrying the deserialized
+        # type names of the exception raised in the receiver.
+        function script:New-RemotePromptFailureRecord {
+            param(
+                [string[]]$Names,
+                [string]$Method = 'ShouldProcess',
+                [switch]$NoSerialized
+            )
+            $InnerMessage = 'PowerShell is in NonInteractive mode. Read and Prompt functionality is not available.'
+            $Serialized = $null
+            if (-not $NoSerialized) {
+                $Serialized = [PSObject]::new()
+                $Serialized.PSObject.TypeNames.Clear()
+                foreach ($N in $Names) { $Serialized.PSObject.TypeNames.Add($N) }
+            }
+            # The (string, PSObject, PSObject) constructor is internal: bind it through reflection.
+            $Remote = [System.Activator]::CreateInstance(
+                [System.Management.Automation.RemoteException],
+                [System.Reflection.BindingFlags]'Instance,NonPublic,Public',
+                $null,
+                @($InnerMessage, $Serialized, $null),
+                $null)
+            $Outer = [System.Management.Automation.MethodInvocationException]::new(
+                "Exception calling `"$Method`" with `"2`" argument(s): `"$InnerMessage`"", $Remote)
+            [System.Management.Automation.ErrorRecord]::new($Outer, 'MethodInvocationException', 'NotSpecified', $null)
+        }
+
+        $script:PsInvalid = @(
+            'Deserialized.System.Management.Automation.PSInvalidOperationException'
+            'Deserialized.System.InvalidOperationException'
+            'Deserialized.System.SystemException'
+            'Deserialized.System.Exception'
+            'Deserialized.System.Object'
+        )
+        $script:NullRef = @(
+            'Deserialized.System.NullReferenceException'
+            'Deserialized.System.SystemException'
+            'Deserialized.System.Exception'
+            'Deserialized.System.Object'
+        )
+        $script:HostEx = @(
+            'Deserialized.System.Management.Automation.Host.HostException'
+            'Deserialized.System.Management.Automation.RuntimeException'
+            'Deserialized.System.SystemException'
+            'Deserialized.System.Exception'
+            'Deserialized.System.Object'
+        )
+        $script:Prompting = @('Deserialized.System.Management.Automation.Host.PromptingException') + $script:HostEx
+
+        # Runs a child pwsh on a script that starts a job and receives it; returns the child's output lines.
+        function script:Invoke-JobChild {
+            param([string]$Name, [switch]$NonInteractive, [switch]$EmptyInput)
+            $Script = Join-Path $TestDrive "$Name.ps1"
+            $OutFile = Join-Path $TestDrive "$Name.out.txt"
+            $ErrFile = Join-Path $TestDrive "$Name.err.txt"
+            $InFile = Join-Path $TestDrive "$Name.in.txt"
+            Set-Content -LiteralPath $Script -Encoding ascii -Value @'
+$Job = Start-Job -ScriptBlock {
+    Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+    function Test-Prompt {
+        [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+        param()
+        $PSCmdlet.ShouldProcess('target', 'action')
+    }
+    try { Test-Prompt } catch {
+        "INNER:$($PSItem.Exception.InnerException.GetType().FullName)"
+        "ANSWER:$(& (Get-Module Omnicit.EntraRBAC) { param($Caught) Test-OERConfirmPromptFailure -Record $Caught } $PSItem)"
+    }
+}
+Receive-Job -Job $Job -Wait
+Remove-Job -Job $Job -Force
+'@
+            $ArgList = @('-NoProfile')
+            if ($NonInteractive) { $ArgList += '-NonInteractive' }
+            $ArgList += @('-File', $Script)
+            $Params = @{
+                FilePath = (Get-Process -Id $PID).Path
+                ArgumentList = $ArgList
+                RedirectStandardOutput = $OutFile
+                RedirectStandardError = $ErrFile
+                PassThru = $true
+                ErrorAction = 'Stop'
+            }
+            if ($EmptyInput) {
+                Set-Content -LiteralPath $InFile -Value '' -NoNewline
+                $Params.RedirectStandardInput = $InFile
+            }
+            $Process = Start-Process @Params
+            try {
+                $Exited = $Process.WaitForExit(120000)
+            } finally {
+                if (-not $Process.HasExited) { Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue }
+            }
+            if (-not $Exited) { return @('TIMEOUT') }
+            @(Get-Content -LiteralPath $OutFile -ErrorAction SilentlyContinue)
+        }
+    }
+
+    It 'builds the measured shape: a RemoteException whose SerializedRemoteException keeps its type names' {
+        $Record = New-RemotePromptFailureRecord -Names $script:NullRef
+        $Record.Exception.InnerException | Should -BeOfType ([System.Management.Automation.RemoteException])
+        $Record.Exception.InnerException.SerializedRemoteException.PSObject.TypeNames[0] | Should -BeExactly 'Deserialized.System.NullReferenceException'
+        $Record.Exception.InnerException.SerializedRemoteException.PSObject.TypeNames.Count | Should -Be 4
+    }
+
+    It 'returns $true for a RemoteException carrying <Kind>' -TestCases @(
+        @{ Kind = 'a PSInvalidOperationException (receiver pwsh -NonInteractive)'; Which = 'PsInvalid' }
+        @{ Kind = 'a NullReferenceException (receiver input at its end)'; Which = 'NullRef' }
+        @{ Kind = 'a HostException'; Which = 'HostEx' }
+        @{ Kind = 'a PromptingException, derived from HostException'; Which = 'Prompting' }
+    ) {
+        $Record = New-RemotePromptFailureRecord -Names (Get-Variable -Scope Script -Name $Which -ValueOnly)
+        $Record.Exception.InnerException | Should -BeOfType ([System.Management.Automation.RemoteException])
+        $Record.Exception.InnerException.SerializedRemoteException.PSObject.TypeNames.Count | Should -BeGreaterThan 3
+        InModuleScope $script:moduleName -Parameters @{ Record = $Record } {
+            param($Record)
+            Test-OERConfirmPromptFailure -Record $Record
+        } | Should -BeExactly $true
+    }
+
+    It 'returns $false for a RemoteException <Kind>' -TestCases @(
+        @{ Kind = 'carrying an InvalidOperationException only'; Names = @('Deserialized.System.InvalidOperationException', 'Deserialized.System.SystemException', 'Deserialized.System.Exception', 'Deserialized.System.Object'); Method = 'ShouldProcess'; NoSerialized = $false }
+        @{ Kind = 'with no SerializedRemoteException'; Names = @(); Method = 'ShouldProcess'; NoSerialized = $true }
+        @{ Kind = 'of the right types whose method is not ShouldProcess'; Names = @('Deserialized.System.NullReferenceException', 'Deserialized.System.Object'); Method = 'ShouldContinue'; NoSerialized = $false }
+        @{ Kind = 'whose type name differs in letter case'; Names = @('deserialized.system.nullreferenceexception', 'Deserialized.System.Object'); Method = 'ShouldProcess'; NoSerialized = $false }
+    ) {
+        $Record = New-RemotePromptFailureRecord -Names $Names -Method $Method -NoSerialized:$NoSerialized
+        $Record.Exception.InnerException | Should -BeOfType ([System.Management.Automation.RemoteException])
+        $Record.Exception.Message | Should -BeLike 'Exception calling "*"*'
+        InModuleScope $script:moduleName -Parameters @{ Record = $Record } {
+            param($Record)
+            Test-OERConfirmPromptFailure -Record $Record
+        } | Should -BeExactly $false
+    }
+
+    It 'returns $true for the record a real background job raised, received in pwsh -NonInteractive' {
+        $Lines = Invoke-JobChild -Name 'NonInteractive' -NonInteractive
+        $Lines | Should -Contain 'INNER:System.Management.Automation.RemoteException'
+        $Lines | Should -Contain 'ANSWER:True'
+    }
+
+    It 'returns $true for the record a real background job raised, received with standard input at its end' {
+        $Lines = Invoke-JobChild -Name 'InputAtEnd' -EmptyInput
+        $Lines | Should -Contain 'INNER:System.Management.Automation.RemoteException'
+        $Lines | Should -Contain 'ANSWER:True'
+    }
+}
